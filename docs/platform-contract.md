@@ -209,6 +209,7 @@ Architecture must remain open for:
 
 - Documentation is a required deliverable for every user-facing feature.
 - A static documentation website is part of the repository and release process.
+- Documentation website framework for V1 is `VitePress` (`apps/docs-site/docs`).
 - Every feature must include a document in the predefined feature format.
 - CI must fail when code changes are present without required feature documentation updates.
 - CI must fail when feature documentation does not match required template sections.

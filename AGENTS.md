@@ -38,6 +38,7 @@ Treat those as the source of truth.
 - `menuColor: default`
 - `radius: none`
 - `font: inter`
+- Docs framework is VitePress under `apps/docs-site/docs`.
 
 ## Documentation and Governance Rules
 

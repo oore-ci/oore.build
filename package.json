@@ -6,9 +6,9 @@
   ],
   "scripts": {
     "dev:web": "cd apps/web && bun run dev",
-    "dev:docs": "cd apps/docs-site && bun run dev",
+    "dev:docs": "cd apps/docs-site && bun run docs:dev",
     "build:web": "cd apps/web && bun run build",
-    "build:docs": "cd apps/docs-site && bun run build",
+    "build:docs": "cd apps/docs-site && bun run docs:build",
     "docs:check": "bash scripts/check-feature-docs.sh",
     "ui:init": "bash scripts/apply-shadcn-preset.sh"
   }

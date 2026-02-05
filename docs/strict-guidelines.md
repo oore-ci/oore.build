@@ -48,6 +48,7 @@ These rules are mandatory unless explicitly superseded by an ADR and contract up
 
 - Every user-facing feature requires a doc in `docs/features/`.
 - `docs/platform-contract.md` is the source of truth for finalized decisions.
+- Static docs site framework is `VitePress` (`apps/docs-site/docs`).
 - Changing finalized decisions requires:
 - ADR entry
 - contract update

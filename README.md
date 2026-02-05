@@ -12,7 +12,7 @@ The current product and engineering contract is documented at:
 ## Workspace Layout
 
 - `apps/web`: primary product web UI
-- `apps/docs-site`: static documentation website
+- `apps/docs-site`: static documentation website (VitePress placeholder)
 - `crates/oored`: daemon runtime
 - `crates/oore`: operator CLI/TUI bootstrap surface
 - `crates/oore-contract`: shared backend API contracts
@@ -38,6 +38,12 @@ Reference one-shot create command:
 Both frontend apps are scaffolded with TanStack file-router:
 
 - `bunx create-tsrouter-app@latest my-app --template file-router`
+
+Docs site framework:
+
+- `VitePress` (placeholder wired under `apps/docs-site/docs`)
+- run docs locally: `bun run dev:docs`
+- build docs: `bun run build:docs`
 
 ## Documentation Gate
 
