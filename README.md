@@ -58,3 +58,48 @@ Feature docs are validated by:
 - run daemon: `cargo run -p oored -- run --listen 127.0.0.1:8787`
 - check setup status: `curl http://127.0.0.1:8787/v1/public/setup-status`
 - run CLI: `cargo run -p oore -- setup open --ttl 15m`
+
+## Setup Flow
+
+### 1. Start the daemon
+```bash
+make run-daemon
+```
+
+### 2. Open a setup window
+```bash
+# Generate a bootstrap token valid for 15 minutes
+oore setup open --ttl 15m
+
+# Or with JSON output for scripts
+oore setup open --ttl 15m --json
+```
+
+### 3. Complete setup via API
+```bash
+# Verify bootstrap token (one-time use)
+curl -X POST http://127.0.0.1:8787/v1/setup/bootstrap-token/verify \
+  -H "Content-Type: application/json" \
+  -d '{"token": "<bootstrap-token>"}'
+
+# Configure OIDC provider
+curl -X POST http://127.0.0.1:8787/v1/setup/oidc/configure \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"issuer_url": "https://accounts.google.com", "client_id": "...", "client_secret": "..."}'
+
+# Create owner
+curl -X POST http://127.0.0.1:8787/v1/setup/owner/finalize \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"owner_email": "admin@example.com"}'
+
+# Complete setup
+curl -X POST http://127.0.0.1:8787/v1/setup/complete \
+  -H "Authorization: Bearer <session-token>"
+```
+
+### 4. Check status
+```bash
+curl http://127.0.0.1:8787/v1/public/setup-status
+```

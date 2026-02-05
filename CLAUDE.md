@@ -102,3 +102,11 @@ When adding new build scripts, test commands, or tooling workflows, add a corres
 - shadcn uses Base UI primitives (not Radix)
 - Every user-facing feature requires a doc in `docs/features/` following `docs/templates/feature-doc-template.md`
 - Changing a finalized decision requires: ADR + contract update + feature doc update
+
+## Documentation Standards
+When generating or updating documentation, always check for existing CLAUDE.md, README.md, and docs/ directory first. Preserve existing content and append/update rather than overwriting.
+
+## Project Structure
+This project primarily uses Markdown and JSON files. When creating new files, follow existing naming conventions and directory structure. Always validate JSON files with `cat <file> | python3 -m json.tool` before committing.
+
+After generating documentation, always run a final review pass: check for broken links, consistent formatting, accurate code references, and completeness against the source code.
