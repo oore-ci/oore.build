@@ -60,11 +60,12 @@ Treat those as the source of truth.
 - Keep `/v1/public/setup-status` non-sensitive.
 - Setup mutating endpoints must be token-gated and disabled after `ready`.
 
+## Makefile Maintenance
+
+- All build, test, lint, and dev commands must have a corresponding `make` target in the root `Makefile`.
+- When adding new scripts or tooling, update the Makefile.
+- `make validate` is the single command for the full pre-handoff checklist.
+
 ## Validation Checklist (Before Handoff)
 
-- Frontend docs gate passes: `bun run docs:check`
-- Frontend builds pass:
-- `bun run build:web`
-- `bun run build:docs`
-- Backend compiles:
-- `cargo check --workspace`
+- Run `make validate` (runs docs-check, build-web, build-docs, cargo-check).

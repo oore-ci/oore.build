@@ -17,44 +17,30 @@ oore.build is a self-hosted, Flutter-first mobile CI and internal app distributi
 
 ## Build / Test / Lint Commands
 
-### Web App (Bun + Vite)
+All common commands have `make` targets. Use `make <target>` from the repo root.
 
-```bash
-bun run dev:web              # dev server for web app (port 3000)
-bun run build:web            # production build
-cd apps/web && bun run test  # run tests (Vitest)
-cd apps/web && bun run lint  # ESLint
-cd apps/web && bun run check # Prettier --write + ESLint --fix
-```
-
-### Docs Site (VitePress)
-
-```bash
-bun run dev:docs             # VitePress dev server (port 4173)
-bun run build:docs           # VitePress production build
-```
-
-### Backend (Rust + Cargo)
-
-```bash
-cargo check --workspace                              # compile check all crates
-cargo run -p oored -- run --listen 127.0.0.1:8787    # run daemon
-cargo run -p oore -- setup open --ttl 15m            # run operator CLI
-```
-
-### Documentation Gate (must pass before finalizing changes)
-
-```bash
-bun run docs:check           # validates feature docs against template
-```
+| Target | What it does |
+|---|---|
+| `make dev-web` | Web app dev server (port 3000) |
+| `make dev-docs` | VitePress dev server (port 4173) |
+| `make build-web` | Production build (web) |
+| `make build-docs` | VitePress production build |
+| `make test-web` | Run web app tests (Vitest) |
+| `make lint-web` | ESLint |
+| `make fix-web` | Prettier --write + ESLint --fix |
+| `make cargo-check` | Compile check all Rust crates |
+| `make run-daemon` | Run oored on 127.0.0.1:8787 |
+| `make run-cli` | Run oore setup open --ttl 15m |
+| `make docs-check` | Validate feature docs against template |
+| `make ui-init` | Re-initialize shadcn from shared preset |
+| `make build` | build-web + build-docs + cargo-check |
+| `make check` | lint-web + cargo-check |
+| `make validate` | Full pre-handoff validation (docs-check + builds + cargo-check) |
 
 ### Validation Checklist (run before handoff)
 
 ```bash
-bun run docs:check
-bun run build:web
-bun run build:docs
-cargo check --workspace
+make validate
 ```
 
 ## Architecture
@@ -102,6 +88,10 @@ Run `bun run ui:init` to re-initialize shadcn from the shared preset.
 `uninitialized` → `bootstrap_pending` → `idp_configured` → `owner_created` → `ready`
 
 Setup mutating endpoints are token-gated and auto-disabled after `ready`. The `/v1/public/setup-status` endpoint is always public and non-sensitive.
+
+## Makefile Maintenance
+
+When adding new build scripts, test commands, or tooling workflows, add a corresponding `make` target to the root `Makefile`. Keep `make validate` as the single command for the full pre-handoff checklist.
 
 ## Non-Negotiable V1 Rules
 
