@@ -1,5 +1,6 @@
 .PHONY: dev-web dev-docs build-web build-docs build check \
        test-web lint-web fix-web \
+       test-docs lint-docs fix-docs \
        cargo-check run-daemon run-cli \
        docs-check ui-init validate
 
@@ -25,6 +26,15 @@ dev-docs:
 
 build-docs:
 	bun run build:docs
+
+test-docs:
+	cd apps/docs-site && bun run test
+
+lint-docs:
+	cd apps/docs-site && bun run lint
+
+fix-docs:
+	cd apps/docs-site && bun run check
 
 # ── Backend (Rust) ────────────────────────────────────────────────
 cargo-check:

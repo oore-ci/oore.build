@@ -44,7 +44,7 @@ The `/setup` route renders a centered card layout with:
 
 - Email input with client-side validation (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`).
 - Route guard redirects to `/setup` if no session token.
-- Submits to `POST /v1/setup/owner/finalize` with Bearer auth.
+- Initiates OIDC flow via `POST /v1/setup/owner/start-oidc`, then verifies via `POST /v1/setup/owner/verify-oidc` with Bearer auth.
 - Warning text: "Make sure this matches your OIDC provider email -- this cannot be changed after submission."
 - Inline validation error shown below the input when the email format is invalid.
 
@@ -59,7 +59,7 @@ The `/setup` route renders a centered card layout with:
 ### State Management
 
 - **Zustand store** (`useSetupStore`): Tracks `currentStep`, `sessionToken`, and `sessionExpiresAt`. Session data is persisted to `sessionStorage` under `oore_setup_session` and `oore_setup_session_expires` keys. The `reset()` method clears all state.
-- **TanStack Query hooks** (`use-setup.ts`): `useSetupStatus` polls `/v1/public/setup-status` every 3 seconds. Mutation hooks (`useVerifyBootstrapToken`, `useConfigureOidc`, `useFinalizeOwner`, `useCompleteSetup`) invalidate the status query on success.
+- **TanStack Query hooks** (`use-setup.ts`): `useSetupStatus` polls `/v1/public/setup-status` every 3 seconds. Mutation hooks (`useVerifyBootstrapToken`, `useConfigureOidc`, `useSetupOidcStart`, `useSetupOidcVerify`, `useCompleteSetup`) invalidate the status query on success.
 - **Session countdown hook** (`useSessionCountdown`): 1-second interval timer that computes remaining seconds from `sessionExpiresAt`. Returns `formatted` (MM:SS), `isWarning` (< 5 min), and `isExpired` (0 seconds remaining).
 
 ### API Client
@@ -73,7 +73,8 @@ No new API endpoints. The wizard consumes the existing setup endpoints documente
 - `GET /v1/public/setup-status`
 - `POST /v1/setup/bootstrap-token/verify`
 - `POST /v1/setup/oidc/configure`
-- `POST /v1/setup/owner/finalize`
+- `POST /v1/setup/owner/start-oidc`
+- `POST /v1/setup/owner/verify-oidc`
 - `POST /v1/setup/complete`
 
 ## Security Considerations

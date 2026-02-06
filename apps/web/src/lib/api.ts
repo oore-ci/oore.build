@@ -3,7 +3,6 @@ import type {
   BootstrapTokenVerifyResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
-  OwnerFinalizeResponse,
   SetupCompleteResponse,
   SetupOidcStartResponse,
   SetupOidcVerifyResponse,
@@ -103,17 +102,6 @@ export function configureOidc(
     method: 'POST',
     headers: authHeaders(sessionToken),
     body: JSON.stringify(data),
-  })
-}
-
-export function finalizeOwner(
-  sessionToken: string,
-  ownerEmail: string,
-): Promise<OwnerFinalizeResponse> {
-  return request<OwnerFinalizeResponse>('/v1/setup/owner/finalize', {
-    method: 'POST',
-    headers: authHeaders(sessionToken),
-    body: JSON.stringify({ owner_email: ownerEmail }),
   })
 }
 

@@ -108,18 +108,6 @@ pub struct OidcConfigureResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct OwnerFinalizeRequest {
-    pub owner_email: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OwnerFinalizeResponse {
-    pub state: SetupState,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_expires_at: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct SetupOidcStartRequest {
     pub redirect_uri: String,
 }

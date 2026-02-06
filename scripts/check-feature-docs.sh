@@ -59,6 +59,13 @@ fi
 if [[ -n "$BASE_SHA" ]]; then
   changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
 
+  # Include uncommitted and untracked changes so the gate works pre-commit
+  if [[ "$HEAD_SHA" == "HEAD" ]]; then
+    uncommitted="$(git diff --name-only HEAD 2>/dev/null || true)"
+    untracked="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
+    changed_files="$(printf '%s\n%s\n%s' "$changed_files" "$uncommitted" "$untracked" | sort -u)"
+  fi
+
   if [[ -n "$changed_files" ]]; then
     code_changed="false"
     docs_changed="false"

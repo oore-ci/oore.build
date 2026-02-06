@@ -45,7 +45,7 @@ bootstrap_pending ──▶ idp_configured ──▶ owner_created ──▶ rea
 | State | What it means | Next action |
 |-------|---------------|-------------|
 | `bootstrap_pending` | Fresh instance, awaiting bootstrap token | Verify token via `POST /v1/setup/bootstrap-token/verify` |
-| `idp_configured` | OIDC provider has been configured | Create owner via OIDC flow or `POST /v1/setup/owner/finalize` |
+| `idp_configured` | OIDC provider has been configured | Create owner via `POST /v1/setup/owner/start-oidc` and `POST /v1/setup/owner/verify-oidc` |
 | `owner_created` | Owner account exists, setup not finalized | Complete setup via `POST /v1/setup/complete` |
 | `ready` | Instance is fully configured | All setup endpoints return `409 Conflict` |
 
@@ -103,7 +103,6 @@ OIDC client secrets are encrypted with AES-256-GCM before storage:
 |--------|------|-------------|
 | `POST` | `/v1/setup/bootstrap-token/verify` | Consume bootstrap token, get session |
 | `POST` | `/v1/setup/oidc/configure` | Configure OIDC provider (with discovery) |
-| `POST` | `/v1/setup/owner/finalize` | Create owner with email directly |
 | `POST` | `/v1/setup/owner/start-oidc` | Start OIDC flow for owner verification |
 | `POST` | `/v1/setup/owner/verify-oidc` | Complete OIDC flow, create owner |
 | `POST` | `/v1/setup/complete` | Transition to `ready` state |

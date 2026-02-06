@@ -70,7 +70,6 @@ Endpoints for first-run instance configuration. All mutating setup endpoints req
 | `GET` | [`/v1/public/setup-status`](/api/setup#setup-status) | Public |
 | `POST` | [`/v1/setup/bootstrap-token/verify`](/api/setup#verify-bootstrap-token) | Public |
 | `POST` | [`/v1/setup/oidc/configure`](/api/setup#configure-oidc) | Setup session |
-| `POST` | [`/v1/setup/owner/finalize`](/api/setup#finalize-owner) | Setup session |
 | `POST` | [`/v1/setup/owner/start-oidc`](/api/setup#start-owner-oidc) | Setup session |
 | `POST` | [`/v1/setup/owner/verify-oidc`](/api/setup#verify-owner-oidc) | Setup session |
 | `POST` | [`/v1/setup/complete`](/api/setup#complete-setup) | Setup session |

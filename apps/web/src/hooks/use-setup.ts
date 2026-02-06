@@ -6,7 +6,6 @@ import {
 import {
   completeSetup,
   configureOidc,
-  finalizeOwner,
   getSetupStatus,
   setupOidcStart,
   setupOidcVerify,
@@ -47,26 +46,6 @@ export function useConfigureOidc() {
       sessionToken: string
       data: OidcConfigureRequest
     }) => configureOidc(sessionToken, data),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
-      }
-      void queryClient.invalidateQueries({ queryKey: SETUP_STATUS_KEY })
-    },
-  })
-}
-
-export function useFinalizeOwner() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      ownerEmail,
-    }: {
-      sessionToken: string
-      ownerEmail: string
-    }) => finalizeOwner(sessionToken, ownerEmail),
     onSuccess: (data) => {
       if (data.session_expires_at) {
         useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)

@@ -255,7 +255,8 @@ Additional documentation rules:
 - Setup/mutating (setup mode only, token required):
 - `POST /v1/setup/bootstrap-token/verify`
 - `POST /v1/setup/oidc/configure`
-- `POST /v1/setup/owner/finalize`
+- `POST /v1/setup/owner/start-oidc`
+- `POST /v1/setup/owner/verify-oidc`
 - `POST /v1/setup/complete`
 - Auth:
 - `GET /v1/auth/oidc/start`

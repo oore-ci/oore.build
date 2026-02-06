@@ -34,7 +34,8 @@ Additional UI behaviors:
 - `GET /v1/public/setup-status` — now sourced from persisted file-backed state (previously env var placeholder). Returns `instance_id`, `state`, `setup_mode`, `is_configured`. Non-sensitive.
 - `POST /v1/setup/bootstrap-token/verify` — accepts `{ "token": "..." }`, validates against stored hash/expiry/consumed status, returns `{ "session_token": "...", "expires_at": <epoch> }`. One-time use.
 - `POST /v1/setup/oidc/configure` — requires Bearer session token. Accepts `{ "issuer_url", "client_id", "client_secret?" }`. Transitions from `bootstrap_pending` to `idp_configured`.
-- `POST /v1/setup/owner/finalize` — requires Bearer session token. Accepts `{ "owner_email" }`. Transitions from `idp_configured` to `owner_created`.
+- `POST /v1/setup/owner/start-oidc` — requires Bearer session token. Accepts `{ "redirect_uri" }`. Initiates OIDC authorization code flow for owner verification.
+- `POST /v1/setup/owner/verify-oidc` — requires Bearer session token. Accepts `{ "code", "state" }`. Completes OIDC flow, transitions from `idp_configured` to `owner_created`.
 - `POST /v1/setup/complete` — requires Bearer session token. Transitions from `owner_created` to `ready`. Auto-disables all setup endpoints.
 - All setup mutating endpoints return `409` with structured `ApiError` after state is `ready`.
 

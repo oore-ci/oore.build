@@ -61,7 +61,7 @@ pub struct OidcConfig {
 pub fn build_http_client() -> Result<reqwest::Client, (StatusCode, Json<ApiError>)> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| {
             error!(error = %e, "failed to build HTTP client");

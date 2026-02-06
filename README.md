@@ -88,11 +88,17 @@ curl -X POST http://127.0.0.1:8787/v1/setup/oidc/configure \
   -H "Content-Type: application/json" \
   -d '{"issuer_url": "https://accounts.google.com", "client_id": "...", "client_secret": "..."}'
 
-# Create owner
-curl -X POST http://127.0.0.1:8787/v1/setup/owner/finalize \
+# Start owner OIDC verification
+curl -X POST http://127.0.0.1:8787/v1/setup/owner/start-oidc \
   -H "Authorization: Bearer <session-token>" \
   -H "Content-Type: application/json" \
-  -d '{"owner_email": "admin@example.com"}'
+  -d '{"redirect_uri": "http://127.0.0.1:3000/setup/owner/callback"}'
+
+# Verify owner OIDC (after completing the OIDC flow)
+curl -X POST http://127.0.0.1:8787/v1/setup/owner/verify-oidc \
+  -H "Authorization: Bearer <session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "<authorization_code>", "state": "<state>"}'
 
 # Complete setup
 curl -X POST http://127.0.0.1:8787/v1/setup/complete \

@@ -35,11 +35,6 @@ export interface OidcConfigureResponse {
   session_expires_at?: number
 }
 
-export interface OwnerFinalizeResponse {
-  state: SetupState
-  session_expires_at?: number
-}
-
 export interface SetupOidcStartRequest {
   redirect_uri: string
 }

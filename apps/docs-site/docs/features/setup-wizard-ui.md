@@ -63,7 +63,7 @@ A warning is shown: "Double-check your values before submitting -- this step can
 ### Step 3: Owner Account
 
 - Email input with client-side validation (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`)
-- Submits to [`POST /v1/setup/owner/finalize`](/api/setup#finalize-owner)
+- Initiates OIDC flow via [`POST /v1/setup/owner/start-oidc`](/api/setup#start-owner-oidc), then verifies via [`POST /v1/setup/owner/verify-oidc`](/api/setup#verify-owner-oidc)
 - Inline validation error shown when format is invalid
 
 ::: warning
@@ -100,7 +100,8 @@ The `reset()` method clears all state and removes `sessionStorage` entries.
 | `useSetupStatus` | `GET /v1/public/setup-status` | Polls every 3 seconds |
 | `useVerifyBootstrapToken` | `POST /v1/setup/bootstrap-token/verify` | Invalidates status on success |
 | `useConfigureOidc` | `POST /v1/setup/oidc/configure` | Invalidates status on success |
-| `useFinalizeOwner` | `POST /v1/setup/owner/finalize` | Invalidates status on success |
+| `useSetupOidcStart` | `POST /v1/setup/owner/start-oidc` | Starts OIDC flow for owner verification |
+| `useSetupOidcVerify` | `POST /v1/setup/owner/verify-oidc` | Invalidates status on success |
 | `useCompleteSetup` | `POST /v1/setup/complete` | Invalidates status on success |
 
 ### Session Countdown Hook (`useSessionCountdown`)
