@@ -31,7 +31,7 @@ cargo-check:
 	cargo check --workspace
 
 run-daemon:
-	cargo run -p oored -- run --listen 127.0.0.1:8787
+	RUST_LOG=debug cargo run -p oored -- run --listen 127.0.0.1:8787
 
 run-cli:
 	cargo run -p oore -- setup open --ttl 15m

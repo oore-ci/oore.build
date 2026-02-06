@@ -9,38 +9,103 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SetupIndexRouteImport } from './routes/setup/index'
+import { Route as SetupOwnerRouteImport } from './routes/setup/owner'
+import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
+import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
 
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SetupIndexRoute = SetupIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SetupRoute,
+} as any)
+const SetupOwnerRoute = SetupOwnerRouteImport.update({
+  id: '/owner',
+  path: '/owner',
+  getParentRoute: () => SetupRoute,
+} as any)
+const SetupOidcRoute = SetupOidcRouteImport.update({
+  id: '/oidc',
+  path: '/oidc',
+  getParentRoute: () => SetupRoute,
+} as any)
+const SetupCompleteRoute = SetupCompleteRouteImport.update({
+  id: '/complete',
+  path: '/complete',
+  getParentRoute: () => SetupRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/setup': typeof SetupRouteWithChildren
+  '/setup/complete': typeof SetupCompleteRoute
+  '/setup/oidc': typeof SetupOidcRoute
+  '/setup/owner': typeof SetupOwnerRoute
+  '/setup/': typeof SetupIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/setup/complete': typeof SetupCompleteRoute
+  '/setup/oidc': typeof SetupOidcRoute
+  '/setup/owner': typeof SetupOwnerRoute
+  '/setup': typeof SetupIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/setup': typeof SetupRouteWithChildren
+  '/setup/complete': typeof SetupCompleteRoute
+  '/setup/oidc': typeof SetupOidcRoute
+  '/setup/owner': typeof SetupOwnerRoute
+  '/setup/': typeof SetupIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/setup'
+    | '/setup/complete'
+    | '/setup/oidc'
+    | '/setup/owner'
+    | '/setup/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/setup/complete' | '/setup/oidc' | '/setup/owner' | '/setup'
+  id:
+    | '__root__'
+    | '/'
+    | '/setup'
+    | '/setup/complete'
+    | '/setup/oidc'
+    | '/setup/owner'
+    | '/setup/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SetupRoute: typeof SetupRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,11 +113,56 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/setup/': {
+      id: '/setup/'
+      path: '/'
+      fullPath: '/setup/'
+      preLoaderRoute: typeof SetupIndexRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/owner': {
+      id: '/setup/owner'
+      path: '/owner'
+      fullPath: '/setup/owner'
+      preLoaderRoute: typeof SetupOwnerRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/oidc': {
+      id: '/setup/oidc'
+      path: '/oidc'
+      fullPath: '/setup/oidc'
+      preLoaderRoute: typeof SetupOidcRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/complete': {
+      id: '/setup/complete'
+      path: '/complete'
+      fullPath: '/setup/complete'
+      preLoaderRoute: typeof SetupCompleteRouteImport
+      parentRoute: typeof SetupRoute
+    }
   }
 }
 
+interface SetupRouteChildren {
+  SetupCompleteRoute: typeof SetupCompleteRoute
+  SetupOidcRoute: typeof SetupOidcRoute
+  SetupOwnerRoute: typeof SetupOwnerRoute
+  SetupIndexRoute: typeof SetupIndexRoute
+}
+
+const SetupRouteChildren: SetupRouteChildren = {
+  SetupCompleteRoute: SetupCompleteRoute,
+  SetupOidcRoute: SetupOidcRoute,
+  SetupOwnerRoute: SetupOwnerRoute,
+  SetupIndexRoute: SetupIndexRoute,
+}
+
+const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SetupRoute: SetupRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

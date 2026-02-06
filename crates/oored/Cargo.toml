@@ -11,11 +11,24 @@ clap.workspace = true
 dirs.workspace = true
 hex.workspace = true
 oore-contract = { path = "../oore-contract" }
+openidconnect.workspace = true
 rand.workspace = true
+reqwest.workspace = true
+url.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+ring.workspace = true
+base64.workspace = true
+sqlx.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
+hyper.workspace = true
+http-body-util.workspace = true
+tempfile.workspace = true

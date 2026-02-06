@@ -1,39 +1,70 @@
-import { createFileRoute } from '@tanstack/react-router'
-import logo from '../logo.svg'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect } from 'react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { useSetupStatus } from '@/hooks/use-setup'
 
 export const Route = createFileRoute('/')({
-  component: App,
+  component: IndexPage,
 })
 
-function App() {
-  return (
-    <div className="text-center">
-      <header className="min-h-screen flex flex-col items-center justify-center bg-[#282c34] text-white text-[calc(10px+2vmin)]">
-        <img
-          src={logo}
-          className="h-[40vmin] pointer-events-none animate-[spin_20s_linear_infinite]"
-          alt="logo"
-        />
-        <p>
-          Edit <code>src/routes/index.tsx</code> and save to reload.
+function IndexPage() {
+  const { data: status, isLoading, error } = useSetupStatus()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (status?.setup_mode) {
+      void navigate({ to: '/setup' })
+    }
+  }, [status?.setup_mode, navigate])
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground text-sm">
+          Connecting to backend...
         </p>
-        <a
-          className="text-[#61dafb] hover:underline"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-        <a
-          className="text-[#61dafb] hover:underline"
-          href="https://tanstack.com"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn TanStack
-        </a>
-      </header>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <div className="max-w-md w-full">
+          <Alert variant="destructive">
+            <AlertTitle>Connection failed</AlertTitle>
+            <AlertDescription>
+              Unable to reach the oore daemon. Make sure{' '}
+              <code className="bg-muted px-1 py-0.5 text-xs">oored</code> is
+              running and accessible.
+            </AlertDescription>
+          </Alert>
+        </div>
+      </div>
+    )
+  }
+
+  if (status?.is_configured) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            oore.build
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            Instance <code className="bg-muted px-1 py-0.5 text-xs">{status.instance_id}</code> is ready.
+          </p>
+          <p className="text-muted-foreground text-xs">
+            Dashboard coming soon.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <p className="text-muted-foreground text-sm">Loading...</p>
     </div>
   )
 }

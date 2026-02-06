@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-
 import { useState } from 'react'
 
 export default function Header() {
@@ -13,15 +12,11 @@ export default function Header() {
           className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
           aria-label="Open menu"
         >
-          <span className="text-xl leading-none">menu</span>
+          <span className="text-xl leading-none">☰</span>
         </button>
-        <h1 className="ml-4 text-xl font-semibold">
+        <h1 className="ml-4">
           <Link to="/">
-            <img
-              src="/tanstack-word-logo-white.svg"
-              alt="TanStack Logo"
-              className="h-10"
-            />
+            <span className="text-xl font-semibold tracking-tight">oore.build</span>
           </Link>
         </h1>
       </header>
@@ -38,7 +33,7 @@ export default function Header() {
             className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
             aria-label="Close menu"
           >
-            <span className="text-xl leading-none">close</span>
+            <span className="text-xl leading-none">✕</span>
           </button>
         </div>
 
@@ -52,13 +47,8 @@ export default function Header() {
                 'flex items-center gap-3 p-3 rounded-lg bg-cyan-600 hover:bg-cyan-700 transition-colors mb-2',
             }}
           >
-            <span className="text-sm">home</span>
             <span className="font-medium">Home</span>
           </Link>
-
-          {/* Demo Links Start */}
-
-          {/* Demo Links End */}
         </nav>
       </aside>
     </>

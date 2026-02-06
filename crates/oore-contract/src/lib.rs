@@ -35,7 +35,6 @@ pub struct SetupStatus {
 
 impl SetupStatus {
     pub fn from_state(instance_id: impl Into<String>, state: SetupState) -> Self {
-        let state = state;
         let is_configured = state == SetupState::Ready;
         let setup_mode = !is_configured;
 
@@ -71,6 +70,9 @@ pub struct OidcConfigureRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OidcConfigureResponse {
     pub state: SetupState,
+    pub discovered_issuer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_expires_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,6 +83,34 @@ pub struct OwnerFinalizeRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OwnerFinalizeResponse {
     pub state: SetupState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_expires_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetupOidcStartRequest {
+    pub redirect_uri: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetupOidcStartResponse {
+    pub authorization_url: String,
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetupOidcVerifyRequest {
+    pub code: String,
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetupOidcVerifyResponse {
+    pub state: SetupState,
+    pub owner_email: String,
+    pub oidc_subject: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_expires_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,6 +158,8 @@ pub struct SetupStateFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_config: Option<OidcConfigRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub oidc_secret: Option<OidcSecretRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<OwnerRecord>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -156,11 +188,49 @@ pub struct OidcConfigRecord {
     pub issuer_url: String,
     pub client_id: String,
     pub has_client_secret: bool,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub userinfo_endpoint: Option<String>,
+    pub jwks_uri: String,
     pub configured_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcSecretRecord {
+    pub encrypted_client_secret: String,
+    pub stored_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OwnerRecord {
     pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oidc_subject: Option<String>,
     pub created_at: i64,
+}
+
+// ── Auth response types ─────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OidcStartResponse {
+    pub authorization_url: String,
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OidcCallbackResponse {
+    pub session_token: String,
+    pub expires_at: i64,
+    pub user: AuthenticatedUser,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthenticatedUser {
+    pub email: String,
+    pub oidc_subject: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LogoutResponse {
+    pub ok: bool,
 }

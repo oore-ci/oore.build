@@ -21,4 +21,17 @@ sha2 = "0.10"
 tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+openidconnect = "4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+dialoguer = "0.11"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
+hyper = "1"
+http-body-util = "0.1"
+tempfile = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+ring = "0.17"
+base64 = "0.22"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
