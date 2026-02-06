@@ -21,35 +21,52 @@ These are done and passing `make validate`:
 - [x] 14 feature docs, 3 ADRs
 - [x] Makefile targets and `make validate` gate
 
-### Implemented API Endpoints (9/25)
+## Phase 1: Data Model + RBAC (Complete)
 
+- [x] **1.1 Expand SQLite schema** — Added `users`, `sessions`, `audit_logs` tables via `002_users_sessions_audit.sql`
+- [x] **1.2 Wire RBAC middleware** — Casbin-rs policy engine integrated into Axum; `AuthUser` extractor validates session + role on every request; per-route guards for owner/admin/developer/qa_viewer
+- [x] **1.3 User management endpoints** — Invite, list, get profile, update role, disable (soft-delete), re-enable; all with RBAC checks
+- [x] **1.4 Persistent sessions** — SQLite-backed sessions with user FK, CASCADE delete, status check on validate; survives daemon restarts
+- [x] **1.5 Auth store per instance** — Frontend auth tokens isolated per instance in localStorage; auth store syncs on instance switch
+- [x] **1.6 Login + callback flow** — `/login` page, OIDC callback (POST), invited user auto-activation on first login, unknown identity rejection
+- [x] **1.7 User management UI** — `/settings/users` page with invite form, role dropdown, disable/enable buttons, confirmation dialogs for destructive actions, inline feedback alerts
+- [x] **1.8 Header auth UI** — Current user email + sign-out button, role-based "Users" nav link
+- [x] **1.9 Audit logging** — Security-relevant actions logged: invite, role change, disable, enable, activation, owner creation
+- [x] **1.10 VitePress docs** — Users API, RBAC, User Management feature pages; updated OIDC, Auth API, Security, and API overview pages
+
+Feature docs: `2026-02-06-rbac-and-user-management.md`, `2026-02-06-session-persistence.md`
+
+### Implemented API Endpoints (16/25+)
+
+Setup:
 - `GET /v1/public/setup-status`
 - `POST /v1/setup/bootstrap-token/verify`
 - `POST /v1/setup/oidc/configure`
 - `POST /v1/setup/owner/start-oidc`
 - `POST /v1/setup/owner/verify-oidc`
 - `POST /v1/setup/complete`
+
+Auth:
 - `GET /v1/auth/oidc/start`
-- `GET /v1/auth/oidc/callback`
+- `POST /v1/auth/oidc/callback`
 - `POST /v1/auth/logout`
+
+User Management:
+- `GET /v1/users/me`
+- `GET /v1/users`
+- `POST /v1/users/invite`
+- `PATCH /v1/users/{user_id}/role`
+- `DELETE /v1/users/{user_id}`
+- `POST /v1/users/{user_id}/enable`
+
+Health:
+- `GET /healthz`
 
 ---
 
-## Phase 1: Data Model + RBAC
-
-Dependency: everything else builds on this.
-
-- [ ] **1.1 Expand SQLite schema** — Add tables: `users`, `roles`, `projects`, `pipelines`, `builds`, `jobs`, `runners`, `artifacts`, `audit_logs`
-- [ ] **1.2 Wire RBAC middleware** — Integrate casbin-rs policy engine into Axum; per-route role guards for owner/admin/developer/qa_viewer
-- [ ] **1.3 User management endpoints** — CRUD for users with role assignment (owner-only create, admin role changes)
-- [ ] **1.4 Persistent sessions** — Move session store from in-memory HashMap to SQLite (survives daemon restart)
-- [ ] **1.5 Multi-instance auth token isolation** — Namespace user auth tokens per instance in frontend (currently deferred, setup-only isolation exists)
-
-Feature docs required: Data Model, RBAC Policy, User Management
-
 ## Phase 2: Project + Pipeline CRUD
 
-Dependency: Phase 1 (schema + RBAC)
+Dependency: Phase 1 (schema + RBAC) ✅
 
 - [ ] **2.1 Project endpoints** — `GET|POST /v1/projects`, `GET|PATCH|DELETE /v1/projects/{project_id}` with RBAC
 - [ ] **2.2 Pipeline endpoints** — `GET|POST /v1/projects/{project_id}/pipelines` with build config validation
@@ -114,11 +131,10 @@ Dependency: Phases 1-6 functional
 
 - [ ] **7.1 E2E test suite** — Playwright tests for setup flow, build trigger, log streaming, artifact download
 - [ ] **7.2 Security hardening** — Input validation audit, path traversal checks, signed URL TTL enforcement
-- [ ] **7.3 Admin panel UI** — User/role management, instance settings
-- [ ] **7.4 Operator documentation** — Deployment guide, runner setup guide, OIDC provider config guide
-- [ ] **7.5 Final `make validate`** — All docs, builds, and checks green
+- [ ] **7.3 Operator documentation** — Deployment guide, runner setup guide, OIDC provider config guide
+- [ ] **7.4 Final `make validate`** — All docs, builds, and checks green
 
-Feature docs required: E2E Tests, Security Hardening, Admin Panel, Deployment Guide
+Feature docs required: E2E Tests, Security Hardening, Deployment Guide
 
 ---
 
@@ -126,12 +142,13 @@ Feature docs required: E2E Tests, Security Hardening, Admin Panel, Deployment Gu
 
 | Area | Built | Remaining | Blocked By |
 |------|-------|-----------|------------|
-| API endpoints | 9/25 | 16 | — |
-| SQLite tables | setup only | 8+ tables | — |
-| RBAC | casbin-rs dep added | zero enforcement | schema |
-| Frontend pages | setup + stub dashboard | 6+ pages | API endpoints |
+| API endpoints | 16 | ~15 (projects, pipelines, builds, runners, artifacts) | — |
+| SQLite tables | setup + users + sessions + audit_logs | ~5 (projects, pipelines, builds, runners, artifacts) | — |
+| RBAC | Casbin enforced on all user endpoints | Extend to project/build/runner endpoints | Phase 2+ |
+| Frontend pages | setup + dashboard + login + callback + settings/users | ~5 (projects, pipelines, builds, runners, artifacts) | API endpoints |
 | CLI commands | setup + version | 5 commands | API endpoints |
-| Tests | unit (API, stores) | E2E suite | features to test |
+| Tests | unit (API, stores, auth store) | E2E suite | features to test |
+| VitePress docs | Setup, OIDC, Multi-Instance, RBAC, User Mgmt, 3 API refs | Project/Build/Runner docs | features to document |
 
 ## Notes
 
