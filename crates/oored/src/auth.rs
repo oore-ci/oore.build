@@ -18,7 +18,7 @@ use tracing::{error, warn};
 
 use crate::session::DEFAULT_SESSION_TTL;
 use crate::util::{api_err, extract_bearer, now_unix};
-use crate::AppState;
+use crate::{AppState, MAX_PENDING_AUTH};
 
 /// Maximum lifetime of a pending OIDC auth request before it expires (10 minutes).
 const PENDING_AUTH_TTL_SECS: i64 = 600;
@@ -97,10 +97,12 @@ async fn load_oidc_config_inner(
 ) -> Result<OidcConfig, (StatusCode, Json<ApiError>)> {
     let store = state.store.lock().await;
     let sf = store.load().await.map_err(|e| {
+        // M4: Log the full error server-side, return generic message to client
+        error!(error = %e, "failed to load setup state");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
-            &e.to_string(),
+            "Failed to load setup state",
         )
     })?;
 
@@ -126,6 +128,7 @@ async fn load_oidc_config_inner(
         )
     })?;
 
+    // C2: Decrypt client secret; the decrypted value is used briefly and dropped
     let secret = if let Some(s) = sf.oidc_secret.as_ref() {
         let decrypted = crate::crypto::decrypt(&s.encrypted_client_secret, &state.encryption_key)
             .map_err(|e| {
@@ -235,6 +238,15 @@ pub async fn oidc_start(
         // Cleanup expired entries while we have the lock
         let now = now_unix();
         pending.retain(|_, pa| now - pa.created_at < PENDING_AUTH_TTL_SECS);
+
+        // H3: Reject if too many pending auth requests
+        if pending.len() >= MAX_PENDING_AUTH {
+            return Err(api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_pending",
+                "Too many pending authentication requests",
+            ));
+        }
 
         pending.insert(
             state_value.clone(),

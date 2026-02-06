@@ -1,15 +1,47 @@
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 // ── Setup state machine ─────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SetupState {
     Uninitialized,
     BootstrapPending,
     IdpConfigured,
     OwnerCreated,
     Ready,
+}
+
+impl fmt::Display for SetupState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Uninitialized => "uninitialized",
+            Self::BootstrapPending => "bootstrap_pending",
+            Self::IdpConfigured => "idp_configured",
+            Self::OwnerCreated => "owner_created",
+            Self::Ready => "ready",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for SetupState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "uninitialized" => Ok(Self::Uninitialized),
+            "bootstrap_pending" => Ok(Self::BootstrapPending),
+            "idp_configured" => Ok(Self::IdpConfigured),
+            "owner_created" => Ok(Self::OwnerCreated),
+            "ready" => Ok(Self::Ready),
+            other => Err(format!("unknown setup state: {other}")),
+        }
+    }
 }
 
 impl SetupState {

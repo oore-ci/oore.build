@@ -15,21 +15,22 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use oore_contract::{
     ApiError, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse, OidcConfigRecord,
-    OidcConfigureRequest, OidcConfigureResponse, OidcSecretRecord, OwnerFinalizeRequest,
-    OwnerFinalizeResponse, OwnerRecord, SetupCompleteResponse, SetupOidcStartRequest,
+    OidcConfigureRequest, OidcConfigureResponse, OidcSecretRecord, OwnerRecord,
+    SetupCompleteResponse, SetupOidcStartRequest,
     SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
     SetupSessionRecord, SetupState, SetupStateFile, SetupStatus,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
+use zeroize::Zeroizing;
 
 use openidconnect::core::CoreProviderMetadata;
 use openidconnect::{
     AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndUserEmail,
     IssuerUrl, Nonce, PkceCodeChallenge, RedirectUrl, Scope, TokenResponse,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::auth::{PendingAuth, build_http_client, load_oidc_config_for_setup};
 use crate::session::SessionStore;
@@ -44,22 +45,68 @@ pub struct AppState {
     pub sessions: Mutex<SessionStore>,
     pub pending_auth: Mutex<HashMap<String, PendingAuth>>,
     /// AES-256 encryption key used to encrypt secrets at rest.
-    pub encryption_key: Vec<u8>,
+    /// Wrapped in Zeroizing so the key is zeroed on drop.
+    pub encryption_key: Zeroizing<Vec<u8>>,
     /// When true, `configure_oidc` skips the real OIDC discovery HTTP call
     /// and populates the config from the raw request values with placeholder
-    /// endpoint URLs. Used only in tests.
+    /// endpoint URLs. Only available with test-support feature or in tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub skip_oidc_discovery: bool,
+    /// Failed bootstrap token verification attempts (keyed by token hash).
+    pub bootstrap_failures: Mutex<HashMap<String, u32>>,
 }
-
-// ── Convenience type alias ───────────────────────────────────────
-
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 // ── Constants ────────────────────────────────────────────────────
 
+/// Convenience type alias
+type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+
 const SETUP_SESSION_TTL_SECS: i64 = 30 * 60;
 
+/// Maximum number of concurrent pending OIDC auth requests.
+const MAX_PENDING_AUTH: usize = 1000;
+
+/// Maximum allowed failed bootstrap token attempts before lockout.
+const MAX_BOOTSTRAP_FAILURES: u32 = 5;
+
 // ── Helpers ──────────────────────────────────────────────────────
+
+/// Check if skip_oidc_discovery is enabled (always false in production builds).
+fn should_skip_oidc_discovery(state: &AppState) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        state.skip_oidc_discovery
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        let _ = state;
+        false
+    }
+}
+
+/// Validate a redirect_uri: must be http://localhost or http://127.0.0.1 (any port).
+fn validate_redirect_uri(uri: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let parsed = url::Url::parse(uri).map_err(|_| {
+        api_err(StatusCode::BAD_REQUEST, "invalid_redirect_uri", "redirect_uri is not a valid URL")
+    })?;
+
+    if parsed.scheme() != "http" {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_uri",
+            "redirect_uri must use http scheme",
+        ));
+    }
+
+    match parsed.host_str() {
+        Some("localhost") | Some("127.0.0.1") => Ok(()),
+        _ => Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_uri",
+            "redirect_uri host must be localhost or 127.0.0.1",
+        )),
+    }
+}
 
 /// Validate the setup session token against the current state file.
 ///
@@ -105,7 +152,8 @@ async fn healthz() -> Json<serde_json::Value> {
 async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {
     let store = state.store.lock().await;
     let sf = store.load().await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to load setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
     })?;
 
     Ok(Json(SetupStatus::from_state(sf.instance_id, sf.setup_state)))
@@ -115,9 +163,24 @@ async fn verify_bootstrap_token(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BootstrapTokenVerifyRequest>,
 ) -> ApiResult<BootstrapTokenVerifyResponse> {
+    // H6: Check failed attempt counter
+    let token_hash_for_tracking = hash_token(&req.token);
+    {
+        let failures = state.bootstrap_failures.lock().await;
+        let count = failures.get(&token_hash_for_tracking).copied().unwrap_or(0);
+        if count >= MAX_BOOTSTRAP_FAILURES {
+            return Err(api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+                "Too many failed verification attempts. Generate a new bootstrap token.",
+            ));
+        }
+    }
+
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to load setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
     })?;
 
     // Setup must not be complete — all setup endpoints are disabled after ready
@@ -143,6 +206,11 @@ async fn verify_bootstrap_token(
     // Hash must match
     let request_hash = hash_token(&req.token);
     if request_hash != bt.hash {
+        // H6: Increment failed attempt counter
+        let mut failures = state.bootstrap_failures.lock().await;
+        let count = failures.entry(token_hash_for_tracking).or_insert(0);
+        *count += 1;
+        warn!(attempts = *count, "invalid bootstrap token attempt");
         return Err(api_err(StatusCode::UNAUTHORIZED, "invalid_token", "Bootstrap token is invalid"));
     }
 
@@ -163,7 +231,8 @@ async fn verify_bootstrap_token(
     sf.updated_at = now;
 
     store.save(&sf).await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to save setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
     })?;
 
     Ok(Json(BootstrapTokenVerifyResponse {
@@ -177,9 +246,45 @@ async fn configure_oidc(
     headers: HeaderMap,
     Json(req): Json<OidcConfigureRequest>,
 ) -> ApiResult<OidcConfigureResponse> {
+    // M7: Validate input
+    if req.issuer_url.is_empty() || req.issuer_url.len() > 2048 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "issuer_url must be between 1 and 2048 characters",
+        ));
+    }
+
+    if url::Url::parse(&req.issuer_url).is_err() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "issuer_url is not a valid URL",
+        ));
+    }
+
+    if req.client_id.is_empty() || req.client_id.len() > 256 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "client_id must be between 1 and 256 characters",
+        ));
+    }
+
+    if let Some(ref secret) = req.client_secret {
+        if secret.is_empty() || secret.len() > 1024 {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "client_secret must be between 1 and 1024 characters",
+            ));
+        }
+    }
+
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to load setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
     })?;
 
     // State gates first — deterministic 409 regardless of session state
@@ -191,7 +296,7 @@ async fn configure_oidc(
         return Err(api_err(
             StatusCode::CONFLICT,
             "invalid_state",
-            format!("OIDC can only be configured in bootstrap_pending state, current: {:?}", sf.setup_state),
+            format!("OIDC can only be configured in bootstrap_pending state, current: {}", sf.setup_state),
         ));
     }
 
@@ -204,7 +309,7 @@ async fn configure_oidc(
     // the raw request values with placeholder endpoint URLs instead of
     // performing a real HTTP discovery call.
     let (issuer, authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri) =
-        if state.skip_oidc_discovery {
+        if should_skip_oidc_discovery(&state) {
             (
                 req.issuer_url.clone(),
                 format!("{}/o/oauth2/v2/auth", req.issuer_url),
@@ -214,7 +319,8 @@ async fn configure_oidc(
             )
         } else {
             let discovered = oidc::discover_provider(&req.issuer_url).await.map_err(|e| {
-                api_err(StatusCode::BAD_REQUEST, "oidc_discovery_failed", e.to_string())
+                error!(error = %e, "OIDC discovery failed");
+                api_err(StatusCode::BAD_REQUEST, "oidc_discovery_failed", "Failed to discover OIDC provider")
             })?;
             (
                 discovered.issuer,
@@ -238,8 +344,11 @@ async fn configure_oidc(
 
     // Encrypt and store the client secret separately if provided
     if let Some(secret) = req.client_secret {
+        // C2: secret will be dropped (and zeroized if using Zeroizing wrapper)
+        // at end of scope naturally. The encryption key is already Zeroizing.
         let encrypted = crypto::encrypt(&secret, &state.encryption_key).map_err(|e| {
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", e.to_string())
+            error!(error = %e, "failed to encrypt client secret");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt client secret")
         })?;
         sf.oidc_secret = Some(OidcSecretRecord {
             encrypted_client_secret: encrypted,
@@ -251,57 +360,13 @@ async fn configure_oidc(
     sf.updated_at = now;
 
     store.save(&sf).await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to save setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
     })?;
 
     Ok(Json(OidcConfigureResponse {
         state: SetupState::IdpConfigured,
         discovered_issuer: issuer,
-        session_expires_at: sf.setup_session.as_ref().map(|s| s.expires_at),
-    }))
-}
-
-async fn finalize_owner(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<OwnerFinalizeRequest>,
-) -> ApiResult<OwnerFinalizeResponse> {
-    let store = state.store.lock().await;
-    let mut sf = store.load().await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
-    })?;
-
-    // State gates first — deterministic 409 regardless of session state
-    if sf.setup_state == SetupState::Ready {
-        return Err(api_err(StatusCode::CONFLICT, "already_configured", "Setup is already complete"));
-    }
-
-    if sf.setup_state != SetupState::IdpConfigured {
-        return Err(api_err(
-            StatusCode::CONFLICT,
-            "invalid_state",
-            format!("Owner can only be finalized in idp_configured state, current: {:?}", sf.setup_state),
-        ));
-    }
-
-    validate_session(&mut sf, &headers)?;
-
-    let now = now_unix();
-    sf.owner = Some(OwnerRecord {
-        email: req.owner_email,
-        oidc_subject: None,
-        created_at: now,
-    });
-
-    sf.setup_state = SetupState::OwnerCreated;
-    sf.updated_at = now;
-
-    store.save(&sf).await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
-    })?;
-
-    Ok(Json(OwnerFinalizeResponse {
-        state: SetupState::OwnerCreated,
         session_expires_at: sf.setup_session.as_ref().map(|s| s.expires_at),
     }))
 }
@@ -318,11 +383,15 @@ async fn setup_oidc_start(
     headers: HeaderMap,
     Json(req): Json<SetupOidcStartRequest>,
 ) -> ApiResult<SetupOidcStartResponse> {
+    // H5: Validate redirect_uri
+    validate_redirect_uri(&req.redirect_uri)?;
+
     // Validate setup session and state
     {
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+            error!(error = %e, "failed to load setup state");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
         })?;
 
         if sf.setup_state == SetupState::Ready {
@@ -333,7 +402,7 @@ async fn setup_oidc_start(
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "invalid_state",
-                format!("Owner OIDC can only be started in idp_configured state, current: {:?}", sf.setup_state),
+                format!("Owner OIDC can only be started in idp_configured state, current: {}", sf.setup_state),
             ));
         }
 
@@ -341,14 +410,15 @@ async fn setup_oidc_start(
 
         // Persist the bumped session expiry
         store.save(&sf).await.map_err(|e| {
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+            error!(error = %e, "failed to save setup state");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
         })?;
     }
 
     // Load the OIDC config (allows IdpConfigured state)
     let oidc_config = load_oidc_config_for_setup(&state).await?;
 
-    if state.skip_oidc_discovery {
+    if should_skip_oidc_discovery(&state) {
         // Test mode: return a placeholder authorization URL without real discovery
         let csrf_state = CsrfToken::new_random();
         let state_value = csrf_state.secret().clone();
@@ -365,6 +435,16 @@ async fn setup_oidc_start(
             let mut pending = state.pending_auth.lock().await;
             let now = now_unix();
             pending.retain(|_, pa| now - pa.created_at < 600);
+
+            // H3: Reject if too many pending auth requests
+            if pending.len() >= MAX_PENDING_AUTH {
+                return Err(api_err(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too_many_pending",
+                    "Too many pending authentication requests",
+                ));
+            }
+
             pending.insert(
                 state_value.clone(),
                 PendingAuth {
@@ -429,6 +509,16 @@ async fn setup_oidc_start(
         let mut pending = state.pending_auth.lock().await;
         let now = now_unix();
         pending.retain(|_, pa| now - pa.created_at < 600);
+
+        // H3: Reject if too many pending auth requests
+        if pending.len() >= MAX_PENDING_AUTH {
+            return Err(api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_pending",
+                "Too many pending authentication requests",
+            ));
+        }
+
         pending.insert(
             state_value.clone(),
             PendingAuth {
@@ -463,7 +553,8 @@ async fn setup_oidc_verify(
     {
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+            error!(error = %e, "failed to load setup state");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
         })?;
 
         if sf.setup_state == SetupState::Ready {
@@ -474,14 +565,15 @@ async fn setup_oidc_verify(
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "invalid_state",
-                format!("Owner OIDC verify requires idp_configured state, current: {:?}", sf.setup_state),
+                format!("Owner OIDC verify requires idp_configured state, current: {}", sf.setup_state),
             ));
         }
 
         validate_session(&mut sf, &headers)?;
 
         store.save(&sf).await.map_err(|e| {
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+            error!(error = %e, "failed to save setup state");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
         })?;
     }
 
@@ -502,7 +594,7 @@ async fn setup_oidc_verify(
     info!("verify-oidc: pending auth found, starting token exchange");
 
     // In test mode, simulate the token exchange with mock claims
-    let (email, subject) = if state.skip_oidc_discovery {
+    let (email, subject) = if should_skip_oidc_discovery(&state) {
         // In test mode, derive owner email/subject from the code
         // Convention: code format is "test-code" and we use known test values
         ("admin@example.com".to_string(), format!("test-subject-{}", &req.code))
@@ -585,7 +677,8 @@ async fn setup_oidc_verify(
     // Create owner and transition state
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to load setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
     })?;
 
     let now = now_unix();
@@ -599,10 +692,11 @@ async fn setup_oidc_verify(
     sf.updated_at = now;
 
     store.save(&sf).await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to save setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
     })?;
 
-    info!(email = %email, "verify-oidc: owner created, state → OwnerCreated");
+    info!(email = %email, "verify-oidc: owner created, state -> OwnerCreated");
 
     Ok(Json(SetupOidcVerifyResponse {
         state: SetupState::OwnerCreated,
@@ -618,7 +712,8 @@ async fn complete_setup(
 ) -> ApiResult<SetupCompleteResponse> {
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to load setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
     })?;
 
     // State gates first — deterministic 409 regardless of session state
@@ -630,7 +725,7 @@ async fn complete_setup(
         return Err(api_err(
             StatusCode::CONFLICT,
             "invalid_state",
-            format!("Setup can only be completed in owner_created state, current: {:?}", sf.setup_state),
+            format!("Setup can only be completed in owner_created state, current: {}", sf.setup_state),
         ));
     }
 
@@ -644,7 +739,8 @@ async fn complete_setup(
     let instance_id = sf.instance_id.clone();
 
     store.save(&sf).await.map_err(|e| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
+        error!(error = %e, "failed to save setup state");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
     })?;
 
     Ok(Json(SetupCompleteResponse {
@@ -665,21 +761,28 @@ pub fn build_router(store: SetupStore, encryption_key: Vec<u8>) -> Router {
 ///
 /// This allows integration tests to exercise the full setup flow without
 /// making any network calls.
+#[cfg(any(test, feature = "test-support"))]
 pub fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Router {
     build_router_inner(store, encryption_key, true)
 }
 
-fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, skip_oidc_discovery: bool) -> Router {
+fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oidc_discovery: bool) -> Router {
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
         sessions: Mutex::new(SessionStore::new()),
         pending_auth: Mutex::new(HashMap::new()),
-        encryption_key,
-        skip_oidc_discovery,
+        encryption_key: Zeroizing::new(encryption_key),
+        #[cfg(any(test, feature = "test-support"))]
+        skip_oidc_discovery: _skip_oidc_discovery,
+        bootstrap_failures: Mutex::new(HashMap::new()),
     });
 
+    // H1: CORS origin from env var, default to http://localhost:3000
+    let cors_origin = std::env::var("OORE_CORS_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+
     let cors = CorsLayer::new()
-        .allow_origin(["http://localhost:3000".parse().unwrap()])
+        .allow_origin([cors_origin.parse().expect("OORE_CORS_ORIGIN must be a valid header value")])
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
@@ -691,7 +794,6 @@ fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, skip_oidc_disc
             post(verify_bootstrap_token),
         )
         .route("/v1/setup/oidc/configure", post(configure_oidc))
-        .route("/v1/setup/owner/finalize", post(finalize_owner))
         .route("/v1/setup/owner/start-oidc", post(setup_oidc_start))
         .route("/v1/setup/owner/verify-oidc", post(setup_oidc_verify))
         .route("/v1/setup/complete", post(complete_setup))

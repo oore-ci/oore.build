@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
@@ -26,6 +29,7 @@ uuid.workspace = true
 ring.workspace = true
 base64.workspace = true
 sqlx.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tower.workspace = true

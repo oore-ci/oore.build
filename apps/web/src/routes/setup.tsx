@@ -4,20 +4,18 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { useSetupStore } from '@/stores/setup-store'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
-import type { SetupStatus } from '@/lib/types'
+import { getSetupStatus } from '@/lib/api'
 
 export const Route = createFileRoute('/setup')({
   beforeLoad: async () => {
     try {
-      const res = await fetch('/v1/public/setup-status')
-      if (res.ok) {
-        const status = (await res.json()) as SetupStatus
-        if (status.is_configured) {
-          throw redirect({ to: '/' })
-        }
+      const status = await getSetupStatus()
+      if (status.is_configured) {
+        throw redirect({ to: '/' })
       }
     } catch (e) {
       if (isRedirect(e)) throw e
+      throw e
     }
   },
   component: SetupLayout,
@@ -56,6 +54,10 @@ function SetupLayout() {
   const currentStep = useSetupStore((s) => s.currentStep)
   const { formatted, isWarning, isExpired } = useSessionCountdown()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    document.title = 'Setup — oore.build'
+  }, [])
 
   useEffect(() => {
     if (isExpired) {

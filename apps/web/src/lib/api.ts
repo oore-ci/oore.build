@@ -62,6 +62,21 @@ function authHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` }
 }
 
+// ── Error helpers ───────────────────────────────────────────────
+
+export function getApiErrorMessage(
+  error: unknown,
+  codeMap: Record<string, string>,
+): string {
+  if (error instanceof ApiClientError) {
+    return codeMap[error.code] ?? error.message
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  return 'An unexpected error occurred. Please try again.'
+}
+
 // ── API functions ───────────────────────────────────────────────
 
 export function getSetupStatus(): Promise<SetupStatus> {

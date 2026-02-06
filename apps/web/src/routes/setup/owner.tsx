@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useEffect, useCallback, useRef } from 'react'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -60,6 +60,7 @@ function getErrorMessage(error: Error | null): string | null {
 
 function OwnerStep() {
   const { code, state: oidcState } = Route.useSearch()
+  const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const startMutation = useSetupOidcStart()
@@ -69,6 +70,10 @@ function OwnerStep() {
   const errorMessage =
     getErrorMessage(startMutation.error) ??
     getErrorMessage(verifyMutation.error)
+
+  useEffect(() => {
+    document.title = 'Owner Account — oore.build'
+  }, [])
 
   useEffect(() => {
     setCurrentStep(2)
@@ -101,9 +106,9 @@ function OwnerStep() {
   useEffect(() => {
     if (status?.state === 'owner_created') {
       setCurrentStep(3)
-      window.location.href = '/setup/complete'
+      void navigate({ to: '/setup/complete' })
     }
-  }, [status?.state, setCurrentStep])
+  }, [status?.state, setCurrentStep, navigate])
 
   const handleStartOidc = useCallback(() => {
     if (!sessionToken) return
@@ -125,7 +130,7 @@ function OwnerStep() {
         },
       },
     )
-  }, [sessionToken, startMutation])
+  }, [sessionToken]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show verifying state while processing the callback
   if (code && oidcState) {

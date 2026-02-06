@@ -12,6 +12,10 @@ function IndexPage() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    document.title = 'oore.build'
+  }, [])
+
+  useEffect(() => {
     if (status?.setup_mode) {
       void navigate({ to: '/setup' })
     }

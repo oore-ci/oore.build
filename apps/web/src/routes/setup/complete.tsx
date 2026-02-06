@@ -1,12 +1,11 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { buttonVariants } from '@/components/ui/button'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { useCompleteSetup, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
-import { ApiClientError } from '@/lib/api'
+import { getApiErrorMessage } from '@/lib/api'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -37,19 +36,19 @@ function CompleteStep() {
   const { data: status } = useSetupStatus()
 
   const errorMessage = completeMutation.error
-    ? completeMutation.error instanceof ApiClientError
-      ? completeMutation.error.code === 'already_configured'
-        ? 'Setup has already been completed.'
-        : completeMutation.error.code === 'session_expired'
-          ? 'Your setup session has expired. Please restart setup with a new bootstrap token.'
-          : completeMutation.error.code === 'invalid_session'
-            ? 'Your session is no longer valid. Please restart setup.'
-            : completeMutation.error.message
-      : completeMutation.error.message
+    ? getApiErrorMessage(completeMutation.error, {
+        already_configured: 'Setup has already been completed.',
+        session_expired: 'Your setup session has expired. Please restart setup with a new bootstrap token.',
+        invalid_session: 'Your session is no longer valid. Please restart setup.',
+      })
     : null
 
   const instanceId = completeMutation.data?.instance_id ?? null
   const isComplete = completeMutation.isSuccess
+
+  useEffect(() => {
+    document.title = 'Complete Setup — oore.build'
+  }, [])
 
   useEffect(() => {
     setCurrentStep(3)

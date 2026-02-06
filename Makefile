@@ -36,6 +36,9 @@ run-daemon:
 run-cli:
 	cargo run -p oore -- setup open --ttl 15m
 
+test-rust:
+	cargo test -p oored --features test-support
+
 # ── Documentation & Validation ────────────────────────────────────
 docs-check:
 	bun run docs:check

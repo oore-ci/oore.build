@@ -60,8 +60,10 @@ impl SessionStore {
     }
 
     /// Validate a session token and return the associated session if it
-    /// exists and has not expired.
-    pub fn validate_session(&self, token: &str) -> Option<&Session> {
+    /// exists and has not expired. Also cleans up expired sessions.
+    pub fn validate_session(&mut self, token: &str) -> Option<&Session> {
+        self.cleanup_expired();
+
         let hashed = hash_token(token);
         let session = self.sessions.get(&hashed)?;
 

@@ -104,7 +104,7 @@ fn parse_ttl(raw: &str) -> anyhow::Result<Duration> {
 fn now_epoch_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64
 }
 
@@ -185,6 +185,7 @@ fn setup_state_to_str(state: SetupState) -> &'static str {
         SetupState::IdpConfigured => "idp_configured",
         SetupState::OwnerCreated => "owner_created",
         SetupState::Ready => "ready",
+        _ => "unknown",
     }
 }
 
@@ -276,7 +277,8 @@ async fn load_state(pool: &SqlitePool) -> anyhow::Result<Option<SetupStateFile>>
             let updated_at: i64 = row.try_get("updated_at")?;
 
             Ok(Some(SetupStateFile {
-                schema_version: schema_version as u32,
+                schema_version: u32::try_from(schema_version)
+                    .context("schema_version out of u32 range")?,
                 instance_id,
                 setup_state,
                 bootstrap_token,
@@ -455,6 +457,7 @@ async fn handle_setup_open(args: SetupOpenArgs) -> anyhow::Result<()> {
         SetupState::IdpConfigured => "idp_configured",
         SetupState::OwnerCreated => "owner_created",
         SetupState::Ready => unreachable!("ready state is rejected above"),
+        _ => "unknown",
     };
     let db_display = db_path.display();
 
@@ -567,6 +570,7 @@ fn state_label(state: SetupState) -> &'static str {
         SetupState::IdpConfigured => "idp_configured",
         SetupState::OwnerCreated => "owner_created",
         SetupState::Ready => "ready",
+        _ => "unknown",
     }
 }
 

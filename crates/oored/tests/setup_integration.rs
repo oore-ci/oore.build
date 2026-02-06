@@ -1,3 +1,7 @@
+// Integration tests require the test-support feature to access build_test_router.
+// Run with: cargo test -p oored --features test-support
+#![cfg(feature = "test-support")]
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,7 +25,7 @@ use tower::ServiceExt;
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64
 }
 
@@ -713,35 +717,6 @@ async fn test_configure_oidc_wrong_state() {
 }
 
 #[tokio::test]
-async fn test_finalize_owner_wrong_state() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let db_path = tmp.path().join("oore.db");
-    let app = create_test_app(&db_path).await;
-    let session_token = seed_session_token(&db_path).await;
-
-    // State is bootstrap_pending — finalize owner requires idp_configured
-
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/setup/owner/finalize")
-                .header("Content-Type", "application/json")
-                .header("Authorization", format!("Bearer {}", session_token))
-                .body(Body::from(
-                    serde_json::to_string(&json!({"owner_email": "admin@example.com"})).unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 409);
-    let body = body_json(resp).await;
-    assert_eq!(body["code"], "invalid_state");
-}
-
-#[tokio::test]
 async fn test_complete_setup_wrong_state() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("oore.db");
@@ -819,27 +794,6 @@ async fn test_all_setup_endpoints_blocked_after_ready() {
                         "client_id": "test"
                     }))
                     .unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 409);
-    let body = body_json(resp).await;
-    assert_eq!(body["code"], "already_configured");
-
-    // 3. Finalize owner → 409
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/setup/owner/finalize")
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer fake-token")
-                .body(Body::from(
-                    serde_json::to_string(&json!({"owner_email": "admin@example.com"})).unwrap(),
                 ))
                 .unwrap(),
         )

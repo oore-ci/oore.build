@@ -186,6 +186,7 @@ fn setup_state_to_str(state: SetupState) -> &'static str {
         SetupState::IdpConfigured => "idp_configured",
         SetupState::OwnerCreated => "owner_created",
         SetupState::Ready => "ready",
+        _ => "unknown",
     }
 }
 
@@ -285,7 +286,8 @@ fn row_to_state_file(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<SetupState
     let updated_at: i64 = row.try_get("updated_at")?;
 
     Ok(SetupStateFile {
-        schema_version: schema_version as u32,
+        schema_version: u32::try_from(schema_version)
+            .context("schema_version out of u32 range")?,
         instance_id,
         setup_state,
         bootstrap_token,

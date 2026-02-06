@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useConfigureOidc } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
-import { ApiClientError } from '@/lib/api'
+import { getApiErrorMessage } from '@/lib/api'
 
 const oidcConfigSchema = z.object({
   issuerUrl: z.url('Please enter a valid URL'),
@@ -58,20 +58,19 @@ function OidcConfigStep() {
   })
 
   const errorMessage = configureMutation.error
-    ? configureMutation.error instanceof ApiClientError
-      ? configureMutation.error.code === 'oidc_discovery_failed'
-        ? `OIDC discovery failed: ${configureMutation.error.message}`
-        : configureMutation.error.code === 'invalid_state'
-          ? 'OIDC has already been configured for this instance.'
-          : configureMutation.error.code === 'session_expired'
-            ? 'Your setup session has expired. Please go back and re-enter the bootstrap token.'
-            : configureMutation.error.code === 'invalid_session'
-              ? 'Your session is no longer valid. Please restart setup.'
-              : configureMutation.error.message
-      : configureMutation.error.message
+    ? getApiErrorMessage(configureMutation.error, {
+        oidc_discovery_failed: `OIDC discovery failed: ${configureMutation.error.message}`,
+        invalid_state: 'OIDC has already been configured for this instance.',
+        session_expired: 'Your setup session has expired. Please go back and re-enter the bootstrap token.',
+        invalid_session: 'Your session is no longer valid. Please restart setup.',
+      })
     : null
 
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
+
+  useEffect(() => {
+    document.title = 'OIDC Provider — oore.build'
+  }, [])
 
   useEffect(() => {
     setCurrentStep(1)

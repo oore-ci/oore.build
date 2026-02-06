@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useVerifyBootstrapToken, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
-import { ApiClientError } from '@/lib/api'
+import { getApiErrorMessage } from '@/lib/api'
 
 const bootstrapTokenSchema = z.object({
   token: z.string().min(1, 'Bootstrap token is required'),
@@ -66,9 +66,16 @@ function BootstrapTokenStep() {
     defaultValues: { token: '' },
   })
 
-  // If backend is already past bootstrap and we have a session, skip ahead
   useEffect(() => {
-    if (!status || !sessionToken) return
+    document.title = 'Bootstrap Token — oore.build'
+  }, [])
+
+  // Set step to 0 unless backend state + session indicate we should skip ahead
+  useEffect(() => {
+    if (!status || !sessionToken) {
+      setCurrentStep(0)
+      return
+    }
 
     const backendStep = stateToStep(status.state)
     if (backendStep >= 1) {
@@ -78,23 +85,17 @@ function BootstrapTokenStep() {
       } else if (status.state === 'owner_created') {
         void navigate({ to: '/setup/complete' })
       }
+    } else {
+      setCurrentStep(0)
     }
   }, [status, sessionToken, navigate, setCurrentStep])
 
-  useEffect(() => {
-    setCurrentStep(0)
-  }, [setCurrentStep])
-
   const errorMessage = verifyMutation.error
-    ? verifyMutation.error instanceof ApiClientError
-      ? verifyMutation.error.code === 'token_expired'
-        ? 'Bootstrap token has expired. Generate a new one with the CLI.'
-        : verifyMutation.error.code === 'token_consumed'
-          ? 'Bootstrap token has already been used. Generate a new one with the CLI.'
-          : verifyMutation.error.code === 'invalid_token'
-            ? 'Invalid bootstrap token. Check the value and try again.'
-            : verifyMutation.error.message
-      : 'An unexpected error occurred. Please try again.'
+    ? getApiErrorMessage(verifyMutation.error, {
+        token_expired: 'Bootstrap token has expired. Generate a new one with the CLI.',
+        token_consumed: 'Bootstrap token has already been used. Generate a new one with the CLI.',
+        invalid_token: 'Invalid bootstrap token. Check the value and try again.',
+      })
     : null
 
   function onSubmit(data: BootstrapTokenForm) {
