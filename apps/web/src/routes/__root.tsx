@@ -1,8 +1,17 @@
 import { Suspense, lazy, useEffect } from 'react'
 import { Outlet, createRootRoute, useMatches } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
+import { ThemeProvider } from 'next-themes'
 
-import Header from '../components/Header'
+import AppSidebar from '@/components/app-sidebar'
+import PageBreadcrumb from '@/components/page-breadcrumb'
+import { Separator } from '@/components/ui/separator'
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from '@/components/ui/sidebar'
+import { Toaster } from '@/components/ui/sonner'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
@@ -45,7 +54,9 @@ export const Route = createRootRoute({
       try {
         const raw = localStorage.getItem('oore_instances')
         if (raw) {
-          const parsed = JSON.parse(raw) as { state?: { activeInstanceId?: string | null } }
+          const parsed = JSON.parse(raw) as {
+            state?: { activeInstanceId?: string | null }
+          }
           activeId = parsed.state?.activeInstanceId ?? null
         }
       } catch {
@@ -63,6 +74,11 @@ export const Route = createRootRoute({
 function RootLayout() {
   const matches = useMatches()
   const isSetupRoute = matches.some((m) => m.fullPath.startsWith('/setup'))
+  const isLoginRoute = matches.some(
+    (m) =>
+      m.fullPath.startsWith('/login') || m.fullPath.startsWith('/auth'),
+  )
+  const showSidebar = !isSetupRoute && !isLoginRoute
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
 
   // Re-sync when active instance changes at runtime (user switches or removes instance)
@@ -72,12 +88,34 @@ function RootLayout() {
   }, [activeInstanceId])
 
   return (
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
     <QueryClientProvider client={queryClient}>
-      {isSetupRoute ? null : <Header />}
-      <Outlet />
+      {showSidebar ? (
+        <SidebarProvider>
+          <AppSidebar />
+          <SidebarInset>
+            <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+              <SidebarTrigger className="-ml-1" />
+              <Separator orientation="vertical" className="mr-2 !h-4 !self-auto" />
+              <PageBreadcrumb />
+            </header>
+            <div className="flex-1 flex flex-col">
+              <Outlet />
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      ) : (
+        <div className="min-h-screen flex flex-col">
+          <div className="flex-1 flex flex-col">
+            <Outlet />
+          </div>
+        </div>
+      )}
+      <Toaster />
       <Suspense>
         <DevTools />
       </Suspense>
     </QueryClientProvider>
+    </ThemeProvider>
   )
 }

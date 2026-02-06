@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useAuthStore, clearAuthStorageForInstance } from './auth-store'
+import { clearAuthStorageForInstance, useAuthStore } from './auth-store'
 
 // Mock localStorage
 const store: Record<string, string> = {}
@@ -75,7 +75,9 @@ describe('auth-store', () => {
     expect(state.user).toBeNull()
 
     expect(mockLocalStorage.removeItem).toHaveBeenCalledWith('oore_auth_token')
-    expect(mockLocalStorage.removeItem).toHaveBeenCalledWith('oore_auth_expires')
+    expect(mockLocalStorage.removeItem).toHaveBeenCalledWith(
+      'oore_auth_expires',
+    )
     expect(mockLocalStorage.removeItem).toHaveBeenCalledWith('oore_auth_user')
   })
 

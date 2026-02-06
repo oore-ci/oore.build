@@ -120,11 +120,15 @@ export function setupOidcStart(
   sessionToken: string,
   redirectUri: string,
 ): Promise<SetupOidcStartResponse> {
-  return request<SetupOidcStartResponse>(baseUrl, '/v1/setup/owner/start-oidc', {
-    method: 'POST',
-    headers: authHeaders(sessionToken),
-    body: JSON.stringify({ redirect_uri: redirectUri }),
-  })
+  return request<SetupOidcStartResponse>(
+    baseUrl,
+    '/v1/setup/owner/start-oidc',
+    {
+      method: 'POST',
+      headers: authHeaders(sessionToken),
+      body: JSON.stringify({ redirect_uri: redirectUri }),
+    },
+  )
 }
 
 export function setupOidcVerify(
@@ -133,11 +137,15 @@ export function setupOidcVerify(
   code: string,
   state: string,
 ): Promise<SetupOidcVerifyResponse> {
-  return request<SetupOidcVerifyResponse>(baseUrl, '/v1/setup/owner/verify-oidc', {
-    method: 'POST',
-    headers: authHeaders(sessionToken),
-    body: JSON.stringify({ code, state }),
-  })
+  return request<SetupOidcVerifyResponse>(
+    baseUrl,
+    '/v1/setup/owner/verify-oidc',
+    {
+      method: 'POST',
+      headers: authHeaders(sessionToken),
+      body: JSON.stringify({ code, state }),
+    },
+  )
 }
 
 export function completeSetup(

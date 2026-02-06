@@ -110,7 +110,9 @@ describe('useSetupStore', () => {
     useSetupStore.getState().setInstanceContext(id)
     useSetupStore.getState().setSessionExpiresAt(5555)
 
-    expect(sessionStorage.getItem(`oore_setup_session_expires_${id}`)).toBe('5555')
+    expect(sessionStorage.getItem(`oore_setup_session_expires_${id}`)).toBe(
+      '5555',
+    )
     expect(sessionStorage.getItem('oore_setup_session_expires')).toBeNull()
   })
 
@@ -123,7 +125,9 @@ describe('useSetupStore', () => {
     useSetupStore.getState().reset()
 
     expect(sessionStorage.getItem(`oore_setup_session_${id}`)).toBeNull()
-    expect(sessionStorage.getItem(`oore_setup_session_expires_${id}`)).toBeNull()
+    expect(
+      sessionStorage.getItem(`oore_setup_session_expires_${id}`),
+    ).toBeNull()
     expect(useSetupStore.getState().sessionToken).toBeNull()
     expect(useSetupStore.getState().sessionExpiresAt).toBeNull()
   })

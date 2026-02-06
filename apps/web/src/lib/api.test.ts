@@ -133,14 +133,11 @@ describe('verifyBootstrapToken', () => {
 
     const result = await verifyBootstrapToken('', 'my-token')
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      '/v1/setup/bootstrap-token/verify',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: 'my-token' }),
-      },
-    )
+    expect(mockFetch).toHaveBeenCalledWith('/v1/setup/bootstrap-token/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'my-token' }),
+    })
     expect(result).toEqual(payload)
   })
 })

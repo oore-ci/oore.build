@@ -6,6 +6,7 @@ interface AuthUser {
   oidc_subject: string
   user_id: string
   role: UserRole
+  avatar_url?: string
 }
 
 interface AuthStoreState {
@@ -19,21 +20,15 @@ interface AuthStoreState {
 }
 
 function tokenKey(instanceId: string | null): string {
-  return instanceId
-    ? `oore_auth_token_${instanceId}`
-    : 'oore_auth_token'
+  return instanceId ? `oore_auth_token_${instanceId}` : 'oore_auth_token'
 }
 
 function expiresKey(instanceId: string | null): string {
-  return instanceId
-    ? `oore_auth_expires_${instanceId}`
-    : 'oore_auth_expires'
+  return instanceId ? `oore_auth_expires_${instanceId}` : 'oore_auth_expires'
 }
 
 function userKey(instanceId: string | null): string {
-  return instanceId
-    ? `oore_auth_user_${instanceId}`
-    : 'oore_auth_user'
+  return instanceId ? `oore_auth_user_${instanceId}` : 'oore_auth_user'
 }
 
 function loadToken(instanceId: string | null): string | null {

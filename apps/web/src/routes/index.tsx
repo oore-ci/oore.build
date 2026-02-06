@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Spinner } from '@/components/ui/spinner'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -46,7 +47,7 @@ function IndexPage() {
   // No active instance — show onboarding
   if (!instance) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -58,7 +59,7 @@ function IndexPage() {
           </div>
 
           <Card>
-            <CardContent className="space-y-4 pt-6">
+            <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Add a backend instance to begin setup or connect to an
                 already-configured server.
@@ -73,26 +74,30 @@ function IndexPage() {
           </Card>
         </div>
 
-        {showAddInstance ? (
-          <AddInstanceDialog onClose={() => setShowAddInstance(false)} />
-        ) : null}
+        <AddInstanceDialog
+          open={showAddInstance}
+          onOpenChange={setShowAddInstance}
+        />
       </div>
     )
   }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <p className="text-muted-foreground text-sm">
-          Connecting to backend...
-        </p>
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex items-center gap-3">
+          <Spinner className="size-5" />
+          <p className="text-muted-foreground text-sm">
+            Connecting to backend...
+          </p>
+        </div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="flex-1 flex items-center justify-center p-6">
         <div className="max-w-md w-full">
           <Alert variant="destructive">
             <AlertTitle>Connection failed</AlertTitle>
@@ -109,33 +114,47 @@ function IndexPage() {
 
   if (status?.is_configured) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="max-w-4xl mx-auto px-6 py-16 space-y-8">
-          <div className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Dashboard
-            </h1>
-            <p className="text-muted-foreground text-sm">
-              Instance{' '}
-              <code className="bg-muted px-1.5 py-0.5 text-xs font-mono">
-                {status.instance_id}
-              </code>
-            </p>
-          </div>
-          <div className="border border-border bg-card p-6">
-            <p className="text-sm text-muted-foreground">
-              Your oore.build instance is configured and ready. Build pipelines
-              and runner management are coming in the next release.
-            </p>
-          </div>
+      <div className="max-w-4xl mx-auto w-full px-6 py-8 space-y-6">
+        <div className="grid grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Instance</p>
+              <p className="text-sm font-medium font-mono truncate">{status.instance_id}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Status</p>
+              <p className="text-sm font-medium text-green-600">Ready</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Builds</p>
+              <p className="text-sm font-medium text-muted-foreground">Coming soon</p>
+            </CardContent>
+          </Card>
         </div>
+
+        <Card>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Build pipelines and runner management are coming in the next
+              release. Once available, your build history and active runners
+              will appear here.
+            </p>
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <p className="text-muted-foreground text-sm">Loading...</p>
+    <div className="flex-1 flex items-center justify-center">
+      <div className="flex items-center gap-3">
+        <Spinner className="size-5" />
+        <p className="text-muted-foreground text-sm">Loading...</p>
+      </div>
     </div>
   )
 }

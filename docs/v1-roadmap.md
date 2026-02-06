@@ -36,6 +36,18 @@ These are done and passing `make validate`:
 
 Feature docs: `2026-02-06-rbac-and-user-management.md`, `2026-02-06-session-persistence.md`
 
+## Phase 1.5: Design System + App Shell (Complete)
+
+- [x] **1.5.1 Design governance** — `DESIGN.md` created with component selection rule, theming, icon, form, loading/error/feedback patterns
+- [x] **1.5.2 shadcn component migration** — Replaced all raw HTML elements (table, select, input, dialog, drawer, dropdown) with shadcn equivalents; added Spinner, Skeleton, Sonner toast, AlertDialog
+- [x] **1.5.3 Sidebar layout** — Replaced top-bar `Header` with collapsible `Sidebar` (shadcn) featuring nav groups, user menu, instance switcher
+- [x] **1.5.4 Nav active state** — Fixed root route always appearing active; uses `useLocation().pathname` for exact `/` match
+- [x] **1.5.5 Instance icon picker** — 24 curated Hugeicons selectable per instance; icon registry with fallback; shown in sidebar trigger + dropdown
+- [x] **1.5.6 Instance edit dialog** — Edit label, URL, and icon for any instance via inline pencil icon on each dropdown row
+- [x] **1.5.7 Avatar URL support** — Backend migration + `avatar_url` field in auth/user responses
+
+Feature docs: `2026-02-06-design-system-governance.md`
+
 ### Implemented API Endpoints (16/25+)
 
 Setup:

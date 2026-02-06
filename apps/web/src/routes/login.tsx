@@ -1,7 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Spinner } from '@/components/ui/spinner'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -80,7 +82,7 @@ function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+    <div className="flex-1 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -92,7 +94,7 @@ function LoginPage() {
         </div>
 
         <Card>
-          <CardContent className="space-y-4 pt-6">
+          <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Connected to{' '}
               <code className="bg-muted px-1.5 py-0.5 text-xs font-mono">
@@ -101,7 +103,9 @@ function LoginPage() {
             </p>
 
             {error ? (
-              <p className="text-sm text-destructive">{error}</p>
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             ) : null}
 
             <Button
@@ -109,7 +113,14 @@ function LoginPage() {
               disabled={loading}
               className="w-full"
             >
-              {loading ? 'Redirecting...' : 'Sign in with OIDC'}
+              {loading ? (
+                <>
+                  <Spinner className="size-4" />
+                  Redirecting...
+                </>
+              ) : (
+                'Sign in with OIDC'
+              )}
             </Button>
           </CardContent>
         </Card>

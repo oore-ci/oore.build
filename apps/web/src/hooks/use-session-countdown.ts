@@ -29,7 +29,12 @@ export function useSessionCountdown(): SessionCountdown {
   }, [sessionExpiresAt])
 
   if (remainingSeconds == null) {
-    return { remainingSeconds: null, isExpired: false, isWarning: false, formatted: null }
+    return {
+      remainingSeconds: null,
+      isExpired: false,
+      isWarning: false,
+      formatted: null,
+    }
   }
 
   const isExpired = remainingSeconds <= 0

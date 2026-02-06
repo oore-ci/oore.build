@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Instance, OidcConfigureRequest } from '@/lib/types'
 import {
   completeSetup,
@@ -16,7 +12,8 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
 
 function requireInstance(instance: Instance | null): string {
-  if (!instance) throw new Error('No active instance. Select or add an instance first.')
+  if (!instance)
+    throw new Error('No active instance. Select or add an instance first.')
   return instance.url
 }
 
@@ -43,7 +40,8 @@ export function useVerifyBootstrapToken() {
   const queryKey = useSetupStatusKey()
 
   return useMutation({
-    mutationFn: (token: string) => verifyBootstrapToken(requireInstance(instance), token),
+    mutationFn: (token: string) =>
+      verifyBootstrapToken(requireInstance(instance), token),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey })
     },
@@ -116,7 +114,8 @@ export function useCompleteSetup() {
   const queryKey = useSetupStatusKey()
 
   return useMutation({
-    mutationFn: (sessionToken: string) => completeSetup(requireInstance(instance), sessionToken),
+    mutationFn: (sessionToken: string) =>
+      completeSetup(requireInstance(instance), sessionToken),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey })
     },

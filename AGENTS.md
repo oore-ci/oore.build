@@ -40,6 +40,17 @@ Treat those as the source of truth.
 - `font: inter`
 - Docs framework is VitePress under `apps/docs-site/docs`.
 
+## Frontend Design System (Mandatory)
+
+- Read `DESIGN.md` before any frontend UI work.
+- Follow the shadcn-first component selection rule: check registry -> install -> use.
+- Never create custom dialogs, dropdowns, drawers, or tables when shadcn has equivalents.
+- Use Hugeicons for all icons. No inline SVG icons.
+- Use shadcn Form component with react-hook-form + zod for all forms.
+- Use Skeleton/Spinner for loading states, Toast for transient feedback, Alert for persistent feedback.
+- All colors must use the token system from `styles.css`. No hard-coded Tailwind color classes.
+- Support dark mode using token-based styling only.
+
 ## Documentation and Governance Rules
 
 - Every user-facing feature MUST add/update a doc in `docs/features/`.

@@ -10,7 +10,10 @@ import {
 } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { ApiClientError } from '@/lib/api'
-import { getActiveInstanceOrRedirect, requireSetupSessionOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireSetupSessionOrRedirect,
+} from '@/lib/instance-context'
 
 const ownerSearchSchema = z.object({
   code: z.string().optional(),

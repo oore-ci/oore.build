@@ -1,5 +1,13 @@
-import { Outlet, createFileRoute, isRedirect, redirect, useNavigate } from '@tanstack/react-router'
+import {
+  Outlet,
+  createFileRoute,
+  isRedirect,
+  redirect,
+  useNavigate,
+} from '@tanstack/react-router'
 import { useEffect } from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Tick02Icon } from '@hugeicons/core-free-icons'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { useSetupStore } from '@/stores/setup-store'
@@ -40,10 +48,23 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
               />
             ) : null}
             <Badge
-              variant={isActive ? 'default' : isCompleted ? 'secondary' : 'outline'}
+              variant={
+                isActive ? 'default' : isCompleted ? 'secondary' : 'outline'
+              }
               className="text-xs"
             >
-              {isCompleted ? <><span className="mr-0.5">✓</span>{label}</> : label}
+              {isCompleted ? (
+                <>
+                  <HugeiconsIcon
+                    icon={Tick02Icon}
+                    size={12}
+                    className="mr-0.5"
+                  />
+                  {label}
+                </>
+              ) : (
+                label
+              )}
             </Badge>
           </div>
         )
@@ -69,7 +90,7 @@ function SetupLayout() {
   }, [isExpired, navigate])
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+    <div className="flex-1 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-lg space-y-6">
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -84,7 +105,9 @@ function SetupLayout() {
 
         {formatted && !isExpired ? (
           <div className="text-center">
-            <p className={`text-sm font-mono ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}>
+            <p
+              className={`text-sm font-mono ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
+            >
               Session expires in {formatted}
             </p>
           </div>

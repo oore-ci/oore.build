@@ -73,6 +73,10 @@ make validate
 
 Run `bun run ui:init` to re-initialize shadcn from the shared preset.
 
+### Frontend Design System
+
+`DESIGN.md` is the mandatory design governance document for `apps/web`. Read it before making any UI change. It specifies: shadcn-first component selection, theming (oklch CSS variables, dark mode), typography/spacing/layout conventions, form/loading/error/feedback patterns, icon usage (Hugeicons only), and anti-patterns to avoid.
+
 ### Backend Stack
 
 - **Language:** Rust (edition 2024)

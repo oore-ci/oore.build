@@ -16,10 +16,16 @@ function readActiveInstanceFromStorage(): Instance | null {
     const raw = localStorage.getItem('oore_instances')
     if (!raw) return null
     const parsed = JSON.parse(raw) as {
-      state?: { instances?: Record<string, Instance>; activeInstanceId?: string | null }
+      state?: {
+        instances?: Record<string, Instance>
+        activeInstanceId?: string | null
+      }
     }
     const state = parsed.state
-    if (!state?.activeInstanceId || !state.instances?.[state.activeInstanceId]) {
+    if (
+      !state?.activeInstanceId ||
+      !state.instances?.[state.activeInstanceId]
+    ) {
       return null
     }
     return state.instances[state.activeInstanceId]
@@ -67,7 +73,9 @@ export function syncSetupStoreContext(instanceId: string): void {
  * Read the setup session token for a given instance from sessionStorage.
  * Pure synchronous read — no hooks, no store subscription.
  */
-export function getSetupSessionTokenForInstance(instanceId: string): string | null {
+export function getSetupSessionTokenForInstance(
+  instanceId: string,
+): string | null {
   try {
     return sessionStorage.getItem(`oore_setup_session_${instanceId}`) ?? null
   } catch {

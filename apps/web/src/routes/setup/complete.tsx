@@ -6,7 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { useCompleteSetup, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
-import { getActiveInstanceOrRedirect, requireSetupSessionOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireSetupSessionOrRedirect,
+} from '@/lib/instance-context'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -37,8 +40,10 @@ function CompleteStep() {
   const errorMessage = completeMutation.error
     ? getApiErrorMessage(completeMutation.error, {
         already_configured: 'Setup has already been completed.',
-        session_expired: 'Your setup session has expired. Please restart setup with a new bootstrap token.',
-        invalid_session: 'Your session is no longer valid. Please restart setup.',
+        session_expired:
+          'Your setup session has expired. Please restart setup with a new bootstrap token.',
+        invalid_session:
+          'Your session is no longer valid. Please restart setup.',
       })
     : null
 
@@ -109,11 +114,15 @@ function CompleteStep() {
               </p>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">State</span>
-                <Badge variant="secondary" className="text-xs">{status.state}</Badge>
+                <Badge variant="secondary" className="text-xs">
+                  {status.state}
+                </Badge>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Instance</span>
-                <code className="text-xs">{status.instance_id.slice(0, 8)}...</code>
+                <code className="text-xs">
+                  {status.instance_id.slice(0, 8)}...
+                </code>
               </div>
             </div>
           ) : null}
@@ -139,9 +148,7 @@ function CompleteStep() {
             disabled={completeMutation.isPending}
             className="w-full"
           >
-            {completeMutation.isPending
-              ? 'Completing...'
-              : 'Complete Setup'}
+            {completeMutation.isPending ? 'Completing...' : 'Complete Setup'}
           </Button>
         </div>
       )}

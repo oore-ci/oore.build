@@ -1,6 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { OidcCallbackResponse } from '@/lib/types'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 
@@ -21,13 +24,18 @@ function AuthCallbackPage() {
   const navigate = useNavigate()
   const setAuth = useAuthStore((s) => s.setAuth)
   const [error, setError] = useState<string | null>(null)
+  const exchangeStartedRef = useRef(false)
 
   useEffect(() => {
     document.title = 'Authenticating... - oore.build'
   }, [])
 
   useEffect(() => {
-    let cancelled = false
+    // Guard against React StrictMode double-execution.
+    // The backend consumes the OIDC state on first use, so a second
+    // request with the same state would fail with a CSRF error.
+    if (exchangeStartedRef.current) return
+    exchangeStartedRef.current = true
 
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
@@ -56,7 +64,7 @@ function AuthCallbackPage() {
 
     // Resolve the instance URL
     const instances = useInstanceStore.getState().instances
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- instanceId may not exist in record
+
     const instance = instanceId ? instances[instanceId] : undefined
     if (!instance) {
       cleanupOidcSessionStorage()
@@ -76,7 +84,6 @@ function AuthCallbackPage() {
       body: JSON.stringify({ code, state }),
     })
       .then(async (res) => {
-        if (cancelled) return
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as {
             error?: string
@@ -86,8 +93,6 @@ function AuthCallbackPage() {
         return res.json() as Promise<OidcCallbackResponse>
       })
       .then((data) => {
-        if (cancelled || !data) return
-
         if (!data.user.user_id || !data.user.role) {
           throw new Error('Incomplete user profile received from server')
         }
@@ -98,40 +103,45 @@ function AuthCallbackPage() {
           oidc_subject: data.user.oidc_subject,
           user_id: data.user.user_id,
           role: data.user.role,
+          avatar_url: data.user.avatar_url,
         })
 
         cleanupOidcSessionStorage()
         void navigate({ to: '/' })
       })
       .catch((e: unknown) => {
-        if (cancelled) return
         cleanupOidcSessionStorage()
         setError(e instanceof Error ? e.message : 'Authentication failed')
       })
-
-    return () => { cancelled = true }
   }, [navigate, setAuth])
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-4 text-center">
-          <h1 className="text-xl font-semibold">Authentication Failed</h1>
-          <p className="text-sm text-destructive">{error}</p>
-          <button
-            onClick={() => void navigate({ to: '/login' })}
-            className="text-sm text-primary underline"
-          >
-            Try again
-          </button>
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm space-y-4">
+          <Alert variant="destructive">
+            <AlertTitle>Authentication Failed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          <div className="text-center">
+            <Button
+              variant="link"
+              onClick={() => void navigate({ to: '/login' })}
+            >
+              Try again
+            </Button>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
-      <p className="text-muted-foreground text-sm">Completing sign-in...</p>
+    <div className="flex-1 flex items-center justify-center">
+      <div className="flex items-center gap-3">
+        <Spinner className="size-5" />
+        <p className="text-muted-foreground text-sm">Completing sign-in...</p>
+      </div>
     </div>
   )
 }

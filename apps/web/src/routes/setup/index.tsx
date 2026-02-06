@@ -96,9 +96,12 @@ function BootstrapTokenStep() {
 
   const errorMessage = verifyMutation.error
     ? getApiErrorMessage(verifyMutation.error, {
-        token_expired: 'Bootstrap token has expired. Generate a new one with the CLI.',
-        token_consumed: 'Bootstrap token has already been used. Generate a new one with the CLI.',
-        invalid_token: 'Invalid bootstrap token. Check the value and try again.',
+        token_expired:
+          'Bootstrap token has expired. Generate a new one with the CLI.',
+        token_consumed:
+          'Bootstrap token has already been used. Generate a new one with the CLI.',
+        invalid_token:
+          'Invalid bootstrap token. Check the value and try again.',
       })
     : null
 

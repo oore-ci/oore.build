@@ -1,8 +1,4 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { InviteUserRequest, UpdateUserRoleRequest } from '@/lib/types'
 import {
   deleteUser,
@@ -61,7 +57,8 @@ export function useInviteUser() {
 
   return useMutation({
     mutationFn: (data: InviteUserRequest) => {
-      if (!baseUrl || !token) return Promise.reject(new Error('Not authenticated'))
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
       return inviteUser(baseUrl, token, data)
     },
     onSuccess: () => {
@@ -86,7 +83,8 @@ export function useUpdateUserRole() {
       userId: string
       data: UpdateUserRoleRequest
     }) => {
-      if (!baseUrl || !token) return Promise.reject(new Error('Not authenticated'))
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
       return updateUserRole(baseUrl, token, userId, data)
     },
     onSuccess: () => {
@@ -105,7 +103,8 @@ export function useReEnableUser() {
 
   return useMutation({
     mutationFn: (userId: string) => {
-      if (!baseUrl || !token) return Promise.reject(new Error('Not authenticated'))
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
       return reEnableUser(baseUrl, token, userId)
     },
     onSuccess: () => {
@@ -124,7 +123,8 @@ export function useDeleteUser() {
 
   return useMutation({
     mutationFn: (userId: string) => {
-      if (!baseUrl || !token) return Promise.reject(new Error('Not authenticated'))
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
       return deleteUser(baseUrl, token, userId)
     },
     onSuccess: () => {
@@ -143,7 +143,8 @@ export function useLogout() {
 
   return useMutation({
     mutationFn: () => {
-      if (!baseUrl || !token) return Promise.resolve({ ok: true } as { ok: boolean })
+      if (!baseUrl || !token)
+        return Promise.resolve({ ok: true } as { ok: boolean })
       return logout(baseUrl, token)
     },
     onSettled: () => {

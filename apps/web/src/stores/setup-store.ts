@@ -13,9 +13,7 @@ interface SetupStoreState {
 }
 
 function tokenKey(instanceId: string | null): string {
-  return instanceId
-    ? `oore_setup_session_${instanceId}`
-    : 'oore_setup_session'
+  return instanceId ? `oore_setup_session_${instanceId}` : 'oore_setup_session'
 }
 
 function expiresKey(instanceId: string | null): string {
@@ -32,7 +30,10 @@ function loadSessionToken(instanceId: string | null): string | null {
   }
 }
 
-function saveSessionToken(instanceId: string | null, token: string | null): void {
+function saveSessionToken(
+  instanceId: string | null,
+  token: string | null,
+): void {
   try {
     if (token) {
       sessionStorage.setItem(tokenKey(instanceId), token)
@@ -53,7 +54,10 @@ function loadSessionExpiresAt(instanceId: string | null): number | null {
   }
 }
 
-function saveSessionExpiresAt(instanceId: string | null, expiresAt: number | null): void {
+function saveSessionExpiresAt(
+  instanceId: string | null,
+  expiresAt: number | null,
+): void {
   try {
     if (expiresAt != null) {
       sessionStorage.setItem(expiresKey(instanceId), String(expiresAt))

@@ -1,7 +1,35 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useState } from 'react'
+import {
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import { getColumns } from './-users-columns'
+import { UsersToolbar } from './-users-toolbar'
+import type {
+  ColumnFiltersState,
+  RowSelectionState,
+  SortingState,
+} from '@tanstack/react-table'
+
+import type { UserRole } from '@/lib/types'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { DataTable } from '@/components/ui/data-table'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import {
   useDeleteUser,
@@ -11,9 +39,11 @@ import {
   useUsers,
 } from '@/hooks/use-auth'
 import { useAuthStore } from '@/stores/auth-store'
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { ApiClientError } from '@/lib/api'
-import type { UserRole } from '@/lib/types'
 
 export const Route = createFileRoute('/settings/users')({
   beforeLoad: () => {
@@ -29,22 +59,18 @@ export const Route = createFileRoute('/settings/users')({
   component: UsersSettingsPage,
 })
 
-const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
-  { value: 'admin', label: 'Admin' },
-  { value: 'developer', label: 'Developer' },
-  { value: 'qa_viewer', label: 'QA Viewer' },
-]
+const ROLE_OPTIONS: Record<string, string> = {
+  admin: 'Admin',
+  developer: 'Developer',
+  qa_viewer: 'QA Viewer',
+}
 
 interface ConfirmAction {
-  type: 'disable' | 'role_change'
+  type: 'disable' | 'role_change' | 'bulk_disable'
   userId: string
   userEmail: string
   newRole?: UserRole
-}
-
-interface Feedback {
-  type: 'success' | 'error'
-  message: string
+  userIds?: Array<string>
 }
 
 function UsersSettingsPage() {
@@ -60,18 +86,14 @@ function UsersSettingsPage() {
   const [inviteRole, setInviteRole] = useState<UserRole>('developer')
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
-  const [feedback, setFeedback] = useState<Feedback | null>(null)
+
+  const [sorting, setSorting] = useState<SortingState>([])
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 
   useEffect(() => {
     document.title = 'User Management - oore.build'
   }, [])
-
-  // Auto-dismiss feedback after 5 seconds
-  useEffect(() => {
-    if (!feedback) return
-    const timer = setTimeout(() => setFeedback(null), 5000)
-    return () => clearTimeout(timer)
-  }, [feedback])
 
   // Redirect non-admin users
   useEffect(() => {
@@ -82,7 +104,7 @@ function UsersSettingsPage() {
 
   const showError = useCallback((err: unknown, fallback: string) => {
     const message = err instanceof ApiClientError ? err.message : fallback
-    setFeedback({ type: 'error', message })
+    toast.error(message)
   }, [])
 
   const handleInvite = () => {
@@ -91,12 +113,14 @@ function UsersSettingsPage() {
       { email: inviteEmail, role: inviteRole },
       {
         onSuccess: () => {
+          toast.success(`${inviteEmail} invited`)
           setInviteEmail('')
           setInviteRole('developer')
-          setFeedback({ type: 'success', message: `${inviteEmail} invited` })
         },
         onError: (e) => {
-          setInviteError(e instanceof Error ? e.message : 'Failed to invite user')
+          setInviteError(
+            e instanceof Error ? e.message : 'Failed to invite user',
+          )
         },
       },
     )
@@ -105,23 +129,55 @@ function UsersSettingsPage() {
   const handleConfirm = () => {
     if (!confirmAction) return
 
-    if (confirmAction.type === 'disable') {
+    if (confirmAction.type === 'bulk_disable' && confirmAction.userIds) {
+      const ids = confirmAction.userIds
+      let completed = 0
+      let failed = 0
+      for (const id of ids) {
+        deleteMutation.mutate(id, {
+          onSuccess: () => {
+            completed++
+            if (completed + failed === ids.length) {
+              if (failed === 0) {
+                toast.success(`${completed} user(s) disabled`)
+              } else {
+                toast.error(`${failed} of ${ids.length} disable(s) failed`)
+              }
+              setConfirmAction(null)
+              setRowSelection({})
+            }
+          },
+          onError: () => {
+            failed++
+            if (completed + failed === ids.length) {
+              toast.error(`${failed} of ${ids.length} disable(s) failed`)
+              setConfirmAction(null)
+              setRowSelection({})
+            }
+          },
+        })
+      }
+    } else if (confirmAction.type === 'disable') {
       deleteMutation.mutate(confirmAction.userId, {
         onSuccess: () => {
-          setFeedback({ type: 'success', message: `${confirmAction.userEmail} has been disabled` })
+          toast.success(`${confirmAction.userEmail} has been disabled`)
           setConfirmAction(null)
+          setRowSelection({})
         },
         onError: (err) => {
           showError(err, 'Failed to disable user')
           setConfirmAction(null)
         },
       })
-    } else if (confirmAction.type === 'role_change' && confirmAction.newRole) {
+    } else if (confirmAction.newRole) {
       updateRoleMutation.mutate(
-        { userId: confirmAction.userId, data: { role: confirmAction.newRole } },
+        {
+          userId: confirmAction.userId,
+          data: { role: confirmAction.newRole },
+        },
         {
           onSuccess: () => {
-            setFeedback({ type: 'success', message: `Role updated for ${confirmAction.userEmail}` })
+            toast.success(`Role updated for ${confirmAction.userEmail}`)
             setConfirmAction(null)
           },
           onError: (err) => {
@@ -133,228 +189,198 @@ function UsersSettingsPage() {
     }
   }
 
-  const handleReEnable = (userId: string, email: string) => {
-    reEnableMutation.mutate(userId, {
-      onSuccess: () => {
-        setFeedback({ type: 'success', message: `${email} has been re-enabled` })
-      },
-      onError: (err) => {
-        showError(err, 'Failed to re-enable user')
-      },
+  const handleReEnable = useCallback(
+    (userId: string, email: string) => {
+      reEnableMutation.mutate(userId, {
+        onSuccess: () => {
+          toast.success(`${email} has been re-enabled`)
+        },
+        onError: (err) => {
+          showError(err, 'Failed to re-enable user')
+        },
+      })
+    },
+    [reEnableMutation, showError],
+  )
+
+  const users = data?.users ?? []
+
+  const columns = useMemo(
+    () =>
+      getColumns({
+        authUserId: authUser?.user_id,
+        onRoleChange: (userId, email, newRole) => {
+          setConfirmAction({
+            type: 'role_change',
+            userId,
+            userEmail: email,
+            newRole,
+          })
+        },
+        onDisable: (userId, email) => {
+          setConfirmAction({
+            type: 'disable',
+            userId,
+            userEmail: email,
+          })
+        },
+        onReEnable: handleReEnable,
+      }),
+    [authUser?.user_id, handleReEnable],
+  )
+
+  const table = useReactTable({
+    data: users,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    enableRowSelection: (row) =>
+      row.original.role !== 'owner' && row.original.id !== authUser?.user_id,
+    state: { sorting, columnFilters, rowSelection },
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    onRowSelectionChange: setRowSelection,
+  })
+
+  const pendingMutation =
+    deleteMutation.isPending || updateRoleMutation.isPending
+
+  const handleBulkDisable = (userIds: Array<string>) => {
+    setConfirmAction({
+      type: 'bulk_disable',
+      userId: '',
+      userEmail: '',
+      userIds,
     })
   }
 
+  const confirmTitle = (() => {
+    if (!confirmAction) return ''
+    if (confirmAction.type === 'bulk_disable') {
+      return `Disable ${confirmAction.userIds?.length ?? 0} user(s)?`
+    }
+    if (confirmAction.type === 'disable') {
+      return `Disable ${confirmAction.userEmail}?`
+    }
+    return `Change role for ${confirmAction.userEmail}?`
+  })()
+
+  const confirmDescription = (() => {
+    if (!confirmAction) return ''
+    if (confirmAction.type === 'bulk_disable') {
+      return 'This will revoke all their active sessions. You can re-enable them later.'
+    }
+    if (confirmAction.type === 'disable') {
+      return 'This will revoke all their active sessions. You can re-enable them later.'
+    }
+    return `Change role from current to ${confirmAction.newRole?.replace('_', ' ') ?? ''}?`
+  })()
+
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground text-sm">Loading users...</p>
+      <div className="max-w-4xl mx-auto w-full px-6 py-8 space-y-8">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-80" />
+        </div>
+        <Skeleton className="h-32 w-full" />
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <p className="text-destructive text-sm">
-          Failed to load users: {error instanceof Error ? error.message : 'Unknown error'}
-        </p>
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="max-w-md w-full">
+          <Alert variant="destructive">
+            <AlertDescription>
+              Failed to load users:{' '}
+              {error instanceof Error ? error.message : 'Unknown error'}
+            </AlertDescription>
+          </Alert>
+        </div>
       </div>
     )
   }
 
-  const users = data?.users ?? []
-  const pendingMutation = deleteMutation.isPending || updateRoleMutation.isPending
-
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            User Management
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Invite users, manage roles, and control access to this instance.
-          </p>
-        </div>
-
-        {/* Feedback alert */}
-        {feedback ? (
-          <div
-            className={`px-4 py-3 text-sm border ${
-              feedback.type === 'success'
-                ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200'
-                : 'border-destructive/20 bg-destructive/5 text-destructive'
-            }`}
-          >
-            {feedback.message}
-          </div>
-        ) : null}
-
-        {/* Invite form */}
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            <h2 className="text-sm font-medium">Invite User</h2>
-            <div className="flex gap-3">
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="email@example.com"
-                className="flex-1 px-3 py-2 text-sm border border-input bg-background"
-              />
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as UserRole)}
-                className="px-3 py-2 text-sm border border-input bg-background"
-              >
-                {ROLE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
+    <div className="max-w-4xl mx-auto w-full px-6 py-8 space-y-6">
+      {/* Invite form */}
+      <Card>
+        <CardContent className="space-y-4">
+          <h2 className="text-sm font-medium">Invite User</h2>
+          <div className="flex gap-3">
+            <Input
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="email@example.com"
+              className="flex-1"
+            />
+            <Select
+              value={inviteRole}
+              onValueChange={(v) => setInviteRole(v as UserRole)}
+            >
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(ROLE_OPTIONS).map(([key, value]) => (
+                  <SelectItem key={key} value={key}>
+                    {value}
+                  </SelectItem>
                 ))}
-              </select>
-              <Button
-                onClick={handleInvite}
-                disabled={!inviteEmail || inviteMutation.isPending}
-              >
-                {inviteMutation.isPending ? 'Inviting...' : 'Invite'}
-              </Button>
-            </div>
-            {inviteError ? (
-              <p className="text-sm text-destructive">{inviteError}</p>
-            ) : null}
-          </CardContent>
-        </Card>
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={handleInvite}
+              disabled={!inviteEmail || inviteMutation.isPending}
+            >
+              {inviteMutation.isPending ? (
+                <>
+                  <Spinner className="size-4" />
+                  Inviting...
+                </>
+              ) : (
+                'Invite'
+              )}
+            </Button>
+          </div>
+          {inviteError ? (
+            <p className="text-sm text-destructive">{inviteError}</p>
+          ) : null}
+        </CardContent>
+      </Card>
 
-        {/* User list */}
-        <div className="border border-border">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium">Email</th>
-                <th className="text-left px-4 py-3 font-medium">Role</th>
-                <th className="text-left px-4 py-3 font-medium">Status</th>
-                <th className="text-right px-4 py-3 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => {
-                const isOwner = user.role === 'owner'
-                const isSelf = user.id === authUser?.user_id
-                const isDisabled = user.status === 'disabled'
-
-                return (
-                  <tr
-                    key={user.id}
-                    className="border-b border-border last:border-b-0"
-                  >
-                    <td className="px-4 py-3">
-                      <div>
-                        <span>{user.email}</span>
-                        {isSelf ? (
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            (you)
-                          </span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {isOwner ? (
-                        <span className="text-xs font-medium uppercase tracking-wider text-amber-600">
-                          Owner
-                        </span>
-                      ) : (
-                        <select
-                          value={user.role}
-                          onChange={(e) => {
-                            const newRole = e.target.value as UserRole
-                            setConfirmAction({
-                              type: 'role_change',
-                              userId: user.id,
-                              userEmail: user.email,
-                              newRole,
-                            })
-                          }}
-                          disabled={isSelf || isDisabled || updateRoleMutation.isPending}
-                          className="px-2 py-1 text-xs border border-input bg-background"
-                        >
-                          {ROLE_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`text-xs font-medium ${
-                          user.status === 'active'
-                            ? 'text-green-600'
-                            : user.status === 'invited'
-                              ? 'text-blue-600'
-                              : 'text-muted-foreground'
-                        }`}
-                      >
-                        {user.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {!isOwner && !isSelf && isDisabled ? (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={() => handleReEnable(user.id, user.email)}
-                          disabled={reEnableMutation.isPending}
-                        >
-                          Enable
-                        </Button>
-                      ) : !isOwner && !isSelf && !isDisabled ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() =>
-                            setConfirmAction({
-                              type: 'disable',
-                              userId: user.id,
-                              userEmail: user.email,
-                            })
-                          }
-                          disabled={deleteMutation.isPending}
-                        >
-                          Disable
-                        </Button>
-                      ) : null}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      {/* Users data table */}
+      <div className="space-y-4">
+        <UsersToolbar table={table} onBulkDisable={handleBulkDisable} />
+        <DataTable table={table} />
       </div>
 
       {/* Confirmation dialog */}
-      {confirmAction ? (
-        <ConfirmDialog
-          title={
-            confirmAction.type === 'disable'
-              ? `Disable ${confirmAction.userEmail}?`
-              : `Change role for ${confirmAction.userEmail}?`
-          }
-          description={
-            confirmAction.type === 'disable'
-              ? 'This will revoke all their active sessions. You can re-enable them later.'
-              : `Change role from current to ${confirmAction.newRole?.replace('_', ' ')}?`
-          }
-          confirmLabel={confirmAction.type === 'disable' ? 'Disable' : 'Change Role'}
-          confirmVariant={confirmAction.type === 'disable' ? 'destructive' : 'default'}
-          isPending={pendingMutation}
-          onConfirm={handleConfirm}
-          onCancel={() => setConfirmAction(null)}
-        />
-      ) : null}
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null)
+        }}
+        title={confirmTitle}
+        description={confirmDescription}
+        confirmLabel={
+          confirmAction?.type === 'role_change' ? 'Change Role' : 'Disable'
+        }
+        confirmVariant={
+          confirmAction?.type === 'role_change' ? 'default' : 'destructive'
+        }
+        isPending={pendingMutation}
+        onConfirm={handleConfirm}
+      />
     </div>
   )
 }

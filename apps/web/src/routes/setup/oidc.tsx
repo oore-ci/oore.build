@@ -10,7 +10,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useConfigureOidc } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
-import { getActiveInstanceOrRedirect, requireSetupSessionOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireSetupSessionOrRedirect,
+} from '@/lib/instance-context'
 
 const oidcConfigSchema = z.object({
   issuerUrl: z.url('Please enter a valid URL'),
@@ -60,8 +63,10 @@ function OidcConfigStep() {
     ? getApiErrorMessage(configureMutation.error, {
         oidc_discovery_failed: `OIDC discovery failed: ${configureMutation.error.message}`,
         invalid_state: 'OIDC has already been configured for this instance.',
-        session_expired: 'Your setup session has expired. Please go back and re-enter the bootstrap token.',
-        invalid_session: 'Your session is no longer valid. Please restart setup.',
+        session_expired:
+          'Your setup session has expired. Please go back and re-enter the bootstrap token.',
+        invalid_session:
+          'Your session is no longer valid. Please restart setup.',
       })
     : null
 
@@ -109,7 +114,8 @@ function OidcConfigStep() {
           need a client ID (and optionally secret) from your identity provider.
         </p>
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          Double-check your values before submitting — this step cannot be undone.
+          Double-check your values before submitting — this step cannot be
+          undone.
         </p>
       </div>
 
@@ -167,15 +173,17 @@ function OidcConfigStep() {
         <Alert>
           <AlertTitle>Discovery successful</AlertTitle>
           <AlertDescription>
-            Verified issuer: <code className="text-xs">{discoveredIssuer}</code>.
-            Proceeding to next step...
+            Verified issuer: <code className="text-xs">{discoveredIssuer}</code>
+            . Proceeding to next step...
           </AlertDescription>
         </Alert>
       ) : null}
 
       <Button
         type="submit"
-        disabled={!isValid || configureMutation.isPending || configureMutation.isSuccess}
+        disabled={
+          !isValid || configureMutation.isPending || configureMutation.isSuccess
+        }
         className="w-full"
       >
         {configureMutation.isPending
