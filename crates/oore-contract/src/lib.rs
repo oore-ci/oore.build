@@ -252,6 +252,8 @@ pub struct AuthenticatedUser {
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -323,6 +325,8 @@ pub struct User {
     pub display_name: Option<String>,
     pub role: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

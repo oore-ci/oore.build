@@ -28,6 +28,7 @@ fn row_to_user(row: &sqlx::sqlite::SqliteRow) -> User {
         display_name: row.get("display_name"),
         role: row.get("role"),
         status: row.get("status"),
+        avatar_url: row.get("avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -41,7 +42,7 @@ async fn fetch_user_by_id(
     let pool = store.pool();
 
     let row = sqlx::query(
-        "SELECT id, email, display_name, role, status, created_at, updated_at \
+        "SELECT id, email, display_name, role, status, avatar_url, created_at, updated_at \
          FROM users WHERE id = ?1",
     )
     .bind(user_id)
@@ -78,7 +79,7 @@ pub async fn list_users(
     let pool = store.pool();
 
     let rows = sqlx::query(
-        "SELECT id, email, display_name, role, status, created_at, updated_at \
+        "SELECT id, email, display_name, role, status, avatar_url, created_at, updated_at \
          FROM users ORDER BY created_at ASC",
     )
     .fetch_all(pool)
@@ -170,6 +171,7 @@ pub async fn invite_user(
         display_name: None,
         role: role.to_string(),
         status: "invited".to_string(),
+        avatar_url: None,
         created_at: now,
         updated_at: now,
     };

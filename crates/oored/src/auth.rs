@@ -408,12 +408,30 @@ pub async fn oidc_callback(
             )
         })?;
 
+    // Extract picture URL from ID token (profile scope is already requested).
+    // CoreIdTokenClaims uses EmptyAdditionalClaims, so we extract the picture
+    // from the raw JWT payload instead.
+    let picture_url = {
+        let token_str = id_token.to_string();
+        let parts: Vec<&str> = token_str.split('.').collect();
+        if parts.len() >= 2 {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(parts[1])
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|val| val.get("picture").and_then(|v| v.as_str()).map(String::from))
+        } else {
+            None
+        }
+    };
+
     // Look up user by oidc_subject
     let store = state.store.lock().await;
     let pool = store.pool();
 
     let user_row = sqlx::query(
-        "SELECT id, email, role FROM users WHERE oidc_subject = ?1 AND status = 'active'",
+        "SELECT id, email, role, avatar_url FROM users WHERE oidc_subject = ?1 AND status = 'active'",
     )
     .bind(&subject)
     .fetch_optional(pool)
@@ -424,11 +442,25 @@ pub async fn oidc_callback(
     })?;
 
     // If not found by subject, check for invited user by email and activate
-    let (user_id, user_email, user_role) = if let Some(row) = user_row {
+    let (user_id, user_email, user_role, user_avatar_url) = if let Some(row) = user_row {
         let uid: String = row.get("id");
         let uemail: String = row.get("email");
         let urole: String = row.get("role");
-        (uid, uemail, urole)
+        let uavatar: Option<String> = row.get("avatar_url");
+
+        // Update avatar_url if the OIDC provider gave a new one
+        if picture_url.is_some() && picture_url != uavatar {
+            let now = now_unix();
+            let _ = sqlx::query("UPDATE users SET avatar_url = ?1, updated_at = ?2 WHERE id = ?3")
+                .bind(&picture_url)
+                .bind(now)
+                .bind(&uid)
+                .execute(pool)
+                .await;
+        }
+
+        let final_avatar = picture_url.or(uavatar);
+        (uid, uemail, urole, final_avatar)
     } else {
         // Check for invited user by email
         let invited = sqlx::query(
@@ -446,12 +478,13 @@ pub async fn oidc_callback(
             let uid: String = inv_row.get("id");
             let uemail: String = inv_row.get("email");
             let urole: String = inv_row.get("role");
-            // Activate the invited user and set their oidc_subject
+            // Activate the invited user and set their oidc_subject + avatar_url
             let now = now_unix();
             sqlx::query(
-                "UPDATE users SET oidc_subject = ?1, status = 'active', updated_at = ?2 WHERE id = ?3",
+                "UPDATE users SET oidc_subject = ?1, status = 'active', avatar_url = ?2, updated_at = ?3 WHERE id = ?4",
             )
             .bind(&subject)
+            .bind(&picture_url)
             .bind(now)
             .bind(&uid)
             .execute(pool)
@@ -463,7 +496,7 @@ pub async fn oidc_callback(
 
             let _ = write_audit_log(pool, Some(&uid), "user_activated", "user", Some(&uid), None).await;
 
-            (uid, uemail, urole)
+            (uid, uemail, urole, picture_url)
         } else {
             // No matching user — reject login
             warn!(email = %email, subject = %subject, "OIDC login rejected: no matching user");
@@ -507,6 +540,7 @@ pub async fn oidc_callback(
             oidc_subject: subject,
             user_id: Some(user_id),
             role: Some(user_role),
+            avatar_url: user_avatar_url,
         },
     }))
 }
