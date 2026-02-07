@@ -105,19 +105,25 @@ Health:
 
 Dependency: Phase 1 complete.
 
-- [ ] **2.1 [P0] Build-domain schema** - Add `projects`, `pipelines`, `builds`, `build_jobs`, `runners`, `build_events`, `artifacts` with indexes and FKs.
-- [ ] **2.2 [P0] Build state machine contract** - Define strict states/transitions (`queued`, `scheduled`, `assigned`, `running`, `succeeded`, `failed`, `canceled`, `timed_out`, `expired`).
-- [ ] **2.3 [P0] Trigger intake endpoints** - Manual/API trigger (`POST /v1/projects/{project_id}/builds`) plus webhook trigger endpoint(s).
-- [ ] **2.4 [P0] Config snapshot at trigger time** - Resolve and persist immutable workflow/pipeline snapshot (commit SHA + resolved inputs + target platform set).
-- [ ] **2.5 [P0] Concurrency and stale-build policy** - Per-branch or per-pipeline cancellation option (`cancel previous` behavior).
-- [ ] **2.6 [P0] Build query endpoints** - `GET /v1/builds`, `GET /v1/builds/{build_id}`, `POST /v1/builds/{build_id}/cancel`.
+- [ ] **2.1 [P0] SCM integration schema** - Add provider/account/installation/repository/webhook tables with encrypted secrets and audit metadata.
+- [ ] **2.2 [P0] GitHub integration flow (BYO App)** - Instance-scoped GitHub App onboarding (manifest-assisted or manual app create), installation linking, and permission validation.
+- [ ] **2.3 [P0] GitLab integration flow** - Support `gitlab.com` and self-managed base URL with OAuth application or token-based integration plus webhook secret validation.
+- [ ] **2.4 [P0] Webhook ingress hardening** - Signature/token verification, idempotency keys, replay window checks, provider event normalization.
+- [ ] **2.5 [P0] Build-domain schema** - Add `projects`, `pipelines`, `builds`, `build_jobs`, `runners`, `build_events`, `artifacts` with indexes and FKs.
+- [ ] **2.6 [P0] Build state machine contract** - Define strict states/transitions (`queued`, `scheduled`, `assigned`, `running`, `succeeded`, `failed`, `canceled`, `timed_out`, `expired`).
+- [ ] **2.7 [P0] Trigger intake endpoints** - Manual/API trigger (`POST /v1/projects/{project_id}/builds`) plus provider webhook trigger endpoint(s).
+- [ ] **2.8 [P0] Config snapshot at trigger time** - Resolve and persist immutable workflow/pipeline snapshot (commit SHA + resolved inputs + target platform set).
+- [ ] **2.9 [P0] Concurrency and stale-build policy** - Per-branch or per-pipeline cancellation option (`cancel previous` behavior).
+- [ ] **2.10 [P0] Build query endpoints** - `GET /v1/builds`, `GET /v1/builds/{build_id}`, `POST /v1/builds/{build_id}/cancel`.
 
 Exit criteria:
+- GitHub and GitLab can be connected with secrets stored encrypted and auditable.
+- Provider webhooks are received directly by customer backend in both hosted-UI and self-hosted-UI modes.
 - Build requests can be created from manual/API/webhook sources.
 - Build records are immutable post-creation except status/event updates.
 - Cancel and status APIs work against persisted state machine rules.
 
-Feature docs required: Build Lifecycle API, Triggering & Concurrency Policy.
+Feature docs required: SCM Integrations (GitHub/GitLab), Build Lifecycle API, Triggering & Concurrency Policy.
 
 ## Phase 3: Scheduler + Runner Execution (`P0`)
 

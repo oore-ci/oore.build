@@ -55,11 +55,14 @@ User action:
 System outcome:
 - Provider installation linkage is stored for the instance.
 - Webhook signature secret and provider tokens are stored encrypted.
+- Provider webhooks are delivered directly to the customer backend.
 
 Done when:
 - UI shows provider connection status.
 - Disconnect/reconnect path is available and audited.
 - Provider auth data never appears in public endpoints or logs.
+- Hosted `ci.oore.build` mode: the browser flow starts in hosted UI, but OAuth/app callbacks and webhook ingestion terminate on the customer backend.
+- Fully self-hosted UI mode: browser flow, callbacks, and webhook ingestion all terminate on the same self-hosted backend.
 
 ### 3) Project creation from repository
 
