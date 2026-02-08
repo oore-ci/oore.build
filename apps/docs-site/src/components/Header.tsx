@@ -15,15 +15,10 @@ export default function Header() {
         >
           <span className="text-xl leading-none">menu</span>
         </button>
-        <h1 className="ml-4 text-xl font-semibold">
-          <Link to="/">
-            <img
-              src="/tanstack-word-logo-white.svg"
-              alt="TanStack Logo"
-              className="h-10"
-            />
-          </Link>
-        </h1>
+        <Link to="/" className="ml-4 inline-flex items-center gap-2">
+          <img src="/logo.svg" alt="oore.build logo" className="h-8 w-8" />
+          <span className="text-lg font-semibold tracking-tight">oore.build</span>
+        </Link>
       </header>
 
       <aside

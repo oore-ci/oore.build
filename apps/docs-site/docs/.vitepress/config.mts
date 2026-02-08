@@ -1,12 +1,90 @@
 import { defineConfig } from "vitepress";
 
 export default defineConfig({
-  title: "oore.build",
+  title: "Oore CI Docs",
   description:
     "Self-hosted, Flutter-first mobile CI and internal app distribution platform",
   cleanUrls: true,
 
   head: [
+    [
+      "link",
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href: "/logo.svg",
+      },
+    ],
+    [
+      "link",
+      {
+        rel: "alternate icon",
+        href: "/favicon.ico",
+      },
+    ],
+    [
+      "link",
+      {
+        rel: "apple-touch-icon",
+        href: "/logo192.png",
+      },
+    ],
+    [
+      "meta",
+      {
+        name: "theme-color",
+        content: "#f49f1e",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:title",
+        content: "Oore CI Docs",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:description",
+        content: "Documentation and architecture reference for Oore CI.",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:image",
+        content: "/logo512.png",
+      },
+    ],
+    [
+      "meta",
+      {
+        name: "twitter:card",
+        content: "summary_large_image",
+      },
+    ],
+    [
+      "meta",
+      {
+        name: "twitter:title",
+        content: "Oore CI Docs",
+      },
+    ],
+    [
+      "meta",
+      {
+        name: "twitter:description",
+        content: "Documentation and architecture reference for Oore CI.",
+      },
+    ],
+    [
+      "meta",
+      {
+        name: "twitter:image",
+        content: "/logo512.png",
+      },
+    ],
     [
       "link",
       {
@@ -17,7 +95,8 @@ export default defineConfig({
   ],
 
   themeConfig: {
-    siteTitle: "oore.build",
+    siteTitle: "Oore CI",
+    logo: "/logo.svg",
 
     nav: [
       { text: "Guide", link: "/guide/overview" },

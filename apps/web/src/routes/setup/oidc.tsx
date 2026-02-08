@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useConfigureOidc } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
+import { webPageTitle } from '@/lib/seo'
 import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
@@ -73,7 +74,7 @@ function OidcConfigStep() {
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
   useEffect(() => {
-    document.title = 'OIDC Provider — oore.build'
+    document.title = webPageTitle('Setup OIDC')
   }, [])
 
   useEffect(() => {

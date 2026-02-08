@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
+import { useEffect } from 'react'
 
 import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
 import { useGitLabStart } from '@/hooks/use-integrations'
@@ -23,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/integrations/gitlab')({
   staticData: { breadcrumbLabel: 'GitLab' },
@@ -45,6 +47,10 @@ function GitLabSetupPage() {
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [webhookSecret, setWebhookSecret] = useState('')
+
+  useEffect(() => {
+    document.title = webPageTitle('Connect GitLab')
+  }, [])
 
   function handleSubmit() {
     startMutation.mutate(

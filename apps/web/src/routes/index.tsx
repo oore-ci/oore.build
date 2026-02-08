@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/')({
   staticData: { breadcrumbLabel: 'Dashboard' },
@@ -26,7 +27,7 @@ function IndexPage() {
   const clearAuth = useAuthStore((s) => s.clearAuth)
 
   useEffect(() => {
-    document.title = 'oore.build'
+    document.title = webPageTitle()
   }, [])
 
   useEffect(() => {

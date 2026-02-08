@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useSetupStatus, useVerifyBootstrapToken } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
+import { webPageTitle } from '@/lib/seo'
 
 const bootstrapTokenSchema = z.object({
   token: z.string().min(1, 'Bootstrap token is required'),
@@ -71,7 +72,7 @@ function BootstrapTokenStep() {
   })
 
   useEffect(() => {
-    document.title = 'Bootstrap Token — oore.build'
+    document.title = webPageTitle('Setup Token')
   }, [])
 
   // Set step to 0 unless backend state + session indicate we should skip ahead

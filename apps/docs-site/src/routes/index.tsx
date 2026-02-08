@@ -8,31 +8,12 @@ export const Route = createFileRoute('/')({
 function App() {
   return (
     <div className="text-center">
-      <header className="min-h-screen flex flex-col items-center justify-center bg-[#282c34] text-white text-[calc(10px+2vmin)]">
-        <img
-          src={logo}
-          className="h-[40vmin] pointer-events-none animate-[spin_20s_linear_infinite]"
-          alt="logo"
-        />
-        <p>
-          Edit <code>src/routes/index.tsx</code> and save to reload.
+      <header className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#171717] text-white p-6">
+        <img src={logo} className="h-20 w-20 pointer-events-none" alt="oore.build logo" />
+        <h1 className="text-3xl font-semibold tracking-tight">Oore CI docs</h1>
+        <p className="max-w-xl text-base text-neutral-300">
+          Documentation shell for local development. Production docs are served by VitePress.
         </p>
-        <a
-          className="text-[#61dafb] hover:underline"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-        <a
-          className="text-[#61dafb] hover:underline"
-          href="https://tanstack.com"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn TanStack
-        </a>
       </header>
     </div>
   )

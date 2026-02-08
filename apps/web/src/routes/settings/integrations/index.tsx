@@ -31,6 +31,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/integrations/')({
   staticData: { breadcrumbLabel: 'Integrations' },
@@ -49,6 +50,10 @@ function IntegrationsPage() {
   const search = useSearch({ from: '/settings/integrations/' })
   const { data, isLoading, error } = useIntegrations()
   const deleteMutation = useDeleteIntegration()
+
+  useEffect(() => {
+    document.title = webPageTitle('Integrations')
+  }, [])
 
   // Show success toast when redirected back from GitHub App creation
   useEffect(() => {

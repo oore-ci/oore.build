@@ -46,6 +46,7 @@ import {
 import { ApiClientError } from '@/lib/api'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/users')({
   staticData: { breadcrumbLabel: 'Users' },
@@ -95,7 +96,7 @@ function UsersSettingsPage() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 
   useEffect(() => {
-    document.title = 'User Management - oore.build'
+    document.title = webPageTitle('User Management')
   }, [])
 
   // Redirect non-admin users

@@ -14,6 +14,7 @@ import { useSetupStore } from '@/stores/setup-store'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
 import { getSetupStatus } from '@/lib/api'
 import { getActiveInstanceOrRedirect } from '@/lib/instance-context'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/setup')({
   beforeLoad: async () => {
@@ -79,7 +80,7 @@ function SetupLayout() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    document.title = 'Setup — oore.build'
+    document.title = webPageTitle('Setup')
   }, [])
 
   useEffect(() => {
@@ -92,7 +93,13 @@ function SetupLayout() {
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-lg space-y-6">
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-3">
+          <div className="flex items-center justify-center gap-2">
+            <img src="/logo.svg" alt="oore.build logo" className="size-7" />
+            <span className="text-base font-semibold tracking-tight">
+              oore.build
+            </span>
+          </div>
           <h1 className="text-2xl font-semibold tracking-tight">
             oore.build Setup
           </h1>

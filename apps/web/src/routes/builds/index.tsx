@@ -1,4 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 
@@ -14,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/builds/')({
   staticData: { breadcrumbLabel: 'Builds' },
@@ -26,6 +28,10 @@ export const Route = createFileRoute('/builds/')({
 
 function BuildsListPage() {
   const { data, isLoading, error } = useBuilds({ limit: 50 })
+
+  useEffect(() => {
+    document.title = webPageTitle('Builds')
+  }, [])
 
   return (
     <PageLayout>

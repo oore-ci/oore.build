@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { useCompleteSetup, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
+import { webPageTitle } from '@/lib/seo'
 import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
@@ -51,7 +52,7 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
 
   useEffect(() => {
-    document.title = 'Complete Setup — oore.build'
+    document.title = webPageTitle('Setup Complete')
   }, [])
 
   useEffect(() => {

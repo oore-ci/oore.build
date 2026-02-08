@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { toast } from 'sonner'
 
 import {
@@ -17,6 +18,7 @@ import {
 } from '@/components/ui/card'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/integrations/github')({
   staticData: { breadcrumbLabel: 'GitHub' },
@@ -34,6 +36,10 @@ function GitHubSetupPage() {
   const backendUrl = instance?.url ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
   const redirectUrl = `${window.location.origin}/settings/integrations`
+
+  useEffect(() => {
+    document.title = webPageTitle('Connect GitHub')
+  }, [])
 
   function handleConnect() {
     startMutation.mutate(

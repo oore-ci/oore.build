@@ -1,5 +1,10 @@
 import { Suspense, lazy, useEffect } from 'react'
-import { Outlet, createRootRoute, useMatches } from '@tanstack/react-router'
+import {
+  Link,
+  Outlet,
+  createRootRoute,
+  useMatches,
+} from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 
@@ -20,23 +25,23 @@ import { useSetupStore } from '@/stores/setup-store'
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
-      Promise.all([
-        import('@tanstack/react-devtools'),
-        import('@tanstack/react-router-devtools'),
-      ]).then(([devMod, routerDevMod]) => ({
-        default: () => (
-          <devMod.TanStackDevtools
-            config={{ position: 'bottom-right' }}
-            plugins={[
-              {
-                name: 'Tanstack Router',
-                render: <routerDevMod.TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
-        ),
-      })),
-    )
+    Promise.all([
+      import('@tanstack/react-devtools'),
+      import('@tanstack/react-router-devtools'),
+    ]).then(([devMod, routerDevMod]) => ({
+      default: () => (
+        <devMod.TanStackDevtools
+          config={{ position: 'bottom-right' }}
+          plugins={[
+            {
+              name: 'Tanstack Router',
+              render: <routerDevMod.TanStackRouterDevtoolsPanel />,
+            },
+          ]}
+        />
+      ),
+    })),
+  )
   : () => null
 
 export const Route = createRootRoute({
@@ -89,33 +94,40 @@ function RootLayout() {
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-    <QueryClientProvider client={queryClient}>
-      {showSidebar ? (
-        <SidebarProvider>
-          <AppSidebar />
-          <SidebarInset>
-            <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mr-2 !h-4 !self-auto" />
-              <PageBreadcrumb />
-            </header>
+      <QueryClientProvider client={queryClient}>
+        {showSidebar ? (
+          <SidebarProvider>
+            <AppSidebar />
+            <SidebarInset>
+              <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+                <SidebarTrigger className="-ml-1" />
+                <Separator orientation="vertical" className="mr-2 h-4! self-auto!" />
+                <Link to="/" className="flex items-center gap-2 pr-1">
+                  <img src="/logo.svg" alt="oore.build logo" className="size-5" />
+                  <span className="hidden text-sm font-semibold tracking-tight sm:inline">
+                    oore.build
+                  </span>
+                </Link>
+                <Separator orientation="vertical" className="mr-2 h-4! self-auto!" />
+                <PageBreadcrumb />
+              </header>
+              <div className="flex-1 flex flex-col">
+                <Outlet />
+              </div>
+            </SidebarInset>
+          </SidebarProvider>
+        ) : (
+          <div className="min-h-screen flex flex-col">
             <div className="flex-1 flex flex-col">
               <Outlet />
             </div>
-          </SidebarInset>
-        </SidebarProvider>
-      ) : (
-        <div className="min-h-screen flex flex-col">
-          <div className="flex-1 flex flex-col">
-            <Outlet />
           </div>
-        </div>
-      )}
-      <Toaster />
-      <Suspense>
-        <DevTools />
-      </Suspense>
-    </QueryClientProvider>
+        )}
+        <Toaster />
+        <Suspense>
+          <DevTools />
+        </Suspense>
+      </QueryClientProvider>
     </ThemeProvider>
   )
 }

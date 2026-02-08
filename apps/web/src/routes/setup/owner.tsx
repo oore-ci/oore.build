@@ -14,6 +14,7 @@ import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
+import { webPageTitle } from '@/lib/seo'
 
 const ownerSearchSchema = z.object({
   code: z.string().optional(),
@@ -74,7 +75,7 @@ function OwnerStep() {
     getErrorMessage(verifyMutation.error)
 
   useEffect(() => {
-    document.title = 'Owner Account — oore.build'
+    document.title = webPageTitle('Setup Owner')
   }, [])
 
   useEffect(() => {

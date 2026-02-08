@@ -243,11 +243,14 @@ pub async fn github_create_page(
 
     // Re-seal the state for the callback (fresh timestamp not needed — same token)
     let html = format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="{favicon}">
+  <link rel="apple-touch-icon" href="{favicon}">
+  <meta name="theme-color" content="#f49f1e">
   <title>Creating GitHub App...</title>
   <style>
     body {{
@@ -274,7 +277,8 @@ pub async fn github_create_page(
   </form>
   <script>document.getElementById('manifest-form').submit();</script>
 </body>
-</html>"#,
+</html>"##,
+        favicon = favicon_data_uri(),
         state = urlencoding::encode(&params.state),
         manifest_escaped = html_escape(&manifest_json),
     );
@@ -476,12 +480,15 @@ pub async fn github_installed(
     };
 
     let html = format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="refresh" content="2;url={redirect_url}">
+  <link rel="icon" href="{favicon}">
+  <link rel="apple-touch-icon" href="{favicon}">
+  <meta name="theme-color" content="#f49f1e">
   <title>GitHub App Installed</title>
   <style>
     body {{
@@ -509,7 +516,8 @@ pub async fn github_installed(
     </p>
   </div>
 </body>
-    </html>"#,
+    </html>"##,
+        favicon = favicon_data_uri(),
         redirect_url = html_escape(&redirect_target),
     );
 
@@ -1084,4 +1092,4 @@ async fn sync_installation_repos(
 }
 
 // ── HTML helpers (re-exported from parent module) ─────────────────
-use super::{error_page, html_escape};
+use super::{error_page, favicon_data_uri, html_escape};

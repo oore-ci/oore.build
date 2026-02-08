@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: oore.build
+  name: Oore CI
   text: Self-hosted mobile CI
   tagline: Flutter-first build system with internal app distribution. OIDC-secured, macOS-native, no vendor lock-in.
   actions:

@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
@@ -18,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -40,6 +42,13 @@ function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const { data, isLoading, error } = useBuild(buildId)
   const cancelMutation = useCancelBuild()
+
+  useEffect(() => {
+    const label = data?.build?.build_number
+      ? `Build #${data.build.build_number}`
+      : 'Build Details'
+    document.title = webPageTitle(label)
+  }, [data?.build?.build_number])
 
   function handleCancel() {
     cancelMutation.mutate(buildId, {

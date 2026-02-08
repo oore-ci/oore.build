@@ -51,6 +51,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -78,6 +79,13 @@ function IntegrationDetailPage() {
   const syncMutation = useSyncInstallations()
   const deleteMutation = useDeleteIntegration()
   const gitlabAuthorizeMutation = useGitLabAuthorize()
+
+  useEffect(() => {
+    const label = detail?.integration?.display_name
+      ?? detail?.integration?.provider
+      ?? 'Integration Details'
+    document.title = webPageTitle(label)
+  }, [detail?.integration?.display_name, detail?.integration?.provider])
 
   useEffect(() => {
     if (search.installed === 'true') {

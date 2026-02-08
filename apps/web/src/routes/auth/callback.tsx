@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
+import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/auth/callback')({
   component: AuthCallbackPage,
@@ -27,7 +28,7 @@ function AuthCallbackPage() {
   const exchangeStartedRef = useRef(false)
 
   useEffect(() => {
-    document.title = 'Authenticating... - oore.build'
+    document.title = webPageTitle('Signing In')
   }, [])
 
   useEffect(() => {
