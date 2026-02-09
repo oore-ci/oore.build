@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide walks you through starting the oore.build daemon, running the setup wizard, and opening the web UI for the first time.
+This guide walks you through starting the oore.build daemon, running the setup wizard, and getting to your first executable build pipeline.
 
 ## 1. Start the daemon
 
@@ -18,6 +18,8 @@ INFO oored: database ready instance_id="a1b2c3d4-..." state=BootstrapPending
 INFO oored: encryption key ready path="/Users/you/Library/Application Support/oore/encryption.key"
 INFO oored: starting oored daemon listen=127.0.0.1:8787
 ```
+
+In default mode, `oored` also starts an embedded local runner so queued builds can execute without a separate `oore runner start` process.
 
 ::: tip
 The daemon defaults to `127.0.0.1:8787`. Override this with the `--listen` flag or `OORED_LISTEN_ADDR` environment variable.
@@ -132,6 +134,14 @@ Expected response:
 ```
 
 Once the state is `ready`, the setup endpoints are permanently disabled and the instance is ready for normal operation.
+
+## 5. Verify build execution path
+
+1. Create a project/pipeline and trigger a build from the UI.
+2. Confirm build state moves out of `queued` within a few seconds.
+3. Open **Settings -> Runners** to confirm the runner status and heartbeat.
+
+If the build stays queued, check whether `OORED_RUNNER_MODE` is set to `external`. In `external` mode, start a runner manually (`make run-runner`) or switch back to default embedded mode.
 
 ## Setup state machine
 

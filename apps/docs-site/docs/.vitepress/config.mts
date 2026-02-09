@@ -144,6 +144,10 @@ export default defineConfig({
             text: "User Management",
             link: "/features/user-management",
           },
+          {
+            text: "Runner Management",
+            link: "/features/runner-management",
+          },
         ],
       },
       {

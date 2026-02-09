@@ -11,6 +11,7 @@ oore.build/
 │   └── docs-site/        # Documentation site (VitePress)
 ├── crates/
 │   ├── oored/            # Daemon runtime and control plane (Axum)
+│   ├── oore-runner/      # Shared runner execution engine
 │   ├── oore/             # Operator CLI/TUI (Clap)
 │   └── oore-contract/    # Shared data types (Serde structs)
 ├── docs/
@@ -69,7 +70,9 @@ The daemon is the central process that runs on the macOS host. It provides:
 - Setup state machine management
 - OIDC authentication and session management
 - Encryption key management for secrets at rest
-- Future: job scheduling, runner coordination, artifact management
+- Build scheduling and runner coordination
+- Default embedded local runner for single-host execution
+- Artifact and log API surface for build outputs
 
 ### `oore` -- Operator CLI
 
@@ -77,7 +80,9 @@ The CLI is the operator-facing tool for setup and administration:
 
 - `oore setup open` -- generate a time-bound bootstrap token
 - `oore setup` -- interactive setup wizard with OIDC loopback
-- Future: `oore login`, `oore status`, `oore runner register`, `oore doctor`
+- `oore runner register` -- register external runner hosts
+- `oore runner start` -- run external runner process
+- Future: `oore login`, `oore status`, `oore doctor`
 
 ### `oore-contract` -- Shared types
 

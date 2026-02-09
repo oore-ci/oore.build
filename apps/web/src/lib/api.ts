@@ -28,6 +28,7 @@ import type {
   ListIntegrationsResponse,
   ListPipelinesResponse,
   ListProjectsResponse,
+  ListRunnersResponse,
   ListRepositoriesResponse,
   ListUsersResponse,
   LogoutResponse,
@@ -43,6 +44,8 @@ import type {
   SyncInstallationsResponse,
   UpdatePipelineRequest,
   UpdateProjectRequest,
+  UpdateRunnerRequest,
+  UpdateRunnerResponse,
   UpdateUserRoleRequest,
   UpdateUserRoleResponse,
   UserProfileResponse,
@@ -412,6 +415,30 @@ export function gitlabAuthorize(
       body: JSON.stringify(data),
     },
   )
+}
+
+// ── Runner API ─────────────────────────────────────────────────
+
+export function listRunners(
+  baseUrl: string,
+  token: string,
+): Promise<ListRunnersResponse> {
+  return request<ListRunnersResponse>(baseUrl, '/v1/runners', {
+    headers: authHeaders(token),
+  })
+}
+
+export function updateRunner(
+  baseUrl: string,
+  token: string,
+  runnerId: string,
+  data: UpdateRunnerRequest,
+): Promise<UpdateRunnerResponse> {
+  return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
 }
 
 // ── Build API ──────────────────────────────────────────────────

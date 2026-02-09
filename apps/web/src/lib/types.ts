@@ -250,6 +250,33 @@ export interface ListRepositoriesResponse {
   repositories: Array<IntegrationRepository>
 }
 
+// ── Runner domain types ────────────────────────────────────────
+
+export type RunnerStatus = 'online' | 'offline' | 'busy' | 'draining'
+
+export interface Runner {
+  id: string
+  name: string
+  status: RunnerStatus | string
+  capabilities: Record<string, unknown>
+  last_heartbeat_at?: number
+  registered_by?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface ListRunnersResponse {
+  runners: Array<Runner>
+}
+
+export interface UpdateRunnerRequest {
+  name?: string
+}
+
+export interface UpdateRunnerResponse {
+  runner: Runner
+}
+
 // ── Build domain types ─────────────────────────────────────────
 
 export type BuildStatus =

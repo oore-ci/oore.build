@@ -35,3 +35,14 @@ export function getIntegrationStatusVariant(status: string): BadgeVariant {
 export function getPipelineStatusVariant(enabled: boolean): BadgeVariant {
   return enabled ? 'success' : 'secondary'
 }
+
+const RUNNER_STATUS_VARIANT: Record<string, BadgeVariant> = {
+  online: 'success',
+  busy: 'warning',
+  draining: 'secondary',
+  offline: 'outline',
+}
+
+export function getRunnerStatusVariant(status: string): BadgeVariant {
+  return RUNNER_STATUS_VARIANT[status] ?? 'outline'
+}

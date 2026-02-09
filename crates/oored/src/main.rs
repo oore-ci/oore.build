@@ -82,6 +82,14 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         .context("failed to load or generate encryption key")?;
     info!(path = %key_path.display(), "encryption key ready");
 
+    // Start embedded local runner in default mode so single-host installations
+    // can execute queued builds without a separate `oore runner start` process.
+    let daemon_url = format!("http://127.0.0.1:{}", addr.port());
+    let _embedded_runner =
+        oored::embedded_runner::start_if_enabled(store.pool().clone(), daemon_url)
+            .await
+            .context("failed to initialize embedded runner")?;
+
     let app = build_router(store, encryption_key, metrics_handle).await;
 
     info!(listen = %addr, "starting oored daemon");

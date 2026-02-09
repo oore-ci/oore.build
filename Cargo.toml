@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/oore", "crates/oored", "crates/oore-contract"]
+members = ["crates/oore", "crates/oore-runner", "crates/oored", "crates/oore-contract"]
 resolver = "2"
 
 [workspace.package]

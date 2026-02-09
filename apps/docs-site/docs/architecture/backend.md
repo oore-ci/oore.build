@@ -13,8 +13,9 @@ When you run `oored run`, the daemon performs these initialization steps:
 5. **Connect to SQLite** -- create the database file and run embedded migrations
 6. **Initialize state** -- if no state row exists, create one with `BootstrapPending` and a fresh UUID instance ID
 7. **Load encryption key** -- from `~/Library/Application Support/oore/encryption.key` (auto-generated on first run)
-8. **Build Axum router** -- mount all route handlers, `/metrics` endpoint, and request metrics middleware
-9. **Start HTTP server** -- bind to the listen address and serve requests
+8. **Start embedded local runner (default mode)** -- bootstrap/rotate local runner credentials and start claim loop unless `OORED_RUNNER_MODE=external`
+9. **Build Axum router** -- mount all route handlers, `/metrics` endpoint, and request metrics middleware
+10. **Start HTTP server** -- bind to the listen address and serve requests
 
 ```rust
 // Simplified daemon bootstrap (crates/oored/src/main.rs)
@@ -119,6 +120,18 @@ OIDC client secrets are encrypted with AES-256-GCM before storage:
 | `GET` | `/v1/auth/oidc/start` | Start OIDC login flow |
 | `GET` | `/v1/auth/oidc/callback` | Handle OIDC callback, create session |
 | `POST` | `/v1/auth/logout` | Revoke session |
+
+## Runner modes
+
+`oored` supports three runtime modes for build execution:
+
+| Mode | Behavior |
+|------|----------|
+| `embedded` (default) | Start a local embedded runner process loop inside daemon runtime. |
+| `external` | Disable embedded runner; requires separately started external runner(s). |
+| `hybrid` | Start embedded runner and still allow external runners. |
+
+Configure via `OORED_RUNNER_MODE`.
 
 ## Session management
 

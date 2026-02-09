@@ -5,6 +5,8 @@ import {
   configureOidc,
   getApiErrorMessage,
   getSetupStatus,
+  listRunners,
+  updateRunner,
   verifyBootstrapToken,
 } from '@/lib/api'
 
@@ -196,5 +198,72 @@ describe('completeSetup', () => {
     )
 
     await expect(completeSetup('', 'bad-token')).rejects.toThrow(ApiClientError)
+  })
+})
+
+describe('listRunners', () => {
+  it('calls GET /v1/runners with auth header', async () => {
+    const payload = {
+      runners: [
+        {
+          id: 'runner-1',
+          name: 'mac-mini',
+          status: 'online',
+          capabilities: { os: 'macos' },
+          created_at: 100,
+          updated_at: 200,
+        },
+      ],
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await listRunners('https://ci.example.com', 'session-token')
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/runners',
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+})
+
+describe('updateRunner', () => {
+  it('calls PATCH /v1/runners/{runner_id} with JSON body', async () => {
+    const payload = {
+      runner: {
+        id: 'runner-1',
+        name: 'renamed-runner',
+        status: 'offline',
+        capabilities: {},
+        created_at: 10,
+        updated_at: 20,
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await updateRunner(
+      'https://ci.example.com',
+      'session-token',
+      'runner-1',
+      { name: 'renamed-runner' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/runners/runner-1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({ name: 'renamed-runner' }),
+      },
+    )
+    expect(result).toEqual(payload)
   })
 })

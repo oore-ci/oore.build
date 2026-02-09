@@ -11,13 +11,18 @@ oore.build needs a mechanism for build execution hosts (runners) to register wit
 ## User Impact
 
 - **Operators** register macOS hosts as runners via `oore runner register`. The CLI returns a one-time runner token that the runner process uses for all subsequent communication with the daemon.
+- **Single-host operators** get a default embedded local runner when `oored` starts (`OORED_RUNNER_MODE=embedded`), so first builds do not require manual runner startup.
 - **Runners** (once started via `oore runner start`) automatically poll for queued builds, report heartbeats, and execute claimed work. No manual job assignment is needed.
 - **Developers** see builds progress from "queued" to "running" to a terminal state as runners claim and execute work.
 - **Admins/Owners** can list all registered runners and monitor their status, capabilities, and last heartbeat via the API.
 
 ## UI Changes
 
-No UI changes in this phase. Runner management is CLI-only in Phase 3. A dedicated Runners page listing registered runners with status, capabilities, and last heartbeat is planned for Phase 5+ UI work.
+Runner management now includes a dedicated admin UI page under Settings:
+
+- `Settings -> Runners` lists all runners with status, heartbeat freshness, capabilities, registration source, and update time.
+- Owners/Admins can rename externally registered runners from the UI.
+- Embedded runners are shown but rename is disabled.
 
 ## API Changes
 
@@ -29,6 +34,7 @@ New endpoints:
 - `POST /v1/runners/{runner_id}/jobs/{job_id}/status` — Report build execution status. Authenticated with runner token. Includes step results (name, status, exit_code, started_at, finished_at, duration_ms) and an overall exit_code. Step results and exit code are persisted on the build record. Runners can only set status to `running`, `succeeded`, or `failed`.
 - `GET /v1/runners/{runner_id}/jobs/{job_id}` — Check current build status. Authenticated with runner token. Used by runners to poll for cancellation or timeout between build steps. Returns the build's current status string.
 - `GET /v1/runners` — List all registered runners with status, capabilities, and last heartbeat. Requires admin or owner role.
+- `PATCH /v1/runners/{runner_id}` — Rename runner. Requires admin or owner role. Accepts `{ "name": "<new_name>" }` and returns updated runner.
 
 Runner token handling:
 
@@ -39,12 +45,20 @@ Runner token handling:
 
 Pull-based protocol: runners poll the claim endpoint on an interval (default 5 seconds). The daemon does not push work to runners. This aligns with the platform contract section 16 decision to use HTTPS JSON with pull-based scheduling.
 
+Embedded runner mode:
+
+- `oored` can bootstrap an embedded local runner at startup.
+- Mode is controlled by `OORED_RUNNER_MODE` (`embedded` default, `external`, `hybrid`).
+- Embedded mode keeps the same HTTP runner contract and auth checks; it does not introduce a separate private execution path.
+- Embedded runners are daemon-managed (`registered_by IS NULL`) and cannot be renamed through the API (`409 embedded_runner_locked`).
+
 ## Security Considerations
 
 - Runner tokens are crypto-random, hashed with SHA-256, and stored as hashes only. Plaintext is never persisted.
 - Plaintext token is returned only once at registration time. If lost, the operator must re-register the runner.
 - Cross-runner access is prevented: every runner-scoped endpoint validates that the `runner_id` in the URL path matches the runner authenticated by the bearer token. Mismatches return 403 Forbidden.
 - Registration requires admin or owner role, preventing unauthorized runner enrollment.
+- Rename requires admin or owner role and is audit logged (`runner_renamed`).
 - A runner can only update builds it has claimed. The `runner_id` ownership check on the build record prevents runner A from reporting status for runner B's claimed build.
 - Runner registration produces an `audit_logs` entry (action: `runner_registered`). Claim and status report transitions produce `build_events` entries via the build state machine. Heartbeats update runner state only (no audit record, to avoid log noise at polling frequency).
 - Runner token scope is limited to runner operations — tokens cannot access user management, setup, or other daemon APIs.
@@ -70,4 +84,4 @@ oore.build team
 
 ## Last Updated
 
-`2026-02-08`
+`2026-02-09`

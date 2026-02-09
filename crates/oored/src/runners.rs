@@ -7,7 +7,8 @@ use axum::Json;
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, ListRunnersResponse, RegisterRunnerRequest, RegisterRunnerResponse, Runner,
-    RunnerHeartbeatRequest, RunnerStatus, UpdateJobStatusRequest,
+    RunnerHeartbeatRequest, RunnerStatus, UpdateJobStatusRequest, UpdateRunnerRequest,
+    UpdateRunnerResponse,
 };
 use sqlx::Row;
 use tracing::{error, info, warn};
@@ -556,4 +557,109 @@ pub async fn list_runners(
     let runners = rows.iter().map(row_to_runner).collect();
 
     Ok(Json(ListRunnersResponse { runners }))
+}
+
+/// `PATCH /v1/runners/{runner_id}` — rename a runner (admin/owner only).
+pub async fn update_runner(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(runner_id): Path<String>,
+    Json(req): Json<UpdateRunnerRequest>,
+) -> ApiResult<UpdateRunnerResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "runners", "write").await?;
+
+    let name = req
+        .name
+        .as_deref()
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "Runner name is required",
+            )
+        })?
+        .trim();
+
+    if name.is_empty() || name.len() > 255 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_name",
+            "Runner name must be between 1 and 255 characters",
+        ));
+    }
+
+    let now = now_unix();
+    let store = state.store.lock().await;
+    let pool = store.pool();
+
+    let existing = sqlx::query("SELECT name, registered_by FROM runners WHERE id = ?1")
+        .bind(&runner_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch runner")
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+
+    let previous_name: String = existing.get("name");
+    let registered_by: Option<String> = existing.get("registered_by");
+
+    if registered_by.is_none() {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "embedded_runner_locked",
+            "Embedded runner name cannot be changed",
+        ));
+    }
+
+    if previous_name != name {
+        sqlx::query("UPDATE runners SET name = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(name)
+            .bind(now)
+            .bind(&runner_id)
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, runner_id = %runner_id, "failed to rename runner");
+                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update runner")
+            })?;
+
+        let details = serde_json::json!({
+            "previous_name": previous_name,
+            "new_name": name,
+            "updated_by": auth.0.email,
+        })
+        .to_string();
+        let _ = write_audit_log(
+            pool,
+            Some(&auth.0.user_id),
+            "runner_renamed",
+            "runner",
+            Some(&runner_id),
+            Some(&details),
+        )
+        .await;
+
+        info!(
+            runner_id = %runner_id,
+            previous_name = %previous_name,
+            new_name = %name,
+            updated_by = %auth.0.email,
+            "runner renamed"
+        );
+    }
+
+    let row = sqlx::query("SELECT * FROM runners WHERE id = ?1")
+        .bind(&runner_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to reload runner");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load runner")
+        })?;
+
+    Ok(Json(UpdateRunnerResponse {
+        runner: row_to_runner(&row),
+    }))
 }

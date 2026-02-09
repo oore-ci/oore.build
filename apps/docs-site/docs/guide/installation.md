@@ -2,6 +2,16 @@
 
 This guide covers everything you need to build and run oore.build from source.
 
+## One-command installer (preview)
+
+For single-host macOS setups, the intended UX is:
+
+```bash
+curl -fsSL https://oore.build/install | bash
+```
+
+The hosted installer endpoint is being finalized. Until it is published, use the source-based flow in this guide.
+
 ## Prerequisites
 
 oore.build requires a macOS host for the backend runtime in V1. The frontend can be developed on any platform, but the daemon and CLI are macOS-only.
@@ -88,6 +98,7 @@ Start the development servers to verify the full stack:
 ```bash [Daemon]
 make run-daemon
 # Starts oored on 127.0.0.1:8787
+# Default mode auto-starts an embedded local runner
 ```
 
 ```bash [Web UI]
@@ -117,7 +128,10 @@ All common commands are available as `make` targets from the repository root:
 | `make fix-web` | Prettier + ESLint auto-fix |
 | `make cargo-check` | Compile check all Rust crates |
 | `make run-daemon` | Run oored on 127.0.0.1:8787 |
+| `make register-runner` | Register an external runner (advanced) |
+| `make run-runner` | Start external runner process (advanced) |
 | `make run-cli` | Run `oore setup open --ttl 15m` |
+| `make install-local` | Run local installer script scaffold (`scripts/install.sh`) |
 | `make docs-check` | Validate feature docs against template |
 | `make ui-init` | Re-initialize shadcn from shared preset |
 | `make build` | build-web + build-docs + cargo-check |
@@ -158,6 +172,10 @@ Or pass it directly:
 ```bash
 cargo run -p oored -- run --state-file /path/to/custom.db
 ```
+
+### Build stuck in queued
+
+By default, `oored` starts an embedded local runner and should claim queued builds automatically. If you explicitly set `OORED_RUNNER_MODE=external`, you must run an external runner process (`make run-runner`) for builds to execute.
 
 ## Next steps
 

@@ -18,7 +18,8 @@ oore <command> [subcommand] [options]
 | `setup` | *(none)* | Interactive setup wizard | Implemented |
 | `login` | | Authenticate with the daemon | Placeholder |
 | `status` | | Check daemon and instance status | Placeholder |
-| `runner` | `register` | Register a build runner | Placeholder |
+| `runner` | `register` | Register an external build runner | Implemented |
+| `runner` | `start` | Start external runner process | Implemented |
 | `config` | `set` | Set a configuration value | Placeholder |
 | `config` | `get` | Get a configuration value | Placeholder |
 | `doctor` | | Run diagnostic checks | Placeholder |

@@ -17,6 +17,7 @@ dirs.workspace = true
 hex.workspace = true
 jsonwebtoken.workspace = true
 oore-contract = { path = "../oore-contract" }
+oore-runner = { path = "../oore-runner" }
 openidconnect.workspace = true
 rand.workspace = true
 reqwest.workspace = true

@@ -1,8 +1,13 @@
 .PHONY: dev-web dev-docs build-web build-docs build check \
        test-web lint-web fix-web \
        test-docs lint-docs fix-docs \
-       cargo-check run-daemon run-cli \
-       docs-check ui-init validate
+       cargo-check run-daemon run-runner register-runner run-cli \
+       docs-check ui-init install-local validate
+
+RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
+RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
+RUNNER_SESSION_TOKEN ?=
+RUNNER_NAME ?= $(shell hostname)
 
 # ── Frontend: Web App ─────────────────────────────────────────────
 dev-web:
@@ -43,8 +48,18 @@ cargo-check:
 run-daemon:
 	RUST_LOG=debug cargo run -p oored -- run --listen 127.0.0.1:8787
 
+run-runner:
+	cargo run -p oore -- runner start --daemon-url $(RUNNER_DAEMON_URL) --config $(RUNNER_CONFIG)
+
+register-runner:
+	@test -n "$(RUNNER_SESSION_TOKEN)" || (echo "RUNNER_SESSION_TOKEN is required"; exit 1)
+	cargo run -p oore -- runner register --daemon-url $(RUNNER_DAEMON_URL) --token $(RUNNER_SESSION_TOKEN) --name "$(RUNNER_NAME)"
+
 run-cli:
 	cargo run -p oore -- setup open --ttl 15m
+
+install-local:
+	bash scripts/install.sh
 
 test-rust:
 	cargo test -p oored --features test-support

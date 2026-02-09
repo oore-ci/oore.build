@@ -35,13 +35,18 @@ The operator CLI handles setup, authentication, and administration.
 | [`oore setup open`](/cli/setup#setup-open) | Generate a bootstrap token |
 | `oore login` | Authenticate via OIDC |
 | `oore status` | Show instance status |
-| `oore runner register` | Register a build runner |
+| `oore runner register` | Register an external build runner |
+| `oore runner start` | Start external runner process |
 | `oore config set <key> <value>` | Set a configuration value |
 | `oore config get <key>` | Get a configuration value |
 | `oore doctor` | Run diagnostic checks |
 
 ::: info
 Commands marked as "placeholder" are defined in the CLI structure but not yet fully implemented. The `setup` command is fully implemented.
+:::
+
+::: info
+Single-host default flow does not require `oore runner start`. `oored` auto-starts an embedded local runner unless `OORED_RUNNER_MODE=external`.
 :::
 
 ### Global Behavior

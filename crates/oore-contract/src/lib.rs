@@ -963,6 +963,17 @@ pub struct RunnerHeartbeatRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateRunnerRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateRunnerResponse {
+    pub runner: Runner,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClaimJobResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job: Option<ClaimedJob>,

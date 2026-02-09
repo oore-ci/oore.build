@@ -3,6 +3,7 @@ pub mod auth;
 pub mod background;
 pub mod builds;
 pub mod crypto;
+pub mod embedded_runner;
 pub mod extractors;
 pub mod integrations;
 pub mod logs;
@@ -949,6 +950,7 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
         // Runner endpoints
         .route("/v1/runners/register", post(runners::register_runner))
+        .route("/v1/runners/{runner_id}", axum::routing::patch(runners::update_runner))
         .route("/v1/runners/{runner_id}/heartbeat", post(runners::runner_heartbeat))
         .route("/v1/runners/{runner_id}/claim", post(runners::claim_job))
         .route("/v1/runners/{runner_id}/jobs/{job_id}/status", post(runners::update_job_status))

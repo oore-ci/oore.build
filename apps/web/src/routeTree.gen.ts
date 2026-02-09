@@ -19,6 +19,7 @@ import { Route as SetupOwnerRouteImport } from './routes/setup/owner'
 import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
+import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings/integrations/index'
@@ -78,6 +79,11 @@ const SettingsUsersRoute = SettingsUsersRouteImport.update({
   path: '/settings/users',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
+  id: '/settings/runners',
+  path: '/settings/runners',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BuildsBuildIdRoute = BuildsBuildIdRouteImport.update({
   id: '/builds/$buildId',
   path: '/builds/$buildId',
@@ -130,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/oidc': typeof SetupOidcRoute
@@ -149,6 +156,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/oidc': typeof SetupOidcRoute
@@ -170,6 +178,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/oidc': typeof SetupOidcRoute
@@ -192,6 +201,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/oidc'
@@ -211,6 +221,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/oidc'
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/oidc'
@@ -252,6 +264,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
   BuildsBuildIdRoute: typeof BuildsBuildIdRoute
+  SettingsRunnersRoute: typeof SettingsRunnersRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   BuildsIndexRoute: typeof BuildsIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
@@ -335,6 +348,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsUsersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/runners': {
+      id: '/settings/runners'
+      path: '/settings/runners'
+      fullPath: '/settings/runners'
+      preLoaderRoute: typeof SettingsRunnersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/builds/$buildId': {
       id: '/builds/$buildId'
       path: '/builds/$buildId'
@@ -416,6 +436,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
   BuildsBuildIdRoute: BuildsBuildIdRoute,
+  SettingsRunnersRoute: SettingsRunnersRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   BuildsIndexRoute: BuildsIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,

@@ -6,8 +6,13 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
-use common::{body_json, create_test_app, connect_pool, seed_test_user, seed_project_chain, seed_github_integration};
+use common::{
+    body_json, connect_pool, create_test_app, seed_github_integration, seed_project_chain,
+    seed_test_user,
+};
+use sqlx::Row;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 /// Create a session token for the test user so AuthUser extractor works.
 async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String {
@@ -28,6 +33,26 @@ async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String 
     .expect("failed to create test session");
 
     token
+}
+
+async fn seed_user_with_role(pool: &sqlx::SqlitePool, email: &str, role: &str) -> String {
+    let user_id = Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    let subject = format!("subject-{user_id}");
+    sqlx::query(
+        "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)",
+    )
+    .bind(&user_id)
+    .bind(email)
+    .bind(subject)
+    .bind(email)
+    .bind(role)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed user with role");
+    user_id
 }
 
 /// Register a runner using the API and return (runner_id, runner_token).
@@ -60,6 +85,47 @@ async fn register_runner(
     let runner_token = json["token"].as_str().unwrap().to_string();
 
     (runner_id, runner_token)
+}
+
+async fn rename_runner(
+    app: &axum::Router,
+    session_token: &str,
+    runner_id: &str,
+    name: &str,
+) -> (StatusCode, serde_json::Value) {
+    let body = serde_json::json!({ "name": name });
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}"))
+        .method("PATCH")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let json = body_json(resp.into_body()).await;
+    (status, json)
+}
+
+async fn seed_embedded_runner(pool: &sqlx::SqlitePool, name: &str) -> String {
+    let runner_id = Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    let token_hash = oored::token::hash_token("embedded-test-token");
+
+    sqlx::query(
+        "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'offline', '{}', NULL, ?4, ?4)",
+    )
+    .bind(&runner_id)
+    .bind(name)
+    .bind(&token_hash)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed embedded runner");
+
+    runner_id
 }
 
 /// Create a build for a project/pipeline so we have something to claim.
@@ -350,4 +416,135 @@ async fn test_cross_runner_access_blocked() {
 
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN, "cross-runner access should be blocked");
+}
+
+#[tokio::test]
+async fn test_runner_rename_with_owner_and_admin_sessions() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    let owner_id = seed_test_user(&pool).await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+    let admin_id = seed_user_with_role(&pool, "admin@example.com", "admin").await;
+    let admin_session = create_session_token(&pool, &admin_id).await;
+
+    let (runner_1_id, _) = register_runner(&app, &owner_session, "rename-owner").await;
+    let (status_1, body_1) = rename_runner(&app, &owner_session, &runner_1_id, "renamed-by-owner").await;
+    assert_eq!(status_1, StatusCode::OK);
+    assert_eq!(body_1["runner"]["name"].as_str().unwrap(), "renamed-by-owner");
+
+    let (runner_2_id, _) = register_runner(&app, &owner_session, "rename-admin").await;
+    let (status_2, body_2) = rename_runner(&app, &admin_session, &runner_2_id, "renamed-by-admin").await;
+    assert_eq!(status_2, StatusCode::OK);
+    assert_eq!(body_2["runner"]["name"].as_str().unwrap(), "renamed-by-admin");
+}
+
+#[tokio::test]
+async fn test_runner_rename_rejects_empty_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session = create_session_token(&pool, &user_id).await;
+
+    let (runner_id, _) = register_runner(&app, &session, "rename-empty").await;
+    let (status, body) = rename_runner(&app, &session, &runner_id, "   ").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"].as_str().unwrap(), "invalid_name");
+}
+
+#[tokio::test]
+async fn test_runner_rename_rejects_overlong_name() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session = create_session_token(&pool, &user_id).await;
+
+    let (runner_id, _) = register_runner(&app, &session, "rename-long").await;
+    let overlong = "x".repeat(256);
+    let (status, body) = rename_runner(&app, &session, &runner_id, &overlong).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"].as_str().unwrap(), "invalid_name");
+}
+
+#[tokio::test]
+async fn test_runner_rename_returns_not_found_for_unknown_runner() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session = create_session_token(&pool, &user_id).await;
+
+    let unknown_id = Uuid::new_v4().to_string();
+    let (status, body) = rename_runner(&app, &session, &unknown_id, "new-name").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"].as_str().unwrap(), "not_found");
+}
+
+#[tokio::test]
+async fn test_runner_rename_blocks_embedded_runner() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session = create_session_token(&pool, &user_id).await;
+
+    let runner_id = seed_embedded_runner(&pool, "local-embedded-runner").await;
+    let (status, body) = rename_runner(&app, &session, &runner_id, "renamed-embedded").await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"].as_str().unwrap(), "embedded_runner_locked");
+}
+
+#[tokio::test]
+async fn test_runner_rename_writes_audit_log() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session = create_session_token(&pool, &user_id).await;
+
+    let (runner_id, _) = register_runner(&app, &session, "audit-runner").await;
+    let (status, _body) = rename_runner(&app, &session, &runner_id, "audit-runner-renamed").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let row = sqlx::query(
+        "SELECT action, actor_id, resource_id, details FROM audit_logs \
+         WHERE action = 'runner_renamed' AND resource_id = ?1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&runner_id)
+    .fetch_one(&pool)
+    .await
+    .expect("expected runner_renamed audit log");
+
+    let action: String = row.get("action");
+    let actor_id: Option<String> = row.get("actor_id");
+    let resource_id: Option<String> = row.get("resource_id");
+    let details: Option<String> = row.get("details");
+
+    assert_eq!(action, "runner_renamed");
+    assert_eq!(actor_id.as_deref(), Some(user_id.as_str()));
+    assert_eq!(resource_id.as_deref(), Some(runner_id.as_str()));
+
+    let details_json: serde_json::Value =
+        serde_json::from_str(details.as_deref().unwrap_or("{}")).expect("details must be valid json");
+    assert_eq!(
+        details_json["previous_name"].as_str().unwrap(),
+        "audit-runner"
+    );
+    assert_eq!(
+        details_json["new_name"].as_str().unwrap(),
+        "audit-runner-renamed"
+    );
 }

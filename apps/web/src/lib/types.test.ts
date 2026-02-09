@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest'
 import type {
   ApiError,
   BootstrapTokenVerifyResponse,
+  ListRunnersResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
+  Runner,
   SetupCompleteResponse,
   SetupOidcStartResponse,
   SetupOidcVerifyResponse,
   SetupState,
   SetupStatus,
+  UpdateRunnerRequest,
+  UpdateRunnerResponse,
 } from '@/lib/types'
 
 describe('types', () => {
@@ -89,5 +93,34 @@ describe('types', () => {
       details: 'stack trace here',
     }
     expect(err.code).toBe('internal_error')
+  })
+
+  it('Runner and ListRunnersResponse can be constructed', () => {
+    const runner: Runner = {
+      id: 'runner-1',
+      name: 'local-runner',
+      status: 'online',
+      capabilities: { os: 'macos', arch: 'arm64' },
+      created_at: 10,
+      updated_at: 20,
+    }
+    const response: ListRunnersResponse = { runners: [runner] }
+    expect(response.runners[0].name).toBe('local-runner')
+  })
+
+  it('UpdateRunnerRequest and UpdateRunnerResponse can be constructed', () => {
+    const req: UpdateRunnerRequest = { name: 'renamed-runner' }
+    const resp: UpdateRunnerResponse = {
+      runner: {
+        id: 'runner-2',
+        name: 'renamed-runner',
+        status: 'offline',
+        capabilities: {},
+        created_at: 1,
+        updated_at: 2,
+      },
+    }
+    expect(req.name).toBe('renamed-runner')
+    expect(resp.runner.name).toBe('renamed-runner')
   })
 })

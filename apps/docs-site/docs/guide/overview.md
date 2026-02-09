@@ -20,7 +20,7 @@ oore.build has three main components:
 
 | Component | Description |
 |-----------|-------------|
-| **`oored`** | The daemon that runs on your macOS host. Handles the API, job scheduling, and state management. |
+| **`oored`** | The daemon that runs on your macOS host. Handles the API, scheduling, state, and default embedded local runner execution. |
 | **`oore`** | The operator CLI for setup, administration, and runner management. |
 | **Web UI** | A React frontend that connects to `oored` over HTTPS. Hosted at `ci.oore.build` or self-hosted. |
 
@@ -35,7 +35,7 @@ oore.build has three main components:
 │  Axum HTTP server + SQLite + OIDC                 │
 │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │
 │  │ Setup    │ │ Auth     │ │ Projects/Builds  │  │
-│  │ Wizard   │ │ (OIDC)   │ │ (planned)        │  │
+│  │ Wizard   │ │ (OIDC)   │ │ + Runner APIs    │  │
 │  └──────────┘ └──────────┘ └──────────────────┘  │
 └──────────────────────────────────────────────────┘
                │

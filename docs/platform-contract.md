@@ -226,6 +226,7 @@ Additional documentation rules:
 
 - V1 uses `HTTPS JSON` with pull-based runner scheduling.
 - Runners poll/claim jobs from backend and push logs/status/artifact metadata back to backend APIs.
+- Single-host default operation may use an embedded local runner started by `oored`; external runners remain supported for explicit multi-runner topologies.
 - `gRPC` is deferred; transport abstraction should be kept clean to allow a future switch.
 
 ### Build execution isolation on macOS
