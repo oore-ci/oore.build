@@ -27,15 +27,16 @@ export function useProjects(params?: {
   search?: string
   limit?: number
   offset?: number
-}) {
+}, options?: { enabled?: boolean }) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'projects', params ?? {}],
     queryFn: () => listProjects(baseUrl!, token!, params),
-    enabled: !!baseUrl && !!token,
+    enabled: enabled && !!baseUrl && !!token,
   })
 }
 

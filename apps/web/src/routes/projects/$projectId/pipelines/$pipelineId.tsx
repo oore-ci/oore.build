@@ -12,6 +12,7 @@ import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instan
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useDeletePipeline, usePipeline, useUpdatePipeline } from '@/hooks/use-pipelines'
+import { useProject } from '@/hooks/use-projects'
 import { getPipelineStatusVariant, getStatusVariant } from '@/lib/status-variants'
 import { webPageTitle } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -40,6 +41,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import EditPipelineDialog from '../-edit-pipeline-dialog'
+import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId',
@@ -68,6 +70,7 @@ function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
+  const { data: projectData } = useProject(projectId)
   const { data: buildsData } = useBuilds({
     pipeline_id: pipelineId,
     limit: 20,
@@ -76,9 +79,11 @@ function PipelineDetailPage() {
   const deleteMutation = useDeletePipeline()
   const canWrite = useHasPermission('pipelines', 'write')
   const canDelete = useHasPermission('pipelines', 'delete')
+  const canTriggerBuild = useHasPermission('builds', 'write')
 
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
   useEffect(() => {
     const label = data?.pipeline.name ?? 'Pipeline Details'
@@ -161,13 +166,21 @@ function PipelineDetailPage() {
             <Badge variant={getPipelineStatusVariant(pipeline.enabled)}>
               {pipeline.enabled ? 'enabled' : 'disabled'}
             </Badge>
-            <span className="font-mono">{pipeline.config_path}</span>
+            <span>{pipeline.config_path_explicit ? 'explicit config path' : 'auto-detect config'}</span>
+            {pipeline.config_path_explicit ? (
+              <span className="font-mono">{pipeline.config_path}</span>
+            ) : null}
             <span>Updated {relativeTime(pipeline.updated_at)}</span>
           </>
         }
         actions={
-          canWrite || canDelete ? (
+          canWrite || canDelete || canTriggerBuild ? (
             <>
+              {canTriggerBuild ? (
+                <Button onClick={() => setTriggerBuildOpen(true)}>
+                  Trigger Build
+                </Button>
+              ) : null}
               {canWrite ? (
                 <Button
                   variant="outline"
@@ -245,6 +258,14 @@ function PipelineDetailPage() {
                 <TableCell className="font-mono text-xs">{pipeline.config_path}</TableCell>
               </TableRow>
               <TableRow>
+                <TableCell className="text-muted-foreground">Config resolution</TableCell>
+                <TableCell>
+                  {pipeline.config_path_explicit
+                    ? 'Explicit path only (UI fallback if file missing)'
+                    : 'Auto-detect .oore.yaml then .oore.yml (UI fallback if missing)'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
                 <TableCell className="text-muted-foreground">Created</TableCell>
                 <TableCell>{new Date(pipeline.created_at * 1000).toLocaleString()}</TableCell>
               </TableRow>
@@ -303,11 +324,136 @@ function PipelineDetailPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Fallback execution config</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell className="w-56 text-muted-foreground">Platforms</TableCell>
+                <TableCell>
+                  {pipeline.execution_config.platforms.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {pipeline.execution_config.platforms.map((platform) => (
+                        <Badge key={platform} variant="outline" className="text-[11px]">
+                          {platform}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">none</span>
+                  )}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Pre-build commands</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {pipeline.execution_config.commands.pre_build.length > 0
+                    ? pipeline.execution_config.commands.pre_build.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Flutter version</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {pipeline.execution_config.flutter_version || 'auto (.fvmrc if present)'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Build commands</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {pipeline.execution_config.commands.build.length > 0
+                    ? pipeline.execution_config.commands.build.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Post-build commands</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {pipeline.execution_config.commands.post_build.length > 0
+                    ? pipeline.execution_config.commands.post_build.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Android build args</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {(pipeline.execution_config.platform_build_args?.android?.length ?? 0) > 0
+                    ? pipeline.execution_config.platform_build_args?.android.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">iOS build args</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {(pipeline.execution_config.platform_build_args?.ios?.length ?? 0) > 0
+                    ? pipeline.execution_config.platform_build_args?.ios.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">macOS build args</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {(pipeline.execution_config.platform_build_args?.macos?.length ?? 0) > 0
+                    ? pipeline.execution_config.platform_build_args?.macos.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Command overrides</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {[
+                    pipeline.execution_config.platform_commands?.android
+                      ? `android: ${pipeline.execution_config.platform_commands.android}`
+                      : '',
+                    pipeline.execution_config.platform_commands?.ios
+                      ? `ios: ${pipeline.execution_config.platform_commands.ios}`
+                      : '',
+                    pipeline.execution_config.platform_commands?.macos
+                      ? `macos: ${pipeline.execution_config.platform_commands.macos}`
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' | ') || 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Environment variables</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {(pipeline.execution_config.env?.length ?? 0) > 0
+                    ? pipeline.execution_config.env
+                        ?.map((entry) => `${entry.key}=${entry.value}`)
+                        .join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted-foreground">Artifact patterns</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {pipeline.execution_config.artifact_patterns.length > 0
+                    ? pipeline.execution_config.artifact_patterns.join(' | ')
+                    : 'none'}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Recent builds</CardTitle>
         </CardHeader>
         <CardContent>
           {builds.length === 0 ? (
-            <p className="py-3 text-sm text-muted-foreground">No builds yet.</p>
+            <div className="space-y-2 py-3">
+              <p className="text-sm text-muted-foreground">No builds yet.</p>
+              {canTriggerBuild ? (
+                <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                  Trigger first build
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -356,6 +502,22 @@ function PipelineDetailPage() {
           pipeline={pipeline}
         />
       ) : null}
+
+      <TriggerBuildDialog
+        open={triggerBuildOpen}
+        onOpenChange={setTriggerBuildOpen}
+        fixedProjectId={projectId}
+        fixedPipelineId={pipeline.id}
+        fixedPipelineName={pipeline.name}
+        defaultBranch={projectData?.project.default_branch}
+        description="Run this pipeline now with a branch or pinned commit."
+        onBuildCreated={(buildId) => {
+          void navigate({
+            to: '/builds/$buildId',
+            params: { buildId },
+          })
+        }}
+      />
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

@@ -75,12 +75,19 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         .await
         .context("failed to ensure owner user")?;
 
-    // Load or generate the AES-256 encryption key for secrets at rest
-    let key_path = crypto::resolve_key_path()
-        .context("failed to resolve encryption key path")?;
-    let encryption_key = crypto::load_or_generate_key(&key_path)
-        .context("failed to load or generate encryption key")?;
-    info!(path = %key_path.display(), "encryption key ready");
+    // Load or generate the AES-256 encryption key for secrets at rest.
+    // Key storage mode is persisted in instance preferences and applied on restart.
+    let key_storage_mode = oored::instance_settings::load_key_storage_mode(store.pool())
+        .await
+        .context("failed to load key storage mode preference")?;
+    let runtime_key = crypto::load_runtime_key_with_mode(key_storage_mode)
+        .context("failed to load runtime encryption key")?;
+    info!(
+        mode = %key_storage_mode,
+        source = runtime_key.source.as_str(),
+        legacy_file_path = %runtime_key.legacy_file_path.display(),
+        "encryption key ready"
+    );
 
     // Start embedded local runner in default mode so single-host installations
     // can execute queued builds without a separate `oore runner start` process.
@@ -90,7 +97,7 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
             .await
             .context("failed to initialize embedded runner")?;
 
-    let app = build_router(store, encryption_key, metrics_handle).await;
+    let app = build_router(store, runtime_key.key, metrics_handle).await;
 
     info!(listen = %addr, "starting oored daemon");
 

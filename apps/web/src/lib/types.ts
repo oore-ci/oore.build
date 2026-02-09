@@ -292,6 +292,15 @@ export type BuildStatus =
 
 export type TriggerType = 'manual' | 'api' | 'webhook' | 'schedule'
 
+export interface StepResult {
+  name: string
+  status: string
+  exit_code?: number
+  started_at: number
+  finished_at: number
+  duration_ms: number
+}
+
 export interface Build {
   id: string
   project_id: string
@@ -306,6 +315,8 @@ export interface Build {
   branch?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
+  step_results?: StepResult[]
+  exit_code?: number
   queued_at: number
   started_at?: number
   finished_at?: number
@@ -390,6 +401,51 @@ export interface ArtifactDownloadLinkResponse {
   expires_at: number
 }
 
+export type ArtifactStorageProvider = 'disabled' | 'local' | 's3' | 'r2'
+export type ArtifactStorageSource = 'database' | 'environment' | 'default'
+
+export interface ArtifactStorageSettings {
+  provider: ArtifactStorageProvider
+  local_base_dir?: string
+  s3_bucket?: string
+  s3_region?: string
+  s3_endpoint?: string
+  has_access_key_id: boolean
+  has_secret_access_key: boolean
+  source: ArtifactStorageSource
+  updated_at?: number
+}
+
+export interface ArtifactStorageSettingsResponse {
+  settings: ArtifactStorageSettings
+}
+
+export interface UpdateArtifactStorageSettingsRequest {
+  provider: ArtifactStorageProvider
+  local_base_dir?: string
+  s3_bucket?: string
+  s3_region?: string
+  s3_endpoint?: string
+  access_key_id?: string
+  secret_access_key?: string
+}
+
+export type KeyStorageMode = 'keychain' | 'file'
+
+export interface InstancePreferences {
+  key_storage_mode: KeyStorageMode
+  restart_required: boolean
+  updated_at?: number
+}
+
+export interface InstancePreferencesResponse {
+  preferences: InstancePreferences
+}
+
+export interface UpdateInstancePreferencesRequest {
+  key_storage_mode: KeyStorageMode
+}
+
 // ── Project domain types ────────────────────────────────────────
 
 export interface Project {
@@ -445,11 +501,48 @@ export interface ConcurrencyPolicy {
   max_concurrent?: number
 }
 
+export type BuildPlatform = 'android' | 'ios' | 'macos'
+
+export interface PipelineCommandStages {
+  pre_build: string[]
+  build: string[]
+  post_build: string[]
+}
+
+export interface PlatformBuildArgs {
+  android: string[]
+  ios: string[]
+  macos: string[]
+}
+
+export interface PlatformBuildCommands {
+  android?: string
+  ios?: string
+  macos?: string
+}
+
+export interface PipelineEnvVar {
+  key: string
+  value: string
+}
+
+export interface PipelineExecutionConfig {
+  platforms: BuildPlatform[]
+  flutter_version?: string
+  commands: PipelineCommandStages
+  platform_build_args?: PlatformBuildArgs
+  platform_commands?: PlatformBuildCommands
+  env?: PipelineEnvVar[]
+  artifact_patterns: string[]
+}
+
 export interface Pipeline {
   id: string
   project_id: string
   name: string
   config_path: string
+  config_path_explicit: boolean
+  execution_config: PipelineExecutionConfig
   trigger_config: TriggerConfig
   concurrency: ConcurrencyPolicy
   enabled: boolean
@@ -459,7 +552,9 @@ export interface Pipeline {
 
 export interface CreatePipelineRequest {
   name: string
-  config_path: string
+  config_path?: string
+  config_path_explicit?: boolean
+  execution_config?: PipelineExecutionConfig
   trigger_config: TriggerConfig
   concurrency: ConcurrencyPolicy
 }
@@ -467,6 +562,8 @@ export interface CreatePipelineRequest {
 export interface UpdatePipelineRequest {
   name?: string
   config_path?: string
+  config_path_explicit?: boolean
+  execution_config?: PipelineExecutionConfig
   trigger_config?: TriggerConfig
   concurrency?: ConcurrencyPolicy
   enabled?: boolean
@@ -487,10 +584,11 @@ export interface ListPipelinesResponse {
 }
 
 export interface ValidatePipelineRequest {
-  name: string
-  config_path: string
-  trigger_config: TriggerConfig
-  concurrency: ConcurrencyPolicy
+  config_path?: string
+  config_path_explicit?: boolean
+  execution_config?: PipelineExecutionConfig
+  trigger_config?: TriggerConfig
+  concurrency?: ConcurrencyPolicy
 }
 
 export interface ValidatePipelineResponse {

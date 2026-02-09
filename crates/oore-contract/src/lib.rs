@@ -615,7 +615,12 @@ impl BuildStatus {
             Self::Queued => &[Self::Scheduled, Self::Canceled, Self::Expired],
             Self::Scheduled => &[Self::Assigned, Self::Canceled, Self::Expired],
             Self::Assigned => &[Self::Running, Self::Queued, Self::Canceled, Self::TimedOut],
-            Self::Running => &[Self::Succeeded, Self::Failed, Self::Canceled, Self::TimedOut],
+            Self::Running => &[
+                Self::Succeeded,
+                Self::Failed,
+                Self::Canceled,
+                Self::TimedOut,
+            ],
             // Terminal states have no valid transitions
             Self::Succeeded | Self::Failed | Self::Canceled | Self::TimedOut | Self::Expired => &[],
         }
@@ -786,7 +791,11 @@ impl TriggerConfig {
         // Check event filter
         if !self.events.is_empty() {
             let canonical = Self::normalize_event(event_type);
-            if !self.events.iter().any(|e| Self::normalize_event(e) == canonical) {
+            if !self
+                .events
+                .iter()
+                .any(|e| Self::normalize_event(e) == canonical)
+            {
                 return false;
             }
         }
@@ -1069,6 +1078,136 @@ pub struct ArtifactDownloadLinkResponse {
     pub expires_at: i64,
 }
 
+// ── Artifact storage settings types ─────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactStorageProvider {
+    Disabled,
+    Local,
+    S3,
+    R2,
+}
+
+impl fmt::Display for ArtifactStorageProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Disabled => "disabled",
+            Self::Local => "local",
+            Self::S3 => "s3",
+            Self::R2 => "r2",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for ArtifactStorageProvider {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "disabled" => Ok(Self::Disabled),
+            "local" => Ok(Self::Local),
+            "s3" => Ok(Self::S3),
+            "r2" => Ok(Self::R2),
+            other => Err(format!("unknown artifact storage provider: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactStorageSource {
+    Database,
+    Environment,
+    Default,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactStorageSettings {
+    pub provider: ArtifactStorageProvider,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_base_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3_bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3_region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3_endpoint: Option<String>,
+    pub has_access_key_id: bool,
+    pub has_secret_access_key: bool,
+    pub source: ArtifactStorageSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArtifactStorageSettingsResponse {
+    pub settings: ArtifactStorageSettings,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateArtifactStorageSettingsRequest {
+    pub provider: ArtifactStorageProvider,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_base_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3_bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3_region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3_endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_access_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyStorageMode {
+    Keychain,
+    File,
+}
+
+impl fmt::Display for KeyStorageMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Keychain => "keychain",
+            Self::File => "file",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for KeyStorageMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "keychain" => Ok(Self::Keychain),
+            "file" => Ok(Self::File),
+            other => Err(format!("unknown key storage mode: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstancePreferences {
+    pub key_storage_mode: KeyStorageMode,
+    pub restart_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstancePreferencesResponse {
+    pub preferences: InstancePreferences,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateInstancePreferencesRequest {
+    pub key_storage_mode: KeyStorageMode,
+}
+
 // ── Project API types ───────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1132,12 +1271,101 @@ pub struct ListProjectsResponse {
 
 // ── Pipeline API types ──────────────────────────────────────────
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildPlatform {
+    #[default]
+    Android,
+    Ios,
+    Macos,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PipelineCommandStages {
+    #[serde(default)]
+    pub pre_build: Vec<String>,
+    #[serde(default)]
+    pub build: Vec<String>,
+    #[serde(default)]
+    pub post_build: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PlatformBuildArgs {
+    #[serde(default)]
+    pub android: Vec<String>,
+    #[serde(default)]
+    pub ios: Vec<String>,
+    #[serde(default)]
+    pub macos: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PlatformBuildCommands {
+    #[serde(default)]
+    pub android: Option<String>,
+    #[serde(default)]
+    pub ios: Option<String>,
+    #[serde(default)]
+    pub macos: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineEnvVar {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineExecutionConfig {
+    #[serde(default = "default_platforms")]
+    pub platforms: Vec<BuildPlatform>,
+    #[serde(default)]
+    pub flutter_version: Option<String>,
+    #[serde(default)]
+    pub commands: PipelineCommandStages,
+    #[serde(default)]
+    pub platform_build_args: PlatformBuildArgs,
+    #[serde(default)]
+    pub platform_commands: PlatformBuildCommands,
+    #[serde(default)]
+    pub env: Vec<PipelineEnvVar>,
+    #[serde(default = "default_artifact_patterns")]
+    pub artifact_patterns: Vec<String>,
+}
+
+fn default_platforms() -> Vec<BuildPlatform> {
+    vec![BuildPlatform::Android]
+}
+
+fn default_artifact_patterns() -> Vec<String> {
+    vec!["*.apk".to_string()]
+}
+
+impl Default for PipelineExecutionConfig {
+    fn default() -> Self {
+        Self {
+            platforms: default_platforms(),
+            flutter_version: None,
+            commands: PipelineCommandStages::default(),
+            platform_build_args: PlatformBuildArgs::default(),
+            platform_commands: PlatformBuildCommands::default(),
+            env: Vec::new(),
+            artifact_patterns: default_artifact_patterns(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pipeline {
     pub id: String,
     pub project_id: String,
     pub name: String,
     pub config_path: String,
+    #[serde(default)]
+    pub config_path_explicit: bool,
+    #[serde(default)]
+    pub execution_config: PipelineExecutionConfig,
     pub trigger_config: TriggerConfig,
     pub concurrency: ConcurrencyPolicy,
     pub enabled: bool,
@@ -1151,6 +1379,10 @@ pub struct CreatePipelineRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path_explicit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyPolicy>,
@@ -1162,6 +1394,10 @@ pub struct UpdatePipelineRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path_explicit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1189,6 +1425,12 @@ pub struct ListPipelinesResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ValidatePipelineRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path_explicit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1312,5 +1554,76 @@ mod tests {
             branches: vec!["main".to_string()],
         };
         assert!(!tc.should_trigger("push", None));
+    }
+
+    #[test]
+    fn pipeline_execution_config_default_is_android_fallback() {
+        let cfg = PipelineExecutionConfig::default();
+        assert_eq!(cfg.platforms, vec![BuildPlatform::Android]);
+        assert!(cfg.flutter_version.is_none());
+        assert!(cfg.commands.pre_build.is_empty());
+        assert!(cfg.commands.build.is_empty());
+        assert!(cfg.commands.post_build.is_empty());
+        assert!(cfg.platform_build_args.android.is_empty());
+        assert!(cfg.platform_commands.android.is_none());
+        assert!(cfg.env.is_empty());
+        assert_eq!(cfg.artifact_patterns, vec!["*.apk".to_string()]);
+    }
+
+    #[test]
+    fn build_platform_round_trip_json() {
+        let json = serde_json::to_string(&BuildPlatform::Ios).expect("serialize");
+        assert_eq!(json, "\"ios\"");
+        let parsed: BuildPlatform = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, BuildPlatform::Ios);
+    }
+
+    #[test]
+    fn pipeline_execution_config_supports_env_and_platform_overrides() {
+        let cfg = PipelineExecutionConfig {
+            platforms: vec![BuildPlatform::Android, BuildPlatform::Ios],
+            flutter_version: Some("3.24.0".to_string()),
+            commands: PipelineCommandStages::default(),
+            platform_build_args: PlatformBuildArgs {
+                android: vec!["--flavor=dev".to_string()],
+                ios: vec!["--dart-define-from-file=config/dev.json".to_string()],
+                macos: Vec::new(),
+            },
+            platform_commands: PlatformBuildCommands {
+                android: Some("flutter build appbundle --release".to_string()),
+                ios: None,
+                macos: None,
+            },
+            env: vec![PipelineEnvVar {
+                key: "PROJECT_BUILD_NUMBER".to_string(),
+                value: "42".to_string(),
+            }],
+            artifact_patterns: vec!["*.apk".to_string()],
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let parsed: PipelineExecutionConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.flutter_version.as_deref(), Some("3.24.0"));
+        assert_eq!(parsed.platform_build_args.android.len(), 1);
+        assert_eq!(
+            parsed.platform_commands.android.as_deref(),
+            Some("flutter build appbundle --release")
+        );
+        assert_eq!(parsed.env[0].key, "PROJECT_BUILD_NUMBER");
+    }
+
+    #[test]
+    fn artifact_storage_provider_round_trip_json() {
+        let json = serde_json::to_string(&ArtifactStorageProvider::R2).expect("serialize");
+        assert_eq!(json, "\"r2\"");
+        let parsed: ArtifactStorageProvider = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, ArtifactStorageProvider::R2);
+    }
+
+    #[test]
+    fn key_storage_mode_round_trip_json() {
+        let json = serde_json::to_string(&KeyStorageMode::Keychain).expect("serialize");
+        assert_eq!(json, "\"keychain\"");
+        let parsed: KeyStorageMode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, KeyStorageMode::Keychain);
     }
 }

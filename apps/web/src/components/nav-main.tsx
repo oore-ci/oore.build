@@ -50,6 +50,12 @@ const ADMIN_ITEMS: Array<NavItem> = [
     icon: Link04Icon,
     adminOnly: true,
   },
+  {
+    title: 'Preferences',
+    to: '/settings/preferences',
+    icon: Folder02Icon,
+    adminOnly: true,
+  },
 ]
 
 export default function NavMain() {
@@ -93,7 +99,7 @@ export default function NavMain() {
         <>
           <Separator className="mx-2" />
           <SidebarGroup>
-            <SidebarGroupLabel>Settings</SidebarGroupLabel>
+            <SidebarGroupLabel>Admin</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {visibleAdminItems.map((item) => (

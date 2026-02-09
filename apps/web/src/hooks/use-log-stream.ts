@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { BuildLogChunk } from '@/lib/types'
+
 import { createStreamToken, getBuildLogs } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
+import type { BuildLogChunk } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth-store'
+import { useActiveInstance } from '@/stores/instance-store'
 
 interface UseLogStreamResult {
   logs: Array<BuildLogChunk>
@@ -11,7 +12,19 @@ interface UseLogStreamResult {
   error: string | null
 }
 
-export function useLogStream(buildId: string, enabled: boolean): UseLogStreamResult {
+interface UseLogStreamOptions {
+  onDone?: () => void
+}
+
+const POLL_INTERVAL_MS = 2500
+const POLL_BACKFILL_WINDOW = 500
+
+export function useLogStream(
+  buildId: string,
+  enabled: boolean,
+  options?: UseLogStreamOptions,
+): UseLogStreamResult {
+  const onDone = options?.onDone
   const [logs, setLogs] = useState<Array<BuildLogChunk>>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [isDone, setIsDone] = useState(false)
@@ -23,32 +36,64 @@ export function useLogStream(buildId: string, enabled: boolean): UseLogStreamRes
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const lastSequenceRef = useRef(-1)
-  const logsRef = useRef<Array<BuildLogChunk>>([])
   const abortRef = useRef<AbortController | null>(null)
+
+  const logsBySequenceRef = useRef<Map<number, BuildLogChunk>>(new Map())
+  const lastSequenceRef = useRef(-1)
 
   const appendLogs = useCallback((chunks: Array<BuildLogChunk>) => {
     if (chunks.length === 0) return
-    const newChunks = chunks.filter((c) => c.sequence > lastSequenceRef.current)
-    if (newChunks.length === 0) return
-    const sorted = newChunks.sort((a, b) => a.sequence - b.sequence)
-    lastSequenceRef.current = sorted[sorted.length - 1].sequence
-    logsRef.current = [...logsRef.current, ...sorted]
-    setLogs(logsRef.current)
+
+    let changed = false
+    for (const chunk of chunks) {
+      const existing = logsBySequenceRef.current.get(chunk.sequence)
+      if (
+        !existing ||
+        existing.content !== chunk.content ||
+        existing.stream !== chunk.stream
+      ) {
+        logsBySequenceRef.current.set(chunk.sequence, chunk)
+        changed = true
+      }
+    }
+
+    if (!changed) return
+
+    const sorted = [...logsBySequenceRef.current.values()].sort(
+      (a, b) => a.sequence - b.sequence,
+    )
+    lastSequenceRef.current =
+      sorted.length > 0 ? sorted[sorted.length - 1].sequence : -1
+    setLogs(sorted)
+  }, [])
+
+  const pollOnce = useCallback(async () => {
+    if (!baseUrl || !token) return
+    const after = Math.max(-1, lastSequenceRef.current - POLL_BACKFILL_WINDOW)
+    try {
+      const response = await getBuildLogs(baseUrl, token, buildId, {
+        after_sequence: after >= 0 ? after : undefined,
+      })
+      appendLogs(response.logs)
+    } catch {
+      // Retry on next interval.
+    }
+  }, [baseUrl, token, buildId, appendLogs])
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
   }, [])
 
   const startPolling = useCallback(() => {
     if (!baseUrl || !token || pollingRef.current) return
+    void pollOnce()
     pollingRef.current = setInterval(() => {
-      void getBuildLogs(baseUrl, token, buildId, {
-        after_sequence: lastSequenceRef.current >= 0 ? lastSequenceRef.current : undefined,
-      }).then((res) => {
-        appendLogs(res.logs)
-      }).catch(() => {
-        // Silently retry on next interval
-      })
-    }, 2000)
-  }, [baseUrl, token, buildId, appendLogs])
+      void pollOnce()
+    }, POLL_INTERVAL_MS)
+  }, [baseUrl, token, pollOnce])
 
   const cleanup = useCallback(() => {
     if (abortRef.current) {
@@ -59,11 +104,8 @@ export function useLogStream(buildId: string, enabled: boolean): UseLogStreamRes
       eventSourceRef.current.close()
       eventSourceRef.current = null
     }
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current)
-      pollingRef.current = null
-    }
-  }, [])
+    stopPolling()
+  }, [stopPolling])
 
   useEffect(() => {
     if (!enabled || !baseUrl || !token) {
@@ -71,38 +113,38 @@ export function useLogStream(buildId: string, enabled: boolean): UseLogStreamRes
       return
     }
 
-    // Reset state when switching builds or re-enabling
     setLogs([])
     setIsStreaming(false)
     setIsDone(false)
     setError(null)
+    logsBySequenceRef.current = new Map()
     lastSequenceRef.current = -1
-    logsRef.current = []
 
     const abort = new AbortController()
     abortRef.current = abort
 
-    // Fetch a short-lived streaming token, then connect EventSource
+    startPolling()
+
     void (async () => {
       let streamToken: string
       try {
-        const resp = await createStreamToken(baseUrl, token, buildId)
-        streamToken = resp.token
+        const response = await createStreamToken(baseUrl, token, buildId)
+        streamToken = response.token
       } catch {
-        // If stream token exchange fails, fall back to polling
         if (!abort.signal.aborted) {
-          setError('Failed to obtain stream token, falling back to polling')
-          startPolling()
+          setError('Live stream unavailable. Using polling fallback.')
         }
         return
       }
 
       if (abort.signal.aborted) return
 
-      const url = `${baseUrl}/v1/builds/${buildId}/logs/stream?token=${encodeURIComponent(streamToken)}`
+      const streamUrl =
+        `${baseUrl}/v1/builds/${buildId}/logs/stream?token=` +
+        encodeURIComponent(streamToken)
 
       try {
-        const es = new EventSource(url)
+        const es = new EventSource(streamUrl)
         eventSourceRef.current = es
 
         es.addEventListener('open', () => {
@@ -115,7 +157,7 @@ export function useLogStream(buildId: string, enabled: boolean): UseLogStreamRes
             const chunk = JSON.parse(event.data as string) as BuildLogChunk
             appendLogs([chunk])
           } catch {
-            // Ignore malformed events
+            // Ignore malformed chunks.
           }
         })
 
@@ -124,25 +166,37 @@ export function useLogStream(buildId: string, enabled: boolean): UseLogStreamRes
           setIsDone(true)
           es.close()
           eventSourceRef.current = null
+          void pollOnce()
+          stopPolling()
+          onDone?.()
         })
 
         es.addEventListener('error', () => {
           es.close()
           eventSourceRef.current = null
           setIsStreaming(false)
-          setError('Log stream disconnected, falling back to polling')
-          startPolling()
+          setError('Live stream disconnected. Continuing with polling.')
         })
       } catch {
         if (!abort.signal.aborted) {
-          setError('Failed to connect to log stream, falling back to polling')
-          startPolling()
+          setError('Failed to connect live stream. Using polling fallback.')
         }
       }
     })()
 
     return cleanup
-  }, [enabled, baseUrl, token, buildId, appendLogs, startPolling, cleanup])
+  }, [
+    enabled,
+    baseUrl,
+    token,
+    buildId,
+    appendLogs,
+    startPolling,
+    stopPolling,
+    pollOnce,
+    cleanup,
+    onDone,
+  ])
 
   return { logs, isStreaming, isDone, error }
 }

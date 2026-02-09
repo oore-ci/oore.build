@@ -1,22 +1,23 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use oore_contract::{
     ApiError, Build, BuildDetailResponse, BuildEvent, BuildStatus, CancelBuildResponse,
-    ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, ListBuildsResponse, TriggerConfig,
+    ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, ListBuildsResponse,
+    PipelineExecutionConfig, TriggerConfig,
 };
 use serde::Deserialize;
 use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -86,7 +87,11 @@ pub async fn transition_build(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch build");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
@@ -141,7 +146,11 @@ pub async fn transition_build(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to update build status");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update build",
+            )
         })?;
 
     if result.rows_affected() == 0 {
@@ -179,7 +188,11 @@ pub async fn transition_build(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to reload build");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to reload build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to reload build",
+            )
         })?;
 
     Ok(row_to_build(&updated_row))
@@ -188,20 +201,32 @@ pub async fn transition_build(
 /// Create a config snapshot capturing pipeline config at build creation time.
 fn create_config_snapshot(
     pipeline_config_path: &str,
+    config_path_explicit: bool,
+    ui_execution_config: &PipelineExecutionConfig,
     trigger_type: &str,
     commit_sha: Option<&str>,
     branch: Option<&str>,
     repo_url: Option<&str>,
 ) -> serde_json::Value {
+    let ui_execution_config_json =
+        serde_json::to_value(ui_execution_config).unwrap_or_else(|_| serde_json::json!({}));
     serde_json::json!({
-        "snapshot_version": 1,
+        "snapshot_version": 2,
+        "config_resolution_policy": "file_first_ui_fallback",
         "config_path": pipeline_config_path,
+        "config_path_explicit": config_path_explicit,
+        "ui_execution_config": ui_execution_config_json,
+        "artifact_patterns": ui_execution_config.artifact_patterns,
         "trigger_type": trigger_type,
         "commit_sha": commit_sha,
         "branch": branch,
         "repo_url": repo_url,
         "captured_at": now_unix(),
     })
+}
+
+fn parse_execution_config(raw: &str) -> PipelineExecutionConfig {
+    serde_json::from_str(raw).unwrap_or_else(|_| PipelineExecutionConfig::default())
 }
 
 async fn fetch_build_number(
@@ -364,7 +389,11 @@ async fn apply_cancel_previous(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to query non-terminal builds");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to query builds")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to query builds",
+        )
     })?;
 
     let mut canceled = 0u32;
@@ -415,12 +444,16 @@ pub async fn create_build(
             .unwrap_or(false);
 
     if !project_exists {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
     }
 
     // Verify pipeline exists and belongs to this project
     let pipeline_row = sqlx::query(
-        "SELECT id, config_path, concurrency FROM pipelines WHERE id = ?1 AND project_id = ?2",
+        "SELECT id, config_path, config_path_explicit, execution_config, concurrency FROM pipelines WHERE id = ?1 AND project_id = ?2",
     )
     .bind(&req.pipeline_id)
     .bind(&project_id)
@@ -433,6 +466,11 @@ pub async fn create_build(
     .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found in this project"))?;
 
     let config_path: String = pipeline_row.get("config_path");
+    let config_path_explicit: i32 = pipeline_row.try_get("config_path_explicit").unwrap_or(0);
+    let execution_config_json: String = pipeline_row
+        .try_get("execution_config")
+        .unwrap_or_else(|_| "{}".to_string());
+    let execution_config = parse_execution_config(&execution_config_json);
     let concurrency_json: String = pipeline_row.get("concurrency");
     let concurrency: ConcurrencyPolicy =
         serde_json::from_str(&concurrency_json).unwrap_or_default();
@@ -447,7 +485,10 @@ pub async fn create_build(
         )
         .await?;
         if canceled > 0 {
-            info!(canceled = canceled, "auto-canceled previous builds via concurrency policy");
+            info!(
+                canceled = canceled,
+                "auto-canceled previous builds via concurrency policy"
+            );
         }
     }
 
@@ -470,6 +511,8 @@ pub async fn create_build(
 
     let config_snapshot = create_config_snapshot(
         &config_path,
+        config_path_explicit != 0,
+        &execution_config,
         "manual",
         req.commit_sha.as_deref(),
         req.branch.as_deref(),
@@ -629,7 +672,11 @@ pub async fn list_builds(
 
     let rows = list_q.fetch_all(pool).await.map_err(|e| {
         error!(error = %e, "failed to list builds");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list builds")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list builds",
+        )
     })?;
 
     let builds = rows.iter().map(row_to_build).collect();
@@ -654,22 +701,29 @@ pub async fn get_build(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch build");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
     let build = row_to_build(&build_row);
 
-    let event_rows = sqlx::query(
-        "SELECT * FROM build_events WHERE build_id = ?1 ORDER BY created_at ASC",
-    )
-    .bind(&build_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch build events");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build events")
-    })?;
+    let event_rows =
+        sqlx::query("SELECT * FROM build_events WHERE build_id = ?1 ORDER BY created_at ASC")
+            .bind(&build_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch build events");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch build events",
+                )
+            })?;
 
     let events = event_rows.iter().map(row_to_build_event).collect();
 
@@ -743,7 +797,11 @@ pub async fn trigger_build_from_webhook(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to find projects for repo");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to resolve project")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve project",
+        )
     })?;
 
     if project_rows.is_empty() {
@@ -755,21 +813,20 @@ pub async fn trigger_build_from_webhook(
     let now = now_unix();
 
     // Resolve repo clone URL from integration host_url
-    let repo_url: Option<String> = sqlx::query_scalar(
-        "SELECT host_url FROM integrations WHERE id = ?1",
-    )
-    .bind(integration_id)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None)
-    .map(|host_url: String| format!("{}/{}.git", host_url, repo_full_name));
+    let repo_url: Option<String> =
+        sqlx::query_scalar("SELECT host_url FROM integrations WHERE id = ?1")
+            .bind(integration_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None)
+            .map(|host_url: String| format!("{}/{}.git", host_url, repo_full_name));
 
     for project_row in &project_rows {
         let project_id: String = project_row.get("id");
 
         // Find enabled pipelines for this project
         let pipeline_rows = sqlx::query(
-            "SELECT id, config_path, trigger_config, concurrency FROM pipelines \
+            "SELECT id, config_path, config_path_explicit, execution_config, trigger_config, concurrency FROM pipelines \
              WHERE project_id = ?1 AND enabled = 1",
         )
         .bind(&project_id)
@@ -783,6 +840,12 @@ pub async fn trigger_build_from_webhook(
         for pipeline_row in &pipeline_rows {
             let pipeline_id: String = pipeline_row.get("id");
             let config_path: String = pipeline_row.get("config_path");
+            let config_path_explicit: i32 =
+                pipeline_row.try_get("config_path_explicit").unwrap_or(0);
+            let execution_config_json: String = pipeline_row
+                .try_get("execution_config")
+                .unwrap_or_else(|_| "{}".to_string());
+            let execution_config = parse_execution_config(&execution_config_json);
             let trigger_config_json: String = pipeline_row.get("trigger_config");
             let concurrency_json: String = pipeline_row.get("concurrency");
             let concurrency: ConcurrencyPolicy =
@@ -812,8 +875,15 @@ pub async fn trigger_build_from_webhook(
 
             let build_id = Uuid::new_v4().to_string();
 
-            let config_snapshot =
-                create_config_snapshot(&config_path, "webhook", commit_sha, branch, repo_url.as_deref());
+            let config_snapshot = create_config_snapshot(
+                &config_path,
+                config_path_explicit != 0,
+                &execution_config,
+                "webhook",
+                commit_sha,
+                branch,
+                repo_url.as_deref(),
+            );
 
             let snapshot_str = config_snapshot.to_string();
             insert_build_with_retry(

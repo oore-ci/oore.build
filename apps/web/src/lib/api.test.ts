@@ -3,10 +3,19 @@ import {
   ApiClientError,
   completeSetup,
   configureOidc,
+  createPipeline,
+  getArtifactStorageSettings,
   getApiErrorMessage,
+  getInstancePreferences,
+  getPipeline,
   getSetupStatus,
+  listPipelines,
   listRunners,
+  updateArtifactStorageSettings,
+  updateInstancePreferences,
+  updatePipeline,
   updateRunner,
+  validatePipeline,
   verifyBootstrapToken,
 } from '@/lib/api'
 
@@ -265,5 +274,317 @@ describe('updateRunner', () => {
       },
     )
     expect(result).toEqual(payload)
+  })
+})
+
+describe('artifact storage settings api', () => {
+  it('calls GET /v1/settings/artifact-storage with auth header', async () => {
+    const payload = {
+      settings: {
+        provider: 'local',
+        local_base_dir: '/tmp/oore-artifacts',
+        has_access_key_id: false,
+        has_secret_access_key: false,
+        source: 'database',
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await getArtifactStorageSettings(
+      'https://ci.example.com',
+      'session-token',
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/artifact-storage',
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+
+  it('calls PUT /v1/settings/artifact-storage with payload', async () => {
+    const payload = {
+      settings: {
+        provider: 'r2',
+        s3_bucket: 'build-artifacts',
+        s3_region: 'auto',
+        s3_endpoint: 'https://example.r2.cloudflarestorage.com',
+        has_access_key_id: true,
+        has_secret_access_key: true,
+        source: 'database',
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await updateArtifactStorageSettings(
+      'https://ci.example.com',
+      'session-token',
+      {
+        provider: 'r2',
+        s3_bucket: 'build-artifacts',
+        s3_region: 'auto',
+        s3_endpoint: 'https://example.r2.cloudflarestorage.com',
+        access_key_id: 'AKIA...',
+        secret_access_key: 'secret',
+      },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/artifact-storage',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          provider: 'r2',
+          s3_bucket: 'build-artifacts',
+          s3_region: 'auto',
+          s3_endpoint: 'https://example.r2.cloudflarestorage.com',
+          access_key_id: 'AKIA...',
+          secret_access_key: 'secret',
+        }),
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+})
+
+describe('instance preferences api', () => {
+  it('calls GET /v1/settings/preferences with auth header', async () => {
+    const payload = {
+      preferences: {
+        key_storage_mode: 'keychain',
+        restart_required: true,
+        updated_at: 123,
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await getInstancePreferences(
+      'https://ci.example.com',
+      'session-token',
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/preferences',
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+
+  it('calls PUT /v1/settings/preferences with payload', async () => {
+    const payload = {
+      preferences: {
+        key_storage_mode: 'file',
+        restart_required: true,
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await updateInstancePreferences(
+      'https://ci.example.com',
+      'session-token',
+      { key_storage_mode: 'file' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/preferences',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({ key_storage_mode: 'file' }),
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+})
+
+describe('pipeline api', () => {
+  it('calls POST /v1/projects/{project_id}/pipelines with execution config fields', async () => {
+    const payload = {
+      pipeline: {
+        id: 'pipe-1',
+        project_id: 'proj-1',
+        name: 'Mobile',
+        config_path: '.oore.yaml',
+        config_path_explicit: false,
+        execution_config: {
+          platforms: ['android'],
+          commands: { pre_build: [], build: [], post_build: [] },
+          platform_build_args: { android: [], ios: [], macos: [] },
+          platform_commands: {},
+          env: [],
+          artifact_patterns: ['*.apk'],
+        },
+        trigger_config: { events: [], branches: [] },
+        concurrency: { cancel_previous: false },
+        enabled: true,
+        created_at: 1,
+        updated_at: 1,
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    await createPipeline('https://ci.example.com', 'session-token', 'proj-1', {
+      name: 'Mobile',
+      config_path: '.oore.yaml',
+      config_path_explicit: false,
+      execution_config: {
+        platforms: ['android'],
+        commands: { pre_build: [], build: [], post_build: [] },
+        platform_build_args: { android: [], ios: [], macos: [] },
+        platform_commands: {},
+        env: [],
+        artifact_patterns: ['*.apk'],
+      },
+      trigger_config: { events: [], branches: [] },
+      concurrency: { cancel_previous: false },
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/proj-1/pipelines',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          name: 'Mobile',
+          config_path: '.oore.yaml',
+          config_path_explicit: false,
+          execution_config: {
+            platforms: ['android'],
+            commands: { pre_build: [], build: [], post_build: [] },
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {},
+            env: [],
+            artifact_patterns: ['*.apk'],
+          },
+          trigger_config: { events: [], branches: [] },
+          concurrency: { cancel_previous: false },
+        }),
+      },
+    )
+  })
+
+  it('calls PATCH /v1/pipelines/{pipeline_id} with explicit mode', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, { pipeline: { id: 'pipe-1' } }),
+    )
+
+    await updatePipeline('https://ci.example.com', 'session-token', 'pipe-1', {
+      config_path: 'ci/mobile.yaml',
+      config_path_explicit: true,
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/pipelines/pipe-1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          config_path: 'ci/mobile.yaml',
+          config_path_explicit: true,
+        }),
+      },
+    )
+  })
+
+  it('calls validate pipeline endpoint with execution config payload', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, { valid: true, errors: [] }),
+    )
+
+    await validatePipeline('https://ci.example.com', 'session-token', {
+      config_path_explicit: false,
+      execution_config: {
+        platforms: ['android', 'ios'],
+        commands: { pre_build: [], build: ['echo custom'], post_build: [] },
+        platform_build_args: {
+          android: ['--build-number=$PROJECT_BUILD_NUMBER'],
+          ios: [],
+          macos: [],
+        },
+        platform_commands: {},
+        env: [{ key: 'APP_FLAVOR', value: 'dev' }],
+        artifact_patterns: ['*.apk', '*.ipa'],
+      },
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/pipelines/validate',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          config_path_explicit: false,
+          execution_config: {
+            platforms: ['android', 'ios'],
+            commands: { pre_build: [], build: ['echo custom'], post_build: [] },
+            platform_build_args: {
+              android: ['--build-number=$PROJECT_BUILD_NUMBER'],
+              ios: [],
+              macos: [],
+            },
+            platform_commands: {},
+            env: [{ key: 'APP_FLAVOR', value: 'dev' }],
+            artifact_patterns: ['*.apk', '*.ipa'],
+          },
+        }),
+      },
+    )
+  })
+
+  it('lists and fetches pipeline endpoints', async () => {
+    mockFetch.mockReturnValueOnce(mockJsonResponse(200, { pipelines: [], total: 0 }))
+    await listPipelines('https://ci.example.com', 'session-token', 'proj-1', {
+      limit: 10,
+      offset: 0,
+    })
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/proj-1/pipelines?limit=10',
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+
+    mockFetch.mockReturnValueOnce(
+      mockJsonResponse(200, { pipeline: { id: 'pipe-1' }, build_count: 0 }),
+    )
+    await getPipeline('https://ci.example.com', 'session-token', 'pipe-1')
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/pipelines/pipe-1',
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
   })
 })

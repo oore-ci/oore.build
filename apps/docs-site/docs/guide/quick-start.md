@@ -140,8 +140,42 @@ Once the state is `ready`, the setup endpoints are permanently disabled and the 
 1. Create a project/pipeline and trigger a build from the UI.
 2. Confirm build state moves out of `queued` within a few seconds.
 3. Open **Settings -> Runners** to confirm the runner status and heartbeat.
+4. Open **Settings -> Artifact Storage** and select `local`, `s3`, or `r2` for binary artifact downloads.
+
+### File-first config tip
+
+If your repository contains `.oore.yaml` (or `.oore.yml`), that file is the source of truth for commands/artifacts.
+
+If no file exists, oore.build uses the fallback execution config from the pipeline UI.
+
+If your repository contains `.fvmrc`, oore.build uses that Flutter version automatically.  
+If `.fvmrc` is missing, you can set a fallback Flutter version in the pipeline editor.
+
+Minimal example:
+
+```yaml
+version: 1
+flutter_version: 3.24.0
+platforms:
+  - android
+commands:
+  pre_build:
+    - flutter pub get
+  build:
+    - flutter build apk --release
+  post_build: []
+artifacts:
+  patterns:
+    - "*.apk"
+```
 
 If the build stays queued, check whether `OORED_RUNNER_MODE` is set to `external`. In `external` mode, start a runner manually (`make run-runner`) or switch back to default embedded mode.
+
+If Flutter commands fail due to toolchain issues, run:
+
+```bash
+make doctor
+```
 
 ## Setup state machine
 

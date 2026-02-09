@@ -5,6 +5,7 @@ pub mod builds;
 pub mod crypto;
 pub mod embedded_runner;
 pub mod extractors;
+pub mod instance_settings;
 pub mod integrations;
 pub mod logs;
 pub mod observability;
@@ -24,8 +25,8 @@ pub mod util;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware as axum_mw;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -38,7 +39,7 @@ use oore_contract::{
     SetupSessionRecord, SetupState, SetupStateFile, SetupStatus,
 };
 use serde_json::json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::CorsLayer;
 use zeroize::Zeroizing;
 
@@ -75,8 +76,8 @@ pub struct AppState {
     pub bootstrap_failures: Mutex<HashMap<String, u32>>,
     /// In-process job scheduler for runner dispatch.
     pub scheduler: Arc<scheduler::Scheduler>,
-    /// Optional S3-compatible storage client for artifacts.
-    pub storage: Option<storage::StorageClient>,
+    /// Runtime-configurable artifact storage backend.
+    pub storage: Arc<RwLock<storage::StorageBackend>>,
     /// In-memory store for short-lived SSE streaming tokens.
     pub stream_tokens: logs::StreamTokenStore,
 }
@@ -87,6 +88,36 @@ pub struct AppState {
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 const SETUP_SESSION_TTL_SECS: i64 = 30 * 60;
+
+fn resolve_cors_origins() -> Vec<HeaderValue> {
+    let raw_origins = std::env::var("OORE_CORS_ORIGINS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
+        .unwrap_or_else(|| "http://localhost:3000,https://ci.oore.build".to_string());
+
+    let mut parsed = Vec::new();
+    for origin in raw_origins.split(',') {
+        let trimmed = origin.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match trimmed.parse::<HeaderValue>() {
+            Ok(value) => parsed.push(value),
+            Err(err) => warn!(origin = trimmed, error = %err, "ignoring invalid CORS origin"),
+        }
+    }
+
+    if parsed.is_empty() {
+        vec![
+            "http://localhost:3000"
+                .parse()
+                .expect("localhost default origin must be valid"),
+        ]
+    } else {
+        parsed
+    }
+}
 
 /// Maximum number of concurrent pending OIDC auth requests.
 const MAX_PENDING_AUTH: usize = 1000;
@@ -850,10 +881,8 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         }
     }
 
-    // Initialize S3-compatible storage client if configured
-    let storage_client = storage::StorageConfig::from_env()
-        .ok()
-        .map(|cfg| storage::StorageClient::new(cfg));
+    // Initialize artifact storage backend from DB settings (or env fallback).
+    let storage_backend = storage::load_backend(store.pool(), &encryption_key).await;
 
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
@@ -865,7 +894,7 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         skip_oidc_discovery: _skip_oidc_discovery,
         bootstrap_failures: Mutex::new(HashMap::new()),
         scheduler: sched.clone(),
-        storage: storage_client,
+        storage: Arc::new(RwLock::new(storage_backend)),
         stream_tokens: logs::StreamTokenStore::new(),
     });
 
@@ -876,13 +905,20 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         background::start_background_tasks(pool, sched);
     }
 
-    // H1: CORS origin from env var, default to http://localhost:3000
-    let cors_origin = std::env::var("OORE_CORS_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    // CORS origins from env var(s), defaults to local web + hosted UI.
+    let cors_origins = resolve_cors_origins();
+    info!(origins = ?cors_origins, "configured CORS origins");
 
     let cors = CorsLayer::new()
-        .allow_origin([cors_origin.parse().expect("OORE_CORS_ORIGIN must be a valid header value")])
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        .allow_origin(cors_origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
 
     // Webhook routes are mounted OUTSIDE the CORS layer since they're called by providers
@@ -926,6 +962,17 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         .route("/v1/users/{user_id}/role", axum::routing::patch(users::update_user_role))
         .route("/v1/users/{user_id}", axum::routing::delete(users::delete_user))
         .route("/v1/users/{user_id}/enable", post(users::re_enable_user))
+        // Instance settings endpoints
+        .route(
+            "/v1/settings/artifact-storage",
+            get(instance_settings::get_artifact_storage_settings)
+                .put(instance_settings::update_artifact_storage_settings),
+        )
+        .route(
+            "/v1/settings/preferences",
+            get(instance_settings::get_instance_preferences)
+                .put(instance_settings::update_instance_preferences),
+        )
         // Integration management endpoints
         .route("/v1/integrations", get(integrations::list_integrations))
         .route("/v1/integrations/{id}", get(integrations::get_integration))
@@ -965,6 +1012,16 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         .route("/v1/runners/{runner_id}/jobs/{job_id}/artifacts", post(artifacts::create_artifact))
         .route("/v1/builds/{build_id}/artifacts", get(artifacts::list_artifacts))
         .route("/v1/artifacts/{artifact_id}/download-link", post(artifacts::generate_download_link))
+        .route(
+            "/v1/artifacts/local-upload/{token}",
+            axum::routing::put(artifacts::upload_local_artifact)
+                // Local artifact uploads can be large (APK/IPA), so disable default 2MB body cap.
+                .layer(DefaultBodyLimit::disable()),
+        )
+        // Backend-agnostic local signed download URL (preferred)
+        .route("/v1/artifacts/download/{token}", get(artifacts::download_local_artifact))
+        // Backward-compatible legacy local download path
+        .route("/v1/artifacts/local-download/{token}", get(artifacts::download_local_artifact))
         .layer(cors)
         .with_state(shared_state)
         // Merge webhook routes (outside CORS)

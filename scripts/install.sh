@@ -34,6 +34,15 @@ install_bun() {
   export PATH="$BUN_INSTALL/bin:$PATH"
 }
 
+install_fvm() {
+  if ! have_cmd brew; then
+    die 'fvm is required. Install Homebrew first, then run: brew tap leoafarias/fvm && brew install fvm'
+  fi
+  log 'Installing FVM via Homebrew...'
+  brew tap leoafarias/fvm
+  brew install fvm
+}
+
 ensure_dependency() {
   local cmd="$1"
   local installer="$2"
@@ -62,6 +71,7 @@ ensure_dependency curl true
 ensure_dependency rustc install_rust
 ensure_dependency cargo install_rust
 ensure_dependency bun install_bun
+ensure_dependency fvm install_fvm
 
 if ! xcode-select -p >/dev/null 2>&1; then
   log 'Xcode Command Line Tools are missing. Triggering installer prompt...'

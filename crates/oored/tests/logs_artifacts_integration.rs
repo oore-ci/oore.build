@@ -571,6 +571,68 @@ async fn test_create_artifact_cross_runner_blocked() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+#[tokio::test]
+async fn test_create_artifact_checksum_dedup() {
+    let (app, _pool, session_token, runner_id, runner_token, build_id) = full_scaffold().await;
+
+    let body = serde_json::json!({
+        "name": "release.apk",
+        "artifact_type": "apk",
+        "file_size": 42,
+        "checksum": "same-checksum-for-dedup"
+    });
+
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let first_json = body_json(resp.into_body()).await;
+    let first_id = first_json["artifact"]["id"].as_str().unwrap().to_string();
+
+    let body = serde_json::json!({
+        "name": "release-copy.apk",
+        "artifact_type": "apk",
+        "file_size": 99,
+        "checksum": "same-checksum-for-dedup"
+    });
+
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let second_json = body_json(resp.into_body()).await;
+    let second_id = second_json["artifact"]["id"].as_str().unwrap();
+
+    assert_eq!(second_id, first_id);
+    assert_eq!(second_json["upload_url"].as_str().unwrap(), "");
+
+    let req = Request::builder()
+        .uri(format!("/v1/builds/{build_id}/artifacts"))
+        .method("GET")
+        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let artifacts = json["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0]["id"].as_str().unwrap(), first_id);
+}
+
 // ── Artifact listing tests ──────────────────────────────────────
 
 #[tokio::test]

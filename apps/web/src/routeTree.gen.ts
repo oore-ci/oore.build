@@ -20,6 +20,8 @@ import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
+import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
+import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings/integrations/index'
@@ -84,6 +86,16 @@ const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   path: '/settings/runners',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsPreferencesRoute = SettingsPreferencesRouteImport.update({
+  id: '/settings/preferences',
+  path: '/settings/preferences',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsArtifactsRoute = SettingsArtifactsRouteImport.update({
+  id: '/settings/artifacts',
+  path: '/settings/artifacts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BuildsBuildIdRoute = BuildsBuildIdRouteImport.update({
   id: '/builds/$buildId',
   path: '/builds/$buildId',
@@ -136,6 +148,8 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/artifacts': typeof SettingsArtifactsRoute
+  '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
@@ -156,6 +170,8 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/artifacts': typeof SettingsArtifactsRoute
+  '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
@@ -178,6 +194,8 @@ export interface FileRoutesById {
   '/setup': typeof SetupRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/artifacts': typeof SettingsArtifactsRoute
+  '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
@@ -201,6 +219,8 @@ export interface FileRouteTypes {
     | '/setup'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/artifacts'
+    | '/settings/preferences'
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
@@ -221,6 +241,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/artifacts'
+    | '/settings/preferences'
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
@@ -242,6 +264,8 @@ export interface FileRouteTypes {
     | '/setup'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/artifacts'
+    | '/settings/preferences'
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
@@ -264,6 +288,8 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
   BuildsBuildIdRoute: typeof BuildsBuildIdRoute
+  SettingsArtifactsRoute: typeof SettingsArtifactsRoute
+  SettingsPreferencesRoute: typeof SettingsPreferencesRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   BuildsIndexRoute: typeof BuildsIndexRoute
@@ -355,6 +381,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRunnersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/preferences': {
+      id: '/settings/preferences'
+      path: '/settings/preferences'
+      fullPath: '/settings/preferences'
+      preLoaderRoute: typeof SettingsPreferencesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/artifacts': {
+      id: '/settings/artifacts'
+      path: '/settings/artifacts'
+      fullPath: '/settings/artifacts'
+      preLoaderRoute: typeof SettingsArtifactsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/builds/$buildId': {
       id: '/builds/$buildId'
       path: '/builds/$buildId'
@@ -436,6 +476,8 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
   BuildsBuildIdRoute: BuildsBuildIdRoute,
+  SettingsArtifactsRoute: SettingsArtifactsRoute,
+  SettingsPreferencesRoute: SettingsPreferencesRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   BuildsIndexRoute: BuildsIndexRoute,

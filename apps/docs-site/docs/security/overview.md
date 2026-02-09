@@ -38,10 +38,10 @@ OIDC client secrets are encrypted before storage using **AES-256-GCM** (Galois/C
 
 ### Encryption Key
 
-- 256-bit key stored at `~/Library/Application Support/oore/encryption.key`
+- macOS default: 256-bit key stored in Keychain (`service=build.oore.oored`, `account=encryption-key-v1`)
+- Legacy fallback/migration path: `~/Library/Application Support/oore/encryption.key` (`0o600`)
 - Generated using `SystemRandom` (cryptographic RNG from the `ring` crate)
-- File permissions set to `0o600` (owner read/write only)
-- Auto-generated on first use if it does not exist
+- Auto-generated on first use if no key exists
 
 ### Encryption Format
 
@@ -56,7 +56,7 @@ base64( nonce[12 bytes] || ciphertext || GCM_tag[16 bytes] )
 - Decryption requires the correct key and validates both the nonce and authentication tag
 
 ::: warning
-If the encryption key file is lost or deleted, encrypted OIDC client secrets cannot be recovered. The OIDC provider must be reconfigured.
+If the active encryption key is lost (Keychain item removed and no usable fallback), encrypted secrets cannot be recovered and must be reconfigured.
 :::
 
 ## Role-Based Access Control {#rbac}

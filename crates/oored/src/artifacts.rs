@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use oore_contract::{
     ApiError, Artifact, ArtifactDownloadLinkResponse, CreateArtifactRequest,
@@ -28,6 +30,15 @@ const DOWNLOAD_URL_TTL_SECS: u64 = 15 * 60;
 
 /// Valid artifact types.
 const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
+
+fn is_unique_constraint(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            db_err.message().contains("UNIQUE constraint failed")
+        }
+        _ => false,
+    }
+}
 
 // ── Row conversion ──────────────────────────────────────────────
 
@@ -81,11 +92,11 @@ pub async fn create_artifact(
 
     // Validate name length
     let name = req.name.trim();
-    if name.is_empty() || name.len() > 255 {
+    if name.is_empty() || name.len() > 255 || name.contains('/') || name.contains('\\') {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_name",
-            "Artifact name must be between 1 and 255 characters",
+            "Artifact name must be 1-255 characters and must not contain path separators",
         ));
     }
 
@@ -113,6 +124,47 @@ pub async fn create_artifact(
     }
 
     let build_id: String = build_row.get("id");
+    let checksum = req
+        .checksum
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    // Deduplicate artifacts within a build by checksum when available.
+    // This avoids duplicate attachments when the same file is discovered more than once.
+    if let Some(checksum_value) = &checksum {
+        if let Some(existing_row) = sqlx::query(
+            "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
+             ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(&build_id)
+        .bind(checksum_value)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to check duplicate artifact checksum");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to create artifact",
+            )
+        })?
+        {
+            let artifact = row_to_artifact(&existing_row);
+            info!(
+                build_id = %build_id,
+                checksum = %checksum_value,
+                artifact_id = %artifact.id,
+                "artifact deduplicated by checksum"
+            );
+            return Ok(Json(CreateArtifactResponse {
+                artifact,
+                upload_url: String::new(),
+            }));
+        }
+    }
+
     let artifact_id = Uuid::new_v4().to_string();
     let now = now_unix();
 
@@ -122,26 +174,25 @@ pub async fn create_artifact(
     let metadata_str =
         serde_json::to_string(&req.metadata).unwrap_or_else(|_| "{}".to_string());
 
-    // Generate upload URL first — if this fails we avoid leaving an orphan DB row
-    let upload_url = match &state.storage {
-        Some(storage) => {
-            storage
-                .generate_upload_url(&file_path, UPLOAD_URL_TTL_SECS)
-                .await
-                .map_err(|e| {
-                    error!(error = %e, "failed to generate upload URL");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "storage_error",
-                        "Failed to generate upload URL",
-                    )
-                })?
-        }
-        None => String::new(),
+    // Generate upload URL first — if this fails we avoid leaving an orphan DB row.
+    let upload_url = {
+        let storage = state.storage.read().await;
+        storage
+            .generate_upload_url(&file_path, UPLOAD_URL_TTL_SECS)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to generate upload URL");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "Failed to generate upload URL",
+                )
+            })?
+            .unwrap_or_default()
     };
 
     // Insert artifact row only after URL generation succeeds
-    sqlx::query(
+    let insert_result = sqlx::query(
         "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, checksum, metadata, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
@@ -151,15 +202,55 @@ pub async fn create_artifact(
     .bind(&req.artifact_type)
     .bind(&file_path)
     .bind(req.file_size)
-    .bind(&req.checksum)
+    .bind(&checksum)
     .bind(&metadata_str)
     .bind(now)
     .execute(pool)
-    .await
-    .map_err(|e| {
+    .await;
+
+    if let Err(e) = insert_result {
+        // If another request inserted the same checksum concurrently, return the existing artifact.
+        if is_unique_constraint(&e) {
+            if let Some(checksum_value) = &checksum {
+                if let Some(existing_row) = sqlx::query(
+                    "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
+                     ORDER BY created_at ASC LIMIT 1",
+                )
+                .bind(&build_id)
+                .bind(checksum_value)
+                .fetch_optional(pool)
+                .await
+                .map_err(|lookup_err| {
+                    error!(error = %lookup_err, "failed to fetch deduplicated artifact");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to create artifact",
+                    )
+                })?
+                {
+                    let artifact = row_to_artifact(&existing_row);
+                    info!(
+                        build_id = %build_id,
+                        checksum = %checksum_value,
+                        artifact_id = %artifact.id,
+                        "artifact deduplicated by checksum after concurrent insert"
+                    );
+                    return Ok(Json(CreateArtifactResponse {
+                        artifact,
+                        upload_url: String::new(),
+                    }));
+                }
+            }
+        }
+
         error!(error = %e, "failed to insert artifact");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to create artifact")
-    })?;
+        return Err(api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to create artifact",
+        ));
+    }
 
     info!(
         artifact_id = %artifact_id,
@@ -176,7 +267,7 @@ pub async fn create_artifact(
         artifact_type: req.artifact_type,
         file_path,
         file_size: req.file_size,
-        checksum: req.checksum,
+        checksum,
         metadata: req.metadata,
         created_at: now,
     };
@@ -238,25 +329,27 @@ pub async fn generate_download_link(
 
     let file_path: String = row.get("file_path");
 
-    let storage = state.storage.as_ref().ok_or_else(|| {
-        api_err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "storage_not_configured",
-            "S3 storage is not configured. Artifact downloads require S3-compatible storage.",
-        )
-    })?;
-
-    let download_url = storage
-        .generate_download_url(&file_path, DOWNLOAD_URL_TTL_SECS)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to generate download URL");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "storage_error",
-                "Failed to generate download URL",
-            )
-        })?;
+    let download_url = {
+        let storage = state.storage.read().await;
+        storage
+            .generate_download_url(&file_path, DOWNLOAD_URL_TTL_SECS)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to generate download URL");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "Failed to generate download URL",
+                )
+            })?
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "storage_not_configured",
+                    "Artifact storage backend is not configured.",
+                )
+            })?
+    };
 
     let now = now_unix();
     let expires_at = now + DOWNLOAD_URL_TTL_SECS as i64;
@@ -288,4 +381,82 @@ pub async fn generate_download_link(
         download_url,
         expires_at,
     }))
+}
+
+/// `PUT /v1/artifacts/local-upload/{token}` — signed local artifact upload endpoint.
+///
+/// Used only when local artifact storage backend is active.
+pub async fn upload_local_artifact(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let stored = {
+        let storage = state.storage.read().await;
+        storage
+            .handle_local_upload(&token, &body)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed local artifact upload");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "Failed to store artifact",
+                )
+            })?
+    };
+
+    if !stored {
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_upload_token",
+            "Upload token is invalid or expired",
+        ));
+    }
+
+    Ok(StatusCode::OK)
+}
+
+/// `GET /v1/artifacts/local-download/{token}` — signed local artifact download endpoint.
+///
+/// Used only when local artifact storage backend is active.
+pub async fn download_local_artifact(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    let payload = {
+        let storage = state.storage.read().await;
+        storage
+            .handle_local_download(&token)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed local artifact download");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "Failed to load artifact",
+                )
+            })?
+    };
+
+    let Some(payload) = payload else {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Artifact not found or download token expired",
+        ));
+    };
+
+    let disposition = format!("attachment; filename=\"{}\"", payload.file_name);
+    let mut response = (StatusCode::OK, payload.bytes).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok(response)
 }

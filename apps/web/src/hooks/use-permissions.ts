@@ -16,7 +16,7 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'integrations:read', 'integrations:write', 'integrations:delete',
   ]),
   admin: new Set([
-    'instance_settings:read',
+    'instance_settings:read', 'instance_settings:write',
     'users:read', 'users:write', 'users:invite', 'users:delete', 'users:enable',
     'projects:read', 'projects:write', 'projects:delete',
     'pipelines:read', 'pipelines:write', 'pipelines:delete',

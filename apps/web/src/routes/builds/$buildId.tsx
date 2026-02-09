@@ -2,16 +2,22 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  AlertCircleIcon,
   ArrowDown01Icon,
+  Clock01Icon,
   Download04Icon,
   File01Icon,
+  GitBranchIcon,
+  GitCommitIcon,
   InformationCircleIcon,
   Loading03Icon,
+  PlayIcon,
+  StopIcon,
   TimeQuarterPassIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import type { Artifact, BuildLogChunk } from '@/lib/types'
+import type { Artifact, BuildLogChunk, BuildStatus, StepResult } from '@/lib/types'
 import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
 import {
   isTerminalStatus,
@@ -28,9 +34,11 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -99,9 +107,14 @@ function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
 function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const [knownTerminal, setKnownTerminal] = useState(false)
-  const { data, isLoading, error } = useBuild(buildId, {
+  const buildQuery = useBuild(buildId, {
     refetchInterval: knownTerminal ? false : 3000,
   })
+  const { data, isLoading, error, refetch: refetchBuild } = buildQuery
+  const artifactsQuery = useArtifacts(buildId, {
+    refetchInterval: knownTerminal ? false : 3000,
+  })
+  const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
 
   const buildStatus = data?.build.status
@@ -128,6 +141,11 @@ function BuildDetailPage() {
       },
     })
   }
+
+  const handleStreamDone = useCallback(() => {
+    void refetchBuild()
+    void refetchArtifacts()
+  }, [refetchBuild, refetchArtifacts])
 
   if (isLoading) {
     return (
@@ -159,6 +177,13 @@ function BuildDetailPage() {
   const duration =
     build.started_at
       ? ((build.finished_at ?? Math.floor(Date.now() / 1000)) - build.started_at)
+      : null
+  const snapshot = build.config_snapshot as Record<string, unknown>
+  const configPath =
+    typeof snapshot.config_path === 'string' ? snapshot.config_path : null
+  const resolutionPolicy =
+    typeof snapshot.config_resolution_policy === 'string'
+      ? snapshot.config_resolution_policy
       : null
 
   return (
@@ -197,71 +222,154 @@ function BuildDetailPage() {
         }
       />
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Queued</CardTitle>
+            <CardTitle className="text-base">Build Details</CardTitle>
+            <CardDescription>Build identity and trigger context</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm font-medium">{relativeTime(build.queued_at)}</p>
-            <p className="text-xs text-muted-foreground">{new Date(build.queued_at * 1000).toLocaleString()}</p>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <HugeiconsIcon icon={GitBranchIcon} size={14} />
+                  Branch
+                </span>
+                <code className="font-mono text-xs">{build.branch ?? 'n/a'}</code>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <HugeiconsIcon icon={GitCommitIcon} size={14} />
+                  Commit
+                </span>
+                <code className="font-mono text-xs">{build.commit_sha ?? 'n/a'}</code>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Runner</span>
+                <span className="font-mono text-xs">{build.runner_id ?? 'unassigned'}</span>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Trigger</span>
+                <span className="capitalize">{build.trigger_type.replaceAll('_', ' ')}</span>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Build ID</span>
+                <span className="font-mono text-xs">{build.id}</span>
+              </div>
+              {configPath ? (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Config path</span>
+                    <span className="font-mono text-xs">{configPath}</span>
+                  </div>
+                </>
+              ) : null}
+              {resolutionPolicy ? (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Policy</span>
+                    <Badge variant="outline" className="font-mono text-[11px]">
+                      {resolutionPolicy}
+                    </Badge>
+                  </div>
+                </>
+              ) : null}
+              {build.exit_code != null && build.exit_code !== 0 ? (
+                <>
+                  <Separator />
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="inline-flex items-center gap-2 text-destructive">
+                      <HugeiconsIcon icon={AlertCircleIcon} size={14} />
+                      Exit code
+                    </span>
+                    <span className="font-mono text-xs text-destructive">{build.exit_code}</span>
+                  </div>
+                </>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
+
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Runner</CardTitle>
+            <CardTitle className="text-base">Timing</CardTitle>
+            <CardDescription>Build lifecycle timestamps</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="font-mono text-xs">{build.runner_id ?? 'unassigned'}</p>
-            <p className="text-xs text-muted-foreground">Claimed runner for this build</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Commit</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="font-mono text-xs">{build.commit_sha ?? 'not provided'}</p>
-            <p className="text-xs text-muted-foreground">Trigger actor: {build.trigger_actor ?? 'n/a'}</p>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <HugeiconsIcon icon={Clock01Icon} size={14} />
+                  Queued
+                </span>
+                <div className="text-right">
+                  <div>{new Date(build.queued_at * 1000).toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">{relativeTime(build.queued_at)}</div>
+                </div>
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <HugeiconsIcon icon={PlayIcon} size={14} />
+                  Started
+                </span>
+                {build.started_at ? (
+                  <div className="text-right">
+                    <div>{new Date(build.started_at * 1000).toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground">{relativeTime(build.started_at)}</div>
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground">Not started</span>
+                )}
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <span className="inline-flex items-center gap-2 text-muted-foreground">
+                  <HugeiconsIcon icon={StopIcon} size={14} />
+                  Finished
+                </span>
+                {build.finished_at ? (
+                  <div className="text-right">
+                    <div>{new Date(build.finished_at * 1000).toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground">{relativeTime(build.finished_at)}</div>
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground">
+                    {isTerminal ? 'Not finished' : 'In progress...'}
+                  </span>
+                )}
+              </div>
+              {duration != null ? (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Duration</span>
+                    <span className="font-medium">{formatDuration(duration)}</span>
+                  </div>
+                </>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
       </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Build metadata</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">Build ID</TableCell>
-                <TableCell className="font-mono text-xs">{build.id}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Branch</TableCell>
-                <TableCell className="font-mono text-xs">{build.branch ?? 'n/a'}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Commit SHA</TableCell>
-                <TableCell className="font-mono text-xs">{build.commit_sha ?? 'n/a'}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Started</TableCell>
-                <TableCell>{build.started_at ? new Date(build.started_at * 1000).toLocaleString() : 'not started'}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Finished</TableCell>
-                <TableCell>{build.finished_at ? new Date(build.finished_at * 1000).toLocaleString() : 'not finished'}</TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <BuildLogsCard
+        buildId={buildId}
+        buildStatus={build.status}
+        stepResults={build.step_results ?? []}
+        onStreamDone={handleStreamDone}
+      />
 
-      <BuildLogsCard buildId={buildId} isTerminal={isTerminal} />
-
-      <ArtifactsCard buildId={buildId} />
+      <ArtifactsCard
+        artifacts={artifactsQuery.data?.artifacts ?? []}
+        isLoading={artifactsQuery.isLoading}
+      />
 
       <Card>
         <CardHeader>
@@ -312,15 +420,33 @@ function BuildDetailPage() {
 
 function BuildLogsCard({
   buildId,
-  isTerminal,
+  buildStatus,
+  stepResults,
+  onStreamDone,
 }: {
   buildId: string
-  isTerminal: boolean
+  buildStatus: BuildStatus
+  stepResults: Array<StepResult>
+  onStreamDone: () => void
 }) {
+  type StepGroup = {
+    name: string
+    status: string
+    command?: string
+    durationMs?: number
+    logs: Array<BuildLogChunk>
+  }
+
+  const isTerminal = isTerminalStatus(buildStatus)
   const streamEnabled = !isTerminal
-  const { logs: streamLogs, isStreaming } = useLogStream(buildId, streamEnabled)
+  const {
+    logs: streamLogs,
+    isStreaming,
+    error: streamError,
+  } = useLogStream(buildId, streamEnabled, { onDone: onStreamDone })
   const { data: fullLogsData, isLoading: logsLoading } = useBuildLogs(buildId)
 
+  const [selectedStep, setSelectedStep] = useState<string>('')
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -331,11 +457,93 @@ function BuildLogsCard({
     return fullLogsData?.logs ?? []
   }, [streamEnabled, streamLogs, isTerminal, fullLogsData?.logs])
 
+  const { stepGroups, allVisibleLogs } = useMemo(() => {
+    const groups = new Map<string, StepGroup>()
+    const order: Array<string> = []
+    const visibleLogs: Array<BuildLogChunk> = []
+    let activeStep: string | null = null
+
+    const ensureGroup = (name: string): StepGroup => {
+      const existing = groups.get(name)
+      if (existing) return existing
+      const created: StepGroup = {
+        name,
+        status: 'pending',
+        logs: [],
+      }
+      groups.set(name, created)
+      order.push(name)
+      return created
+    }
+
+    for (const chunk of logs) {
+      const marker = parseStepMarker(chunk.content)
+      if (marker) {
+        const group = ensureGroup(marker.name)
+        if (marker.event === 'start') {
+          group.status = 'running'
+          if (marker.command) group.command = marker.command
+          activeStep = marker.name
+        } else {
+          group.status = marker.status ?? 'succeeded'
+          activeStep = activeStep === marker.name ? null : activeStep
+        }
+        continue
+      }
+
+      visibleLogs.push(chunk)
+      if (activeStep) {
+        ensureGroup(activeStep).logs.push(chunk)
+      }
+    }
+
+    for (const result of stepResults) {
+      const group = ensureGroup(result.name)
+      group.status = result.status
+      group.durationMs = result.duration_ms
+    }
+
+    return {
+      stepGroups: order
+        .map((name) => groups.get(name))
+        .filter(Boolean) as Array<StepGroup>,
+      allVisibleLogs: visibleLogs,
+    }
+  }, [logs, stepResults])
+
+  useEffect(() => {
+    const hasSelected =
+      selectedStep === 'all' || stepGroups.some((group) => group.name === selectedStep)
+    if (hasSelected) return
+    const running = stepGroups.find((group) => group.status === 'running')
+    setSelectedStep(running?.name ?? (stepGroups[0]?.name ?? 'all'))
+  }, [stepGroups, selectedStep])
+
+  const selectedLogs = useMemo(() => {
+    if (selectedStep === 'all') return allVisibleLogs
+    return stepGroups.find((group) => group.name === selectedStep)?.logs ?? []
+  }, [selectedStep, allVisibleLogs, stepGroups])
+
+  const selectedStepMeta = useMemo(() => {
+    if (selectedStep === 'all') return null
+    const group = stepGroups.find((entry) => entry.name === selectedStep)
+    if (!group) return null
+    const envPreview = group.logs.find((chunk) =>
+      chunk.content.startsWith('# env: '),
+    )?.content
+    return {
+      command: group.command,
+      envPreview,
+    }
+  }, [selectedStep, stepGroups])
+
+  const currentStep = stepGroups.find((group) => group.status === 'running')
+
   useEffect(() => {
     if (autoScroll && scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight
     }
-  }, [logs, autoScroll])
+  }, [selectedLogs, autoScroll])
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
@@ -357,7 +565,7 @@ function BuildLogsCard({
               </span>
             ) : null}
           </CardTitle>
-          {!autoScroll && logs.length > 0 ? (
+          {!autoScroll && selectedLogs.length > 0 ? (
             <Button
               variant="ghost"
               size="sm"
@@ -373,32 +581,150 @@ function BuildLogsCard({
             </Button>
           ) : null}
         </div>
+        {currentStep ? (
+          <p className="text-xs text-muted-foreground">
+            Current step: <span className="font-medium">{currentStep.name}</span>
+          </p>
+        ) : null}
       </CardHeader>
       <CardContent>
-        {logsLoading && !streamEnabled ? (
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-4 w-5/6" />
-          </div>
-        ) : logs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No logs yet.</p>
-        ) : (
-          <div
-            ref={scrollContainerRef}
-            onScroll={handleScroll}
-            className="max-h-[600px] overflow-y-auto border bg-muted/30 p-4"
-          >
-            <pre className="font-mono text-xs leading-relaxed">
-              {logs.map((chunk) => (
-                <LogLine key={chunk.sequence} chunk={chunk} />
+        <div
+          className={
+            stepGroups.length > 0
+              ? 'grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]'
+              : 'space-y-3'
+          }
+        >
+          {stepGroups.length > 0 ? (
+            <aside className="space-y-2 rounded-md border bg-muted/20 p-2">
+              <Button
+                size="sm"
+                variant={selectedStep === 'all' ? 'default' : 'ghost'}
+                className="w-full justify-between"
+                onClick={() => setSelectedStep('all')}
+              >
+                <span>All logs</span>
+                <span className="text-xs text-muted-foreground">{allVisibleLogs.length}</span>
+              </Button>
+              {stepGroups.map((group) => (
+                <Button
+                  key={group.name}
+                  size="sm"
+                  variant={selectedStep === group.name ? 'default' : 'ghost'}
+                  className="w-full justify-between gap-2"
+                  onClick={() => setSelectedStep(group.name)}
+                  title={group.command}
+                >
+                  <span className="truncate">{group.name}</span>
+                  <span className="inline-flex items-center gap-2">
+                    <Badge variant={stepStatusVariant(group.status)}>{group.status}</Badge>
+                    {group.durationMs != null ? (
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatDuration(group.durationMs / 1000)}
+                      </span>
+                    ) : null}
+                  </span>
+                </Button>
               ))}
-            </pre>
+            </aside>
+          ) : null}
+
+          <div className="space-y-3">
+            {streamError ? (
+              <Alert>
+                <HugeiconsIcon icon={InformationCircleIcon} size={14} />
+                <AlertDescription>{streamError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {selectedStepMeta?.command ? (
+              <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Command
+                  </p>
+                  <p className="font-mono text-xs">$ {selectedStepMeta.command}</p>
+                </div>
+                {selectedStepMeta.envPreview ? (
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Env
+                    </p>
+                    <p className="font-mono text-xs">{selectedStepMeta.envPreview}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {logsLoading && !streamEnabled ? (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-5/6" />
+              </div>
+            ) : selectedLogs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No logs yet.</p>
+            ) : (
+              <div
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
+                className="max-h-[600px] overflow-y-auto border bg-muted/30 p-4"
+              >
+                <pre className="font-mono text-xs leading-relaxed">
+                  {selectedLogs.map((chunk) => (
+                    <LogLine key={chunk.sequence} chunk={chunk} />
+                  ))}
+                </pre>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </CardContent>
     </Card>
   )
+}
+
+function parseStepMarker(content: string): {
+  event: 'start' | 'end'
+  name: string
+  status?: string
+  command?: string
+} | null {
+  const prefix = '[oore-step] '
+  if (!content.startsWith(prefix)) return null
+  try {
+    const raw = content.slice(prefix.length)
+    const parsed = JSON.parse(raw) as {
+      event?: string
+      name?: string
+      status?: string
+      command?: string
+    }
+    if (
+      (parsed.event === 'start' || parsed.event === 'end') &&
+      parsed.name?.trim()
+    ) {
+      return {
+        event: parsed.event,
+        name: parsed.name.trim(),
+        status: parsed.status?.trim(),
+        command: parsed.command?.trim(),
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function stepStatusVariant(status: string) {
+  const normalized = status.trim().toLowerCase()
+  if (normalized === 'running') return 'info'
+  if (normalized === 'succeeded') return 'success'
+  if (normalized === 'failed' || normalized === 'canceled' || normalized === 'timed_out') {
+    return 'destructive'
+  }
+  return 'outline'
 }
 
 function LogLine({ chunk }: { chunk: BuildLogChunk }) {
@@ -413,8 +739,13 @@ function LogLine({ chunk }: { chunk: BuildLogChunk }) {
   )
 }
 
-function ArtifactsCard({ buildId }: { buildId: string }) {
-  const { data, isLoading } = useArtifacts(buildId)
+function ArtifactsCard({
+  artifacts,
+  isLoading,
+}: {
+  artifacts: Array<Artifact>
+  isLoading: boolean
+}) {
   const downloadMutation = useArtifactDownloadLink()
 
   function handleDownload(artifactId: string, name: string) {
@@ -442,7 +773,7 @@ function ArtifactsCard({ buildId }: { buildId: string }) {
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
-        ) : !data?.artifacts.length ? (
+        ) : !artifacts.length ? (
           <p className="text-sm text-muted-foreground">No artifacts.</p>
         ) : (
           <Table>
@@ -456,7 +787,7 @@ function ArtifactsCard({ buildId }: { buildId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.artifacts.map((artifact) => (
+              {artifacts.map((artifact) => (
                 <TableRow key={artifact.id}>
                   <TableCell className="font-medium">{artifact.name}</TableCell>
                   <TableCell>

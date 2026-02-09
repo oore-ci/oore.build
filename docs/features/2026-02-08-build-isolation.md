@@ -6,79 +6,74 @@
 
 ## Problem
 
-Build execution must be isolated to prevent interference between concurrent builds and ensure deterministic cleanup. Without isolation, concurrent builds on the same runner can corrupt each other's state through shared directories, environment variables, or leftover files. Orphaned workspaces from crashed builds waste disk space and can leak sensitive material such as signing keys. The platform contract (section 16) mandates process-level isolation with ephemeral workspaces and deterministic cleanup.
+Build execution must be isolated to prevent interference between concurrent builds and ensure deterministic cleanup. Without isolation, concurrent builds on the same runner can corrupt each other's state through shared directories, environment variables, or leftover files.
 
 ## User Impact
 
-- **Developers** benefit from deterministic builds. Each build executes in a clean, dedicated workspace with no residual state from previous builds. Build results are reproducible regardless of runner history.
-- **Operators** do not need to manually clean build directories. Workspaces are automatically destroyed after completion, whether the build succeeds, fails, times out, or the runner crashes.
-- **Admins** can trust the single-tenant isolation model: one organization per backend instance, with process-level separation between concurrent builds on the same host.
+- **Developers** get deterministic, clean workspaces for every build.
+- **Operators** do not need manual workspace cleanup after failures.
+- **Admins** keep single-tenant process isolation guarantees in V1.
+- **Pipeline authors** get deterministic execution planning:
+  - repository config (`.oore.yaml` / `.oore.yml`) is authoritative when present
+  - UI fallback config is used only when repository config is absent
 
 ## UI Changes
 
-No direct UI changes in this phase. Build detail views (from Phase 2) already display build status and step-level results. Future phases may surface workspace path and per-step timing in the build detail UI.
+No direct isolation UI changes. Build detail and pipeline detail pages now expose execution source policy and fallback config summary.
 
 ## API Changes
 
-Step results are reported via `POST /v1/runners/{runner_id}/jobs/{job_id}/status` and include per-step execution details:
+Build runtime consumes immutable `config_snapshot` captured at build creation time.
 
-```json
-{
-  "status": "succeeded",
-  "steps": [
-    {
-      "name": "checkout",
-      "status": "succeeded",
-      "exit_code": 0,
-      "started_at": "2026-02-08T10:00:00Z",
-      "finished_at": "2026-02-08T10:00:12Z",
-      "duration_ms": 12000
-    },
-    {
-      "name": "build",
-      "status": "succeeded",
-      "exit_code": 0,
-      "started_at": "2026-02-08T10:00:12Z",
-      "finished_at": "2026-02-08T10:03:45Z",
-      "duration_ms": 213000
-    }
-  ]
-}
-```
+Snapshot v2 includes:
 
-StepResult schema fields: `name` (string), `status` (succeeded | failed | skipped), `exit_code` (integer, nullable for skipped steps), `started_at` (Unix timestamp, integer), `finished_at` (Unix timestamp, integer), `duration_ms` (integer).
+- `snapshot_version: 2`
+- `config_resolution_policy: file_first_ui_fallback`
+- `config_path`
+- `config_path_explicit`
+- `ui_execution_config`
+- trigger metadata (`trigger_type`, `commit_sha`, `branch`, `repo_url`, `captured_at`)
 
-Config snapshot (immutable JSON captured at build creation time in Phase 2) drives execution. The runner reads the snapshot to determine `config_path`, `repo_url`, `commit_sha`, `branch`, and `trigger_type`. The snapshot is never modified during execution.
+Runner execution resolution:
 
-Between build steps, the runner polls `GET /v1/runners/{runner_id}/jobs/{job_id}` to check if the build has been canceled or timed out. If the build status is terminal, execution is aborted immediately.
+1. If `config_path_explicit=true`, check explicit path only.
+2. Else check `.oore.yaml`, then `.oore.yml`.
+3. If file exists, parse strict YAML schema and execute it.
+4. If file missing, execute `ui_execution_config` fallback from snapshot.
+5. If file exists but is invalid, fail build immediately (no silent fallback).
+6. Flutter version resolution: `.fvmrc` in repo wins; otherwise use `ui_execution_config.flutter_version`.
+
+Staged execution model (V1):
+
+- `pre_build`
+- `build`
+- `post_build`
+
+Default Flutter commands are generated per selected platform, and custom build commands run after defaults.
+When Flutter version is resolved, runner executes `fvm use <version> --force` first and runs Flutter/Dart commands through `fvm`.
 
 ## Security Considerations
 
-- **Process-level isolation** (V1): each build runs as a child process under the runner's OS user. Per the platform contract section 16, VM/container isolation is deferred post-V1.
-- **Dedicated workspace directory**: each build gets a unique directory at `/tmp/oore-builds/{build_id}/`. No two builds share a workspace.
-- **No shared state**: concurrent builds on the same runner use separate workspace directories, separate process trees, and separate environment variable sets.
-- **Deterministic cleanup**: workspace is destroyed after build completion via RAII-style cleanup (Rust `Drop` or `scopeguard`). Cleanup executes even on build failure, runner panic, or cancellation.
-- **Single-tenant trust model**: V1 assumes one organization per backend instance. All builds on a runner belong to the same trust boundary. Cross-tenant isolation is not required.
-- **Git credentials**: the runner performs `git clone` using the integration's stored credentials (GitHub App installation token or GitLab access token). Credentials are passed via environment variable or CLI argument, not persisted in the workspace. Future phases will use ephemeral SSH keys.
-- **Signing material**: ephemeral keychain material (for iOS/macOS code signing) is scoped to the build workspace and destroyed with it. This prevents signing key leakage between builds.
+- **Process-level isolation**: each build runs in its own child process tree.
+- **Dedicated workspace**: `/tmp/oore-builds/{build_id}`.
+- **Deterministic cleanup**: workspace removed at end of run (including failures/cancellations).
+- **Fail-fast config validation**: malformed repo config fails build immediately, preventing accidental fallback to stale UI settings.
+- **Immutable snapshot**: fallback execution settings are captured at build creation time and cannot drift mid-run.
 
 ## Migration and Rollout
 
-- No daemon-side schema changes or migrations required. Build isolation is entirely runner-side behavior.
-- Runner execution engine is implemented in the `oore runner start` CLI command. The runner binary handles workspace creation, git checkout, step execution, result reporting, and cleanup.
-- Workspace uses the `/tmp/oore-builds/` prefix by default. A configurable workspace root may be added in future phases.
-- The step executor runs build steps sequentially with fail-fast behavior: if any step exits with a non-zero code, subsequent steps are skipped and the build transitions to `failed`.
+- Isolation model remains runner-side with no breaking runtime contract changes.
+- Build snapshot format moved from v1 to v2 (additive fields).
+- Existing pipelines receive seeded fallback config defaults via migration 009.
 
 ## Acceptance Criteria
 
-- [ ] Each build gets a unique ephemeral workspace directory under /tmp/oore-builds/{build_id}/
-- [ ] Git checkout (shallow clone) works with the branch and commit SHA from the config snapshot
-- [ ] Build steps execute sequentially with fail-fast behavior (non-zero exit skips remaining steps)
-- [ ] Step-level timing (started_at, finished_at, duration_ms) and exit codes are captured and reported
-- [ ] Workspace is always cleaned up, even on build failure or runner crash
-- [ ] No file leakage between concurrent builds on the same runner
-- [ ] Config snapshot drives execution (immutable, captured at trigger time)
-- [ ] Step results are reported to the daemon via POST /v1/runners/{id}/jobs/{job_id}/status
+- [x] Each build uses a unique ephemeral workspace under `/tmp/oore-builds/{build_id}`.
+- [x] Checkout uses commit-pinned fetch when `commit_sha` is present, branch fallback otherwise.
+- [x] Runner resolves config source as file-first with UI fallback only when file is absent.
+- [x] Invalid repository YAML fails the build immediately.
+- [x] Stage results are captured with stage-aware names (`pre_build-*`, `build-*`, `post_build-*`).
+- [x] Workspace cleanup happens on success/failure/cancel paths.
 
 ## Owner
 
@@ -86,4 +81,4 @@ oore.build team
 
 ## Last Updated
 
-`2026-02-08`
+`2026-02-09`

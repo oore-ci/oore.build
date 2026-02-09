@@ -22,6 +22,12 @@ Build management UI:
 - `/builds/$buildId` — build detail page with metadata (branch, commit, actor, timestamps) and events timeline showing every state transition with actor and reason.
 - Cancel button on build detail page for non-terminal builds.
 - Navigation: "Builds" item in Platform sidebar group (visible to all roles with builds:read).
+- Manual trigger CTA is now exposed in the web UI:
+- Project detail header and empty-state CTA
+- Pipeline detail header and empty-state CTA
+- Project pipelines table row-level `Run` action
+- Builds index header and empty-state CTA
+- Manual trigger dialog supports project/pipeline selection (global), branch or commit pinning, and deep-links to created build.
 
 ## API Changes
 
@@ -91,6 +97,7 @@ Config snapshot (immutable, captured at build creation):
 - [x] Build cancellation from any non-terminal state.
 - [x] Per-project sequential build numbers.
 - [x] Webhook-triggered builds create records with trigger metadata.
+- [x] Manual build trigger is available from project, pipeline, and builds UI surfaces.
 
 ## Owner
 
@@ -98,4 +105,4 @@ Platform Team
 
 ## Last Updated
 
-`2026-02-07`
+`2026-02-09`

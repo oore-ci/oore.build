@@ -152,7 +152,10 @@ export function useBuildLogs(buildId: string) {
   })
 }
 
-export function useArtifacts(buildId: string) {
+export function useArtifacts(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -161,6 +164,7 @@ export function useArtifacts(buildId: string) {
     queryKey: [instance?.id ?? '__none__', 'artifacts', buildId],
     queryFn: () => listArtifacts(baseUrl!, token!, buildId),
     enabled: !!baseUrl && !!token && !!buildId,
+    refetchInterval: options?.refetchInterval,
   })
 }
 

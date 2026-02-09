@@ -1983,6 +1983,55 @@ async fn run_and_stream(
     status
 }
 
+fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
+    std::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .and_then(|s| s.lines().next().map(|line| line.trim().to_string()))
+}
+
+fn run_doctor_checks() -> anyhow::Result<()> {
+    let checks: [(&str, &[&str], &str); 7] = [
+        ("git", &["--version"], "brew install git"),
+        ("rustc", &["--version"], "curl https://sh.rustup.rs -sSf | sh"),
+        ("cargo", &["--version"], "curl https://sh.rustup.rs -sSf | sh"),
+        ("bun", &["--version"], "curl -fsSL https://bun.sh/install | bash"),
+        ("fvm", &["--version"], "brew tap leoafarias/fvm && brew install fvm"),
+        ("flutter", &["--version"], "fvm install <version> && fvm use <version>"),
+        ("xcodebuild", &["-version"], "xcode-select --install"),
+    ];
+
+    println!("oore doctor -- environment checks");
+    let mut missing = Vec::new();
+
+    for (cmd, args, install_hint) in checks {
+        match command_version(cmd, args) {
+            Some(version) => {
+                println!("  [ok] {:<10} {}", cmd, version);
+            }
+            None => {
+                println!("  [missing] {:<10} install: {}", cmd, install_hint);
+                missing.push(cmd);
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        println!("All required tools are installed.");
+        Ok(())
+    } else {
+        anyhow::bail!("missing required tools: {}", missing.join(", "))
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -2026,7 +2075,7 @@ fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Doctor => {
-            println!("doctor checks placeholder");
+            run_doctor_checks()?;
         }
     }
 

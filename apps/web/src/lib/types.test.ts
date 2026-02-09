@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type {
   ApiError,
+  ArtifactStorageProvider,
+  ArtifactStorageSettings,
+  ArtifactStorageSettingsResponse,
+  BuildPlatform,
   BootstrapTokenVerifyResponse,
+  CreatePipelineRequest,
+  Pipeline,
+  PipelineExecutionConfig,
+  InstancePreferences,
+  InstancePreferencesResponse,
   ListRunnersResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
@@ -122,5 +131,82 @@ describe('types', () => {
     }
     expect(req.name).toBe('renamed-runner')
     expect(resp.runner.name).toBe('renamed-runner')
+  })
+
+  it('Pipeline execution config types can be constructed', () => {
+    const platforms: BuildPlatform[] = ['android', 'ios']
+    const execution: PipelineExecutionConfig = {
+      platforms,
+      flutter_version: '3.24.0',
+      commands: {
+        pre_build: ['flutter pub get'],
+        build: ['flutter build apk --release'],
+        post_build: ['echo done'],
+      },
+      platform_build_args: {
+        android: ['--build-number=$PROJECT_BUILD_NUMBER'],
+        ios: [],
+        macos: [],
+      },
+      platform_commands: {
+        android: 'flutter build appbundle --release',
+      },
+      env: [{ key: 'PROJECT_BUILD_NUMBER', value: '42' }],
+      artifact_patterns: ['*.apk', '*.ipa'],
+    }
+
+    const pipeline: Pipeline = {
+      id: 'pipe-1',
+      project_id: 'proj-1',
+      name: 'Mobile',
+      config_path: '.oore.yaml',
+      config_path_explicit: false,
+      execution_config: execution,
+      trigger_config: { events: [], branches: [] },
+      concurrency: { cancel_previous: false },
+      enabled: true,
+      created_at: 1,
+      updated_at: 2,
+    }
+
+    const req: CreatePipelineRequest = {
+      name: 'Mobile',
+      config_path_explicit: false,
+      execution_config: execution,
+      trigger_config: { events: [], branches: [] },
+      concurrency: { cancel_previous: false },
+    }
+
+    expect(pipeline.execution_config.platforms).toEqual(['android', 'ios'])
+    expect(pipeline.execution_config.flutter_version).toBe('3.24.0')
+    expect(req.execution_config?.artifact_patterns).toContain('*.apk')
+  })
+
+  it('Artifact storage settings types can be constructed', () => {
+    const provider: ArtifactStorageProvider = 'r2'
+    const settings: ArtifactStorageSettings = {
+      provider,
+      s3_bucket: 'oore-artifacts',
+      s3_region: 'auto',
+      s3_endpoint: 'https://example.r2.cloudflarestorage.com',
+      has_access_key_id: true,
+      has_secret_access_key: true,
+      source: 'database',
+      updated_at: 123,
+    }
+    const response: ArtifactStorageSettingsResponse = { settings }
+    expect(response.settings.provider).toBe('r2')
+    expect(response.settings.has_secret_access_key).toBe(true)
+  })
+
+  it('Instance preferences types can be constructed', () => {
+    const prefs: InstancePreferences = {
+      key_storage_mode: 'keychain',
+      restart_required: true,
+      updated_at: 123,
+    }
+    const response: InstancePreferencesResponse = { preferences: prefs }
+    expect(response.preferences.key_storage_mode).toBe('keychain')
+    expect(response.preferences.restart_required).toBe(true)
   })
 })

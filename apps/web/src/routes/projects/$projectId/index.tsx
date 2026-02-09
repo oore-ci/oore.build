@@ -63,6 +63,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import CreatePipelineDialog from './-create-pipeline-dialog'
+import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 export const Route = createFileRoute('/projects/$projectId/')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -236,10 +237,13 @@ function ProjectDetailPage() {
   const canWriteProjects = useHasPermission('projects', 'write')
   const canDeleteProjects = useHasPermission('projects', 'delete')
   const canWritePipelines = useHasPermission('pipelines', 'write')
+  const canTriggerBuild = useHasPermission('builds', 'write')
 
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [pipelineCreateOpen, setPipelineCreateOpen] = useState(false)
+  const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
+  const [triggerPipelineId, setTriggerPipelineId] = useState<string | undefined>()
 
   useEffect(() => {
     const label = data?.project.name ?? 'Project Details'
@@ -287,6 +291,11 @@ function ProjectDetailPage() {
     })
   }
 
+  function openTriggerBuild(pipelineId?: string) {
+    setTriggerPipelineId(pipelineId)
+    setTriggerBuildOpen(true)
+  }
+
   return (
     <PageLayout width="wide">
       <PageHeader
@@ -305,8 +314,16 @@ function ProjectDetailPage() {
           </>
         }
         actions={
-          canWriteProjects || canDeleteProjects ? (
+          canWriteProjects || canDeleteProjects || canTriggerBuild ? (
             <>
+              {canTriggerBuild ? (
+                <Button
+                  onClick={() => openTriggerBuild()}
+                  disabled={pipelines.length === 0}
+                >
+                  Trigger Build
+                </Button>
+              ) : null}
               {canWriteProjects ? (
                 <Button variant="outline" onClick={() => setEditOpen(true)}>
                   <HugeiconsIcon icon={Edit02Icon} size={16} />
@@ -408,7 +425,7 @@ function ProjectDetailPage() {
                   <TableHead>Config path</TableHead>
                   <TableHead>Triggers</TableHead>
                   <TableHead>Updated</TableHead>
-                  <TableHead className="text-right">Open</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -440,18 +457,28 @@ function ProjectDetailPage() {
                       {relativeTime(pipeline.updated_at)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        render={
-                          <Link
-                            to="/projects/$projectId/pipelines/$pipelineId"
-                            params={{ projectId, pipelineId: pipeline.id }}
-                          />
-                        }
-                      >
-                        Open
-                      </Button>
+                      <div className="inline-flex items-center gap-2">
+                        {canTriggerBuild ? (
+                          <Button
+                            size="sm"
+                            onClick={() => openTriggerBuild(pipeline.id)}
+                          >
+                            Run
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          render={
+                            <Link
+                              to="/projects/$projectId/pipelines/$pipelineId"
+                              params={{ projectId, pipelineId: pipeline.id }}
+                            />
+                          }
+                        >
+                          Open
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -467,7 +494,14 @@ function ProjectDetailPage() {
         </CardHeader>
         <CardContent>
           {builds.length === 0 ? (
-            <p className="py-3 text-sm text-muted-foreground">No builds yet.</p>
+            <div className="space-y-2 py-3">
+              <p className="text-sm text-muted-foreground">No builds yet.</p>
+              {canTriggerBuild && pipelines.length > 0 ? (
+                <Button size="sm" onClick={() => openTriggerBuild()}>
+                  Trigger first build
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -528,6 +562,26 @@ function ProjectDetailPage() {
         open={pipelineCreateOpen}
         onOpenChange={setPipelineCreateOpen}
         projectId={projectId}
+      />
+
+      <TriggerBuildDialog
+        open={triggerBuildOpen}
+        onOpenChange={(nextOpen) => {
+          setTriggerBuildOpen(nextOpen)
+          if (!nextOpen) {
+            setTriggerPipelineId(undefined)
+          }
+        }}
+        fixedProjectId={projectId}
+        defaultPipelineId={triggerPipelineId}
+        defaultBranch={project.default_branch}
+        description="Run this project's pipeline now."
+        onBuildCreated={(buildId) => {
+          void navigate({
+            to: '/builds/$buildId',
+            params: { buildId },
+          })
+        }}
       />
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>

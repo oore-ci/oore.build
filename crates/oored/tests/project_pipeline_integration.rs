@@ -94,10 +94,7 @@ async fn test_create_and_list_projects() {
         json["project"]["description"].as_str().unwrap(),
         "A test project"
     );
-    assert_eq!(
-        json["project"]["default_branch"].as_str().unwrap(),
-        "main"
-    );
+    assert_eq!(json["project"]["default_branch"].as_str().unwrap(), "main");
 
     // List projects
     let (status, json) = json_request(&app, "GET", "/v1/projects", &token, None).await;
@@ -108,27 +105,14 @@ async fn test_create_and_list_projects() {
     assert_eq!(projects[0]["id"].as_str().unwrap(), project_id);
 
     // List with search
-    let (status, json) = json_request(
-        &app,
-        "GET",
-        "/v1/projects?search=Test",
-        &token,
-        None,
-    )
-    .await;
+    let (status, json) = json_request(&app, "GET", "/v1/projects?search=Test", &token, None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["projects"].as_array().unwrap().len(), 1);
 
     // Search miss
-    let (status, json) = json_request(
-        &app,
-        "GET",
-        "/v1/projects?search=Nonexistent",
-        &token,
-        None,
-    )
-    .await;
+    let (status, json) =
+        json_request(&app, "GET", "/v1/projects?search=Nonexistent", &token, None).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["projects"].as_array().unwrap().len(), 0);
@@ -169,14 +153,7 @@ async fn test_get_project() {
     assert_eq!(json["project"]["name"].as_str().unwrap(), "Detail Project");
 
     // Get nonexistent
-    let (status, _) = json_request(
-        &app,
-        "GET",
-        "/v1/projects/nonexistent-id",
-        &token,
-        None,
-    )
-    .await;
+    let (status, _) = json_request(&app, "GET", "/v1/projects/nonexistent-id", &token, None).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
@@ -307,7 +284,11 @@ async fn test_delete_project_with_terminal_builds() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "delete project with terminal builds should succeed: {json}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "delete project with terminal builds should succeed: {json}"
+    );
 
     // Build should also be gone
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE id = ?1")
@@ -432,6 +413,14 @@ async fn test_create_and_list_pipelines() {
         json["pipeline"]["config_path"].as_str().unwrap(),
         ".oore.yml"
     );
+    assert_eq!(
+        json["pipeline"]["config_path_explicit"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        json["pipeline"]["execution_config"]["platforms"][0].as_str(),
+        Some("android")
+    );
     assert!(json["pipeline"]["enabled"].as_bool().unwrap());
 
     // List pipelines for project
@@ -497,14 +486,7 @@ async fn test_get_pipeline() {
     );
 
     // Nonexistent
-    let (status, _) = json_request(
-        &app,
-        "GET",
-        "/v1/pipelines/nonexistent-id",
-        &token,
-        None,
-    )
-    .await;
+    let (status, _) = json_request(&app, "GET", "/v1/pipelines/nonexistent-id", &token, None).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
@@ -653,7 +635,11 @@ async fn test_delete_pipeline_with_terminal_builds() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "delete pipeline with terminal builds: {json}");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "delete pipeline with terminal builds: {json}"
+    );
 
     // Build should also be gone
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE id = ?1")
@@ -865,4 +851,114 @@ async fn test_create_pipeline_with_invalid_trigger() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid trigger: {json}");
+}
+
+#[tokio::test]
+async fn test_create_pipeline_with_execution_config_and_explicit_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let token = create_session_token(&pool, &user_id).await;
+
+    let (_, json) = json_request(
+        &app,
+        "POST",
+        "/v1/projects",
+        &token,
+        Some(serde_json::json!({ "name": "Execution Config Project" })),
+    )
+    .await;
+    let project_id = json["project"]["id"].as_str().unwrap();
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/pipelines"),
+        &token,
+        Some(serde_json::json!({
+            "name": "Flutter Release",
+            "config_path": "ci/mobile.yaml",
+            "config_path_explicit": true,
+            "execution_config": {
+                "platforms": ["android", "ios"],
+                "commands": {
+                    "pre_build": ["echo pre"],
+                    "build": ["echo custom-build"],
+                    "post_build": ["echo post"]
+                },
+                "artifact_patterns": ["*.apk", "*.ipa"]
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "create pipeline: {json}");
+    assert_eq!(
+        json["pipeline"]["config_path"].as_str(),
+        Some("ci/mobile.yaml")
+    );
+    assert_eq!(
+        json["pipeline"]["config_path_explicit"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        json["pipeline"]["execution_config"]["platforms"]
+            .as_array()
+            .map(|v| v.len()),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn test_validate_pipeline_rejects_invalid_execution_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let token = create_session_token(&pool, &user_id).await;
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        "/v1/pipelines/validate",
+        &token,
+        Some(serde_json::json!({
+            "config_path_explicit": true,
+            "execution_config": {
+                "platforms": [],
+                "flutter_version": "   ",
+                "commands": {
+                    "pre_build": [],
+                    "build": [""],
+                    "post_build": []
+                },
+                "platform_build_args": {
+                    "android": ["--build-number=1"],
+                    "ios": [],
+                    "macos": []
+                },
+                "platform_commands": {},
+                "env": [
+                    { "key": "BAD-KEY", "value": "x" }
+                ],
+                "artifact_patterns": ["not-a-glob"]
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "validate: {json}");
+    assert_eq!(json["valid"].as_bool(), Some(false));
+    let errors = json["errors"].as_array().expect("errors");
+    assert!(errors.len() >= 3);
+    assert!(
+        errors
+            .iter()
+            .filter_map(|v| v.as_str())
+            .any(|msg| msg.contains("execution_config.flutter_version")),
+        "expected flutter_version validation error"
+    );
 }

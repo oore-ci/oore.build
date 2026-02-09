@@ -1,7 +1,7 @@
 .PHONY: dev-web dev-docs build-web build-docs build check \
        test-web lint-web fix-web \
        test-docs lint-docs fix-docs \
-       cargo-check run-daemon run-runner register-runner run-cli \
+       cargo-check run-daemon run-runner register-runner run-cli doctor \
        docs-check ui-init install-local validate
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
@@ -57,6 +57,9 @@ register-runner:
 
 run-cli:
 	cargo run -p oore -- setup open --ttl 15m
+
+doctor:
+	cargo run -p oore -- doctor
 
 install-local:
 	bash scripts/install.sh

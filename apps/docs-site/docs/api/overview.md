@@ -56,9 +56,14 @@ The `details` field is omitted when not applicable.
 
 The API is configured with the following CORS policy:
 
-- **Allowed origins**: `http://localhost:3000`
-- **Allowed methods**: `GET`, `POST`, `PATCH`, `DELETE`, `OPTIONS`
+- **Allowed origins**: defaults to `http://localhost:3000` and `https://ci.oore.build`
+- **Allowed methods**: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
 - **Allowed headers**: `Content-Type`, `Authorization`
+
+You can override origins with:
+
+- `OORE_CORS_ORIGINS` (comma-separated, preferred)
+- `OORE_CORS_ORIGIN` (single origin, backward compatible)
 
 ## Endpoint Groups
 

@@ -12,7 +12,7 @@ When you run `oored run`, the daemon performs these initialization steps:
 4. **Resolve database path** -- from `--state-file`, `OORE_SETUP_STATE_FILE` env, or default (`~/Library/Application Support/oore/oore.db`)
 5. **Connect to SQLite** -- create the database file and run embedded migrations
 6. **Initialize state** -- if no state row exists, create one with `BootstrapPending` and a fresh UUID instance ID
-7. **Load encryption key** -- from `~/Library/Application Support/oore/encryption.key` (auto-generated on first run)
+7. **Load encryption key** -- on macOS, use Keychain first (`build.oore.oored` / `encryption-key-v1`) with legacy file migration from `~/Library/Application Support/oore/encryption.key` when present
 8. **Start embedded local runner (default mode)** -- bootstrap/rotate local runner credentials and start claim loop unless `OORED_RUNNER_MODE=external`
 9. **Build Axum router** -- mount all route handlers, `/metrics` endpoint, and request metrics middleware
 10. **Start HTTP server** -- bind to the listen address and serve requests
@@ -23,8 +23,8 @@ observability::init_tracing();
 let metrics_handle = observability::init_metrics();
 let store = SetupStore::connect(db_path).await?;
 let initial = store.init_if_missing().await?;
-let encryption_key = crypto::load_or_generate_key(&key_path)?;
-let app = build_router(store, encryption_key, metrics_handle);
+let runtime_key = crypto::load_runtime_key()?;
+let app = build_router(store, runtime_key.key, metrics_handle);
 axum::serve(listener, app).await?;
 observability::shutdown_tracing();
 ```
@@ -36,9 +36,10 @@ All handlers share an `Arc<AppState>` containing:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `store` | `Mutex<SetupStore>` | SQLite-backed persistent state |
-| `sessions` | `Mutex<SessionStore>` | In-memory authenticated sessions |
+| `sessions` | `SessionStore` | Persistent auth sessions |
 | `pending_auth` | `Mutex<HashMap<String, PendingAuth>>` | Pending OIDC authorization flows |
 | `encryption_key` | `Vec<u8>` | AES-256 key for secrets at rest |
+| `storage` | `RwLock<StorageBackend>` | Runtime artifact backend (`disabled`, `local`, `s3`, `r2`) |
 
 ## Setup state machine
 
@@ -90,7 +91,7 @@ The table is constrained to a single row (`CHECK (id = 1)`) since the daemon man
 
 OIDC client secrets are encrypted with AES-256-GCM before storage:
 
-1. A 256-bit key is generated on first run and stored at `~/Library/Application Support/oore/encryption.key` with `0o600` permissions
+1. On macOS, a 256-bit key is stored in Keychain (`build.oore.oored` / `encryption-key-v1`); legacy file key is migrated when present
 2. Each encryption operation generates a fresh random nonce
 3. The ciphertext format is `base64(nonce || ciphertext || tag)`
 
@@ -133,6 +134,43 @@ OIDC client secrets are encrypted with AES-256-GCM before storage:
 
 Configure via `OORED_RUNNER_MODE`.
 
+## Artifact storage backends
+
+Artifact binary storage is runtime-configurable through Settings/API:
+
+- `disabled`: metadata only, binary download links unavailable
+- `local`: daemon-host filesystem with signed upload/download URLs
+- `s3`: S3-compatible object storage via pre-signed URLs
+- `r2`: Cloudflare R2 via S3-compatible endpoint
+
+Configuration endpoint:
+
+- `GET /v1/settings/artifact-storage`
+- `PUT /v1/settings/artifact-storage`
+
+Credentials for S3/R2 are encrypted at rest using daemon key material.
+
+## Pipeline config resolution
+
+Build snapshots now capture immutable config resolution metadata (`snapshot_version = 2`):
+
+- `config_resolution_policy: file_first_ui_fallback`
+- `config_path`
+- `config_path_explicit`
+- `ui_execution_config`
+
+Runner resolution order:
+
+1. Explicit mode: check explicit `config_path` only.
+2. Auto mode: check `.oore.yaml`, then `.oore.yml`.
+3. If file exists, parse strict YAML schema and execute it.
+4. If file is missing, execute `ui_execution_config` fallback from snapshot.
+5. If file exists but is invalid, fail build immediately.
+6. Flutter version resolution:
+   - `.fvmrc` in repository takes precedence
+   - else use `ui_execution_config.flutter_version` when configured
+   - when resolved, runner prepends `fvm use <version> --force` and runs Flutter/Dart via `fvm`
+
 ## Session management
 
 ### Setup sessions
@@ -173,8 +211,8 @@ The daemon restricts cross-origin requests to approved frontend origins:
 
 ```rust
 CorsLayer::new()
-    .allow_origin(["http://localhost:3000".parse().unwrap()])
-    .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+    .allow_origin(resolve_cors_origins()) // defaults: localhost:3000 + https://ci.oore.build
+    .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
     .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
 ```
 

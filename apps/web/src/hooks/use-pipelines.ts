@@ -31,10 +31,12 @@ function useBaseUrl(): string | null {
 export function usePipelines(
   projectId: string,
   params?: { limit?: number; offset?: number },
+  options?: { enabled?: boolean },
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
 
   return useQuery({
     queryKey: [
@@ -44,7 +46,7 @@ export function usePipelines(
       params ?? {},
     ],
     queryFn: () => listPipelines(baseUrl!, token!, projectId, params),
-    enabled: !!baseUrl && !!token && !!projectId,
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
   })
 }
 

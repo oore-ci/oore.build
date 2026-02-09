@@ -202,7 +202,7 @@ Exit criteria (all met):
 - Operator can trigger build, watch live logs, and download produced artifacts.
 - Artifact links expire predictably and are auditable.
 - SSE stream supports reconnection and auto-closes on terminal builds.
-- S3 storage is optional — artifact metadata is always persisted, upload/download URLs require S3.
+- Artifact storage supports local filesystem and S3-compatible backends. If storage is disabled, artifact metadata remains persisted but binary downloads are unavailable.
 
 Feature docs: `2026-02-08-live-build-logs.md`, `2026-02-08-artifact-storage-download-policy.md`.
 
@@ -217,12 +217,15 @@ Dependency: Phases 2-4 complete and stable.
 - [x] **5.5 [P1] Trigger settings UI** - Toggle stale-build cancellation and trigger source controls.
 - [x] **5.6 [P1] Runner management UI** - Added `Settings -> Runners` page for runner inventory and external-runner rename flow. Embedded runners are visible but rename-locked.
 - [x] **5.7 [P1] Command-center UI redesign** - Reworked main authenticated app pages to table-first, operator-dense layouts with consistent `PageLayout`/`PageHeader` rhythm and settings-page visual alignment.
+- [x] **5.8 [P1] File-first pipeline config with UI fallback** - Added strict `.oore.yaml/.oore.yml` resolution, immutable fallback execution snapshot (`snapshot_version=2`), pipeline UI controls for platform toggles/staged commands, and Flutter version control via `.fvmrc` or fallback `flutter_version`.
+- [x] **5.9 [P1] Artifact storage settings UI + API** - Added owner/admin artifact storage management (`Settings -> Artifact Storage`) with encrypted credential persistence, runtime backend switching, local filesystem upload/download flow, and S3/R2 support without daemon restart.
+- [x] **5.10 [P1] Admin Preferences hub + key storage mode toggle** - Added `Settings -> Preferences` as the admin settings hub, moved artifact storage controls into Preferences, and added owner/admin key storage mode toggle (`keychain` vs `file`) with persisted startup preference and audit logging.
 
 Exit criteria (all met):
 - Developers can self-serve project/pipeline setup without direct DB/API intervention.
 - Invalid pipeline configs are blocked before execution.
 
-Feature docs: `2026-02-08-projects-api.md`, `2026-02-08-pipelines-api.md`, `2026-02-08-project-pipeline-ui.md`, `2026-02-09-runner-management-ui.md`, `2026-02-09-command-center-ui-redesign.md`.
+Feature docs: `2026-02-08-projects-api.md`, `2026-02-08-pipelines-api.md`, `2026-02-08-project-pipeline-ui.md`, `2026-02-09-runner-management-ui.md`, `2026-02-09-command-center-ui-redesign.md`, `2026-02-09-file-first-pipeline-config-and-ui-fallback.md`.
 
 ## Phase 6: Operator CLI Completeness (`P1`)
 
@@ -252,6 +255,100 @@ Dependency: Phases 2-6 functional.
 
 Feature docs required: E2E Tests, Security Hardening, Deployment/Operations.
 
+## Phase 8: Artifact Distribution Portal (`P2`, Future)
+
+Dependency: Phases 4-7 stable.
+
+Goal: Add a dedicated distribution experience (target URL: `https://artifacts.oore.build` in hosted-UI mode, or customer-hosted equivalent) so QA/viewers can install and track builds without full operator access to the main control UI.
+
+- [ ] **8.1 [P2] Product boundary and tenancy model**
+  - Decide portal deployment modes:
+    - customer-hosted portal (same instance/domain family)
+    - hosted UI portal (`artifacts.oore.build`) that talks to customer backend APIs only
+  - Define tenant/instance switching UX for hosted mode.
+  - Confirm contract alignment: portal is UI/distribution surface only, not a hosted build runner plane.
+
+- [ ] **8.2 [P2] Release domain model + schema**
+  - Add release-oriented entities (draft):
+    - `release_channels` (e.g. internal, qa, beta)
+    - `release_entries` (maps build -> publish metadata)
+    - `release_notes` (manual + generated)
+    - `release_assets` (artifact references + checksums + platform metadata)
+  - Add migration and indexes for channel listing and newest-per-platform queries.
+  - Define retention/archive markers independent from raw build retention.
+
+- [ ] **8.3 [P2] Publish workflow APIs**
+  - Add APIs to publish/unpublish a build artifact into a channel.
+  - Add APIs to edit release notes/changelog and visibility settings.
+  - Add APIs for portal listing:
+    - latest release per app/platform/channel
+    - release history feed
+    - install/download endpoint handshake
+  - Keep audit logs for publish/unpublish/note edits/share-link generation.
+
+- [ ] **8.4 [P2] Access model for QA/viewers (simplified)**
+  - Add lightweight distribution access path:
+    - portal-scoped viewer sessions and/or expiring share links
+    - optional email allowlist per project/channel
+  - Keep admin/owner controls in main app.
+  - Ensure no pipeline edit/build trigger permissions leak into portal roles.
+
+- [ ] **8.5 [P2] iOS/macOS install flow**
+  - Implement signed `manifest.plist` generation and hosted install URL flow for iOS ad-hoc installs.
+  - Surface required metadata checks before publish (bundle id, version, build number).
+  - Add device-facing install CTA compatible with Safari flow.
+
+- [ ] **8.6 [P2] Android install flow**
+  - Add APK/AAB distribution UX with checksum/version info.
+  - Expose platform-specific install guidance (unknown sources, managed devices).
+
+- [ ] **8.7 [P2] Changelog pipeline**
+  - Support manual release notes in UI.
+  - Add optional auto-generated changelog from commit range:
+    - previous published build SHA -> current SHA
+    - grouped by conventional commit type (best effort)
+  - Provide markdown renderer with sanitized output.
+
+- [ ] **8.8 [P2] Storage and delivery strategy**
+  - Support delivery backends already present in instance settings (`local`, `s3`, `r2`).
+  - Add optional public-read mode per channel/project with explicit warning.
+  - Add signed-download mode with TTL and revoke support.
+  - Ensure dedupe/checksum behavior remains consistent for release assets.
+
+- [ ] **8.9 [P2] Portal frontend**
+  - New portal shell optimized for non-operator users:
+    - app list
+    - channel picker
+    - latest build/install CTA
+    - release history + changelog
+  - Mobile-first QA layout (Safari/iPhone first-class).
+  - Keep design tokens/theme aligned with main app but with simplified navigation.
+
+- [ ] **8.10 [P2] Observability + abuse controls**
+  - Metrics:
+    - release publish count
+    - install/download attempts
+    - success/failure by platform
+  - Controls:
+    - download rate limit
+    - link expiry + one-click revoke
+    - suspicious access logging
+
+- [ ] **8.11 [P2] Docs and onboarding**
+  - Add docs for:
+    - publish workflow
+    - channel strategy
+    - iOS ad-hoc prerequisites
+    - QA viewer onboarding
+  - Add operator checklist for safe public/internal distribution settings.
+
+Exit criteria:
+- QA/viewers can discover and install latest builds from a dedicated portal without full control-plane access.
+- Owner/admin can publish/unpublish releases with auditable history.
+- iOS Safari install flow works for ad-hoc distribution where signing/profile prerequisites are met.
+- Changelog is visible per published release (manual or generated).
+- Storage/security policy (public vs signed links) is explicit per channel and enforced.
+
 ---
 
 ## Gap Summary
@@ -262,8 +359,9 @@ Feature docs required: E2E Tests, Security Hardening, Deployment/Operations.
 | Triggering | Manual/API + webhook (GitHub/GitLab) with concurrency policy | Schedule triggers | Phase 5+ |
 | SCM integration | GitHub App + GitLab (token/OAuth) with encrypted secrets | None for V1 | Complete |
 | Scheduling/execution | In-process scheduler, runner registration, claim/lease, workspace isolation, step executor, timeout enforcement | None for V1 | Complete |
-| Logs/artifacts | SSE streaming, log ingestion, S3 artifacts, signed URLs, live UI | None for V1 | Complete |
+| Logs/artifacts | SSE streaming, log ingestion, local or S3-compatible artifacts, signed URLs, live UI | None for V1 | Complete |
 | Project/pipeline UX | CRUD APIs, validation, trigger settings, management UI | Complete | Complete |
+| Distribution portal | Build details + artifact downloads exist in main app | Dedicated QA/viewer release portal, publish workflow, changelogs, install-first UX | Phase 8 (`P2`, Future) |
 | CLI operations | Setup + runner register/start | login/status/config/doctor | Phase 6 (`P1`) |
 | Reliability/security | Partial baseline | E2E, retry, hardening, release gate | Phase 7 (`P2`) |
 

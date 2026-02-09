@@ -1,6 +1,7 @@
 import type {
   ApiError,
   ArtifactDownloadLinkResponse,
+  ArtifactStorageSettingsResponse,
   BootstrapTokenVerifyResponse,
   BuildDetailResponse,
   BuildLogsResponse,
@@ -20,6 +21,7 @@ import type {
   GitLabCompleteResponse,
   GitLabStartRequest,
   IntegrationDetailResponse,
+  InstancePreferencesResponse,
   InviteUserRequest,
   InviteUserResponse,
   ListArtifactsResponse,
@@ -43,6 +45,8 @@ import type {
   SetupStatus,
   SyncInstallationsResponse,
   UpdatePipelineRequest,
+  UpdateArtifactStorageSettingsRequest,
+  UpdateInstancePreferencesRequest,
   UpdateProjectRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
@@ -436,6 +440,58 @@ export function updateRunner(
 ): Promise<UpdateRunnerResponse> {
   return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
     method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
+}
+
+// ── Instance Settings API ──────────────────────────────────────
+
+export function getArtifactStorageSettings(
+  baseUrl: string,
+  token: string,
+): Promise<ArtifactStorageSettingsResponse> {
+  return request<ArtifactStorageSettingsResponse>(
+    baseUrl,
+    '/v1/settings/artifact-storage',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function updateArtifactStorageSettings(
+  baseUrl: string,
+  token: string,
+  data: UpdateArtifactStorageSettingsRequest,
+): Promise<ArtifactStorageSettingsResponse> {
+  return request<ArtifactStorageSettingsResponse>(
+    baseUrl,
+    '/v1/settings/artifact-storage',
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function getInstancePreferences(
+  baseUrl: string,
+  token: string,
+): Promise<InstancePreferencesResponse> {
+  return request<InstancePreferencesResponse>(baseUrl, '/v1/settings/preferences', {
+    headers: authHeaders(token),
+  })
+}
+
+export function updateInstancePreferences(
+  baseUrl: string,
+  token: string,
+  data: UpdateInstancePreferencesRequest,
+): Promise<InstancePreferencesResponse> {
+  return request<InstancePreferencesResponse>(baseUrl, '/v1/settings/preferences', {
+    method: 'PUT',
     headers: authHeaders(token),
     body: JSON.stringify(data),
   })

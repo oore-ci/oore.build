@@ -148,6 +148,14 @@ export default defineConfig({
             text: "Runner Management",
             link: "/features/runner-management",
           },
+          {
+            text: "Artifact Storage Management",
+            link: "/features/artifact-storage-management",
+          },
+          {
+            text: "File-First Pipeline Config",
+            link: "/features/file-first-pipeline-config",
+          },
         ],
       },
       {

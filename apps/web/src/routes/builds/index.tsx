@@ -1,10 +1,11 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
-import { useEffect, useMemo } from 'react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 
 import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { getStatusVariant } from '@/lib/status-variants'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +23,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { webPageTitle } from '@/lib/seo'
+import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 export const Route = createFileRoute('/builds/')({
   staticData: { breadcrumbLabel: 'Builds' },
@@ -33,7 +35,10 @@ export const Route = createFileRoute('/builds/')({
 })
 
 function BuildsListPage() {
+  const navigate = useNavigate()
   const { data, isLoading, error } = useBuilds({ limit: 100 })
+  const canTriggerBuild = useHasPermission('builds', 'write')
+  const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
   useEffect(() => {
     document.title = webPageTitle('Builds')
@@ -46,6 +51,13 @@ function BuildsListPage() {
       <PageHeader
         title="Builds"
         description="Queue, execution, and historical run inventory across projects."
+        actions={
+          canTriggerBuild ? (
+            <Button onClick={() => setTriggerBuildOpen(true)}>
+              Trigger Build
+            </Button>
+          ) : undefined
+        }
       />
 
       {isLoading ? (
@@ -72,7 +84,14 @@ function BuildsListPage() {
           </CardHeader>
           <CardContent>
             {builds.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">No builds yet.</p>
+              <div className="space-y-2 py-6">
+                <p className="text-sm text-muted-foreground">No builds yet.</p>
+                {canTriggerBuild ? (
+                  <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                    Trigger first build
+                  </Button>
+                ) : null}
+              </div>
             ) : (
               <Table>
                 <TableHeader>
@@ -132,6 +151,18 @@ function BuildsListPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <TriggerBuildDialog
+        open={triggerBuildOpen}
+        onOpenChange={setTriggerBuildOpen}
+        description="Choose a project and pipeline to run a manual build."
+        onBuildCreated={(buildId) => {
+          void navigate({
+            to: '/builds/$buildId',
+            params: { buildId },
+          })
+        }}
+      />
     </PageLayout>
   )
 }

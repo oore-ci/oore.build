@@ -45,6 +45,21 @@ Verify the installation:
 bun --version   # Bun 1.0+
 ```
 
+### FVM (Flutter Version Manager)
+
+oore.build uses `fvm` to run Flutter commands with pinned versions from `.fvmrc` (or pipeline fallback settings).
+
+```bash
+brew tap leoafarias/fvm
+brew install fvm
+```
+
+Verify installation:
+
+```bash
+fvm --version
+```
+
 ### SQLite
 
 The backend uses SQLite for persistent state. macOS ships with SQLite pre-installed, but you may want a newer version:
@@ -131,6 +146,7 @@ All common commands are available as `make` targets from the repository root:
 | `make register-runner` | Register an external runner (advanced) |
 | `make run-runner` | Start external runner process (advanced) |
 | `make run-cli` | Run `oore setup open --ttl 15m` |
+| `make doctor` | Check required tooling (git, rust, bun, fvm, flutter, xcodebuild) |
 | `make install-local` | Run local installer script scaffold (`scripts/install.sh`) |
 | `make docs-check` | Validate feature docs against template |
 | `make ui-init` | Re-initialize shadcn from shared preset |
