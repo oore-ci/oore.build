@@ -164,14 +164,15 @@ function PreferencesPage() {
   function onSubmitStorage(values: StorageFormValues) {
     const payload = {
       provider: values.provider,
-      local_base_dir: values.provider === 'local' ? values.local_base_dir?.trim() : undefined,
+      local_base_dir:
+        values.provider === 'local' ? values.local_base_dir?.trim() : undefined,
       s3_bucket:
         values.provider === 's3' || values.provider === 'r2'
           ? values.s3_bucket?.trim()
           : undefined,
       s3_region:
         values.provider === 's3' || values.provider === 'r2'
-          ? (values.s3_region?.trim() || 'us-east-1')
+          ? values.s3_region?.trim() || 'us-east-1'
           : undefined,
       s3_endpoint:
         values.provider === 's3' || values.provider === 'r2'
@@ -209,19 +210,19 @@ function PreferencesPage() {
         key_storage_mode: values.use_keychain ? 'keychain' : 'file',
       },
       {
-      onSuccess: (res) => {
-        toast.success(
-          `Security preference updated (${res.preferences.key_storage_mode}). Restart daemon to apply startup mode.`,
-        )
+        onSuccess: (res) => {
+          toast.success(
+            `Security preference updated (${res.preferences.key_storage_mode}). Restart daemon to apply startup mode.`,
+          )
+        },
+        onError: (error) => {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : 'Failed to update instance preferences',
+          )
+        },
       },
-      onError: (error) => {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : 'Failed to update instance preferences',
-        )
-      },
-    },
     )
   }
 
@@ -238,25 +239,35 @@ function PreferencesPage() {
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Artifact provider</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Artifact provider
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {settings?.provider ?? 'disabled'}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Current artifact backend</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Current artifact backend
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Config source</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Config source
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {settings?.source ?? 'default'}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Database, environment, or default</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Database, environment, or default
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Key storage mode</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Key storage mode
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {preferences?.key_storage_mode ?? 'keychain'}
             </p>
@@ -288,7 +299,8 @@ function PreferencesPage() {
       {preferencesQuery.error ? (
         <Alert variant="destructive">
           <AlertDescription>
-            Failed to load instance preferences: {preferencesQuery.error.message}
+            Failed to load instance preferences:{' '}
+            {preferencesQuery.error.message}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -296,14 +308,16 @@ function PreferencesPage() {
       {!settingsQuery.isLoading && !settingsQuery.error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Artifact Storage</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Artifact Storage
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {!canWrite ? (
               <Alert>
                 <AlertDescription>
-                  You have read access only. Owner/Admin write permission is required to update
-                  settings.
+                  You have read access only. Owner/Admin write permission is
+                  required to update settings.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -331,8 +345,12 @@ function PreferencesPage() {
                         </FormControl>
                         <SelectContent>
                           <SelectItem value="disabled">Disabled</SelectItem>
-                          <SelectItem value="local">Local filesystem</SelectItem>
-                          <SelectItem value="s3">S3-compatible (AWS/MinIO)</SelectItem>
+                          <SelectItem value="local">
+                            Local filesystem
+                          </SelectItem>
+                          <SelectItem value="s3">
+                            S3-compatible (AWS/MinIO)
+                          </SelectItem>
                           <SelectItem value="r2">Cloudflare R2</SelectItem>
                         </SelectContent>
                       </Select>
@@ -359,11 +377,14 @@ function PreferencesPage() {
                           <Input
                             placeholder="/Users/arya/Library/Application Support/oore/artifacts"
                             {...field}
-                            disabled={!canWrite || updateStorageMutation.isPending}
+                            disabled={
+                              !canWrite || updateStorageMutation.isPending
+                            }
                           />
                         </FormControl>
                         <FormDescription>
-                          Absolute path on the daemon host where artifact files are stored.
+                          Absolute path on the daemon host where artifact files
+                          are stored.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -383,7 +404,9 @@ function PreferencesPage() {
                             <Input
                               placeholder="oore-artifacts"
                               {...field}
-                              disabled={!canWrite || updateStorageMutation.isPending}
+                              disabled={
+                                !canWrite || updateStorageMutation.isPending
+                              }
                             />
                           </FormControl>
                           <FormMessage />
@@ -401,7 +424,9 @@ function PreferencesPage() {
                             <Input
                               placeholder="us-east-1"
                               {...field}
-                              disabled={!canWrite || updateStorageMutation.isPending}
+                              disabled={
+                                !canWrite || updateStorageMutation.isPending
+                              }
                             />
                           </FormControl>
                           <FormMessage />
@@ -414,12 +439,16 @@ function PreferencesPage() {
                       name="s3_endpoint"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Endpoint (optional for S3, required for R2)</FormLabel>
+                          <FormLabel>
+                            Endpoint (optional for S3, required for R2)
+                          </FormLabel>
                           <FormControl>
                             <Input
                               placeholder="https://<account-id>.r2.cloudflarestorage.com"
                               {...field}
-                              disabled={!canWrite || updateStorageMutation.isPending}
+                              disabled={
+                                !canWrite || updateStorageMutation.isPending
+                              }
                             />
                           </FormControl>
                           <FormMessage />
@@ -441,7 +470,9 @@ function PreferencesPage() {
                                   : 'Enter access key'
                               }
                               {...field}
-                              disabled={!canWrite || updateStorageMutation.isPending}
+                              disabled={
+                                !canWrite || updateStorageMutation.isPending
+                              }
                             />
                           </FormControl>
                           <FormDescription>
@@ -467,11 +498,14 @@ function PreferencesPage() {
                                   : 'Enter secret key'
                               }
                               {...field}
-                              disabled={!canWrite || updateStorageMutation.isPending}
+                              disabled={
+                                !canWrite || updateStorageMutation.isPending
+                              }
                             />
                           </FormControl>
                           <FormDescription>
-                            Stored encrypted at rest using the daemon encryption key.
+                            Stored encrypted at rest using the daemon encryption
+                            key.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -491,7 +525,7 @@ function PreferencesPage() {
                         Saving...
                       </>
                     ) : (
-                      'Save artifact settings'
+                      'Save'
                     )}
                   </Button>
                 </div>
@@ -504,7 +538,9 @@ function PreferencesPage() {
       {!preferencesQuery.isLoading && !preferencesQuery.error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Security Preferences</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Security Preferences
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <Form {...keyModeForm}>
@@ -525,10 +561,13 @@ function PreferencesPage() {
                             onCheckedChange={(checked) =>
                               field.onChange(Boolean(checked))
                             }
-                            disabled={!canWrite || updatePreferencesMutation.isPending}
+                            disabled={
+                              !canWrite || updatePreferencesMutation.isPending
+                            }
                           />
                           <span className="text-sm">
-                            Use macOS Keychain for encryption key storage (recommended)
+                            Use macOS Keychain for encryption key storage
+                            (recommended)
                           </span>
                         </label>
                       </FormControl>
@@ -542,8 +581,8 @@ function PreferencesPage() {
 
                 <Alert>
                   <AlertDescription>
-                    Restart the daemon after saving to ensure startup uses the selected key storage
-                    mode.
+                    Restart the daemon after saving to ensure startup uses the
+                    selected key storage mode.
                   </AlertDescription>
                 </Alert>
 
@@ -558,7 +597,7 @@ function PreferencesPage() {
                         Saving...
                       </>
                     ) : (
-                      'Save security preferences'
+                      'Save'
                     )}
                   </Button>
                 </div>
