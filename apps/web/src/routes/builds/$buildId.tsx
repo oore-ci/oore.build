@@ -225,7 +225,7 @@ function BuildDetailPage() {
       <section className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Build Details</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Build Details</CardTitle>
             <CardDescription>Build identity and trigger context</CardDescription>
           </CardHeader>
           <CardContent>
@@ -298,7 +298,7 @@ function BuildDetailPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Timing</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Timing</CardTitle>
             <CardDescription>Build lifecycle timestamps</CardDescription>
           </CardHeader>
           <CardContent>
@@ -373,7 +373,7 @@ function BuildDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Event timeline</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Event Timeline</CardTitle>
         </CardHeader>
         <CardContent>
           {events.length === 0 ? (
@@ -556,8 +556,8 @@ function BuildLogsCard({
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
-            Build logs
+          <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Build Logs
             {isStreaming ? (
               <span className="flex items-center gap-1 text-xs font-normal text-muted-foreground">
                 <HugeiconsIcon icon={Loading03Icon} size={12} className="animate-spin" />
@@ -668,7 +668,7 @@ function BuildLogsCard({
               <div
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
-                className="max-h-[600px] overflow-y-auto border bg-muted/30 p-4"
+                className="max-h-[600px] overflow-y-auto border border-border/60 bg-muted/50 p-4 dark:bg-background"
               >
                 <pre className="font-mono text-xs leading-relaxed">
                   {selectedLogs.map((chunk) => (
@@ -762,8 +762,8 @@ function ArtifactsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <HugeiconsIcon icon={File01Icon} size={16} />
+        <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <HugeiconsIcon icon={File01Icon} size={14} />
           Artifacts
         </CardTitle>
       </CardHeader>

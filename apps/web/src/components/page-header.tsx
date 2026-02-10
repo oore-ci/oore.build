@@ -18,11 +18,11 @@ export default function PageHeader({
   meta,
 }: PageHeaderProps) {
   return (
-    <header className="space-y-4 border-b pb-4">
+    <header className="space-y-3 pb-6">
       {back && (
         <Link
           to={back.to}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
         >
           <HugeiconsIcon icon={ArrowLeft02Icon} size={14} />
           {back.label}
@@ -30,8 +30,8 @@ export default function PageHeader({
       )}
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0 space-y-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
           {description ? (
             <p className="text-sm text-muted-foreground">{description}</p>
           ) : null}
@@ -42,7 +42,7 @@ export default function PageHeader({
       </div>
 
       {meta ? (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
           {meta}
         </div>
       ) : null}

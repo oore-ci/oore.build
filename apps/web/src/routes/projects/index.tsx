@@ -90,11 +90,14 @@ function ProjectsListPage() {
       {!isLoading && !error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Project inventory</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Project inventory</CardTitle>
+              <span className="text-xs text-muted-foreground">{projects.length} total</span>
+            </div>
           </CardHeader>
           <CardContent>
             {projects.length === 0 ? (
-              <div className="space-y-3 py-6 text-center">
+              <div className="space-y-4 py-12 text-center">
                 <p className="text-sm text-muted-foreground">No projects yet.</p>
                 {canWrite ? (
                   <Button onClick={() => setCreateOpen(true)}>
@@ -120,7 +123,7 @@ function ProjectsListPage() {
                       <TableCell>
                         <div>
                           <p className="font-medium">{project.name}</p>
-                          <p className="font-mono text-xs text-muted-foreground">{project.id.slice(0, 8)}</p>
+                          <p className="font-mono text-[11px] text-muted-foreground">{project.id.slice(0, 8)}</p>
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">

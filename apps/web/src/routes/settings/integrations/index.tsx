@@ -91,7 +91,7 @@ function IntegrationsPage() {
       <section className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">GitHub</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">GitHub</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -106,7 +106,7 @@ function IntegrationsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">GitLab</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">GitLab</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -141,7 +141,7 @@ function IntegrationsPage() {
       {!isLoading && !error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Connected integrations</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Connected Integrations</CardTitle>
           </CardHeader>
           <CardContent>
             {integrations.length === 0 ? (

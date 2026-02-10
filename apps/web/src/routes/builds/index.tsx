@@ -80,7 +80,10 @@ function BuildsListPage() {
       {!isLoading && !error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Build queue and history</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Build queue and history</CardTitle>
+              <span className="text-xs text-muted-foreground">{builds.length} total</span>
+            </div>
           </CardHeader>
           <CardContent>
             {builds.length === 0 ? (

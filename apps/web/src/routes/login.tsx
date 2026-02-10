@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -26,14 +27,12 @@ function LoginPage() {
     document.title = webPageTitle('Login')
   }, [])
 
-  // Already authenticated — redirect to dashboard
   useEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
     }
   }, [hasValidToken, navigate])
 
-  // No active instance — redirect to home
   useEffect(() => {
     if (!instance) {
       void navigate({ to: '/' })
@@ -66,7 +65,6 @@ function LoginPage() {
         state: string
       }
 
-      // Store the OIDC state for callback validation
       try {
         sessionStorage.setItem('oore_oidc_state', data.state)
         sessionStorage.setItem('oore_oidc_instance', instance.id)
@@ -74,7 +72,6 @@ function LoginPage() {
         // sessionStorage unavailable
       }
 
-      // Redirect to IdP
       window.location.href = data.authorization_url
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Login failed')
@@ -84,30 +81,30 @@ function LoginPage() {
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-3">
-          <div className="flex items-center justify-center gap-2">
+      <div className="w-full max-w-sm space-y-8">
+        <div className="text-center space-y-4">
+          <div className="mx-auto flex size-14 items-center justify-center border-2 border-primary/20 bg-primary/5">
             <img src="/logo.svg" alt="oore.build logo" className="size-7" />
-            <span className="text-base font-semibold tracking-tight">
-              oore.build
-            </span>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Sign in to oore.build
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Authenticate with your identity provider to continue.
-          </p>
+          <div className="space-y-1">
+            <h1 className="text-3xl font-bold tracking-tight">
+              Sign in
+            </h1>
+            <p className="text-muted-foreground text-sm">
+              Authenticate with your identity provider to continue.
+            </p>
+          </div>
         </div>
 
         <Card>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Connected to{' '}
-              <code className="bg-muted px-1.5 py-0.5 text-xs font-mono">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Instance</span>
+              <Separator orientation="vertical" className="h-3!" />
+              <code className="bg-muted px-1.5 py-0.5 text-xs font-mono font-medium">
                 {instance.label}
               </code>
-            </p>
+            </div>
 
             {error ? (
               <Alert variant="destructive">

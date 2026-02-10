@@ -343,30 +343,24 @@ function ProjectDetailPage() {
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Pipelines</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{pipelines.length}</p>
-            <p className="text-xs text-muted-foreground">Configured under this project</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Pipelines</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">{pipelines.length}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Configured under this project</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Recent builds</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{builds.length}</p>
-            <p className="text-xs text-muted-foreground">Latest 10 runs</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Recent builds</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">{builds.length}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Latest 10 runs</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Created by</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="truncate text-sm font-medium">{project.created_by}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Created by</p>
+            <p className="mt-3 truncate text-sm font-bold">{project.created_by}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
               {new Date(project.created_at * 1000).toLocaleString()}
             </p>
           </CardContent>
@@ -375,7 +369,7 @@ function ProjectDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Project details</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Project details</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -404,7 +398,7 @@ function ProjectDetailPage() {
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base">Pipelines</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Pipelines</CardTitle>
             {canWritePipelines ? (
               <Button size="sm" onClick={() => setPipelineCreateOpen(true)}>
                 <HugeiconsIcon icon={Add01Icon} size={14} />
@@ -490,7 +484,7 @@ function ProjectDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Recent builds</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Recent builds</CardTitle>
         </CardHeader>
         <CardContent>
           {builds.length === 0 ? (

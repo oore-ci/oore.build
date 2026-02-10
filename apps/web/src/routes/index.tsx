@@ -5,6 +5,8 @@ import {
   Add01Icon,
   ArrowRight01Icon,
   CheckmarkCircle02Icon,
+  Folder02Icon,
+  GitBranchIcon,
   InformationCircleIcon,
   Setting07Icon,
 } from '@hugeicons/core-free-icons'
@@ -61,19 +63,26 @@ function IndexPage() {
   if (!instance) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-6">
-        <div className="w-full max-w-md space-y-6">
-          <div className="space-y-2 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Welcome to oore.build
+        <div className="w-full max-w-md space-y-8">
+          <div className="space-y-3 text-center">
+            <div className="mx-auto flex size-14 items-center justify-center border-2 border-primary/20 bg-primary/5">
+              <img src="/logo.svg" alt="oore.build logo" className="size-7" />
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              oore.build
             </h1>
             <p className="text-sm text-muted-foreground">
-              Connect your first backend instance to begin.
+              Self-hosted mobile CI and app distribution platform.
+              <br />
+              Connect a backend instance to begin.
             </p>
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Instance Registry</CardTitle>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                Instance Registry
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
@@ -136,7 +145,7 @@ function IndexPage() {
                 <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} />
                 Instance ready
               </Badge>
-              <span className="font-mono">{status.instance_id}</span>
+              <span className="font-mono text-[11px]">{status.instance_id}</span>
               {authUser?.role ? <Badge variant="outline">{authUser.role}</Badge> : null}
             </>
           }
@@ -154,32 +163,27 @@ function IndexPage() {
 
         <section className="grid gap-4 md:grid-cols-3">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">Daemon status</CardTitle>
-            </CardHeader>
             <CardContent>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Daemon</p>
                 <Badge variant="success">online</Badge>
-                <span className="text-sm text-muted-foreground">Connected and authenticated</span>
               </div>
+              <p className="mt-3 text-2xl font-bold tracking-tight">Connected</p>
+              <p className="mt-1 text-xs text-muted-foreground">Authenticated and responding</p>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">Setup state</CardTitle>
-            </CardHeader>
             <CardContent>
-              <p className="text-sm font-medium">ready</p>
-              <p className="text-xs text-muted-foreground">OIDC and owner bootstrap complete</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Setup state</p>
+              <p className="mt-3 text-2xl font-bold tracking-tight">Ready</p>
+              <p className="mt-1 text-xs text-muted-foreground">OIDC and owner bootstrap complete</p>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">Operator</CardTitle>
-            </CardHeader>
             <CardContent>
-              <p className="truncate text-sm font-medium">{authUser?.email ?? 'Unknown user'}</p>
-              <p className="text-xs text-muted-foreground">Role-based actions are enforced per route</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operator</p>
+              <p className="mt-3 truncate text-2xl font-bold tracking-tight">{authUser?.email ?? 'Unknown'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Role-based actions enforced per route</p>
             </CardContent>
           </Card>
         </section>
@@ -187,22 +191,25 @@ function IndexPage() {
         <section className="grid gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Quick actions</CardTitle>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Quick Actions</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-2">
               <QuickAction
                 to="/projects"
+                icon={Folder02Icon}
                 title="Manage projects"
                 description="Create and maintain build-ready repositories and pipeline configs."
               />
               <QuickAction
                 to="/builds"
+                icon={GitBranchIcon}
                 title="Inspect builds"
                 description="Open run details, stream logs, and download generated artifacts."
               />
               {isAdmin ? (
                 <QuickAction
                   to="/settings/runners"
+                  icon={Setting07Icon}
                   title="Review runners"
                   description="Track runner health and rename non-embedded runners."
                 />
@@ -212,7 +219,7 @@ function IndexPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Control plane notes</CardTitle>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">System Notes</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <Alert>
@@ -222,7 +229,7 @@ function IndexPage() {
                 </AlertDescription>
               </Alert>
               {isAdmin ? (
-                <Button variant="outline" render={<Link to="/settings/integrations" />}>
+                <Button variant="outline" className="w-full" render={<Link to="/settings/integrations" />}>
                   <HugeiconsIcon icon={Setting07Icon} size={16} />
                   Configure integrations
                 </Button>
@@ -246,23 +253,30 @@ function IndexPage() {
 
 function QuickAction({
   to,
+  icon,
   title,
   description,
 }: {
   to: '/projects' | '/builds' | '/settings/runners'
+  icon: typeof Folder02Icon
   title: string
   description: string
 }) {
   return (
     <Link
       to={to}
-      className="flex items-center justify-between gap-3 border p-3 text-left transition-colors hover:bg-muted/40"
+      className="group flex items-center justify-between gap-4 border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/30 hover:bg-primary/5"
     >
-      <div className="min-w-0">
-        <p className="text-sm font-medium">{title}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
+      <div className="flex items-center gap-4">
+        <div className="flex size-9 shrink-0 items-center justify-center border bg-muted/40 text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:text-primary">
+          <HugeiconsIcon icon={icon} size={16} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{title}</p>
+          <p className="text-xs text-muted-foreground">{description}</p>
+        </div>
       </div>
-      <HugeiconsIcon icon={ArrowRight01Icon} size={16} />
+      <HugeiconsIcon icon={ArrowRight01Icon} size={16} className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
     </Link>
   )
 }

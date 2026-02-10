@@ -237,36 +237,30 @@ function PreferencesPage() {
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Artifact provider</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Artifact provider</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {settings?.provider ?? 'disabled'}
             </p>
-            <p className="text-xs text-muted-foreground">Current artifact backend</p>
+            <p className="mt-1 text-xs text-muted-foreground">Current artifact backend</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Config source</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Config source</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {settings?.source ?? 'default'}
             </p>
-            <p className="text-xs text-muted-foreground">Database, environment, or default</p>
+            <p className="mt-1 text-xs text-muted-foreground">Database, environment, or default</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Key storage mode</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Key storage mode</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {preferences?.key_storage_mode ?? 'keychain'}
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Startup secret-key source for encryption-at-rest
             </p>
           </CardContent>
@@ -302,7 +296,7 @@ function PreferencesPage() {
       {!settingsQuery.isLoading && !settingsQuery.error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Artifact Storage</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Artifact Storage</CardTitle>
           </CardHeader>
           <CardContent>
             {!canWrite ? (
@@ -510,7 +504,7 @@ function PreferencesPage() {
       {!preferencesQuery.isLoading && !preferencesQuery.error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Security Preferences</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Security Preferences</CardTitle>
           </CardHeader>
           <CardContent>
             <Form {...keyModeForm}>

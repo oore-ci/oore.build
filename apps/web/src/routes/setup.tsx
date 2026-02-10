@@ -36,16 +36,16 @@ const STEPS = ['Token', 'OIDC', 'Owner', 'Complete'] as const
 
 function StepIndicator({ currentStep }: { currentStep: number }) {
   return (
-    <div className="flex items-center justify-center gap-3">
+    <div className="flex items-center justify-center gap-1">
       {STEPS.map((label, index) => {
         const isActive = index === currentStep
         const isCompleted = index < currentStep
 
         return (
-          <div key={label} className="flex items-center gap-3">
+          <div key={label} className="flex items-center gap-1">
             {index > 0 ? (
               <div
-                className={`h-px w-6 ${isCompleted ? 'bg-primary' : 'bg-muted'}`}
+                className={`h-px w-8 ${isCompleted ? 'bg-primary' : 'bg-border'}`}
               />
             ) : null}
             <Badge
@@ -92,20 +92,19 @@ function SetupLayout() {
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-lg space-y-6">
-        <div className="text-center space-y-3">
-          <div className="flex items-center justify-center gap-2">
+      <div className="w-full max-w-lg space-y-8">
+        <div className="text-center space-y-4">
+          <div className="mx-auto flex size-14 items-center justify-center border-2 border-primary/20 bg-primary/5">
             <img src="/logo.svg" alt="oore.build logo" className="size-7" />
-            <span className="text-base font-semibold tracking-tight">
-              oore.build
-            </span>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            oore.build Setup
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Configure your self-hosted CI instance
-          </p>
+          <div className="space-y-1">
+            <h1 className="text-3xl font-bold tracking-tight">
+              Instance Setup
+            </h1>
+            <p className="text-muted-foreground text-sm">
+              Configure your self-hosted CI instance
+            </p>
+          </div>
         </div>
 
         <StepIndicator currentStep={currentStep} />
@@ -113,7 +112,7 @@ function SetupLayout() {
         {formatted && !isExpired ? (
           <div className="text-center">
             <p
-              className={`text-sm font-mono ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
+              className={`text-xs font-mono ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
             >
               Session expires in {formatted}
             </p>

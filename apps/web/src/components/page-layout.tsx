@@ -21,7 +21,7 @@ export default function PageLayout({
     <div
       className={cn(
         WIDTH_CLASSES[width],
-        'mx-auto w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8',
+        'mx-auto w-full space-y-6 px-6 py-8 lg:px-10 lg:py-10',
         className,
       )}
     >

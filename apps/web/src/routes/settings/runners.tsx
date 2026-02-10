@@ -228,30 +228,27 @@ function RunnersSettingsPage() {
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Total runners</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{runners.length}</p>
-            <p className="text-xs text-muted-foreground">Embedded and external</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Total runners</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">{runners.length}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Embedded and external</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Online runners</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{onlineCount}</p>
-            <p className="text-xs text-muted-foreground">Online or currently busy</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Online runners</p>
+              {onlineCount > 0 ? <Badge variant="success">{onlineCount}</Badge> : null}
+            </div>
+            <p className="mt-3 text-2xl font-bold tracking-tight">{onlineCount}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Online or currently busy</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Rename policy</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-sm font-medium">External only</p>
-            <p className="text-xs text-muted-foreground">Embedded runners stay daemon-managed</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Rename policy</p>
+            <p className="mt-3 text-sm font-bold">External only</p>
+            <p className="mt-1 text-xs text-muted-foreground">Embedded runners stay daemon-managed</p>
           </CardContent>
         </Card>
       </section>
@@ -277,7 +274,7 @@ function RunnersSettingsPage() {
       {!isLoading && !error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Runner inventory</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Runner Inventory</CardTitle>
           </CardHeader>
           <CardContent>
             {runners.length === 0 ? (

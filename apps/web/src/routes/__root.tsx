@@ -46,14 +46,6 @@ const DevTools = import.meta.env.DEV
 
 export const Route = createRootRoute({
   beforeLoad: () => {
-    // Sync setup store's instance context eagerly so that child route guards
-    // and components have the correct sessionToken from namespaced sessionStorage.
-    // This must run before child beforeLoad guards, not in a useEffect (which
-    // fires after render and would leave child components with stale state).
-    //
-    // Read from localStorage directly as fallback — Zustand persist may not
-    // have rehydrated the instance store yet on a full-page reload (e.g. after
-    // an OIDC redirect back from an external IdP).
     let activeId = useInstanceStore.getState().activeInstanceId
     if (!activeId) {
       try {
@@ -86,7 +78,6 @@ function RootLayout() {
   const showSidebar = !isSetupRoute && !isLoginRoute
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
 
-  // Re-sync when active instance changes at runtime (user switches or removes instance)
   useEffect(() => {
     useSetupStore.getState().setInstanceContext(activeInstanceId)
     useAuthStore.getState().setInstanceContext(activeInstanceId)
@@ -99,7 +90,7 @@ function RootLayout() {
           <SidebarProvider>
             <AppSidebar />
             <SidebarInset>
-              <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+              <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
                 <SidebarTrigger className="-ml-1" />
                 <Separator orientation="vertical" className="mr-2 h-4! self-auto!" />
                 <Link to="/" className="flex items-center gap-2 pr-1">
@@ -111,13 +102,13 @@ function RootLayout() {
                 <Separator orientation="vertical" className="mr-2 h-4! self-auto!" />
                 <PageBreadcrumb />
               </header>
-              <div className="flex flex-1 flex-col bg-muted/10">
+              <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />
               </div>
             </SidebarInset>
           </SidebarProvider>
         ) : (
-          <div className="min-h-screen flex flex-col">
+          <div className="min-h-screen flex flex-col bg-surface">
             <div className="flex-1 flex flex-col">
               <Outlet />
             </div>

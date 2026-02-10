@@ -8,11 +8,118 @@ This document governs **`apps/web`** only. `apps/docs-site` (VitePress) follows 
 
 ## Design Philosophy
 
-1. **shadcn-first.** Use shadcn registry components before building custom ones.
-2. **Consistency over novelty.** Reuse existing patterns; avoid inventing new ones.
-3. **Accessible by default.** All interactive elements must be keyboard-navigable and screen-reader friendly.
-4. **Minimal custom CSS.** Tailwind utility classes and CSS variable tokens handle styling. No hand-written CSS files.
-5. **No inline SVGs.** All icons come from Hugeicons.
+1. **Industrial command-center aesthetic.** oore.build is a CI platform, not a consumer app. The UI should feel like mission control — authoritative, information-dense, and confident. Every element should communicate competence and production-readiness.
+2. **shadcn-first.** Use shadcn registry components before building custom ones.
+3. **Consistency over novelty.** Reuse established patterns across all pages.
+4. **Accessible by default.** All interactive elements must be keyboard-navigable and screen-reader friendly.
+5. **Minimal custom CSS.** Tailwind utility classes and CSS variable tokens handle styling. No hand-written CSS files.
+6. **No inline SVGs.** All icons come from Hugeicons.
+
+## Visual Language
+
+### Typography Hierarchy
+
+The typography system uses deliberate weight and size contrast to create clear hierarchy:
+
+- **Page titles:** `text-3xl font-bold tracking-tight` — commanding presence
+- **Stat card values:** `text-2xl font-bold tracking-tight` — large and prominent
+- **Section labels (card titles):** `text-sm font-medium uppercase tracking-wider text-muted-foreground` — small, uppercase, always muted to differentiate from content
+- **Body text:** `text-sm` (14px)
+- **Helper/muted text:** `text-xs text-muted-foreground`
+- **Mono data:** `font-mono text-[11px] text-muted-foreground` for IDs, SHAs, timestamps
+- **Back links:** `text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground`
+
+### Card Patterns
+
+#### Stat Cards (compact, no header)
+
+Use for overview metrics at the top of pages. No `CardHeader` — label goes directly inside `CardContent`. The `Card` component already provides symmetric `py-6` padding, so do **not** add `pt-6` to `CardContent` (that would double the top padding):
+
+```tsx
+<Card>
+  <CardContent>
+    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Label</p>
+    <p className="mt-3 text-2xl font-bold tracking-tight">Value</p>
+    <p className="mt-1 text-xs text-muted-foreground">Description</p>
+  </CardContent>
+</Card>
+```
+
+For stat cards with a status badge inline:
+
+```tsx
+<Card>
+  <CardContent>
+    <div className="flex items-center justify-between">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Label</p>
+      <Badge variant="success">online</Badge>
+    </div>
+    <p className="mt-3 text-2xl font-bold tracking-tight">Value</p>
+    <p className="mt-1 text-xs text-muted-foreground">Description</p>
+  </CardContent>
+</Card>
+```
+
+#### Content Cards (with header)
+
+Use for tables, forms, and detailed content. Card titles use the uppercase label style:
+
+```tsx
+<Card>
+  <CardHeader>
+    <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+      Section Title
+    </CardTitle>
+  </CardHeader>
+  <CardContent>{/* ... */}</CardContent>
+</Card>
+```
+
+For card headers with a count or action:
+
+```tsx
+<Card>
+  <CardHeader>
+    <div className="flex items-center justify-between">
+      <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        Inventory
+      </CardTitle>
+      <span className="text-xs text-muted-foreground">{count} total</span>
+    </div>
+  </CardHeader>
+  <CardContent>{/* ... */}</CardContent>
+</Card>
+```
+
+### Color Tokens
+
+All colors use oklch CSS variables in `src/styles.css`. The token set includes a `--surface` token for the main content area background, which creates subtle depth separation between the sidebar/header (using `--background`) and the page content area.
+
+| Token | Purpose |
+|---|---|
+| `--background` / `--foreground` | Header and sidebar backgrounds, text |
+| `--surface` | Main content area background (subtle separation from header) |
+| `--card` / `--card-foreground` | Card surfaces |
+| `--popover` / `--popover-foreground` | Popovers and dropdowns |
+| `--primary` / `--primary-foreground` | Primary actions (amber) |
+| `--secondary` / `--secondary-foreground` | Secondary actions |
+| `--muted` / `--muted-foreground` | Subdued text and backgrounds |
+| `--accent` / `--accent-foreground` | Hover/active states |
+| `--destructive` | Destructive/error actions |
+| `--border` | Borders |
+| `--input` | Input borders |
+| `--ring` | Focus rings |
+| `--success` / `--warning` / `--info` | Semantic status colors |
+
+### Dark Mode
+
+Dark mode is toggled by adding the `.dark` class to the root `<html>` element. The `@custom-variant dark (&:is(.dark *))` directive handles it.
+
+**Rule:** Never use hard-coded Tailwind color classes (e.g., `text-green-600`, `text-blue-600`). Use token-based classes (`text-primary`, `text-destructive`, `text-muted-foreground`) or define new tokens if needed.
+
+### `@theme inline`
+
+Tailwind v4 maps CSS variables to utility classes via `@theme inline` in `styles.css`. When adding a new semantic token, add it to both `:root` / `.dark` and to `@theme inline`.
 
 ## Component Selection Rule
 
@@ -28,54 +135,36 @@ Need a component
 
 **Never** build a custom dialog, dropdown, drawer, select, table, form, or toast when shadcn has an equivalent.
 
-## Theming
-
-### CSS Variable Tokens
-
-All colors use oklch CSS variables defined in `src/styles.css`. The token set includes:
-
-| Token | Purpose |
-|---|---|
-| `--background` / `--foreground` | Page background and text |
-| `--card` / `--card-foreground` | Card surfaces |
-| `--popover` / `--popover-foreground` | Popovers and dropdowns |
-| `--primary` / `--primary-foreground` | Primary actions (amber) |
-| `--secondary` / `--secondary-foreground` | Secondary actions |
-| `--muted` / `--muted-foreground` | Subdued text and backgrounds |
-| `--accent` / `--accent-foreground` | Hover/active states |
-| `--destructive` | Destructive/error actions |
-| `--border` | Borders |
-| `--input` | Input borders |
-| `--ring` | Focus rings |
-
-### Dark Mode
-
-Dark mode is toggled by adding the `.dark` class to the root `<html>` element. The `@custom-variant dark (&:is(.dark *))` directive handles it.
-
-**Rule:** Never use hard-coded Tailwind color classes (e.g., `text-green-600`, `text-blue-600`). Use token-based classes (`text-primary`, `text-destructive`, `text-muted-foreground`) or define new tokens if needed.
-
-### `@theme inline`
-
-Tailwind v4 maps CSS variables to utility classes via `@theme inline` in `styles.css`. When adding a new semantic token, add it to both `:root` / `.dark` and to `@theme inline`.
-
 ## Typography
 
-- **Sans font:** Google Sans Flex (self-hosted variable woff2, weight 100–900)
+- **Sans font:** Google Sans Flex (self-hosted variable woff2, weight 100-900)
 - **Mono font:** JetBrains Mono Variable (`@fontsource-variable/jetbrains-mono`) — commit SHAs, build numbers, IDs
 - **Body text:** `text-sm` (14px)
-- **Page headings:** `text-2xl font-semibold tracking-tight`
-- **Section headings:** `text-lg font-medium` or `text-sm font-medium` for card titles
+- **Page headings:** `text-3xl font-bold tracking-tight`
+- **Section labels:** `text-sm font-medium uppercase tracking-wider text-muted-foreground`
 - **Labels:** `text-xs font-medium uppercase tracking-wider` for category labels; shadcn `Label` for form fields
-- **Muted/helper text:** `text-sm text-muted-foreground`
+- **Muted/helper text:** `text-sm text-muted-foreground` or `text-xs text-muted-foreground`
 
 ## Spacing and Layout
 
-- **Page containers:** Use `PageLayout` component (`mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 lg:py-8 space-y-6`). Supports `width="narrow"` (max-w-xl), `width="default"` (max-w-4xl), and `width="wide"` (max-w-6xl).
+- **Page containers:** Use `PageLayout` component (`mx-auto w-full px-6 py-8 lg:px-10 lg:py-10 space-y-6`). Supports `width="narrow"` (max-w-xl), `width="default"` (max-w-4xl), and `width="wide"` (max-w-6xl).
 - **Data-dense pages:** Prefer `width="wide"` for project/build/integrations/runners inventory and detail pages.
-- **Page headers:** Use `PageHeader` component with `title`, optional `description`, `actions`, `back`, and `meta` props. Replaces ad-hoc `<h1>` + `<p>` patterns.
-- **Focused flows** (login, setup): `max-w-lg` or `max-w-sm` centered, or `PageLayout width="narrow"`
+- **Page headers:** Use `PageHeader` component with `title`, optional `description`, `actions`, `back`, and `meta` props. Title uses `text-3xl font-bold tracking-tight`. Back link uses uppercase tracking.
+- **Focused flows** (login, setup): `max-w-lg` or `max-w-sm` centered with a branded header (logo in bordered square container + bold title)
 - **Vertical rhythm:** `space-y-6` between page sections, `space-y-4` within cards
 - **Gaps:** `gap-3` for inline form rows, `gap-2` for button groups
+
+### Branded Header Pattern
+
+Used on login, setup, and welcome (no-instance) pages for strong brand presence:
+
+```tsx
+<div className="mx-auto flex size-14 items-center justify-center border-2 border-primary/20 bg-primary/5">
+  <img src="/logo.svg" alt="oore.build logo" className="size-7" />
+</div>
+<h1 className="text-3xl font-bold tracking-tight">Title</h1>
+<p className="text-sm text-muted-foreground">Subtitle</p>
+```
 
 ## Icons
 
@@ -91,6 +180,28 @@ import { Menu02Icon } from '@hugeicons/core-free-icons'
 **Anti-pattern:** Never use inline `<svg>` elements for icons. Never import icons from other libraries.
 
 ## Component Patterns
+
+### Quick Action Links
+
+Used on the dashboard for navigation items with icons:
+
+```tsx
+<Link
+  to={to}
+  className="group flex items-center justify-between gap-4 border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/30 hover:bg-primary/5"
+>
+  <div className="flex items-center gap-4">
+    <div className="flex size-9 shrink-0 items-center justify-center border bg-muted/40 text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:text-primary">
+      <HugeiconsIcon icon={icon} size={16} />
+    </div>
+    <div className="min-w-0">
+      <p className="text-sm font-medium">{title}</p>
+      <p className="text-xs text-muted-foreground">{description}</p>
+    </div>
+  </div>
+  <HugeiconsIcon icon={ArrowRight01Icon} size={16} className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+</Link>
+```
 
 ### Dialog
 
@@ -373,6 +484,9 @@ toast.error('Failed to update role')
 | Ad-hoc `<h1>` + `<p>` page headers | `PageHeader` component |
 | Inline `max-w-4xl mx-auto px-6 py-8` wrappers | `PageLayout` component |
 | Custom drawer with `transform transition` | shadcn `Sheet` |
+| `CardTitle className="text-base"` for section titles | `CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground"` |
+| CardHeader + CardTitle for stat cards | Compact pattern: `CardContent` (no `pt-6`) with inline label |
+| `CardContent className="pt-6"` on headerless cards | Plain `CardContent` — `Card` already provides symmetric `py-6` |
 
 ## Sidebar Layout
 
@@ -381,8 +495,8 @@ The app uses a `SidebarProvider` + `Sidebar` + `SidebarInset` layout (shadcn sid
 ### Structure
 
 - **SidebarHeader**: `InstanceSwitcher` — switch/add/remove backend instances
-- **SidebarContent**: `NavMain` — flat navigation (Dashboard, Builds, separator, Users + Integrations for admin/owner)
-- **SidebarFooter**: `NavUser` — user avatar dropdown with email, role, sign out
+- **SidebarContent**: `NavMain` — flat navigation (Dashboard, Projects, Builds + admin section)
+- **SidebarFooter**: `NavUser` — user avatar dropdown with email, role, sign out, theme switcher
 
 ### When Sidebar Shows
 
@@ -398,10 +512,14 @@ When no active instance or unauthenticated, `AppSidebar` returns null and the la
 
 ### Content Header
 
-Every page within the sidebar layout has a top header with:
+Every page within the sidebar layout has a sticky top header (`h-12`) with:
 1. `SidebarTrigger` — hamburger button to toggle sidebar
 2. Vertical `Separator`
-3. `PageBreadcrumb` — route-aware breadcrumb
+3. Logo and brand name
+4. Vertical `Separator`
+5. `PageBreadcrumb` — route-aware breadcrumb
+
+The header uses `bg-background` (solid) while the content area uses `bg-surface` (subtly different) for depth.
 
 ### Avatar Pattern
 
@@ -442,6 +560,9 @@ Before submitting frontend changes, verify:
 - [ ] Forms use react-hook-form + zod
 - [ ] Dark mode works with all new UI
 - [ ] All interactive elements are keyboard-accessible
+- [ ] Card titles use uppercase label style (`text-sm font-medium uppercase tracking-wider text-muted-foreground`)
+- [ ] Stat cards use compact pattern (no CardHeader, label inside CardContent)
+- [ ] Page titles use `text-3xl font-bold tracking-tight`
 
 ## Governance
 
