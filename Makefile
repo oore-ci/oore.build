@@ -1,4 +1,4 @@
-.PHONY: dev-web dev-docs build-web build-demo deploy-demo build-docs build check \
+.PHONY: dev-web dev-docs build-web build-demo deploy-demo deploy-docs build-docs build check \
        test-web lint-web fix-web \
        test-docs lint-docs fix-docs \
        cargo-check run-daemon run-daemon-debug run-daemon-release \
@@ -39,6 +39,9 @@ dev-docs:
 
 build-docs:
 	bun run build:docs
+
+deploy-docs: build-docs
+	wrangler pages deploy apps/docs-site/docs/.vitepress/dist --project-name=oore-docs
 
 test-docs:
 	cd apps/docs-site && bun run test
