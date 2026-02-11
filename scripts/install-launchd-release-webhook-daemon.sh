@@ -15,7 +15,8 @@ fi
 ETC_DIR="/etc/oore"
 ENV_FILE="$ETC_DIR/release-webhook.env"
 USER_ENV_FILE="$BUILD_HOME/.oore/release-runner/webhook.env"
-LOG_FILE="/var/log/oore-release-webhook.log"
+LOG_DIR="$BUILD_HOME/Library/Logs"
+LOG_FILE="$LOG_DIR/oore-release-webhook.log"
 STATE_DIR="$BUILD_HOME/.oore/release-runner"
 
 log() {
@@ -34,8 +35,9 @@ require_root() {
 require_root
 [[ -f "$TEMPLATE" ]] || die "Template not found: $TEMPLATE"
 
-mkdir -p "$ETC_DIR" "$(dirname "$TARGET")" "$STATE_DIR"
+mkdir -p "$ETC_DIR" "$(dirname "$TARGET")" "$STATE_DIR" "$LOG_DIR"
 chown "$BUILD_USER":staff "$STATE_DIR"
+chown "$BUILD_USER":staff "$LOG_DIR"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   if [[ -f "$USER_ENV_FILE" ]] && grep -Eq '^(export[[:space:]]+)?OORE_WEBHOOK_SECRET=' "$USER_ENV_FILE"; then
@@ -64,7 +66,7 @@ chmod 600 "$ENV_FILE"
 
 touch "$LOG_FILE"
 chmod 644 "$LOG_FILE"
-chown root:wheel "$LOG_FILE"
+chown "$BUILD_USER":staff "$LOG_FILE"
 
 sed \
   -e "s#__ROOT_DIR__#$ROOT_DIR#g" \

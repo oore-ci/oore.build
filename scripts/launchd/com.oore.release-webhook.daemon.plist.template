@@ -50,9 +50,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/var/log/oore-release-webhook.log</string>
+    <string>__BUILD_HOME__/Library/Logs/oore-release-webhook.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/var/log/oore-release-webhook.log</string>
+    <string>__BUILD_HOME__/Library/Logs/oore-release-webhook.log</string>
   </dict>
 </plist>

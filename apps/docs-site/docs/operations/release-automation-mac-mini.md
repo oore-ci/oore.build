@@ -53,7 +53,7 @@ Use webhook URL:
 
 ```bash
 curl -fsSL http://127.0.0.1:8789/healthz
-sudo tail -f /var/log/oore-release-webhook.log
+tail -f ~/Library/Logs/oore-release-webhook.log
 ```
 
 On tag push `refs/tags/v*.*.*`, the listener triggers release build/upload.
