@@ -89,6 +89,7 @@ make doctor           # Check system prerequisites
 Releases are published from a dedicated Mac mini:
 
 ```bash
+make release-cut VERSION=0.2.0             # Bump version, commit, push, tag, push tag
 make release-local TAG=v0.2.0          # Build + upload one release to R2
 sudo make install-release-webhook-daemon  # Install LaunchDaemon webhook listener
 make install-release-poller               # Optional polling fallback
