@@ -18,7 +18,7 @@
     width="28"
     height="28"
     rx="6"
-    fill="#f49f1e"
+    fill="#dc7702"
     clip-path="url(#left)"
     mask="url(#hole)"
   />
@@ -28,7 +28,7 @@
     width="28"
     height="28"
     rx="6"
-    fill="#f49f1e"
+    fill="#dc7702"
     clip-path="url(#right)"
     mask="url(#hole)"
   />

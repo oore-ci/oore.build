@@ -571,7 +571,7 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
             <!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
             <link rel=\"icon\" href=\"{favicon}\"><link rel=\"apple-touch-icon\" href=\"{favicon}\">\
-            <meta name=\"theme-color\" content=\"#f49f1e\"><title>Authentication failed</title></head>\
+            <meta name=\"theme-color\" content=\"#dc7702\"><title>Authentication failed</title></head>\
             <body><h2>Authentication failed</h2><p>{error}{desc}</p><p>You can close this tab.</p></body></html>",
             favicon = FAVICON_DATA_URI,
             error = error,
@@ -596,7 +596,7 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
         <!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
         <link rel=\"icon\" href=\"{favicon}\"><link rel=\"apple-touch-icon\" href=\"{favicon}\">\
-        <meta name=\"theme-color\" content=\"#f49f1e\"><title>Authentication successful</title></head>\
+        <meta name=\"theme-color\" content=\"#dc7702\"><title>Authentication successful</title></head>\
         <body><h2>Authentication successful</h2><p>You can close this tab and return to the terminal.</p></body></html>",
         favicon = FAVICON_DATA_URI,
     );

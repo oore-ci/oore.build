@@ -31,7 +31,7 @@ pub(crate) fn error_page(title: &str, message: &str) -> String {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="{favicon}">
   <link rel="apple-touch-icon" href="{favicon}">
-  <meta name="theme-color" content="#f49f1e">
+  <meta name="theme-color" content="#dc7702">
   <title>{title}</title>
   <style>
     body {{
