@@ -3,7 +3,8 @@ set -euo pipefail
 
 OORE_VERSION="${OORE_VERSION:-latest}"
 OORE_INSTALL_ROOT="${OORE_INSTALL_ROOT:-$HOME/.oore}"
-OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-devaryakjha/oore.build}"
+OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://dl.oore.build/releases}"
+OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-$OORE_RELEASE_BASE_URL/latest.json}"
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 
@@ -116,19 +117,22 @@ detect_arch() {
 resolve_release_tag() {
   local tag=""
   if [[ "$OORE_VERSION" == "latest" ]]; then
-    tag="$(
-      curl -fsSL "https://api.github.com/repos/$OORE_GITHUB_REPO/releases/latest" \
-        | awk -F'"' '/"tag_name":/ { print $4; exit }'
-    )"
-    [[ -n "$tag" ]] || die "Unable to resolve latest release for $OORE_GITHUB_REPO."
+    local manifest_file="$TMP_DIR/latest.json"
+    curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL" \
+      || die "Unable to fetch release manifest: $OORE_RELEASE_MANIFEST_URL"
+
+    tag="$(sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
+    [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
   else
     if [[ "$OORE_VERSION" == v* ]]; then
       tag="$OORE_VERSION"
     else
       tag="v$OORE_VERSION"
     fi
-    curl -fsSL "https://api.github.com/repos/$OORE_GITHUB_REPO/releases/tags/$tag" >/dev/null \
-      || die "Release tag not found: $tag"
+  fi
+
+  if [[ "$tag" != v* ]]; then
+    tag="v$tag"
   fi
 
   RELEASE_TAG="$tag"
@@ -141,7 +145,7 @@ resolve_release_tag() {
 download_release_assets() {
   local archive_name="oore_${RELEASE_VERSION}_darwin_${RELEASE_ARCH}.tar.gz"
   local checksum_name="oore_${RELEASE_VERSION}_checksums.txt"
-  local base_url="https://github.com/$OORE_GITHUB_REPO/releases/download/$RELEASE_TAG"
+  local base_url="${OORE_RELEASE_BASE_URL%/}/$RELEASE_TAG"
   local archive_url="$base_url/$archive_name"
   local checksum_url="$base_url/$checksum_name"
 
@@ -261,7 +265,10 @@ Next steps:
 Environment variables:
   OORE_VERSION=latest             # 'latest' or a tag like v0.2.0
   OORE_INSTALL_ROOT=~/.oore       # Installation directory
-  OORE_GITHUB_REPO=owner/repo     # Release source repository
+  OORE_RELEASE_BASE_URL=https://dl.oore.build/releases
+                                  # Release base URL (contains /<tag>/assets)
+  OORE_RELEASE_MANIFEST_URL=https://dl.oore.build/releases/latest.json
+                                  # Manifest URL used when OORE_VERSION=latest
   OORE_NONINTERACTIVE=1           # Disable prompts
   OORE_START_DAEMON=true|false    # Non-interactive daemon startup behavior
 
@@ -297,9 +304,8 @@ main() {
   ensure_dependency mktemp
 
   detect_arch
-  resolve_release_tag
-
   TMP_DIR="$(mktemp -d)"
+  resolve_release_tag
   download_release_assets
   verify_archive_checksum
   install_binaries

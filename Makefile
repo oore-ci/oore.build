@@ -3,7 +3,8 @@
 	       test-docs lint-docs fix-docs \
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
 	       run-runner register-runner run-cli doctor \
-	       docs-check ui-init install-local validate
+	       docs-check ui-init install-local validate \
+	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -95,6 +96,25 @@ install-local:
 
 test-rust:
 	cargo test -p oored --features test-support
+
+release-local:
+	@test -n "$(TAG)" || (echo "TAG is required (example: make release-local TAG=v0.2.0)"; exit 1)
+	bash scripts/release-local.sh "$(TAG)"
+
+release-poll-tags:
+	bash scripts/release-poll-tags.sh
+
+release-webhook-server:
+	bash scripts/release-webhook-server.sh
+
+install-release-poller:
+	bash scripts/install-launchd-release-poller.sh
+
+install-release-webhook:
+	bash scripts/install-launchd-release-webhook.sh
+
+install-release-webhook-daemon:
+	bash scripts/install-launchd-release-webhook-daemon.sh
 
 # ── Documentation & Validation ────────────────────────────────────
 docs-check:

@@ -271,7 +271,7 @@ Dependency: Phases 2-6 functional.
 - [ ] **7.4 [P2] Security hardening** - Input validation audit, path traversal defenses, strict URL TTL enforcement.
 - [ ] **7.5 [P2] Operational docs** - Deploy/runbook/recovery guidance.
 - [ ] **7.6 [P2] Final release validation** - `make validate` and handoff checklist.
-- [x] **7.7 [P1] Release installer + onboarding bootstrap** - Added tag-driven GitHub release packaging for macOS (`arm64`, `x86_64`) with checksum assets, release-based `scripts/install.sh` (`curl -fsSL https://oore.build/install | bash`), neutral landing site plan (`apps/site`), and hosted-UI-first onboarding docs.
+- [x] **7.7 [P1] Release installer + onboarding bootstrap** - Added tag-driven macOS release packaging (`arm64`, `x86_64`) with checksum assets published to Cloudflare R2 (`dl.oore.build`), release-based `scripts/install.sh` (`curl -fsSL https://oore.build/install | bash`), neutral landing site plan (`apps/site`), and hosted-UI-first onboarding docs.
 
 Feature docs required: E2E Tests, Security Hardening, Deployment/Operations.
 

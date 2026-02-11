@@ -327,6 +327,10 @@ export default defineConfig({
           text: "Operations",
           items: [
             { text: "Deployment", link: "/operations/deployment" },
+            {
+              text: "Release Automation (macOS + R2)",
+              link: "/operations/release-automation-mac-mini",
+            },
             { text: "Backup & Restore", link: "/operations/backup-restore" },
             { text: "Upgrade", link: "/operations/upgrade" },
             { text: "Monitoring", link: "/operations/monitoring" },

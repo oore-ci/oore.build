@@ -4,13 +4,13 @@ status: implemented
 
 # Install oore.build
 
-This page walks you through installing prebuilt backend binaries from GitHub Releases.
+This page walks you through installing prebuilt backend binaries from the oore release bucket (`dl.oore.build`).
 
 ## What you need
 
 - macOS host (V1 backend runtime target)
 - `curl`
-- Internet access to `github.com`, `ci.oore.build`, and `docs.oore.build`
+- Internet access to `dl.oore.build`, `ci.oore.build`, and `docs.oore.build`
 
 ## Install (latest release)
 
@@ -60,7 +60,8 @@ Continue with [Hosted UI Onboarding](/getting-started/hosted-ui-onboarding).
 |---|---|---|
 | `OORE_VERSION` | `latest` | Release selector (`latest` or tag like `v0.2.0`) |
 | `OORE_INSTALL_ROOT` | `~/.oore` | Installation directory |
-| `OORE_GITHUB_REPO` | `devaryakjha/oore.build` | GitHub repo used for release downloads |
+| `OORE_RELEASE_BASE_URL` | `https://dl.oore.build/releases` | Base URL that contains `<tag>/` release assets |
+| `OORE_RELEASE_MANIFEST_URL` | `https://dl.oore.build/releases/latest.json` | Manifest URL used when `OORE_VERSION=latest` |
 | `OORE_NONINTERACTIVE` | `0` | Disable prompts when set to `1` |
 | `OORE_START_DAEMON` | unset | Non-interactive daemon startup behavior (`true` or `false`) |
 
@@ -72,7 +73,7 @@ The installer currently supports macOS `arm64` and `x86_64`.
 
 ### Checksum mismatch
 
-The installer exits before installing binaries if checksums do not match. Re-run once to rule out transient download issues. If it persists, do not continue and verify release assets in GitHub.
+The installer exits before installing binaries if checksums do not match. Re-run once to rule out transient download issues. If it persists, do not continue and verify release assets in `https://dl.oore.build/releases/<tag>/`.
 
 ### Daemon startup failed
 

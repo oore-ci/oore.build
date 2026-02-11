@@ -84,6 +84,18 @@ make run-cli          # Open a setup window (15 min TTL)
 make doctor           # Check system prerequisites
 ```
 
+## Release Automation (macOS + R2)
+
+Releases are published from a dedicated Mac mini:
+
+```bash
+make release-local TAG=v0.2.0          # Build + upload one release to R2
+sudo make install-release-webhook-daemon  # Install LaunchDaemon webhook listener
+make install-release-poller               # Optional polling fallback
+```
+
+Artifacts are published under `https://dl.oore.build/releases/`.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
