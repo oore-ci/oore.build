@@ -3,12 +3,13 @@
 import * as React from 'react'
 import {
   Controller,
+  
+  
+  
   FormProvider,
-  useFormContext,
-  type ControllerProps,
-  type FieldPath,
-  type FieldValues,
+  useFormContext
 } from 'react-hook-form'
+import type {ControllerProps, FieldPath, FieldValues} from 'react-hook-form';
 
 import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
@@ -43,11 +44,6 @@ function useFormField() {
   const { getFieldState, formState } = useFormContext()
 
   const fieldState = getFieldState(fieldContext.name, formState)
-
-  if (!fieldContext) {
-    throw new Error('useFormField should be used within <FormField>')
-  }
-
   const { id } = itemContext
 
   return {
@@ -82,7 +78,10 @@ function FormItem({ className, ...props }: React.ComponentProps<'div'>) {
   )
 }
 
-function FormLabel({ className, ...props }: React.ComponentProps<typeof Label>) {
+function FormLabel({
+  className,
+  ...props
+}: React.ComponentProps<typeof Label>) {
   const { error, formItemId } = useFormField()
 
   return (
@@ -94,9 +93,12 @@ function FormLabel({ className, ...props }: React.ComponentProps<typeof Label>) 
   )
 }
 
-function FormControl({ children }: { children: React.ReactElement<Record<string, unknown>> }) {
-  const { error, formItemId, formDescriptionId, formMessageId } =
-    useFormField()
+function FormControl({
+  children,
+}: {
+  children: React.ReactElement<Record<string, unknown>>
+}) {
+  const { error, formItemId, formDescriptionId, formMessageId } = useFormField()
 
   return React.cloneElement(children, {
     id: formItemId,
@@ -107,10 +109,7 @@ function FormControl({ children }: { children: React.ReactElement<Record<string,
   })
 }
 
-function FormDescription({
-  className,
-  ...props
-}: React.ComponentProps<'p'>) {
+function FormDescription({ className, ...props }: React.ComponentProps<'p'>) {
   const { formDescriptionId } = useFormField()
 
   return (
@@ -129,7 +128,7 @@ function FormMessage({
   ...props
 }: React.ComponentProps<'p'>) {
   const { error, formMessageId } = useFormField()
-  const body = error ? String(error?.message ?? '') : children
+  const body = error ? String(error.message ?? '') : children
 
   if (!body) {
     return null

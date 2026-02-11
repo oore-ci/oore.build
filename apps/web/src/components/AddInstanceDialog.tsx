@@ -14,10 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useInstanceStore } from '@/stores/instance-store'
-import {
-  DEFAULT_INSTANCE_ICON_KEY,
-  INSTANCE_ICONS,
-} from '@/lib/instance-icons'
+import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
 
 const addInstanceSchema = z.object({
   label: z.string().min(1, 'Label is required'),

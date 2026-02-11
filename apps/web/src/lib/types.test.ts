@@ -4,16 +4,16 @@ import type {
   ArtifactStorageProvider,
   ArtifactStorageSettings,
   ArtifactStorageSettingsResponse,
-  BuildPlatform,
   BootstrapTokenVerifyResponse,
+  BuildPlatform,
   CreatePipelineRequest,
-  Pipeline,
-  PipelineExecutionConfig,
   InstancePreferences,
   InstancePreferencesResponse,
   ListRunnersResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
+  Pipeline,
+  PipelineExecutionConfig,
   Runner,
   SetupCompleteResponse,
   SetupOidcStartResponse,
@@ -134,7 +134,7 @@ describe('types', () => {
   })
 
   it('Pipeline execution config types can be constructed', () => {
-    const platforms: BuildPlatform[] = ['android', 'ios']
+    const platforms: Array<BuildPlatform> = ['android', 'ios']
     const execution: PipelineExecutionConfig = {
       platforms,
       flutter_version: '3.24.0',

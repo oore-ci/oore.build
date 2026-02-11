@@ -68,9 +68,7 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
             table.getIsSomePageRowsSelected() &&
             !table.getIsAllPageRowsSelected()
           }
-          onCheckedChange={(value) =>
-            table.toggleAllPageRowsSelected(!!value)
-          }
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
           aria-label="Select all"
         />
       ),
@@ -127,7 +125,10 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
       cell: ({ row }) => {
         const role = row.original.role
         return (
-          <Badge variant={ROLE_BADGE_VARIANT[role] ?? 'outline'} className="text-xs">
+          <Badge
+            variant={ROLE_BADGE_VARIANT[role] ?? 'outline'}
+            className="text-xs"
+          >
             {ROLE_LABELS[role] ?? role}
           </Badge>
         )
@@ -163,9 +164,7 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
           <div className="text-right">
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={
-                  <Button variant="ghost" size="icon-sm" />
-                }
+                render={<Button variant="ghost" size="icon-sm" />}
               >
                 <HugeiconsIcon icon={MoreHorizontalCircle01Icon} size={16} />
                 <span className="sr-only">Open menu</span>

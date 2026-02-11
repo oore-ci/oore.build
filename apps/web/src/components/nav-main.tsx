@@ -12,11 +12,17 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { useAuthStore } from '@/stores/auth-store'
+import { useRecentProjectsStore } from '@/stores/recent-projects-store'
+import { useBuilds } from '@/hooks/use-builds'
 
 interface NavItem {
   title: string
@@ -58,11 +64,19 @@ const ADMIN_ITEMS: Array<NavItem> = [
   },
 ]
 
+function ActiveBuildBadge() {
+  const { data } = useBuilds({ status: 'running', limit: 100 })
+  const count = data?.builds.length ?? 0
+  if (count === 0) return null
+  return <SidebarMenuBadge>{count}</SidebarMenuBadge>
+}
+
 export default function NavMain() {
   const matches = useMatches()
   const location = useLocation()
   const authUser = useAuthStore((s) => s.user)
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
+  const recentProjects = useRecentProjectsStore((s) => s.projects)
 
   function isActive(item: NavItem) {
     return item.to === '/'
@@ -89,6 +103,28 @@ export default function NavMain() {
                   <HugeiconsIcon icon={item.icon} size={18} />
                   <span>{item.title}</span>
                 </SidebarMenuButton>
+                {item.to === '/builds' && <ActiveBuildBadge />}
+                {item.to === '/projects' && recentProjects.length > 0 && (
+                  <SidebarMenuSub>
+                    {recentProjects.map((project) => (
+                      <SidebarMenuSubItem key={project.id}>
+                        <SidebarMenuSubButton
+                          isActive={
+                            location.pathname === `/projects/${project.id}`
+                          }
+                          render={
+                            <Link
+                              to="/projects/$projectId"
+                              params={{ projectId: project.id }}
+                            />
+                          }
+                        >
+                          <span>{project.name}</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                )}
               </SidebarMenuItem>
             ))}
           </SidebarMenu>

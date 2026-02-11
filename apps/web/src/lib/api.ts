@@ -20,8 +20,8 @@ import type {
   GitLabAuthorizeResponse,
   GitLabCompleteResponse,
   GitLabStartRequest,
-  IntegrationDetailResponse,
   InstancePreferencesResponse,
+  IntegrationDetailResponse,
   InviteUserRequest,
   InviteUserResponse,
   ListArtifactsResponse,
@@ -30,14 +30,14 @@ import type {
   ListIntegrationsResponse,
   ListPipelinesResponse,
   ListProjectsResponse,
-  ListRunnersResponse,
   ListRepositoriesResponse,
+  ListRunnersResponse,
   ListUsersResponse,
   LogoutResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
-  PipelineDetailResponse,
   PipelineAndroidSigningResponse,
+  PipelineDetailResponse,
   ProjectDetailResponse,
   ReEnableUserResponse,
   SetupCompleteResponse,
@@ -45,10 +45,10 @@ import type {
   SetupOidcVerifyResponse,
   SetupStatus,
   SyncInstallationsResponse,
-  UpdatePipelineRequest,
-  UpdatePipelineAndroidSigningRequest,
   UpdateArtifactStorageSettingsRequest,
   UpdateInstancePreferencesRequest,
+  UpdatePipelineAndroidSigningRequest,
+  UpdatePipelineRequest,
   UpdateProjectRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
@@ -301,11 +301,9 @@ export function getIntegration(
   token: string,
   id: string,
 ): Promise<IntegrationDetailResponse> {
-  return request<IntegrationDetailResponse>(
-    baseUrl,
-    `/v1/integrations/${id}`,
-    { headers: authHeaders(token) },
-  )
+  return request<IntegrationDetailResponse>(baseUrl, `/v1/integrations/${id}`, {
+    headers: authHeaders(token),
+  })
 }
 
 export function deleteIntegration(
@@ -482,9 +480,13 @@ export function getInstancePreferences(
   baseUrl: string,
   token: string,
 ): Promise<InstancePreferencesResponse> {
-  return request<InstancePreferencesResponse>(baseUrl, '/v1/settings/preferences', {
-    headers: authHeaders(token),
-  })
+  return request<InstancePreferencesResponse>(
+    baseUrl,
+    '/v1/settings/preferences',
+    {
+      headers: authHeaders(token),
+    },
+  )
 }
 
 export function updateInstancePreferences(
@@ -492,11 +494,15 @@ export function updateInstancePreferences(
   token: string,
   data: UpdateInstancePreferencesRequest,
 ): Promise<InstancePreferencesResponse> {
-  return request<InstancePreferencesResponse>(baseUrl, '/v1/settings/preferences', {
-    method: 'PUT',
-    headers: authHeaders(token),
-    body: JSON.stringify(data),
-  })
+  return request<InstancePreferencesResponse>(
+    baseUrl,
+    '/v1/settings/preferences',
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
 }
 
 // ── Build API ──────────────────────────────────────────────────
@@ -560,14 +566,10 @@ export function cancelBuild(
   token: string,
   buildId: string,
 ): Promise<CancelBuildResponse> {
-  return request<CancelBuildResponse>(
-    baseUrl,
-    `/v1/builds/${buildId}/cancel`,
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-    },
-  )
+  return request<CancelBuildResponse>(baseUrl, `/v1/builds/${buildId}/cancel`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
 }
 
 // ── Stream Token API ────────────────────────────────────────
@@ -593,7 +595,8 @@ export function getBuildLogs(
   params?: { after_sequence?: number; limit?: number },
 ): Promise<BuildLogsResponse> {
   const query = new URLSearchParams()
-  if (params?.after_sequence != null) query.set('after_sequence', String(params.after_sequence))
+  if (params?.after_sequence != null)
+    query.set('after_sequence', String(params.after_sequence))
   if (params?.limit) query.set('limit', String(params.limit))
   const qs = query.toString()
   return request<BuildLogsResponse>(
@@ -653,11 +656,9 @@ export function getProject(
   token: string,
   projectId: string,
 ): Promise<ProjectDetailResponse> {
-  return request<ProjectDetailResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}`,
-    { headers: authHeaders(token) },
-  )
+  return request<ProjectDetailResponse>(baseUrl, `/v1/projects/${projectId}`, {
+    headers: authHeaders(token),
+  })
 }
 
 export function createProject(
@@ -678,15 +679,11 @@ export function updateProject(
   projectId: string,
   data: UpdateProjectRequest,
 ): Promise<CreateProjectResponse> {
-  return request<CreateProjectResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}`,
-    {
-      method: 'PATCH',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
+  return request<CreateProjectResponse>(baseUrl, `/v1/projects/${projectId}`, {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
 }
 
 export async function deleteProject(
@@ -702,9 +699,9 @@ export async function deleteProject(
     },
   })
   if (!res.ok) {
-    let body: import('@/lib/types').ApiError
+    let body: ApiError
     try {
-      body = (await res.json()) as import('@/lib/types').ApiError
+      body = (await res.json()) as ApiError
     } catch {
       body = {
         error: `Request failed with status ${res.status}`,
@@ -793,9 +790,9 @@ export async function deletePipeline(
     },
   })
   if (!res.ok) {
-    let body: import('@/lib/types').ApiError
+    let body: ApiError
     try {
-      body = (await res.json()) as import('@/lib/types').ApiError
+      body = (await res.json()) as ApiError
     } catch {
       body = {
         error: `Request failed with status ${res.status}`,
@@ -811,15 +808,11 @@ export function validatePipeline(
   token: string,
   data: ValidatePipelineRequest,
 ): Promise<ValidatePipelineResponse> {
-  return request<ValidatePipelineResponse>(
-    baseUrl,
-    '/v1/pipelines/validate',
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
+  return request<ValidatePipelineResponse>(baseUrl, '/v1/pipelines/validate', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
 }
 
 export function getPipelineAndroidSigning(

@@ -1,14 +1,20 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  ArrowDown01Icon,
+  ArrowRight01Icon,
   Delete02Icon,
   Edit02Icon,
   InformationCircleIcon,
+  PlayIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
@@ -18,7 +24,11 @@ import {
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
 import { useProject } from '@/hooks/use-projects'
-import { getPipelineStatusVariant, getStatusVariant } from '@/lib/status-variants'
+import {
+  getPipelineStatusVariant,
+  getStatusVariant,
+} from '@/lib/status-variants'
+import { relativeTime } from '@/lib/format-utils'
 import { webPageTitle } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -33,7 +43,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -45,7 +60,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import EditPipelineDialog from '../-edit-pipeline-dialog'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 export const Route = createFileRoute(
@@ -59,17 +73,52 @@ export const Route = createFileRoute(
   component: PipelineDetailPage,
 })
 
-function relativeTime(epochSecs: number): string {
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSecs
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
+/* ------------------------------------------------------------------ */
+/*  Collapsible section helper                                         */
+/* ------------------------------------------------------------------ */
+
+function Section({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex w-full items-center gap-2 py-2 text-sm font-medium">
+        <HugeiconsIcon
+          icon={open ? ArrowDown01Icon : ArrowRight01Icon}
+          size={14}
+        />
+        {title}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="pb-2">{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
 }
+
+/* ------------------------------------------------------------------ */
+/*  Key-value row for read-only display                                */
+/* ------------------------------------------------------------------ */
+
+function KV({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-4 py-1 text-xs">
+      <span className="w-40 shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 break-all">{children}</span>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main page                                                          */
+/* ------------------------------------------------------------------ */
 
 function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
@@ -87,7 +136,6 @@ function PipelineDetailPage() {
   const canDelete = useHasPermission('pipelines', 'delete')
   const canTriggerBuild = useHasPermission('builds', 'write')
 
-  const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
@@ -126,19 +174,14 @@ function PipelineDetailPage() {
 
   function handleToggleEnabled() {
     updateMutation.mutate(
+      { pipelineId: pipeline.id, data: { enabled: !pipeline.enabled } },
       {
-        pipelineId: pipeline.id,
-        data: { enabled: !pipeline.enabled },
-      },
-      {
-        onSuccess: () => {
+        onSuccess: () =>
           toast.success(
             pipeline.enabled ? 'Pipeline disabled' : 'Pipeline enabled',
-          )
-        },
-        onError: (err) => {
-          toast.error(`Failed to update pipeline: ${err.message}`)
-        },
+          ),
+        onError: (err) =>
+          toast.error(`Failed to update pipeline: ${err.message}`),
       },
     )
   }
@@ -147,14 +190,10 @@ function PipelineDetailPage() {
     deleteMutation.mutate(pipelineId, {
       onSuccess: () => {
         toast.success('Pipeline deleted')
-        void navigate({
-          to: '/projects/$projectId',
-          params: { projectId },
-        })
+        void navigate({ to: '/projects/$projectId', params: { projectId } })
       },
-      onError: (err) => {
-        toast.error(`Failed to delete pipeline: ${err.message}`)
-      },
+      onError: (err) =>
+        toast.error(`Failed to delete pipeline: ${err.message}`),
     })
   }
 
@@ -162,20 +201,18 @@ function PipelineDetailPage() {
     <PageLayout width="wide">
       <PageHeader
         title={pipeline.name}
-        back={{
-          to: `/projects/${projectId}`,
-          label: 'Project',
-        }}
-        description="Pipeline execution and trigger policy overview."
+        back={{ to: `/projects/${projectId}`, label: 'Project' }}
+        description="Pipeline overview and configuration."
         meta={
           <>
             <Badge variant={getPipelineStatusVariant(pipeline.enabled)}>
               {pipeline.enabled ? 'enabled' : 'disabled'}
             </Badge>
-            <span>{pipeline.config_path_explicit ? 'explicit config path' : 'auto-detect config'}</span>
-            {pipeline.config_path_explicit ? (
-              <span className="font-mono">{pipeline.config_path}</span>
-            ) : null}
+            {pipeline.execution_config.platforms.map((p) => (
+              <Badge key={p} variant="outline" className="text-[11px]">
+                {p}
+              </Badge>
+            ))}
             <span>Updated {relativeTime(pipeline.updated_at)}</span>
           </>
         }
@@ -184,6 +221,7 @@ function PipelineDetailPage() {
             <>
               {canTriggerBuild ? (
                 <Button onClick={() => setTriggerBuildOpen(true)}>
+                  <HugeiconsIcon icon={PlayIcon} size={16} />
                   Trigger Build
                 </Button>
               ) : null}
@@ -197,7 +235,15 @@ function PipelineDetailPage() {
                 </Button>
               ) : null}
               {canWrite ? (
-                <Button variant="outline" onClick={() => setEditOpen(true)}>
+                <Button
+                  variant="outline"
+                  render={
+                    <Link
+                      to="/projects/$projectId/pipelines/$pipelineId/edit"
+                      params={{ projectId, pipelineId }}
+                    />
+                  }
+                >
                   <HugeiconsIcon icon={Edit02Icon} size={16} />
                   Edit
                 </Button>
@@ -216,263 +262,188 @@ function PipelineDetailPage() {
         }
       />
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Recent builds</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{builds.length}</p>
-            <p className="text-xs text-muted-foreground">Latest 20 runs</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Cancel previous</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm font-medium">
-              {pipeline.concurrency.cancel_previous ? 'enabled' : 'disabled'}
-            </p>
-            <p className="text-xs text-muted-foreground">Concurrency policy behavior</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Max concurrent</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm font-medium">{pipeline.concurrency.max_concurrent ?? 'unlimited'}</p>
-            <p className="text-xs text-muted-foreground">Per-pipeline limit</p>
-          </CardContent>
-        </Card>
-      </section>
-
+      {/* Collapsible config sections */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">Name</TableCell>
-                <TableCell>{pipeline.name}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Config path</TableCell>
-                <TableCell className="font-mono text-xs">{pipeline.config_path}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Config resolution</TableCell>
-                <TableCell>
-                  {pipeline.config_path_explicit
-                    ? 'Explicit path only (UI fallback if file missing)'
-                    : 'Auto-detect .oore.yaml then .oore.yml (UI fallback if missing)'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Created</TableCell>
-                <TableCell>{new Date(pipeline.created_at * 1000).toLocaleString()}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Updated</TableCell>
-                <TableCell>{new Date(pipeline.updated_at * 1000).toLocaleString()}</TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+        <CardContent className="divide-y">
+          <Section title="Configuration" defaultOpen>
+            <KV label="Config path">
+              <span className="font-mono">{pipeline.config_path}</span>
+            </KV>
+            <KV label="Resolution">
+              {pipeline.config_path_explicit
+                ? 'Explicit path only'
+                : 'Auto-detect .oore.yaml / .oore.yml'}
+            </KV>
+            <KV label="Flutter version">
+              <span className="font-mono">
+                {pipeline.execution_config.flutter_version || 'auto'}
+              </span>
+            </KV>
+            <KV label="Created">
+              {new Date(pipeline.created_at * 1000).toLocaleString()}
+            </KV>
+            <KV label="Updated">
+              {new Date(pipeline.updated_at * 1000).toLocaleString()}
+            </KV>
+          </Section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Trigger configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">Events</TableCell>
-                <TableCell>
-                  {pipeline.trigger_config.events.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {pipeline.trigger_config.events.map((event) => (
-                        <Badge key={event} variant="outline" className="text-[11px]">
-                          {event}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">all events</span>
-                  )}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Branch patterns</TableCell>
-                <TableCell>
-                  {pipeline.trigger_config.branches.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {pipeline.trigger_config.branches.map((branch) => (
-                        <Badge key={branch} variant="outline" className="font-mono text-[11px]">
-                          {branch}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">all branches</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+          <Section title="Triggers">
+            <KV label="Events">
+              {pipeline.trigger_config.events.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {pipeline.trigger_config.events.map((e) => (
+                    <Badge key={e} variant="outline" className="text-[11px]">
+                      {e}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                'all events'
+              )}
+            </KV>
+            <KV label="Branch patterns">
+              {pipeline.trigger_config.branches.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {pipeline.trigger_config.branches.map((b) => (
+                    <Badge
+                      key={b}
+                      variant="outline"
+                      className="font-mono text-[11px]"
+                    >
+                      {b}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                'all branches'
+              )}
+            </KV>
+            <KV label="Cancel previous">
+              {pipeline.concurrency.cancel_previous ? 'yes' : 'no'}
+            </KV>
+            <KV label="Max concurrent">
+              {pipeline.concurrency.max_concurrent ?? 'unlimited'}
+            </KV>
+          </Section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Fallback execution config</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">Platforms</TableCell>
-                <TableCell>
-                  {pipeline.execution_config.platforms.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                      {pipeline.execution_config.platforms.map((platform) => (
-                        <Badge key={platform} variant="outline" className="text-[11px]">
-                          {platform}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">none</span>
+          <Section title="Execution config">
+            <KV label="Pre-build">
+              <span className="font-mono">
+                {pipeline.execution_config.commands.pre_build.length > 0
+                  ? pipeline.execution_config.commands.pre_build.join(' && ')
+                  : 'none'}
+              </span>
+            </KV>
+            <KV label="Build">
+              <span className="font-mono">
+                {pipeline.execution_config.commands.build.length > 0
+                  ? pipeline.execution_config.commands.build.join(' && ')
+                  : 'none'}
+              </span>
+            </KV>
+            <KV label="Post-build">
+              <span className="font-mono">
+                {pipeline.execution_config.commands.post_build.length > 0
+                  ? pipeline.execution_config.commands.post_build.join(' && ')
+                  : 'none'}
+              </span>
+            </KV>
+            {(pipeline.execution_config.platform_build_args?.android.length ??
+              0) > 0 ? (
+              <KV label="Android args">
+                <span className="font-mono">
+                  {pipeline.execution_config.platform_build_args?.android.join(
+                    ' ',
                   )}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Pre-build commands</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {pipeline.execution_config.commands.pre_build.length > 0
-                    ? pipeline.execution_config.commands.pre_build.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Flutter version</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {pipeline.execution_config.flutter_version || 'auto (.fvmrc if present)'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Build commands</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {pipeline.execution_config.commands.build.length > 0
-                    ? pipeline.execution_config.commands.build.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Post-build commands</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {pipeline.execution_config.commands.post_build.length > 0
-                    ? pipeline.execution_config.commands.post_build.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Android build args</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {(pipeline.execution_config.platform_build_args?.android?.length ?? 0) > 0
-                    ? pipeline.execution_config.platform_build_args?.android.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">iOS build args</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {(pipeline.execution_config.platform_build_args?.ios?.length ?? 0) > 0
-                    ? pipeline.execution_config.platform_build_args?.ios.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">macOS build args</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {(pipeline.execution_config.platform_build_args?.macos?.length ?? 0) > 0
-                    ? pipeline.execution_config.platform_build_args?.macos.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Command overrides</TableCell>
-                <TableCell className="font-mono text-xs">
+                </span>
+              </KV>
+            ) : null}
+            {(pipeline.execution_config.platform_build_args?.ios.length ?? 0) >
+            0 ? (
+              <KV label="iOS args">
+                <span className="font-mono">
+                  {pipeline.execution_config.platform_build_args?.ios.join(' ')}
+                </span>
+              </KV>
+            ) : null}
+            {(pipeline.execution_config.platform_build_args?.macos.length ??
+              0) > 0 ? (
+              <KV label="macOS args">
+                <span className="font-mono">
+                  {pipeline.execution_config.platform_build_args?.macos.join(
+                    ' ',
+                  )}
+                </span>
+              </KV>
+            ) : null}
+            {pipeline.execution_config.platform_commands?.android ||
+            pipeline.execution_config.platform_commands?.ios ||
+            pipeline.execution_config.platform_commands?.macos ? (
+              <KV label="Command overrides">
+                <span className="font-mono">
                   {[
-                    pipeline.execution_config.platform_commands?.android
+                    pipeline.execution_config.platform_commands.android
                       ? `android: ${pipeline.execution_config.platform_commands.android}`
                       : '',
-                    pipeline.execution_config.platform_commands?.ios
+                    pipeline.execution_config.platform_commands.ios
                       ? `ios: ${pipeline.execution_config.platform_commands.ios}`
                       : '',
-                    pipeline.execution_config.platform_commands?.macos
+                    pipeline.execution_config.platform_commands.macos
                       ? `macos: ${pipeline.execution_config.platform_commands.macos}`
                       : '',
                   ]
                     .filter(Boolean)
-                    .join(' | ') || 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Environment variables</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {(pipeline.execution_config.env?.length ?? 0) > 0
-                    ? pipeline.execution_config.env
-                        ?.map((entry) => `${entry.key}=${entry.value}`)
-                        .join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Artifact patterns</TableCell>
-                <TableCell className="font-mono text-xs">
-                  {pipeline.execution_config.artifact_patterns.length > 0
-                    ? pipeline.execution_config.artifact_patterns.join(' | ')
-                    : 'none'}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Android signing</TableCell>
-                <TableCell className="text-xs">
-                  {signingQuery.data ? (
-                    [
-                      signingQuery.data.release.enabled
-                        ? `release: enabled (${signingQuery.data.release.keystore_filename ?? 'keystore configured'})`
-                        : 'release: disabled',
-                      signingQuery.data.debug.enabled
-                        ? `debug: enabled (${signingQuery.data.debug.keystore_filename ?? 'keystore configured'})`
-                        : 'debug: disabled',
-                    ].join(' | ')
-                  ) : (
-                    'not configured'
-                  )}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
+                    .join(', ')}
+                </span>
+              </KV>
+            ) : null}
+            <KV label="Env vars">
+              {(pipeline.execution_config.env?.length ?? 0) > 0
+                ? `${pipeline.execution_config.env!.length} configured`
+                : 'none'}
+            </KV>
+            <KV label="Artifact patterns">
+              <span className="font-mono">
+                {pipeline.execution_config.artifact_patterns.length > 0
+                  ? pipeline.execution_config.artifact_patterns.join(', ')
+                  : 'none'}
+              </span>
+            </KV>
+          </Section>
+
+          <Section title="Android signing">
+            {signingQuery.data ? (
+              <>
+                <KV label="Release">
+                  {signingQuery.data.release.enabled
+                    ? `enabled (${signingQuery.data.release.keystore_filename ?? 'keystore configured'})`
+                    : 'disabled'}
+                </KV>
+                <KV label="Debug">
+                  {signingQuery.data.debug.enabled
+                    ? `enabled (${signingQuery.data.debug.keystore_filename ?? 'keystore configured'})`
+                    : 'disabled'}
+                </KV>
+              </>
+            ) : (
+              <p className="py-1 text-xs text-muted-foreground">
+                Not configured
+              </p>
+            )}
+          </Section>
         </CardContent>
       </Card>
 
+      {/* Recent builds */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Recent builds</CardTitle>
-        </CardHeader>
         <CardContent>
+          <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
           {builds.length === 0 ? (
             <div className="space-y-2 py-3">
               <p className="text-sm text-muted-foreground">No builds yet.</p>
               {canTriggerBuild ? (
                 <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                  <HugeiconsIcon icon={PlayIcon} size={14} />
                   Trigger first build
                 </Button>
               ) : null}
@@ -485,30 +456,33 @@ function PipelineDetailPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Branch</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Open</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {builds.map((build) => (
-                  <TableRow key={build.id}>
-                    <TableCell className="font-mono text-sm">#{build.build_number}</TableCell>
+                  <TableRow
+                    key={build.id}
+                    className="group cursor-pointer"
+                    onClick={() =>
+                      void navigate({
+                        to: '/builds/$buildId',
+                        params: { buildId: build.id },
+                      })
+                    }
+                  >
+                    <TableCell className="font-mono text-sm group-hover:underline">
+                      #{build.build_number}
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={getStatusVariant(build.status)}>{build.status}</Badge>
+                      <Badge variant={getStatusVariant(build.status)}>
+                        {build.status}
+                      </Badge>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {build.branch ?? 'n/a'}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {new Date(build.created_at * 1000).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        render={<Link to="/builds/$buildId" params={{ buildId: build.id }} />}
-                      >
-                        Open
-                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -518,14 +492,7 @@ function PipelineDetailPage() {
         </CardContent>
       </Card>
 
-      {editOpen ? (
-        <EditPipelineDialog
-          open={editOpen}
-          onOpenChange={setEditOpen}
-          pipeline={pipeline}
-        />
-      ) : null}
-
+      {/* Dialogs */}
       <TriggerBuildDialog
         open={triggerBuildOpen}
         onOpenChange={setTriggerBuildOpen}
@@ -535,10 +502,7 @@ function PipelineDetailPage() {
         defaultBranch={projectData?.project.default_branch}
         description="Run this pipeline now with a branch or pinned commit."
         onBuildCreated={(buildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId },
-          })
+          void navigate({ to: '/builds/$buildId', params: { buildId } })
         }}
       />
 
@@ -547,7 +511,8 @@ function PipelineDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete pipeline?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete "{pipeline.name}". This action cannot be undone.
+              This will permanently delete "{pipeline.name}". This action cannot
+              be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

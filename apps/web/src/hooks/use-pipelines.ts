@@ -8,11 +8,11 @@ import type {
 import {
   createPipeline,
   deletePipeline,
-  getPipelineAndroidSigning,
   getPipeline,
+  getPipelineAndroidSigning,
   listPipelines,
-  updatePipelineAndroidSigning,
   updatePipeline,
+  updatePipelineAndroidSigning,
   validatePipeline,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -163,7 +163,11 @@ export function usePipelineAndroidSigning(pipelineId: string) {
   const instance = useActiveInstance()
 
   return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'pipeline-android-signing', pipelineId],
+    queryKey: [
+      instance?.id ?? '__none__',
+      'pipeline-android-signing',
+      pipelineId,
+    ],
     queryFn: () => getPipelineAndroidSigning(baseUrl!, token!, pipelineId),
     enabled: !!baseUrl && !!token && !!pipelineId,
   })
@@ -196,7 +200,11 @@ export function useUpdatePipelineAndroidSigning() {
         ],
       })
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'pipeline', variables.pipelineId],
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline',
+          variables.pipelineId,
+        ],
       })
     },
   })

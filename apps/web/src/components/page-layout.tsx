@@ -4,6 +4,7 @@ const WIDTH_CLASSES = {
   default: 'max-w-4xl',
   narrow: 'max-w-xl',
   wide: 'max-w-6xl',
+  full: '',
 } as const
 
 interface PageLayoutProps {

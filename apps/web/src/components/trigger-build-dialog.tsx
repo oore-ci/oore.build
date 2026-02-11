@@ -129,10 +129,24 @@ export default function TriggerBuildDialog({
     [pipelinesQuery.data?.pipelines],
   )
 
+  const projectItems = useMemo(
+    () => Object.fromEntries(projects.map((p) => [p.id, p.name])),
+    [projects],
+  )
+  const pipelineItems = useMemo(
+    () => Object.fromEntries(pipelines.map((p) => [p.id, p.name])),
+    [pipelines],
+  )
+
   useEffect(() => {
     if (!open) return
     form.reset(
-      defaults(fixedProjectId, fixedPipelineId, defaultPipelineId, defaultBranch),
+      defaults(
+        fixedProjectId,
+        fixedPipelineId,
+        defaultPipelineId,
+        defaultBranch,
+      ),
     )
   }, [
     open,
@@ -171,7 +185,9 @@ export default function TriggerBuildDialog({
     }
 
     if (!currentIsValid) {
-      form.setValue('pipeline_id', pipelines[0]?.id ?? '', { shouldDirty: false })
+      form.setValue('pipeline_id', pipelines[0]?.id ?? '', {
+        shouldDirty: false,
+      })
     }
   }, [open, fixedPipelineId, projectId, pipelines, defaultPipelineId, form])
 
@@ -252,9 +268,12 @@ export default function TriggerBuildDialog({
                       onValueChange={(value) => {
                         field.onChange(value)
                         if (!fixedPipelineId) {
-                          form.setValue('pipeline_id', '', { shouldDirty: true })
+                          form.setValue('pipeline_id', '', {
+                            shouldDirty: true,
+                          })
                         }
                       }}
+                      items={projectItems}
                     >
                       <FormControl>
                         <SelectTrigger className="w-full">
@@ -286,6 +305,7 @@ export default function TriggerBuildDialog({
                       value={field.value ?? ''}
                       onValueChange={field.onChange}
                       disabled={!projectId || pipelinesQuery.isLoading}
+                      items={pipelineItems}
                     >
                       <FormControl>
                         <SelectTrigger className="w-full">
@@ -372,7 +392,8 @@ export default function TriggerBuildDialog({
             {noPipelines ? (
               <Alert variant="destructive">
                 <AlertDescription>
-                  This project has no pipelines. Add one before triggering builds.
+                  This project has no pipelines. Add one before triggering
+                  builds.
                 </AlertDescription>
               </Alert>
             ) : null}

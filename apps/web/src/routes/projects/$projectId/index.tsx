@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -7,17 +7,25 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
   Delete02Icon,
-  Edit02Icon,
   InformationCircleIcon,
+  PlayIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines } from '@/hooks/use-pipelines'
-import { useDeleteProject, useProject, useUpdateProject } from '@/hooks/use-projects'
-import { getPipelineStatusVariant, getStatusVariant } from '@/lib/status-variants'
+import {
+  useDeleteProject,
+  useProject,
+  useUpdateProject,
+} from '@/hooks/use-projects'
+import { getStatusVariant } from '@/lib/status-variants'
+import { relativeTime } from '@/lib/format-utils'
 import { webPageTitle } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -32,15 +40,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Form,
   FormControl,
@@ -62,11 +67,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import CreatePipelineDialog from './-create-pipeline-dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import PipelineCard from '@/components/pipeline-card'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
+
+const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
+type TabValue = (typeof TAB_VALUES)[number]
+
+const tabSearch = z.object({
+  tab: z.enum(TAB_VALUES).optional().catch(undefined),
+})
 
 export const Route = createFileRoute('/projects/$projectId/')({
   staticData: { breadcrumbLabel: 'Details' },
+  validateSearch: tabSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -74,17 +88,9 @@ export const Route = createFileRoute('/projects/$projectId/')({
   component: ProjectDetailPage,
 })
 
-function relativeTime(epochSecs: number): string {
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSecs
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
+/* ------------------------------------------------------------------ */
+/*  Settings tab: inline project edit form                             */
+/* ------------------------------------------------------------------ */
 
 const editProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -94,14 +100,10 @@ const editProjectSchema = z.object({
 
 type EditProjectForm = z.infer<typeof editProjectSchema>
 
-function EditProjectDialog({
-  open,
-  onOpenChange,
+function ProjectSettingsForm({
   projectId,
   currentValues,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
   projectId: string
   currentValues: { name: string; description?: string; default_branch?: string }
 }) {
@@ -118,14 +120,12 @@ function EditProjectDialog({
   })
 
   useEffect(() => {
-    if (open) {
-      form.reset({
-        name: currentValues.name,
-        description: currentValues.description ?? '',
-        default_branch: currentValues.default_branch ?? '',
-      })
-    }
-  }, [open, currentValues, form])
+    form.reset({
+      name: currentValues.name,
+      description: currentValues.description ?? '',
+      default_branch: currentValues.default_branch ?? '',
+    })
+  }, [currentValues, form])
 
   function onSubmit(data: EditProjectForm) {
     updateMutation.mutate(
@@ -138,25 +138,16 @@ function EditProjectDialog({
         },
       },
       {
-        onSuccess: () => {
-          toast.success('Project updated')
-          onOpenChange(false)
-        },
-        onError: (err) => {
-          toast.error(`Failed to update project: ${err.message}`)
-        },
+        onSuccess: () => toast.success('Project updated'),
+        onError: (err) =>
+          toast.error(`Failed to update project: ${err.message}`),
       },
     )
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit Project</DialogTitle>
-          <DialogDescription>Update project settings.</DialogDescription>
-        </DialogHeader>
-
+    <Card>
+      <CardContent>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
@@ -172,7 +163,6 @@ function EditProjectDialog({
                 </FormItem>
               )}
             />
-
             <FormField
               control={form.control}
               name="description"
@@ -186,7 +176,6 @@ function EditProjectDialog({
                 </FormItem>
               )}
             />
-
             <FormField
               control={form.control}
               name="default_branch"
@@ -200,15 +189,7 @@ function EditProjectDialog({
                 </FormItem>
               )}
             />
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-              >
-                Cancel
-              </Button>
+            <div className="flex justify-end">
               <Button type="submit" disabled={updateMutation.isPending}>
                 {updateMutation.isPending ? (
                   <>
@@ -219,31 +200,42 @@ function EditProjectDialog({
                   'Save'
                 )}
               </Button>
-            </DialogFooter>
+            </div>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
+      </CardContent>
+    </Card>
   )
 }
 
+/* ------------------------------------------------------------------ */
+/*  Main page                                                          */
+/* ------------------------------------------------------------------ */
+
 function ProjectDetailPage() {
   const { projectId } = Route.useParams()
+  const { tab } = Route.useSearch()
   const navigate = useNavigate()
   const { data, isLoading, error } = useProject(projectId)
   const { data: pipelinesData } = usePipelines(projectId)
-  const { data: buildsData } = useBuilds({ project_id: projectId, limit: 10 })
+  const { data: buildsData } = useBuilds(
+    { project_id: projectId, limit: 20 },
+    { refetchInterval: 15_000 },
+  )
   const deleteMutation = useDeleteProject()
   const canWriteProjects = useHasPermission('projects', 'write')
   const canDeleteProjects = useHasPermission('projects', 'delete')
   const canWritePipelines = useHasPermission('pipelines', 'write')
   const canTriggerBuild = useHasPermission('builds', 'write')
 
-  const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [pipelineCreateOpen, setPipelineCreateOpen] = useState(false)
+  const [dangerOpen, setDangerOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
-  const [triggerPipelineId, setTriggerPipelineId] = useState<string | undefined>()
+  const [triggerPipelineId, setTriggerPipelineId] = useState<
+    string | undefined
+  >()
+
+  const activeTab: TabValue = tab ?? 'pipelines'
 
   useEffect(() => {
     const label = data?.project.name ?? 'Project Details'
@@ -254,7 +246,7 @@ function ProjectDetailPage() {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-10 w-72" />
         <Skeleton className="h-56 w-full" />
       </PageLayout>
     )
@@ -279,6 +271,15 @@ function ProjectDetailPage() {
   const pipelines = pipelinesData?.pipelines ?? []
   const builds = buildsData?.builds ?? []
 
+  function setTab(value: TabValue) {
+    void navigate({
+      to: '/projects/$projectId',
+      params: { projectId },
+      search: value === 'pipelines' ? {} : { tab: value },
+      replace: true,
+    })
+  }
+
   function handleDelete() {
     deleteMutation.mutate(projectId, {
       onSuccess: () => {
@@ -296,6 +297,20 @@ function ProjectDetailPage() {
     setTriggerBuildOpen(true)
   }
 
+  // Build a quick lookup: pipeline.id -> last build info
+  const lastBuildByPipeline = new Map<
+    string,
+    { status: string; time: number }
+  >()
+  for (const build of builds) {
+    if (build.pipeline_id && !lastBuildByPipeline.has(build.pipeline_id)) {
+      lastBuildByPipeline.set(build.pipeline_id, {
+        status: build.status,
+        time: build.queued_at,
+      })
+    }
+  }
+
   return (
     <PageLayout width="wide">
       <PageHeader
@@ -310,28 +325,25 @@ function ProjectDetailPage() {
               </Badge>
             ) : null}
             <span>Updated {relativeTime(project.updated_at)}</span>
-            <span className="font-mono">{project.id.slice(0, 8)}</span>
           </>
         }
         actions={
-          canWriteProjects || canDeleteProjects || canTriggerBuild ? (
+          canTriggerBuild || canDeleteProjects ? (
             <>
               {canTriggerBuild ? (
                 <Button
                   onClick={() => openTriggerBuild()}
                   disabled={pipelines.length === 0}
                 >
+                  <HugeiconsIcon icon={PlayIcon} size={16} />
                   Trigger Build
                 </Button>
               ) : null}
-              {canWriteProjects ? (
-                <Button variant="outline" onClick={() => setEditOpen(true)}>
-                  <HugeiconsIcon icon={Edit02Icon} size={16} />
-                  Edit
-                </Button>
-              ) : null}
               {canDeleteProjects ? (
-                <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+                <Button
+                  variant="destructive"
+                  onClick={() => setDeleteOpen(true)}
+                >
                   <HugeiconsIcon icon={Delete02Icon} size={16} />
                   Delete
                 </Button>
@@ -341,240 +353,198 @@ function ProjectDetailPage() {
         }
       />
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Pipelines</p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{pipelines.length}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Configured under this project</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Recent builds</p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{builds.length}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Latest 10 runs</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Created by</p>
-            <p className="mt-3 truncate text-sm font-bold">{project.created_by}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {new Date(project.created_at * 1000).toLocaleString()}
-            </p>
-          </CardContent>
-        </Card>
-      </section>
+      <Tabs value={activeTab} onValueChange={(val) => setTab(val as TabValue)}>
+        <TabsList variant="line">
+          <TabsTrigger value="pipelines">
+            Pipelines{pipelines.length > 0 ? ` (${pipelines.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="builds">
+            Builds{builds.length > 0 ? ` (${builds.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Project details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">Name</TableCell>
-                <TableCell>{project.name}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Description</TableCell>
-                <TableCell>{project.description ?? 'No description'}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Default branch</TableCell>
-                <TableCell className="font-mono text-xs">{project.default_branch ?? 'not set'}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">Updated</TableCell>
-                <TableCell>{new Date(project.updated_at * 1000).toLocaleString()}</TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Pipelines</CardTitle>
+        {/* ---- Pipelines tab ---- */}
+        <TabsContent value="pipelines">
+          <div className="space-y-4 pt-2">
             {canWritePipelines ? (
-              <Button size="sm" onClick={() => setPipelineCreateOpen(true)}>
-                <HugeiconsIcon icon={Add01Icon} size={14} />
-                Add Pipeline
-              </Button>
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  render={
+                    <Link
+                      to="/projects/$projectId/pipelines/new"
+                      params={{ projectId }}
+                    />
+                  }
+                >
+                  <HugeiconsIcon icon={Add01Icon} size={14} />
+                  Add Pipeline
+                </Button>
+              </div>
             ) : null}
+
+            {pipelines.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No pipelines yet. Add one to start building.
+              </p>
+            ) : (
+              pipelines.map((pipeline) => {
+                const lb = lastBuildByPipeline.get(pipeline.id)
+                return (
+                  <PipelineCard
+                    key={pipeline.id}
+                    pipeline={pipeline}
+                    projectId={projectId}
+                    defaultBranch={project.default_branch}
+                    canWrite={canWritePipelines}
+                    canTriggerBuild={canTriggerBuild}
+                    lastBuildStatus={lb?.status}
+                    lastBuildTime={lb?.time}
+                  />
+                )
+              })
+            )}
           </div>
-        </CardHeader>
-        <CardContent>
-          {pipelines.length === 0 ? (
-            <p className="py-3 text-sm text-muted-foreground">No pipelines yet. Add one to start building.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Config path</TableHead>
-                  <TableHead>Triggers</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pipelines.map((pipeline) => (
-                  <TableRow key={pipeline.id}>
-                    <TableCell className="font-medium">{pipeline.name}</TableCell>
-                    <TableCell>
-                      <Badge variant={getPipelineStatusVariant(pipeline.enabled)}>
-                        {pipeline.enabled ? 'enabled' : 'disabled'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {pipeline.config_path}
-                    </TableCell>
-                    <TableCell>
-                      {pipeline.trigger_config.events.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {pipeline.trigger_config.events.map((event) => (
-                            <Badge key={event} variant="outline" className="text-[11px]">
-                              {event}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">all events</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {relativeTime(pipeline.updated_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="inline-flex items-center gap-2">
-                        {canTriggerBuild ? (
-                          <Button
-                            size="sm"
-                            onClick={() => openTriggerBuild(pipeline.id)}
-                          >
-                            Run
-                          </Button>
-                        ) : null}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          render={
-                            <Link
-                              to="/projects/$projectId/pipelines/$pipelineId"
-                              params={{ projectId, pipelineId: pipeline.id }}
-                            />
+        </TabsContent>
+
+        {/* ---- Builds tab ---- */}
+        <TabsContent value="builds">
+          <div className="pt-2">
+            <Card>
+              <CardContent>
+                {builds.length === 0 ? (
+                  <div className="space-y-2 py-6 text-center">
+                    <p className="text-sm text-muted-foreground">No builds yet.</p>
+                    {canTriggerBuild && pipelines.length > 0 ? (
+                      <Button size="sm" onClick={() => openTriggerBuild()}>
+                        <HugeiconsIcon icon={PlayIcon} size={14} />
+                        Trigger first build
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Build</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Trigger</TableHead>
+                        <TableHead>Branch</TableHead>
+                        <TableHead>Commit</TableHead>
+                        <TableHead>Queued</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {builds.map((build) => (
+                        <TableRow
+                          key={build.id}
+                          className="group cursor-pointer"
+                          onClick={() =>
+                            void navigate({
+                              to: '/builds/$buildId',
+                              params: { buildId: build.id },
+                            })
                           }
                         >
-                          Open
+                          <TableCell className="font-mono text-sm group-hover:underline">
+                            #{build.build_number}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusVariant(build.status)}>
+                              {build.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{build.trigger_type}</Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {build.branch ?? 'n/a'}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {build.commit_sha
+                              ? build.commit_sha.slice(0, 10)
+                              : 'n/a'}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {relativeTime(build.queued_at)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ---- Settings tab ---- */}
+        <TabsContent value="settings">
+          <div className="space-y-4 pt-2">
+            {canWriteProjects ? (
+              <ProjectSettingsForm
+                projectId={projectId}
+                currentValues={{
+                  name: project.name,
+                  description: project.description,
+                  default_branch: project.default_branch,
+                }}
+              />
+            ) : (
+              <Card>
+                <CardContent className="text-sm text-muted-foreground">
+                  You do not have permission to edit this project.
+                </CardContent>
+              </Card>
+            )}
+
+            {canDeleteProjects ? (
+              <Collapsible open={dangerOpen} onOpenChange={setDangerOpen}>
+                <Card className="border-destructive/40">
+                  <CardContent>
+                    <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-destructive">
+                      Danger zone
+                      <span className="text-xs text-muted-foreground">
+                        {dangerOpen ? 'collapse' : 'expand'}
+                      </span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="space-y-3 pt-4">
+                        <p className="text-sm text-muted-foreground">
+                          Permanently delete "{project.name}" and all associated
+                          pipelines and builds. This cannot be undone.
+                        </p>
+                        <Button
+                          variant="destructive"
+                          onClick={() => setDeleteOpen(true)}
+                        >
+                          <HugeiconsIcon icon={Delete02Icon} size={16} />
+                          Delete Project
                         </Button>
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                    </CollapsibleContent>
+                  </CardContent>
+                </Card>
+              </Collapsible>
+            ) : null}
+          </div>
+        </TabsContent>
+      </Tabs>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Recent builds</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {builds.length === 0 ? (
-            <div className="space-y-2 py-3">
-              <p className="text-sm text-muted-foreground">No builds yet.</p>
-              {canTriggerBuild && pipelines.length > 0 ? (
-                <Button size="sm" onClick={() => openTriggerBuild()}>
-                  Trigger first build
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Build</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Trigger</TableHead>
-                  <TableHead>Branch</TableHead>
-                  <TableHead>Queued</TableHead>
-                  <TableHead className="text-right">Open</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {builds.map((build) => (
-                  <TableRow key={build.id}>
-                    <TableCell className="font-mono text-sm">#{build.build_number}</TableCell>
-                    <TableCell>
-                      <Badge variant={getStatusVariant(build.status)}>{build.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{build.trigger_type}</Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {build.branch ?? 'n/a'}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {relativeTime(build.queued_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        render={<Link to="/builds/$buildId" params={{ buildId: build.id }} />}
-                      >
-                        Open
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <EditProjectDialog
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        projectId={projectId}
-        currentValues={{
-          name: project.name,
-          description: project.description,
-          default_branch: project.default_branch,
-        }}
-      />
-
-      <CreatePipelineDialog
-        open={pipelineCreateOpen}
-        onOpenChange={setPipelineCreateOpen}
-        projectId={projectId}
-      />
-
+      {/* Dialogs */}
       <TriggerBuildDialog
         open={triggerBuildOpen}
         onOpenChange={(nextOpen) => {
           setTriggerBuildOpen(nextOpen)
-          if (!nextOpen) {
-            setTriggerPipelineId(undefined)
-          }
+          if (!nextOpen) setTriggerPipelineId(undefined)
         }}
         fixedProjectId={projectId}
         defaultPipelineId={triggerPipelineId}
         defaultBranch={project.default_branch}
         description="Run this project's pipeline now."
         onBuildCreated={(buildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId },
-          })
+          void navigate({ to: '/builds/$buildId', params: { buildId } })
         }}
       />
 
@@ -583,8 +553,8 @@ function ProjectDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete project?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete "{project.name}" and all associated pipelines and builds.
-              This action cannot be undone.
+              This will permanently delete "{project.name}" and all associated
+              pipelines and builds. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

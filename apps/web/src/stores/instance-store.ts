@@ -10,7 +10,10 @@ interface InstanceStoreState {
   addInstance: (label: string, url: string, icon?: string) => string
   removeInstance: (id: string) => void
   setActiveInstance: (id: string) => void
-  updateInstance: (id: string, fields: Partial<Pick<Instance, 'label' | 'url' | 'icon'>>) => void
+  updateInstance: (
+    id: string,
+    fields: Partial<Pick<Instance, 'label' | 'url' | 'icon'>>,
+  ) => void
   updateInstanceLabel: (id: string, label: string) => void
   updateInstanceIcon: (id: string, icon: string) => void
 }
@@ -23,7 +26,13 @@ export const useInstanceStore = create<InstanceStoreState>()(
 
       addInstance: (label, url, icon) => {
         const id = crypto.randomUUID()
-        const instance: Instance = { id, label, url, ...(icon ? { icon } : {}), addedAt: Date.now() }
+        const instance: Instance = {
+          id,
+          label,
+          url,
+          ...(icon ? { icon } : {}),
+          addedAt: Date.now(),
+        }
         const state = get()
         const isFirst = state.activeInstanceId === null
         set({

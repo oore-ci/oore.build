@@ -315,7 +315,7 @@ export interface Build {
   branch?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
-  step_results?: StepResult[]
+  step_results?: Array<StepResult>
   exit_code?: number
   queued_at: number
   started_at?: number
@@ -492,8 +492,8 @@ export interface ListProjectsResponse {
 // ── Pipeline domain types ───────────────────────────────────────
 
 export interface TriggerConfig {
-  events: string[]
-  branches: string[]
+  events: Array<string>
+  branches: Array<string>
 }
 
 export interface ConcurrencyPolicy {
@@ -504,15 +504,15 @@ export interface ConcurrencyPolicy {
 export type BuildPlatform = 'android' | 'ios' | 'macos'
 
 export interface PipelineCommandStages {
-  pre_build: string[]
-  build: string[]
-  post_build: string[]
+  pre_build: Array<string>
+  build: Array<string>
+  post_build: Array<string>
 }
 
 export interface PlatformBuildArgs {
-  android: string[]
-  ios: string[]
-  macos: string[]
+  android: Array<string>
+  ios: Array<string>
+  macos: Array<string>
 }
 
 export interface PlatformBuildCommands {
@@ -527,13 +527,13 @@ export interface PipelineEnvVar {
 }
 
 export interface PipelineExecutionConfig {
-  platforms: BuildPlatform[]
+  platforms: Array<BuildPlatform>
   flutter_version?: string
   commands: PipelineCommandStages
   platform_build_args?: PlatformBuildArgs
   platform_commands?: PlatformBuildCommands
-  env?: PipelineEnvVar[]
-  artifact_patterns: string[]
+  env?: Array<PipelineEnvVar>
+  artifact_patterns: Array<string>
 }
 
 export interface Pipeline {
@@ -593,7 +593,7 @@ export interface ValidatePipelineRequest {
 
 export interface ValidatePipelineResponse {
   valid: boolean
-  errors?: string[]
+  errors?: Array<string>
 }
 
 export type AndroidSigningBuildType = 'debug' | 'release'

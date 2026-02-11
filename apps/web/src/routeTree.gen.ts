@@ -29,7 +29,9 @@ import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$p
 import { Route as SettingsIntegrationsGitlabRouteImport } from './routes/settings/integrations/gitlab'
 import { Route as SettingsIntegrationsGithubRouteImport } from './routes/settings/integrations/github'
 import { Route as SettingsIntegrationsIntegrationIdRouteImport } from './routes/settings/integrations/$integrationId'
+import { Route as ProjectsProjectIdPipelinesNewRouteImport } from './routes/projects/$projectId/pipelines/new'
 import { Route as ProjectsProjectIdPipelinesPipelineIdRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId'
+import { Route as ProjectsProjectIdPipelinesPipelineIdEditRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId.edit'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -135,11 +137,23 @@ const SettingsIntegrationsIntegrationIdRoute =
     path: '/settings/integrations/$integrationId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ProjectsProjectIdPipelinesNewRoute =
+  ProjectsProjectIdPipelinesNewRouteImport.update({
+    id: '/projects/$projectId/pipelines/new',
+    path: '/projects/$projectId/pipelines/new',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ProjectsProjectIdPipelinesPipelineIdRoute =
   ProjectsProjectIdPipelinesPipelineIdRouteImport.update({
     id: '/projects/$projectId/pipelines/$pipelineId',
     path: '/projects/$projectId/pipelines/$pipelineId',
     getParentRoute: () => rootRouteImport,
+  } as any)
+const ProjectsProjectIdPipelinesPipelineIdEditRoute =
+  ProjectsProjectIdPipelinesPipelineIdEditRouteImport.update({
+    id: '/edit',
+    path: '/edit',
+    getParentRoute: () => ProjectsProjectIdPipelinesPipelineIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -163,7 +177,9 @@ export interface FileRoutesByFullPath {
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
+  '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -185,7 +201,9 @@ export interface FileRoutesByTo {
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations': typeof SettingsIntegrationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
+  '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -209,7 +227,9 @@ export interface FileRoutesById {
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
+  '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -235,6 +255,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/settings/integrations/'
     | '/projects/$projectId/pipelines/$pipelineId'
+    | '/projects/$projectId/pipelines/new'
+    | '/projects/$projectId/pipelines/$pipelineId/edit'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -257,6 +279,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/settings/integrations'
     | '/projects/$projectId/pipelines/$pipelineId'
+    | '/projects/$projectId/pipelines/new'
+    | '/projects/$projectId/pipelines/$pipelineId/edit'
   id:
     | '__root__'
     | '/'
@@ -280,6 +304,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/settings/integrations/'
     | '/projects/$projectId/pipelines/$pipelineId'
+    | '/projects/$projectId/pipelines/new'
+    | '/projects/$projectId/pipelines/$pipelineId/edit'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -299,7 +325,8 @@ export interface RootRouteChildren {
   SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
-  ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
+  ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  ProjectsProjectIdPipelinesNewRoute: typeof ProjectsProjectIdPipelinesNewRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -444,12 +471,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIntegrationsIntegrationIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects/$projectId/pipelines/new': {
+      id: '/projects/$projectId/pipelines/new'
+      path: '/projects/$projectId/pipelines/new'
+      fullPath: '/projects/$projectId/pipelines/new'
+      preLoaderRoute: typeof ProjectsProjectIdPipelinesNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projects/$projectId/pipelines/$pipelineId': {
       id: '/projects/$projectId/pipelines/$pipelineId'
       path: '/projects/$projectId/pipelines/$pipelineId'
       fullPath: '/projects/$projectId/pipelines/$pipelineId'
       preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId/pipelines/$pipelineId/edit': {
+      id: '/projects/$projectId/pipelines/$pipelineId/edit'
+      path: '/edit'
+      fullPath: '/projects/$projectId/pipelines/$pipelineId/edit'
+      preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRouteImport
+      parentRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
     }
   }
 }
@@ -470,6 +511,21 @@ const SetupRouteChildren: SetupRouteChildren = {
 
 const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 
+interface ProjectsProjectIdPipelinesPipelineIdRouteChildren {
+  ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+}
+
+const ProjectsProjectIdPipelinesPipelineIdRouteChildren: ProjectsProjectIdPipelinesPipelineIdRouteChildren =
+  {
+    ProjectsProjectIdPipelinesPipelineIdEditRoute:
+      ProjectsProjectIdPipelinesPipelineIdEditRoute,
+  }
+
+const ProjectsProjectIdPipelinesPipelineIdRouteWithChildren =
+  ProjectsProjectIdPipelinesPipelineIdRoute._addFileChildren(
+    ProjectsProjectIdPipelinesPipelineIdRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
@@ -489,7 +545,8 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
   ProjectsProjectIdPipelinesPipelineIdRoute:
-    ProjectsProjectIdPipelinesPipelineIdRoute,
+    ProjectsProjectIdPipelinesPipelineIdRouteWithChildren,
+  ProjectsProjectIdPipelinesNewRoute: ProjectsProjectIdPipelinesNewRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

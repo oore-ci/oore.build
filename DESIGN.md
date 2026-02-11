@@ -31,6 +31,8 @@ The typography system uses deliberate weight and size contrast to create clear h
 
 ### Card Patterns
 
+> **NEVER add `p-*` to `CardContent`.** The `Card` component provides `py-6` (vertical) and `CardContent` provides `px-6` (horizontal). Adding `p-4`, `p-5`, `p-6`, etc. to `CardContent` doubles the vertical padding and creates bloated, uneven cards. If you need tighter cards, use `<Card size="sm">` which switches to `py-4` / `px-4` automatically.
+
 #### Stat Cards (compact, no header)
 
 Use for overview metrics at the top of pages. No `CardHeader` — label goes directly inside `CardContent`. The `Card` component already provides symmetric `py-6` padding, so do **not** add `pt-6` to `CardContent` (that would double the top padding):
@@ -486,7 +488,7 @@ toast.error('Failed to update role')
 | Custom drawer with `transform transition` | shadcn `Sheet` |
 | `CardTitle className="text-base"` for section titles | `CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground"` |
 | CardHeader + CardTitle for stat cards | Compact pattern: `CardContent` (no `pt-6`) with inline label |
-| `CardContent className="pt-6"` on headerless cards | Plain `CardContent` — `Card` already provides symmetric `py-6` |
+| `CardContent className="p-4"` or any `p-*` override | Plain `CardContent` — `Card` provides `py-6`, `CardContent` provides `px-6`. Use `<Card size="sm">` for compact cards. |
 
 ## Sidebar Layout
 

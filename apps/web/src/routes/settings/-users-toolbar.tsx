@@ -38,11 +38,7 @@ export function UsersToolbar({ table, onBulkDisable }: UsersToolbarProps) {
             <span className="text-sm text-muted-foreground">
               {selectedCount} selected
             </span>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleBulkDisable}
-            >
+            <Button variant="destructive" size="sm" onClick={handleBulkDisable}>
               Disable Selected
             </Button>
           </>
