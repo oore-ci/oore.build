@@ -6,7 +6,10 @@ import { z } from 'zod'
 import { toast } from 'sonner'
 
 import type { Runner } from '@/lib/types'
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useAuthStore } from '@/stores/auth-store'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
@@ -74,7 +77,7 @@ function formatRelativeTime(epochSeconds?: number): string {
 }
 
 function formatCapabilities(capabilities: Runner['capabilities']): string {
-  const entries = Object.entries(capabilities ?? {})
+  const entries = Object.entries(capabilities)
   if (entries.length === 0) return 'none'
   return entries
     .slice(0, 3)
@@ -98,7 +101,11 @@ interface RenameRunnerDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-function RenameRunnerDialog({ runner, open, onOpenChange }: RenameRunnerDialogProps) {
+function RenameRunnerDialog({
+  runner,
+  open,
+  onOpenChange,
+}: RenameRunnerDialogProps) {
   const mutation = useUpdateRunner()
   const form = useForm<RenameRunnerForm>({
     resolver: zodResolver(renameRunnerSchema),
@@ -137,7 +144,9 @@ function RenameRunnerDialog({ runner, open, onOpenChange }: RenameRunnerDialogPr
           handleClose(false)
         },
         onError: (error) => {
-          toast.error(error instanceof Error ? error.message : 'Failed to rename runner')
+          toast.error(
+            error instanceof Error ? error.message : 'Failed to rename runner',
+          )
         },
       },
     )
@@ -156,7 +165,8 @@ function RenameRunnerDialog({ runner, open, onOpenChange }: RenameRunnerDialogPr
         {isEmbedded ? (
           <Alert>
             <AlertDescription>
-              Embedded runner names are managed by the daemon and cannot be changed.
+              Embedded runner names are managed by the daemon and cannot be
+              changed.
             </AlertDescription>
           </Alert>
         ) : (
@@ -215,7 +225,10 @@ function RunnersSettingsPage() {
 
   const runners = data?.runners ?? []
   const onlineCount = useMemo(
-    () => runners.filter((runner) => runner.status === 'online' || runner.status === 'busy').length,
+    () =>
+      runners.filter(
+        (runner) => runner.status === 'online' || runner.status === 'busy',
+      ).length,
     [runners],
   )
 
@@ -229,26 +242,44 @@ function RunnersSettingsPage() {
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Total runners</p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{runners.length}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Embedded and external</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Total runners
+            </p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
+              {runners.length}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Embedded and external
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Online runners</p>
-              {onlineCount > 0 ? <Badge variant="success">{onlineCount}</Badge> : null}
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Online runners
+              </p>
+              {onlineCount > 0 ? (
+                <Badge variant="success">{onlineCount}</Badge>
+              ) : null}
             </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{onlineCount}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Online or currently busy</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
+              {onlineCount}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Online or currently busy
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Rename policy</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Rename policy
+            </p>
             <p className="mt-3 text-sm font-bold">External only</p>
-            <p className="mt-1 text-xs text-muted-foreground">Embedded runners stay daemon-managed</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Embedded runners stay daemon-managed
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -274,11 +305,15 @@ function RunnersSettingsPage() {
       {!isLoading && !error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Runner Inventory</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Runner Inventory
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {runners.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">No runners registered yet.</p>
+              <p className="py-6 text-sm text-muted-foreground">
+                No runners registered yet.
+              </p>
             ) : (
               <Table>
                 <TableHeader>
@@ -299,10 +334,14 @@ function RunnersSettingsPage() {
                       <TableRow key={runner.id}>
                         <TableCell>
                           <p className="font-medium">{runner.name}</p>
-                          <p className="font-mono text-xs text-muted-foreground">{runner.id.slice(0, 8)}</p>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {runner.id.slice(0, 8)}
+                          </p>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getRunnerStatusVariant(runner.status)}>
+                          <Badge
+                            variant={getRunnerStatusVariant(runner.status)}
+                          >
                             {runner.status}
                           </Badge>
                         </TableCell>

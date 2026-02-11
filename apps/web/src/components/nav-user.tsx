@@ -28,10 +28,12 @@ import { useLogout } from '@/hooks/use-auth'
 
 function getInitials(email: string): string {
   const parts = email.split('@')[0].split(/[._-]/)
-  return parts
-    .slice(0, 2)
-    .map((s) => (s.length > 0 ? s[0].toUpperCase() : ''))
-    .join('') || email[0].toUpperCase()
+  return (
+    parts
+      .slice(0, 2)
+      .map((s) => (s.length > 0 ? s[0].toUpperCase() : ''))
+      .join('') || email[0].toUpperCase()
+  )
 }
 
 export default function NavUser() {

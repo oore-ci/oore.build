@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
+import { useQuery } from '@tanstack/react-query'
+import type { IntegrationRepository } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -32,11 +34,9 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { useCreateProject } from '@/hooks/use-projects'
-import { listIntegrations, listIntegrationRepos } from '@/lib/api'
+import { listIntegrationRepos, listIntegrations } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
-import type { IntegrationRepository } from '@/lib/types'
-import { useQuery } from '@tanstack/react-query'
 
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -61,7 +61,7 @@ function useAvailableRepos() {
     queryFn: async () => {
       if (!baseUrl || !token) return []
       const intResp = await listIntegrations(baseUrl, token)
-      const repos: IntegrationRepository[] = []
+      const repos: Array<IntegrationRepository> = []
       for (const integration of intResp.integrations) {
         try {
           const repoResp = await listIntegrationRepos(
@@ -88,6 +88,10 @@ export default function CreateProjectDialog({
   const createMutation = useCreateProject()
   const { data: repos, isLoading: reposLoading } = useAvailableRepos()
   const [selectedRepoId, setSelectedRepoId] = useState<string>('')
+  const repoItems = useMemo(
+    () => Object.fromEntries((repos ?? []).map((r) => [r.id, r.full_name])),
+    [repos],
+  )
 
   const form = useForm<CreateProjectForm>({
     resolver: zodResolver(createProjectSchema),
@@ -195,6 +199,7 @@ export default function CreateProjectDialog({
                 <Select
                   value={selectedRepoId}
                   onValueChange={(v) => setSelectedRepoId(v ?? '')}
+                  items={repoItems}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a repository..." />

@@ -4,10 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import type { Instance } from '@/lib/types'
-import {
-  DEFAULT_INSTANCE_ICON_KEY,
-  INSTANCE_ICONS,
-} from '@/lib/instance-icons'
+import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'

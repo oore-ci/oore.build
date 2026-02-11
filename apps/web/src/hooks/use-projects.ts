@@ -23,11 +23,14 @@ function useBaseUrl(): string | null {
   return instance?.url ?? null
 }
 
-export function useProjects(params?: {
-  search?: string
-  limit?: number
-  offset?: number
-}, options?: { enabled?: boolean }) {
+export function useProjects(
+  params?: {
+    search?: string
+    limit?: number
+    offset?: number
+  },
+  options?: { enabled?: boolean },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()

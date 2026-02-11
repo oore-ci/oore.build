@@ -5,7 +5,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useGitLabStart } from '@/hooks/use-integrations'
 import { webPageTitle } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
@@ -156,7 +159,10 @@ function GitLabSetupPage() {
         </CardHeader>
         <CardContent>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <form
+              onSubmit={form.handleSubmit(handleSubmit)}
+              className="space-y-4"
+            >
               <FormField
                 control={form.control}
                 name="host_url"
@@ -177,15 +183,26 @@ function GitLabSetupPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Authentication method</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={{
+                        personal_token: 'Personal Access Token',
+                        oauth_app: 'OAuth Application',
+                      }}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="personal_token">Personal Access Token</SelectItem>
-                        <SelectItem value="oauth_app">OAuth Application</SelectItem>
+                        <SelectItem value="personal_token">
+                          Personal Access Token
+                        </SelectItem>
+                        <SelectItem value="oauth_app">
+                          OAuth Application
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -222,10 +239,16 @@ function GitLabSetupPage() {
                     <FormItem>
                       <FormLabel>Access token</FormLabel>
                       <FormControl>
-                        <Input type="password" {...field} placeholder="glpat-..." />
+                        <Input
+                          type="password"
+                          {...field}
+                          placeholder="glpat-..."
+                        />
                       </FormControl>
                       <p className="text-xs text-muted-foreground">
-                        Create a token with api scope at {hostUrl || 'https://gitlab.com'}/-/user_settings/personal_access_tokens.
+                        Create a token with api scope at{' '}
+                        {hostUrl || 'https://gitlab.com'}
+                        /-/user_settings/personal_access_tokens.
                       </p>
                       <FormMessage />
                     </FormItem>
@@ -253,7 +276,11 @@ function GitLabSetupPage() {
                       <FormItem>
                         <FormLabel>Client secret</FormLabel>
                         <FormControl>
-                          <Input type="password" {...field} placeholder="Application secret" />
+                          <Input
+                            type="password"
+                            {...field}
+                            placeholder="Application secret"
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

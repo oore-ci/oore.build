@@ -1,33 +1,53 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
   ArrowRight01Icon,
-  CheckmarkCircle02Icon,
-  Folder02Icon,
-  GitBranchIcon,
-  InformationCircleIcon,
-  Setting07Icon,
+  Loading03Icon,
+  PlayIcon,
 } from '@hugeicons/core-free-icons'
 
+import ActiveBuildBanner from '@/components/active-build-banner'
+import AddInstanceDialog from '@/components/AddInstanceDialog'
+import ProjectCard from '@/components/project-card'
+import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
+import { useBuilds } from '@/hooks/use-builds'
+import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
+import { getStatusVariant } from '@/lib/status-variants'
 import { webPageTitle } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
-import AddInstanceDialog from '@/components/AddInstanceDialog'
 
 export const Route = createFileRoute('/')({
   staticData: { breadcrumbLabel: 'Dashboard' },
   component: IndexPage,
 })
+
+function relativeTime(epochSeconds: number): string {
+  const diff = Math.floor(Date.now() / 1000) - epochSeconds
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
 
 function IndexPage() {
   const instance = useActiveInstance()
@@ -68,9 +88,7 @@ function IndexPage() {
             <div className="mx-auto flex size-14 items-center justify-center border-2 border-primary/20 bg-primary/5">
               <img src="/logo.svg" alt="oore.build logo" className="size-7" />
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              oore.build
-            </h1>
+            <h1 className="text-3xl font-bold tracking-tight">oore.build</h1>
             <p className="text-sm text-muted-foreground">
               Self-hosted mobile CI and app distribution platform.
               <br />
@@ -86,9 +104,13 @@ function IndexPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Add a backend instance to start setup or connect to an already-configured daemon.
+                Add a backend instance to start setup or connect to an
+                already-configured daemon.
               </p>
-              <Button onClick={() => setShowAddInstance(true)} className="w-full">
+              <Button
+                onClick={() => setShowAddInstance(true)}
+                className="w-full"
+              >
                 <HugeiconsIcon icon={Add01Icon} size={16} />
                 Add Instance
               </Button>
@@ -109,7 +131,9 @@ function IndexPage() {
       <div className="flex flex-1 items-center justify-center">
         <div className="flex items-center gap-3">
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">Connecting to backend...</p>
+          <p className="text-sm text-muted-foreground">
+            Connecting to backend...
+          </p>
         </div>
       </div>
     )
@@ -123,7 +147,8 @@ function IndexPage() {
             <AlertTitle>Connection failed</AlertTitle>
             <AlertDescription>
               Unable to reach the oore daemon. Make sure{' '}
-              <code className="bg-muted px-1 py-0.5 text-xs">oored</code> is running.
+              <code className="bg-muted px-1 py-0.5 text-xs">oored</code> is
+              running.
             </AlertDescription>
           </Alert>
         </div>
@@ -132,113 +157,7 @@ function IndexPage() {
   }
 
   if (status?.is_configured) {
-    const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
-
-    return (
-      <PageLayout width="wide">
-        <PageHeader
-          title="Dashboard"
-          description="Operational overview for this connected instance."
-          meta={
-            <>
-              <Badge variant="success" className="gap-1">
-                <HugeiconsIcon icon={CheckmarkCircle02Icon} size={12} />
-                Instance ready
-              </Badge>
-              <span className="font-mono text-[11px]">{status.instance_id}</span>
-              {authUser?.role ? <Badge variant="outline">{authUser.role}</Badge> : null}
-            </>
-          }
-          actions={
-            <>
-              <Button variant="outline" render={<Link to="/projects" />}>
-                Projects
-              </Button>
-              <Button render={<Link to="/builds" />}>
-                Build Queue
-              </Button>
-            </>
-          }
-        />
-
-        <section className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Daemon</p>
-                <Badge variant="success">online</Badge>
-              </div>
-              <p className="mt-3 text-2xl font-bold tracking-tight">Connected</p>
-              <p className="mt-1 text-xs text-muted-foreground">Authenticated and responding</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent>
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Setup state</p>
-              <p className="mt-3 text-2xl font-bold tracking-tight">Ready</p>
-              <p className="mt-1 text-xs text-muted-foreground">OIDC and owner bootstrap complete</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent>
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Operator</p>
-              <p className="mt-3 truncate text-2xl font-bold tracking-tight">{authUser?.email ?? 'Unknown'}</p>
-              <p className="mt-1 text-xs text-muted-foreground">Role-based actions enforced per route</p>
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Quick Actions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <QuickAction
-                to="/projects"
-                icon={Folder02Icon}
-                title="Manage projects"
-                description="Create and maintain build-ready repositories and pipeline configs."
-              />
-              <QuickAction
-                to="/builds"
-                icon={GitBranchIcon}
-                title="Inspect builds"
-                description="Open run details, stream logs, and download generated artifacts."
-              />
-              {isAdmin ? (
-                <QuickAction
-                  to="/settings/runners"
-                  icon={Setting07Icon}
-                  title="Review runners"
-                  description="Track runner health and rename non-embedded runners."
-                />
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">System Notes</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Alert>
-                <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-                <AlertDescription>
-                  Build execution starts only after a runner heartbeats online and claims queued work.
-                </AlertDescription>
-              </Alert>
-              {isAdmin ? (
-                <Button variant="outline" className="w-full" render={<Link to="/settings/integrations" />}>
-                  <HugeiconsIcon icon={Setting07Icon} size={16} />
-                  Configure integrations
-                </Button>
-              ) : null}
-            </CardContent>
-          </Card>
-        </section>
-      </PageLayout>
-    )
+    return <ConfiguredDashboard userName={authUser?.email} />
   }
 
   return (
@@ -251,32 +170,224 @@ function IndexPage() {
   )
 }
 
-function QuickAction({
-  to,
-  icon,
-  title,
-  description,
-}: {
-  to: '/projects' | '/builds' | '/settings/runners'
-  icon: typeof Folder02Icon
-  title: string
-  description: string
-}) {
+function ConfiguredDashboard({ userName }: { userName?: string }) {
+  const navigate = useNavigate()
+  const [triggerOpen, setTriggerOpen] = useState(false)
+  const [triggerProjectId, setTriggerProjectId] = useState<string | undefined>()
+
+  const projectsQuery = useProjects({ limit: 50 })
+  const projects = useMemo(
+    () => projectsQuery.data?.projects ?? [],
+    [projectsQuery.data?.projects],
+  )
+
+  const activeBuildsQuery = useBuilds({ limit: 10 })
+  const activeBuilds = useMemo(() => {
+    const all = activeBuildsQuery.data?.builds ?? []
+    return all.filter((b) => b.status === 'queued' || b.status === 'running')
+  }, [activeBuildsQuery.data?.builds])
+
+  const recentBuildsQuery = useBuilds({ limit: 50 })
+  const recentBuilds = useMemo(
+    () => recentBuildsQuery.data?.builds ?? [],
+    [recentBuildsQuery.data?.builds],
+  )
+
+  // Derive last build status per project from recent builds
+  const lastBuildByProject = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const build of recentBuilds) {
+      if (!map.has(build.project_id)) {
+        map.set(build.project_id, build.status)
+      }
+    }
+    return map
+  }, [recentBuilds])
+
+  function handleTriggerForProject(projectId: string) {
+    setTriggerProjectId(projectId)
+    setTriggerOpen(true)
+  }
+
+  function handleGlobalTrigger() {
+    setTriggerProjectId(undefined)
+    setTriggerOpen(true)
+  }
+
   return (
-    <Link
-      to={to}
-      className="group flex items-center justify-between gap-4 border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/30 hover:bg-primary/5"
-    >
-      <div className="flex items-center gap-4">
-        <div className="flex size-9 shrink-0 items-center justify-center border bg-muted/40 text-muted-foreground transition-colors group-hover:border-primary/30 group-hover:text-primary">
-          <HugeiconsIcon icon={icon} size={16} />
+    <PageLayout width="wide">
+      <PageHeader
+        title={userName ? `Welcome, ${userName.split('@')[0]}` : 'Dashboard'}
+        description="Project overview and build activity."
+        actions={
+          <Button onClick={handleGlobalTrigger}>
+            <HugeiconsIcon icon={PlayIcon} size={16} />
+            Trigger Build
+          </Button>
+        }
+      />
+
+      {/* Active Builds */}
+      {activeBuilds.length > 0 ? (
+        <section className="space-y-2">
+          <div className="flex items-center gap-2">
+            <HugeiconsIcon
+              icon={Loading03Icon}
+              size={14}
+              className="animate-spin text-info"
+            />
+            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Active Builds
+            </h2>
+            <Badge variant="info">{activeBuilds.length}</Badge>
+          </div>
+          <div className="space-y-1">
+            {activeBuilds.map((build) => (
+              <ActiveBuildBanner key={build.id} build={build} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {/* Projects Grid */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Projects
+          </h2>
+          <Button variant="ghost" size="sm" render={<Link to="/projects" />}>
+            View all
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+          </Button>
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{title}</p>
-          <p className="text-xs text-muted-foreground">{description}</p>
+
+        {projectsQuery.isLoading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Skeleton className="h-32" />
+            <Skeleton className="h-32" />
+            <Skeleton className="h-32" />
+          </div>
+        ) : projects.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center">
+              <p className="text-sm text-muted-foreground">No projects yet.</p>
+              <Button
+                size="sm"
+                className="mt-3"
+                render={<Link to="/projects" />}
+              >
+                <HugeiconsIcon icon={Add01Icon} size={14} />
+                Create project
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {projects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                lastBuildStatus={lastBuildByProject.get(project.id)}
+                onTriggerBuild={handleTriggerForProject}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Recent Builds */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Recent Builds
+          </h2>
+          <Button variant="ghost" size="sm" render={<Link to="/builds" />}>
+            View all
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+          </Button>
         </div>
-      </div>
-      <HugeiconsIcon icon={ArrowRight01Icon} size={16} className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-    </Link>
+
+        {recentBuildsQuery.isLoading ? (
+          <Card>
+            <CardContent className="space-y-3">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </CardContent>
+          </Card>
+        ) : recentBuilds.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                No builds yet. Trigger one to get started.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Build</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Branch</TableHead>
+                    <TableHead>Commit</TableHead>
+                    <TableHead>When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recentBuilds.map((build) => (
+                    <TableRow
+                      key={build.id}
+                      className="group cursor-pointer"
+                      onClick={() =>
+                        void navigate({
+                          to: '/builds/$buildId',
+                          params: { buildId: build.id },
+                        })
+                      }
+                    >
+                      <TableCell className="font-mono text-sm group-hover:underline">
+                        #{build.build_number}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={getStatusVariant(build.status)}>
+                          {build.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {build.branch ?? 'n/a'}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {build.commit_sha
+                          ? build.commit_sha.slice(0, 8)
+                          : 'n/a'}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {relativeTime(build.created_at)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+      </section>
+
+      <TriggerBuildDialog
+        open={triggerOpen}
+        onOpenChange={setTriggerOpen}
+        fixedProjectId={triggerProjectId}
+        description="Choose a project and pipeline to run a manual build."
+        onBuildCreated={(buildId) => {
+          void navigate({
+            to: '/builds/$buildId',
+            params: { buildId },
+          })
+        }}
+      />
+    </PageLayout>
   )
 }

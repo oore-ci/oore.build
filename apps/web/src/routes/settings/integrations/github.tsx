@@ -20,12 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableRow,
-} from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/github')({
   staticData: { breadcrumbLabel: 'GitHub' },
@@ -77,15 +72,15 @@ function GitHubSetupPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              oore creates a GitHub App manifest, redirects you to GitHub, then returns here after install.
+              oore creates a GitHub App manifest, redirects you to GitHub, then
+              returns here after install.
             </p>
-            <Button
-              onClick={handleConnect}
-              disabled={startMutation.isPending}
-            >
+            <Button onClick={handleConnect} disabled={startMutation.isPending}>
               <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
               {startMutation.isPending ? 'Starting...' : 'Create GitHub App'}
-              {!startMutation.isPending ? <HugeiconsIcon icon={ArrowRight01Icon} size={14} /> : null}
+              {!startMutation.isPending ? (
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+              ) : null}
             </Button>
           </CardContent>
         </Card>
@@ -98,12 +93,20 @@ function GitHubSetupPage() {
             <Table>
               <TableBody>
                 <TableRow>
-                  <TableCell className="w-44 text-muted-foreground">Webhook URL</TableCell>
-                  <TableCell className="font-mono text-xs">{webhookUrl}</TableCell>
+                  <TableCell className="w-44 text-muted-foreground">
+                    Webhook URL
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {webhookUrl}
+                  </TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell className="text-muted-foreground">Redirect URL</TableCell>
-                  <TableCell className="font-mono text-xs">{redirectUrl}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    Redirect URL
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {redirectUrl}
+                  </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -114,7 +117,8 @@ function GitHubSetupPage() {
       <Alert>
         <HugeiconsIcon icon={InformationCircleIcon} size={16} />
         <AlertDescription>
-          After GitHub installation, you will return to Integrations with the connection status updated.
+          After GitHub installation, you will return to Integrations with the
+          connection status updated.
         </AlertDescription>
       </Alert>
     </PageLayout>

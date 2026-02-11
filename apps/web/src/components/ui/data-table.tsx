@@ -16,8 +16,7 @@ interface DataTableProps<TData> {
 }
 
 function DataTable<TData>({ table, columnCount }: DataTableProps<TData>) {
-  const colCount =
-    columnCount ?? table.getAllColumns().length
+  const colCount = columnCount ?? table.getAllColumns().length
 
   return (
     <Table>

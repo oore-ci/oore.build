@@ -10,7 +10,11 @@ import {
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
+import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import {
   useDeleteIntegration,
   useGitLabAuthorize,
@@ -75,21 +79,42 @@ function IntegrationDetailPage() {
   const deleteMutation = useDeleteIntegration()
   const gitlabAuthorizeMutation = useGitLabAuthorize()
 
+  const setLabel = useBreadcrumbStore((s) => s.setLabel)
+
   useEffect(() => {
-    const label = detail?.integration?.display_name
-      ?? detail?.integration?.provider
-      ?? 'Integration Details'
+    const label =
+      detail?.integration.display_name ??
+      detail?.integration.provider ??
+      'Integration Details'
     document.title = webPageTitle(label)
-  }, [detail?.integration?.display_name, detail?.integration?.provider])
+    if (detail?.integration) {
+      setLabel(
+        '/settings/integrations/$integrationId',
+        detail.integration.display_name ?? detail.integration.provider,
+      )
+    }
+  }, [
+    detail?.integration.display_name,
+    detail?.integration.provider,
+    setLabel,
+  ])
 
   useEffect(() => {
     if (search.installed === 'true') {
       toast.success('GitHub App installed successfully')
-      window.history.replaceState({}, '', `/settings/integrations/${integrationId}`)
+      window.history.replaceState(
+        {},
+        '',
+        `/settings/integrations/${integrationId}`,
+      )
     }
     if (search.gitlab === 'success') {
       toast.success('GitLab OAuth authorization completed')
-      window.history.replaceState({}, '', `/settings/integrations/${integrationId}`)
+      window.history.replaceState(
+        {},
+        '',
+        `/settings/integrations/${integrationId}`,
+      )
     }
   }, [search.installed, search.gitlab, integrationId])
 
@@ -105,7 +130,10 @@ function IntegrationDetailPage() {
   }
 
   function handleDisconnect() {
-    const name = detail?.integration.display_name ?? detail?.integration.provider ?? 'integration'
+    const name =
+      detail?.integration.display_name ??
+      detail?.integration.provider ??
+      'integration'
     deleteMutation.mutate(integrationId, {
       onSuccess: () => {
         toast.success(`Disconnected ${name}`)
@@ -169,7 +197,9 @@ function IntegrationDetailPage() {
             <CardTitle className="text-sm font-medium">Installations</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{installations.length}</p>
+            <p className="text-2xl font-semibold tracking-tight">
+              {installations.length}
+            </p>
             <p className="text-xs text-muted-foreground">Connected accounts</p>
           </CardContent>
         </Card>
@@ -178,7 +208,9 @@ function IntegrationDetailPage() {
             <CardTitle className="text-sm font-medium">Repositories</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">{repositories.length}</p>
+            <p className="text-2xl font-semibold tracking-tight">
+              {repositories.length}
+            </p>
             <p className="text-xs text-muted-foreground">Synced repositories</p>
           </CardContent>
         </Card>
@@ -188,7 +220,9 @@ function IntegrationDetailPage() {
           </CardHeader>
           <CardContent>
             <p className="text-sm font-medium">{integration.auth_mode}</p>
-            <p className="text-xs text-muted-foreground">Host: {integration.host_url}</p>
+            <p className="text-xs text-muted-foreground">
+              Host: {integration.host_url}
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -201,26 +235,38 @@ function IntegrationDetailPage() {
           <Table>
             <TableBody>
               <TableRow>
-                <TableCell className="w-56 text-muted-foreground">Provider</TableCell>
+                <TableCell className="w-56 text-muted-foreground">
+                  Provider
+                </TableCell>
                 <TableCell>{integration.provider}</TableCell>
               </TableRow>
               <TableRow>
-                <TableCell className="text-muted-foreground">Host URL</TableCell>
+                <TableCell className="text-muted-foreground">
+                  Host URL
+                </TableCell>
                 <TableCell>{integration.host_url}</TableCell>
               </TableRow>
               <TableRow>
-                <TableCell className="text-muted-foreground">Auth mode</TableCell>
+                <TableCell className="text-muted-foreground">
+                  Auth mode
+                </TableCell>
                 <TableCell>{integration.auth_mode}</TableCell>
               </TableRow>
               {integration.app_id ? (
                 <TableRow>
-                  <TableCell className="text-muted-foreground">App ID</TableCell>
-                  <TableCell className="font-mono text-xs">{integration.app_id}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    App ID
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {integration.app_id}
+                  </TableCell>
                 </TableRow>
               ) : null}
               <TableRow>
                 <TableCell className="text-muted-foreground">Created</TableCell>
-                <TableCell>{new Date(integration.created_at * 1000).toLocaleString()}</TableCell>
+                <TableCell>
+                  {new Date(integration.created_at * 1000).toLocaleString()}
+                </TableCell>
               </TableRow>
             </TableBody>
           </Table>
@@ -233,24 +279,24 @@ function IntegrationDetailPage() {
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {integration.provider === 'gitlab' &&
-            integration.auth_mode === 'oauth_app' &&
-            integration.status === 'inactive' ? (
-              <Button
-                variant="outline"
-                onClick={() =>
-                  gitlabAuthorizeMutation.mutate({
-                    integration_id: integrationId,
-                    redirect_url: window.location.href,
-                  })
-                }
-                disabled={gitlabAuthorizeMutation.isPending}
-              >
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-                {gitlabAuthorizeMutation.isPending
-                  ? 'Redirecting...'
-                  : 'Authorize on GitLab'}
-              </Button>
-            ) : null}
+          integration.auth_mode === 'oauth_app' &&
+          integration.status === 'inactive' ? (
+            <Button
+              variant="outline"
+              onClick={() =>
+                gitlabAuthorizeMutation.mutate({
+                  integration_id: integrationId,
+                  redirect_url: window.location.href,
+                })
+              }
+              disabled={gitlabAuthorizeMutation.isPending}
+            >
+              <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+              {gitlabAuthorizeMutation.isPending
+                ? 'Redirecting...'
+                : 'Authorize on GitLab'}
+            </Button>
+          ) : null}
 
           {integration.provider === 'github' && integration.app_slug ? (
             <Button
@@ -268,7 +314,9 @@ function IntegrationDetailPage() {
               }
             >
               <HugeiconsIcon icon={Setting07Icon} size={16} />
-              {installations.length > 0 ? 'Manage on GitHub' : 'Install on GitHub'}
+              {installations.length > 0
+                ? 'Manage on GitHub'
+                : 'Install on GitHub'}
             </Button>
           ) : null}
 
@@ -294,7 +342,8 @@ function IntegrationDetailPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Disconnect integration?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This removes credentials, installations, repository links, and webhook behavior.
+                  This removes credentials, installations, repository links, and
+                  webhook behavior.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -310,12 +359,15 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Installations ({installations.length})</CardTitle>
+          <CardTitle className="text-base">
+            Installations ({installations.length})
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {installations.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No installations yet{integration.provider === 'github' && integration.app_slug
+              No installations yet
+              {integration.provider === 'github' && integration.app_slug
                 ? ' - install your GitHub App to get started.'
                 : '.'}
             </p>
@@ -333,7 +385,9 @@ function IntegrationDetailPage() {
                   <TableRow key={inst.id}>
                     <TableCell>{inst.account_name}</TableCell>
                     <TableCell>{inst.account_type ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{inst.external_id}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {inst.external_id}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -344,11 +398,15 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Repositories ({repositories.length})</CardTitle>
+          <CardTitle className="text-base">
+            Repositories ({repositories.length})
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {repositories.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No repositories synced yet.</p>
+            <p className="text-sm text-muted-foreground">
+              No repositories synced yet.
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -366,7 +424,9 @@ function IntegrationDetailPage() {
                       {repo.default_branch ?? '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={repo.is_private ? 'secondary' : 'outline'}>
+                      <Badge
+                        variant={repo.is_private ? 'secondary' : 'outline'}
+                      >
                         {repo.is_private ? 'private' : 'public'}
                       </Badge>
                     </TableCell>

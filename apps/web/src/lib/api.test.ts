@@ -4,8 +4,8 @@ import {
   completeSetup,
   configureOidc,
   createPipeline,
-  getArtifactStorageSettings,
   getApiErrorMessage,
+  getArtifactStorageSettings,
   getInstancePreferences,
   getPipeline,
   getSetupStatus,
@@ -558,7 +558,9 @@ describe('pipeline api', () => {
   })
 
   it('lists and fetches pipeline endpoints', async () => {
-    mockFetch.mockReturnValueOnce(mockJsonResponse(200, { pipelines: [], total: 0 }))
+    mockFetch.mockReturnValueOnce(
+      mockJsonResponse(200, { pipelines: [], total: 0 }),
+    )
     await listPipelines('https://ci.example.com', 'session-token', 'proj-1', {
       limit: 10,
       offset: 0,

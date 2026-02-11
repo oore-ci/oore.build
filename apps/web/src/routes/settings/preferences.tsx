@@ -337,6 +337,12 @@ function PreferencesPage() {
                         value={field.value}
                         onValueChange={field.onChange}
                         disabled={!canWrite || updateStorageMutation.isPending}
+                        items={{
+                          disabled: 'Disabled',
+                          local: 'Local filesystem',
+                          s3: 'S3-compatible (AWS/MinIO)',
+                          r2: 'Cloudflare R2',
+                        }}
                       >
                         <FormControl>
                           <SelectTrigger>

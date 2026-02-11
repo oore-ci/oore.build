@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { BuildStatus, CreateBuildRequest } from '@/lib/types'
+import type {
+  Build,
+  BuildLogChunk,
+  BuildStatus,
+  CreateBuildRequest,
+  ListBuildsResponse,
+} from '@/lib/types'
 import {
   cancelBuild,
   createBuild,
@@ -25,14 +31,17 @@ function useBaseUrl(): string | null {
   return instance?.url ?? null
 }
 
-export function useBuilds(params?: {
-  project_id?: string
-  pipeline_id?: string
-  status?: string
-  branch?: string
-  limit?: number
-  offset?: number
-}) {
+export function useBuilds(
+  params?: {
+    project_id?: string
+    pipeline_id?: string
+    status?: string
+    branch?: string
+    limit?: number
+    offset?: number
+  },
+  options?: { refetchInterval?: number | false },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -41,6 +50,7 @@ export function useBuilds(params?: {
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
     queryFn: () => listBuilds(baseUrl!, token!, params),
     enabled: !!baseUrl && !!token,
+    refetchInterval: options?.refetchInterval,
   })
 }
 
@@ -56,7 +66,10 @@ export function isTerminalStatus(status: BuildStatus | string): boolean {
   return TERMINAL_STATUSES.has(status)
 }
 
-export function useBuild(buildId: string, options?: { refetchInterval?: number | false }) {
+export function useBuild(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -74,6 +87,7 @@ export function useCreateBuild() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
+  const instanceId = instance?.id ?? '__none__'
 
   return useMutation({
     mutationFn: ({
@@ -87,9 +101,52 @@ export function useCreateBuild() {
         return Promise.reject(new Error('Not authenticated'))
       return createBuild(baseUrl, token, projectId, data)
     },
-    onSuccess: () => {
+    onMutate: async ({ projectId, data }) => {
+      await queryClient.cancelQueries({
+        queryKey: [instanceId, 'builds'],
+      })
+
+      const queriesData = queryClient.getQueriesData<
+        ListBuildsResponse
+      >({ queryKey: [instanceId, 'builds'] })
+
+      const optimisticBuild: Build = {
+        id: `optimistic-${Date.now()}`,
+        project_id: projectId,
+        pipeline_id: data.pipeline_id,
+        build_number: 0,
+        status: 'queued',
+        trigger_type: 'manual',
+        branch: data.branch,
+        commit_sha: data.commit_sha,
+        trigger_ref: data.trigger_ref,
+        config_snapshot: {},
+        queued_at: Math.floor(Date.now() / 1000),
+        created_at: Math.floor(Date.now() / 1000),
+        updated_at: Math.floor(Date.now() / 1000),
+      }
+
+      for (const [key, existing] of queriesData) {
+        if (existing) {
+          queryClient.setQueryData(key, {
+            builds: [optimisticBuild, ...existing.builds],
+            total: existing.total + 1,
+          })
+        }
+      }
+
+      return { queriesData }
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.queriesData) {
+        for (const [key, data] of context.queriesData) {
+          queryClient.setQueryData(key, data)
+        }
+      }
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'builds'],
+        queryKey: [instanceId, 'builds'],
       })
     },
   })
@@ -128,11 +185,11 @@ export function useBuildLogs(buildId: string) {
     queryFn: async () => {
       // Fetch all log pages (server max per page is 5000)
       const pageSize = 5000
-      let allLogs: import('@/lib/types').BuildLogChunk[] = []
+      let allLogs: Array<BuildLogChunk> = []
       let afterSeq = -1
       let total = 0
 
-      // eslint-disable-next-line no-constant-condition
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       while (true) {
         const page = await getBuildLogs(baseUrl!, token!, buildId, {
           after_sequence: afterSeq >= 0 ? afterSeq : undefined,

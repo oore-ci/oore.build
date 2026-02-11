@@ -1,9 +1,12 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { InformationCircleIcon, PlayIcon } from '@hugeicons/core-free-icons'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -54,6 +57,7 @@ function BuildsListPage() {
         actions={
           canTriggerBuild ? (
             <Button onClick={() => setTriggerBuildOpen(true)}>
+              <HugeiconsIcon icon={PlayIcon} size={16} />
               Trigger Build
             </Button>
           ) : undefined
@@ -73,7 +77,9 @@ function BuildsListPage() {
       {error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>Failed to load builds: {error.message}</AlertDescription>
+          <AlertDescription>
+            Failed to load builds: {error.message}
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -81,8 +87,12 @@ function BuildsListPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Build queue and history</CardTitle>
-              <span className="text-xs text-muted-foreground">{builds.length} total</span>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                Build queue and history
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {builds.length} total
+              </span>
             </div>
           </CardHeader>
           <CardContent>
@@ -91,6 +101,7 @@ function BuildsListPage() {
                 <p className="text-sm text-muted-foreground">No builds yet.</p>
                 {canTriggerBuild ? (
                   <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                    <HugeiconsIcon icon={PlayIcon} size={14} />
                     Trigger first build
                   </Button>
                 ) : null}
@@ -105,26 +116,42 @@ function BuildsListPage() {
                     <TableHead>Branch</TableHead>
                     <TableHead>Commit</TableHead>
                     <TableHead>Created</TableHead>
-                    <TableHead className="text-right">Open</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {builds.map((build) => (
-                    <TableRow key={build.id}>
+                    <TableRow
+                      key={build.id}
+                      className="group cursor-pointer"
+                      onClick={() =>
+                        void navigate({
+                          to: '/builds/$buildId',
+                          params: { buildId: build.id },
+                        })
+                      }
+                    >
                       <TableCell>
                         <div>
-                          <p className="font-mono text-sm">#{build.build_number}</p>
-                          <p className="font-mono text-xs text-muted-foreground">{build.id.slice(0, 8)}</p>
+                          <p className="font-mono text-sm group-hover:underline">
+                            #{build.build_number}
+                          </p>
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            {build.id.slice(0, 8)}
+                          </p>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={getStatusVariant(build.status)}>{build.status}</Badge>
+                        <Badge variant={getStatusVariant(build.status)}>
+                          {build.status}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline">{build.trigger_type}</Badge>
                           {build.trigger_actor ? (
-                            <span className="text-xs text-muted-foreground">by {build.trigger_actor}</span>
+                            <span className="text-xs text-muted-foreground">
+                              by {build.trigger_actor}
+                            </span>
                           ) : null}
                         </div>
                       </TableCell>
@@ -132,19 +159,12 @@ function BuildsListPage() {
                         {build.branch ?? 'n/a'}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.commit_sha ? build.commit_sha.slice(0, 10) : 'n/a'}
+                        {build.commit_sha
+                          ? build.commit_sha.slice(0, 10)
+                          : 'n/a'}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {new Date(build.created_at * 1000).toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          render={<Link to="/builds/$buildId" params={{ buildId: build.id }} />}
-                        >
-                          Open
-                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}

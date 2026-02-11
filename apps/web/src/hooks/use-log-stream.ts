@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { createStreamToken, getBuildLogs } from '@/lib/api'
 import type { BuildLogChunk } from '@/lib/types'
+import { createStreamToken, getBuildLogs } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
 
@@ -178,6 +178,7 @@ export function useLogStream(
           setError('Live stream disconnected. Continuing with polling.')
         })
       } catch {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- abort may happen concurrently
         if (!abort.signal.aborted) {
           setError('Failed to connect live stream. Using polling fallback.')
         }

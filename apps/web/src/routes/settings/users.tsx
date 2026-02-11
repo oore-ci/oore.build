@@ -322,34 +322,50 @@ function UsersSettingsPage() {
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Total users</p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{users.length}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Active + invited + disabled</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Total users
+            </p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
+              {users.length}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Active + invited + disabled
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Active users</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Active users
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {users.filter((user) => user.status === 'active').length}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Can access this instance</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Can access this instance
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Invited users</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Invited users
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {users.filter((user) => user.status === 'invited').length}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Pending account completion</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Pending account completion
+            </p>
           </CardContent>
         </Card>
       </section>
       {/* Invite form */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Invite user</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Invite user
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-3">
@@ -363,6 +379,7 @@ function UsersSettingsPage() {
             <Select
               value={inviteRole}
               onValueChange={(v) => setInviteRole(v as UserRole)}
+              items={ROLE_OPTIONS}
             >
               <SelectTrigger className="w-36">
                 <SelectValue />
@@ -398,11 +415,13 @@ function UsersSettingsPage() {
       {/* Users data table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Team Access Inventory</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Team Access Inventory
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-        <UsersToolbar table={table} onBulkDisable={handleBulkDisable} />
-        <DataTable table={table} />
+          <UsersToolbar table={table} onBulkDisable={handleBulkDisable} />
+          <DataTable table={table} />
         </CardContent>
       </Card>
 

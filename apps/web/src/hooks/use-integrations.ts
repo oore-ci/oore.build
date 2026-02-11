@@ -133,7 +133,11 @@ export function useSyncInstallations() {
         queryKey: [instance?.id ?? '__none__', 'installations', integrationId],
       })
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integration-repos', integrationId],
+        queryKey: [
+          instance?.id ?? '__none__',
+          'integration-repos',
+          integrationId,
+        ],
       })
     },
   })

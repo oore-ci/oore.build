@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import CreateProjectDialog from './-create-project-dialog'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useProjects } from '@/hooks/use-projects'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -21,7 +25,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { webPageTitle } from '@/lib/seo'
-import CreateProjectDialog from './-create-project-dialog'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
@@ -45,6 +48,7 @@ function relativeTime(epochSecs: number): string {
 }
 
 function ProjectsListPage() {
+  const navigate = useNavigate()
   const { data, isLoading, error } = useProjects({ limit: 100 })
   const canWrite = useHasPermission('projects', 'write')
   const [createOpen, setCreateOpen] = useState(false)
@@ -83,7 +87,9 @@ function ProjectsListPage() {
       {error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>Failed to load projects: {error.message}</AlertDescription>
+          <AlertDescription>
+            Failed to load projects: {error.message}
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -91,14 +97,20 @@ function ProjectsListPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Project inventory</CardTitle>
-              <span className="text-xs text-muted-foreground">{projects.length} total</span>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                Project inventory
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {projects.length} total
+              </span>
             </div>
           </CardHeader>
           <CardContent>
             {projects.length === 0 ? (
               <div className="space-y-4 py-12 text-center">
-                <p className="text-sm text-muted-foreground">No projects yet.</p>
+                <p className="text-sm text-muted-foreground">
+                  No projects yet.
+                </p>
                 {canWrite ? (
                   <Button onClick={() => setCreateOpen(true)}>
                     <HugeiconsIcon icon={Add01Icon} size={16} />
@@ -114,16 +126,26 @@ function ProjectsListPage() {
                     <TableHead>Default branch</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Updated</TableHead>
-                    <TableHead className="text-right">Open</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {projects.map((project) => (
-                    <TableRow key={project.id}>
+                    <TableRow
+                      key={project.id}
+                      className="group cursor-pointer"
+                      onClick={() =>
+                        void navigate({
+                          to: '/projects/$projectId',
+                          params: { projectId: project.id },
+                        })
+                      }
+                    >
                       <TableCell>
                         <div>
-                          <p className="font-medium">{project.name}</p>
-                          <p className="font-mono text-[11px] text-muted-foreground">{project.id.slice(0, 8)}</p>
+                          <p className="font-medium group-hover:underline">{project.name}</p>
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            {project.id.slice(0, 8)}
+                          </p>
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
@@ -134,15 +156,6 @@ function ProjectsListPage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {relativeTime(project.updated_at)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          render={<Link to="/projects/$projectId" params={{ projectId: project.id }} />}
-                        >
-                          Open
-                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}

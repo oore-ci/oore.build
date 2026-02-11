@@ -63,7 +63,10 @@ export default function InstanceSwitcher() {
               }
             >
               <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center">
-                <HugeiconsIcon icon={getInstanceIcon(instance?.icon)} size={16} />
+                <HugeiconsIcon
+                  icon={getInstanceIcon(instance?.icon)}
+                  size={16}
+                />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">
@@ -92,7 +95,10 @@ export default function InstanceSwitcher() {
                   className="group gap-2 p-2"
                 >
                   <div className="flex size-6 items-center justify-center border">
-                    <HugeiconsIcon icon={getInstanceIcon(inst.icon)} size={14} />
+                    <HugeiconsIcon
+                      icon={getInstanceIcon(inst.icon)}
+                      size={14}
+                    />
                   </div>
                   <span className="truncate flex-1">{inst.label}</span>
                   <button

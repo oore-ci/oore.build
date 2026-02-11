@@ -1,4 +1,4 @@
-import { Toaster as Sonner  } from 'sonner'
+import { Toaster as Sonner } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Alert02Icon,
@@ -7,7 +7,7 @@ import {
   Loading03Icon,
   MultiplicationSignCircleIcon,
 } from '@hugeicons/core-free-icons'
-import type {ToasterProps} from 'sonner';
+import type { ToasterProps } from 'sonner'
 
 const Toaster = ({ ...props }: ToasterProps) => {
   return (

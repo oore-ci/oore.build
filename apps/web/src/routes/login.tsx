@@ -87,9 +87,7 @@ function LoginPage() {
             <img src="/logo.svg" alt="oore.build logo" className="size-7" />
           </div>
           <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight">
-              Sign in
-            </h1>
+            <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
             <p className="text-muted-foreground text-sm">
               Authenticate with your identity provider to continue.
             </p>

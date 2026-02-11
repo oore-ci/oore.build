@@ -8,7 +8,10 @@ import {
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import {
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { useDeleteIntegration, useIntegrations } from '@/hooks/use-integrations'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
 import { webPageTitle } from '@/lib/seo'
@@ -41,7 +44,9 @@ import {
 
 export const Route = createFileRoute('/settings/integrations/')({
   staticData: { breadcrumbLabel: 'Integrations' },
-  validateSearch: (search: Record<string, unknown>): { github?: string; integration_id?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { github?: string; integration_id?: string } => ({
     github: (search.github as string) || undefined,
     integration_id: (search.integration_id as string) || undefined,
   }),
@@ -91,11 +96,14 @@ function IntegrationsPage() {
       <section className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">GitHub</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              GitHub
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Create and install a GitHub App to enable repository discovery and webhook events.
+              Create and install a GitHub App to enable repository discovery and
+              webhook events.
             </p>
             <Button render={<Link to="/settings/integrations/github" />}>
               <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
@@ -106,13 +114,19 @@ function IntegrationsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">GitLab</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              GitLab
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Connect gitlab.com or self-managed GitLab through OAuth or personal access token.
+              Connect gitlab.com or self-managed GitLab through OAuth or
+              personal access token.
             </p>
-            <Button variant="outline" render={<Link to="/settings/integrations/gitlab" />}>
+            <Button
+              variant="outline"
+              render={<Link to="/settings/integrations/gitlab" />}
+            >
               <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
               Connect GitLab
             </Button>
@@ -141,11 +155,15 @@ function IntegrationsPage() {
       {!isLoading && !error ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Connected Integrations</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Connected Integrations
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {integrations.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">No integrations connected yet.</p>
+              <p className="py-6 text-sm text-muted-foreground">
+                No integrations connected yet.
+              </p>
             ) : (
               <Table>
                 <TableHeader>
@@ -163,20 +181,32 @@ function IntegrationsPage() {
                     <TableRow key={integration.id}>
                       <TableCell>
                         <div>
-                          <p className="font-medium">{integration.display_name ?? integration.provider}</p>
-                          <p className="font-mono text-xs text-muted-foreground">{integration.id.slice(0, 8)}</p>
+                          <p className="font-medium">
+                            {integration.display_name ?? integration.provider}
+                          </p>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {integration.id.slice(0, 8)}
+                          </p>
                         </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{integration.provider}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={getIntegrationStatusVariant(integration.status)}>
+                        <Badge
+                          variant={getIntegrationStatusVariant(
+                            integration.status,
+                          )}
+                        >
                           {integration.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{integration.host_url}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{integration.auth_mode}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {integration.host_url}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {integration.auth_mode}
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button
@@ -195,16 +225,22 @@ function IntegrationsPage() {
                             <AlertDialogTrigger
                               render={
                                 <Button variant="ghost" size="sm">
-                                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                                  <HugeiconsIcon
+                                    icon={Delete02Icon}
+                                    size={16}
+                                  />
                                   Disconnect
                                 </Button>
                               }
                             />
                             <AlertDialogContent>
                               <AlertDialogHeader>
-                                <AlertDialogTitle>Disconnect integration?</AlertDialogTitle>
+                                <AlertDialogTitle>
+                                  Disconnect integration?
+                                </AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  This removes credentials, installations, repository links, and webhook behavior.
+                                  This removes credentials, installations,
+                                  repository links, and webhook behavior.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
@@ -213,7 +249,8 @@ function IntegrationsPage() {
                                   onClick={() =>
                                     handleDisconnect(
                                       integration.id,
-                                      integration.display_name ?? integration.provider,
+                                      integration.display_name ??
+                                        integration.provider,
                                     )
                                   }
                                 >
