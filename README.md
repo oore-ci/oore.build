@@ -90,7 +90,8 @@ If GitHub Actions is unavailable, publish releases from a dedicated Mac mini:
 
 ```bash
 make release-local TAG=v0.2.0          # Build + upload one release to R2
-make install-release-poller            # Install launchd poller for new tags
+sudo make install-release-webhook-daemon  # Install LaunchDaemon webhook listener
+make install-release-poller               # Optional polling fallback
 ```
 
 Artifacts are published under `https://dl.oore.build/releases/`.

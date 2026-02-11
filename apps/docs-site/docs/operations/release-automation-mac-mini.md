@@ -14,24 +14,24 @@ Use this flow when GitHub Actions is unavailable. A dedicated macOS host (for ex
 - R2 bucket and public domain already configured (example: `oore` and `dl.oore.build`)
 - Repo checked out on the macOS host
 
-## Webhook mode (recommended)
+## Webhook mode (recommended, LaunchDaemon)
 
 This mode reacts to Git tag pushes immediately.
 
 ### 1) Configure webhook secret on Mac mini
 
 ```bash
-mkdir -p ~/.oore/release-runner
-cat > ~/.oore/release-runner/webhook.env <<'EOF'
+sudo mkdir -p /etc/oore
+sudo tee /etc/oore/release-webhook.env >/dev/null <<'EOF'
 OORE_WEBHOOK_SECRET=replace-with-strong-random-secret
 EOF
-chmod 600 ~/.oore/release-runner/webhook.env
+sudo chmod 600 /etc/oore/release-webhook.env
 ```
 
-### 2) Install webhook listener service
+### 2) Install system daemon
 
 ```bash
-make install-release-webhook
+sudo make install-release-webhook-daemon
 ```
 
 ### 3) Expose listener publicly (Cloudflare Tunnel)
@@ -53,12 +53,32 @@ Use webhook URL:
 
 ```bash
 curl -fsSL http://127.0.0.1:8789/healthz
-tail -f ~/Library/Logs/oore-release-webhook.log
+sudo tail -f /var/log/oore-release-webhook.log
 ```
 
 On tag push `refs/tags/v*.*.*`, the listener triggers release build/upload.
 
-## Polling mode (fallback)
+### Check daemon status
+
+```bash
+sudo launchctl print system/com.oore.release-webhook | head -n 50
+```
+
+## LaunchAgent mode (fallback)
+
+If you do not want system-level setup, you can still run the per-user LaunchAgent:
+
+```bash
+make install-release-webhook
+```
+
+Logs:
+
+```bash
+tail -f ~/Library/Logs/oore-release-webhook.log
+```
+
+## Polling mode (backup fallback)
 
 If webhooks are unavailable, install the poller:
 

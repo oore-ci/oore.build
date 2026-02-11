@@ -48,6 +48,7 @@ Release/distribution contract additions:
 
 - Installer path moved from source-build bootstrap to release-artifact bootstrap.
 - Added local macOS release automation scripts for semver tags (`v*.*.*`) that package both architectures and upload to Cloudflare R2.
+- Added webhook-based release automation service with launchd templates for both LaunchDaemon (system) and LaunchAgent (user) operation.
 - Added CI validate workflow (`make validate` + Rust tests) for PR/push coverage.
 - Added site build/deploy plumbing (`dev-site`, `build-site`, `deploy-site`) and root scripts (`dev:site`, `build:site`).
 

@@ -4,7 +4,7 @@
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
 	       run-runner register-runner run-cli doctor \
 	       docs-check ui-init install-local validate \
-	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook
+	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -112,6 +112,9 @@ install-release-poller:
 
 install-release-webhook:
 	bash scripts/install-launchd-release-webhook.sh
+
+install-release-webhook-daemon:
+	bash scripts/install-launchd-release-webhook-daemon.sh
 
 # ── Documentation & Validation ────────────────────────────────────
 docs-check:
