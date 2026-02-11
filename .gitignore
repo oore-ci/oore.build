@@ -13,5 +13,13 @@ target/
 .env
 .env.*
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
+
+# editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

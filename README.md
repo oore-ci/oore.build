@@ -1,118 +1,75 @@
 # oore.build
 
-Self-hosted, Flutter-first mobile CI and internal app distribution.
+Self-hosted, Flutter-first mobile CI and internal app distribution platform.
 
-## Project Contract
+> **Alpha** — oore.build is under active development. APIs, config formats, and CLI flags will change without notice. Use at your own risk.
 
-The current product and engineering contract is documented at:
+## What is this?
 
-- `docs/platform-contract.md`
-- `docs/strict-guidelines.md`
+oore.build lets you run your own mobile CI server. V1 targets Android, iOS, and macOS Flutter builds on a macOS host. It provides:
 
-## Workspace Layout
+- A **daemon** (`oored`) that orchestrates builds and serves the API
+- An **operator CLI** (`oore`) for setup, admin, and runner management
+- A **web UI** for managing builds, apps, and team access
+- **OIDC-only authentication** — no local passwords
 
-- `apps/web`: primary product web UI
-- `apps/docs-site`: static documentation website (VitePress placeholder)
-- `crates/oored`: daemon runtime
-- `crates/oore`: operator CLI/TUI bootstrap surface
-- `crates/oore-contract`: shared backend API contracts
-- `docs/features`: required feature documentation entries
-- `docs/templates/feature-doc-template.md`: required feature doc template
+## Prerequisites
 
-## Shared shadcn Preset
+- macOS (backend requirement for V1)
+- [Rust](https://rustup.rs/) (stable, edition 2024)
+- [Bun](https://bun.sh/) (package manager for the frontend)
 
-Both `apps/web` and `apps/docs-site` use the same shadcn preset URL in:
+## Quick Start
 
-- `configs/shadcn-preset.txt`
-
-Initialize shadcn in both repos with Base UI + Vega style + Hugeicons + amber theme:
-
-- `bun run ui:init`
-
-Reference one-shot create command:
-
-- `bunx --bun shadcn@latest create --preset "https://ui.shadcn.com/init?base=base&style=vega&baseColor=neutral&theme=amber&iconLibrary=hugeicons&font=inter&menuAccent=subtle&menuColor=default&radius=none&template=start&rtl=false"`
-
-## Frontend Scaffold
-
-Both frontend apps are scaffolded with TanStack file-router:
-
-- `bunx create-tsrouter-app@latest my-app --template file-router`
-
-Docs site framework:
-
-- `VitePress` (placeholder wired under `apps/docs-site/docs`)
-- run docs locally: `bun run dev:docs`
-- build docs: `bun run build:docs`
-
-## Documentation Gate
-
-Feature docs are validated by:
-
-- local: `bun run docs:check`
-- CI: `.github/workflows/docs-guard.yml`
-
-## Backend Bootstrap
-
-- check workspace: `cargo check --workspace`
-- run daemon: `cargo run -p oored -- run --listen 127.0.0.1:8787`
-- check setup status: `curl http://127.0.0.1:8787/v1/public/setup-status`
-- run CLI: `cargo run -p oore -- setup open --ttl 15m`
-
-## Setup Flow
-
-### 1. Start the daemon
 ```bash
+# Install dependencies
+bun install
+
+# Start the daemon
 make run-daemon
+
+# In another terminal, open a setup window
+make run-cli
+
+# In another terminal, start the web UI
+make dev-web
 ```
 
-By default this runs with `RUST_LOG=info`. For higher verbosity or lower runtime overhead:
+Then open `http://localhost:3000` and follow the setup wizard.
+
+## Project Structure
+
+```
+apps/web/           React 19 + TanStack Router (product UI)
+apps/docs-site/     VitePress documentation site
+crates/oored/       Daemon — Axum HTTP server
+crates/oore/        Operator CLI — Clap
+crates/oore-runner/ Build runner agent
+crates/oore-contract/ Shared data types (Serde structs)
+docs/               Design docs, platform contract, feature specs
+```
+
+## Common Commands
+
+All commands are available as `make` targets:
 
 ```bash
-make run-daemon-debug    # RUST_LOG=debug
-make run-daemon-release  # Release build + RUST_LOG=info
+make dev-web          # Web UI dev server (port 3000)
+make dev-docs         # Docs dev server (VitePress)
+make build            # Build everything (web + docs + cargo check)
+make check            # Lint web + cargo check
+make test-web         # Run web tests (Vitest)
+make test-rust        # Run Rust tests
+make cargo-check      # Type-check Rust workspace
+make run-daemon       # Start oored on 127.0.0.1:8787
+make run-cli          # Open a setup window (15 min TTL)
+make doctor           # Check system prerequisites
 ```
 
-### 2. Open a setup window
-```bash
-# Generate a bootstrap token valid for 15 minutes
-oore setup open --ttl 15m
+## Contributing
 
-# Or with JSON output for scripts
-oore setup open --ttl 15m --json
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### 3. Complete setup via API
-```bash
-# Verify bootstrap token (one-time use)
-curl -X POST http://127.0.0.1:8787/v1/setup/bootstrap-token/verify \
-  -H "Content-Type: application/json" \
-  -d '{"token": "<bootstrap-token>"}'
+## License
 
-# Configure OIDC provider
-curl -X POST http://127.0.0.1:8787/v1/setup/oidc/configure \
-  -H "Authorization: Bearer <session-token>" \
-  -H "Content-Type: application/json" \
-  -d '{"issuer_url": "https://accounts.google.com", "client_id": "...", "client_secret": "..."}'
-
-# Start owner OIDC verification
-curl -X POST http://127.0.0.1:8787/v1/setup/owner/start-oidc \
-  -H "Authorization: Bearer <session-token>" \
-  -H "Content-Type: application/json" \
-  -d '{"redirect_uri": "http://127.0.0.1:3000/setup/owner/callback"}'
-
-# Verify owner OIDC (after completing the OIDC flow)
-curl -X POST http://127.0.0.1:8787/v1/setup/owner/verify-oidc \
-  -H "Authorization: Bearer <session-token>" \
-  -H "Content-Type: application/json" \
-  -d '{"code": "<authorization_code>", "state": "<state>"}'
-
-# Complete setup
-curl -X POST http://127.0.0.1:8787/v1/setup/complete \
-  -H "Authorization: Bearer <session-token>"
-```
-
-### 4. Check status
-```bash
-curl http://127.0.0.1:8787/v1/public/setup-status
-```
+[MIT](LICENSE)
