@@ -9,23 +9,25 @@ import {
   DEMO_USER_ROLE,
   getDemoInstanceUrl,
 } from './seed'
+import { useAuthStore } from '@/stores/auth-store'
+import { useInstanceStore } from '@/stores/instance-store'
 
 function seedDemoStores() {
   // Use current origin so `!!baseUrl` checks pass in query hooks and
   // MSW intercepts the full-URL fetches before they hit the network.
   const instanceUrl = getDemoInstanceUrl()
+  const now = Date.now()
 
   // Seed instance store — matches zustand/persist format (name: 'oore_instances')
+  const demoInstance = {
+    id: DEMO_INSTANCE_ID,
+    label: DEMO_INSTANCE_LABEL,
+    url: instanceUrl,
+    addedAt: now,
+  }
   const instanceStorePayload = {
     state: {
-      instances: {
-        [DEMO_INSTANCE_ID]: {
-          id: DEMO_INSTANCE_ID,
-          label: DEMO_INSTANCE_LABEL,
-          url: instanceUrl,
-          addedAt: Date.now(),
-        },
-      },
+      instances: { [DEMO_INSTANCE_ID]: demoInstance },
       activeInstanceId: DEMO_INSTANCE_ID,
     },
     version: 0,
@@ -52,8 +54,16 @@ function seedDemoStores() {
   localStorage.setItem(`oore_auth_last_method_${DEMO_INSTANCE_ID}`, 'oidc')
   localStorage.setItem(
     `oore_auth_last_at_${DEMO_INSTANCE_ID}`,
-    String(Math.floor(Date.now() / 1000)),
+    String(Math.floor(now / 1000)),
   )
+
+  // Imperatively set Zustand store state so React sees the demo instance
+  // immediately, without waiting for zustand/persist async rehydration.
+  useInstanceStore.setState({
+    instances: { [DEMO_INSTANCE_ID]: demoInstance },
+    activeInstanceId: DEMO_INSTANCE_ID,
+  })
+  useAuthStore.getState().setInstanceContext(DEMO_INSTANCE_ID)
 }
 
 export async function enableDemoMode(): Promise<void> {
