@@ -139,6 +139,71 @@ async fn test_github_webhook_invalid_signature() {
 }
 
 #[tokio::test]
+async fn test_github_webhook_secret_rotation_refreshes_cache_without_restart() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let old_secret = "gh-rotate-old-secret";
+    let new_secret = "gh-rotate-new-secret";
+    let integration_id = common::seed_github_integration(&pool, &user_id, old_secret).await;
+    let (project_id, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "org/rotate-repo").await;
+
+    // First webhook uses old secret and warms the in-process cache.
+    let payload1 = common::github_push_payload("org/rotate-repo", "main", "sha-old");
+    let body1 = serde_json::to_vec(&payload1).unwrap();
+    let sig1 = common::github_hmac_signature(&body1, old_secret);
+    let req1 = Request::post("/v1/webhooks/github")
+        .header("content-type", "application/json")
+        .header("x-hub-signature-256", &sig1)
+        .header("x-github-delivery", "delivery-rotate-1")
+        .header("x-github-event", "push")
+        .body(Body::from(body1))
+        .unwrap();
+    let resp1 = app.clone().oneshot(req1).await.unwrap();
+    assert_eq!(resp1.status(), 200);
+    let builds1 = common::wait_for_builds(&pool, &project_id, 1, 2000).await;
+    assert_eq!(builds1.len(), 1);
+
+    // Rotate the stored webhook secret in DB.
+    let encrypted_new = oored::crypto::encrypt(new_secret, &common::TEST_ENCRYPTION_KEY)
+        .expect("failed to encrypt rotated secret");
+    sqlx::query(
+        "UPDATE integration_credentials \
+         SET encrypted_value = ?1, updated_at = ?2 \
+         WHERE integration_id = ?3 AND credential_type = 'webhook_secret'",
+    )
+    .bind(&encrypted_new)
+    .bind(common::now_unix())
+    .bind(&integration_id)
+    .execute(&pool)
+    .await
+    .expect("failed to rotate webhook secret");
+
+    // Second webhook uses new secret. It should still succeed without restart
+    // by forcing a cache refresh after the initial cached-signature miss.
+    let payload2 = common::github_push_payload("org/rotate-repo", "main", "sha-new");
+    let body2 = serde_json::to_vec(&payload2).unwrap();
+    let sig2 = common::github_hmac_signature(&body2, new_secret);
+    let req2 = Request::post("/v1/webhooks/github")
+        .header("content-type", "application/json")
+        .header("x-hub-signature-256", &sig2)
+        .header("x-github-delivery", "delivery-rotate-2")
+        .header("x-github-event", "push")
+        .body(Body::from(body2))
+        .unwrap();
+    let resp2 = app.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), 200);
+
+    let builds2 = common::wait_for_builds(&pool, &project_id, 2, 2000).await;
+    assert_eq!(builds2.len(), 2, "rotated secret should still trigger a build");
+    assert_eq!(builds2[1]["commit_sha"], "sha-new");
+}
+
+#[tokio::test]
 async fn test_github_webhook_missing_signature() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
@@ -308,6 +373,69 @@ async fn test_gitlab_webhook_idempotency() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let builds_after = common::wait_for_builds(&pool, &project_id, 1, 500).await;
     assert_eq!(builds_after.len(), 1, "duplicate should not create extra build");
+}
+
+#[tokio::test]
+async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let old_secret = "gl-rotate-old-secret";
+    let new_secret = "gl-rotate-new-secret";
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, old_secret).await;
+    let (project_id, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "group/rotate-proj").await;
+
+    // First webhook uses old secret and warms the in-process cache.
+    let payload1 = common::gitlab_push_payload("group/rotate-proj", "main", "gl-sha-old");
+    let body1 = serde_json::to_vec(&payload1).unwrap();
+    let req1 = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", old_secret)
+        .header("x-gitlab-event-uuid", "gl-delivery-rotate-1")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(body1))
+        .unwrap();
+    let resp1 = app.clone().oneshot(req1).await.unwrap();
+    assert_eq!(resp1.status(), 200);
+    let builds1 = common::wait_for_builds(&pool, &project_id, 1, 2000).await;
+    assert_eq!(builds1.len(), 1);
+
+    // Rotate stored webhook secret in DB.
+    let encrypted_new = oored::crypto::encrypt(new_secret, &common::TEST_ENCRYPTION_KEY)
+        .expect("failed to encrypt rotated secret");
+    sqlx::query(
+        "UPDATE integration_credentials \
+         SET encrypted_value = ?1, updated_at = ?2 \
+         WHERE integration_id = ?3 AND credential_type = 'webhook_secret'",
+    )
+    .bind(&encrypted_new)
+    .bind(common::now_unix())
+    .bind(&integration_id)
+    .execute(&pool)
+    .await
+    .expect("failed to rotate webhook secret");
+
+    // Second webhook uses new secret. It should still succeed without restart
+    // by forcing a cache refresh after the initial cached-token miss.
+    let payload2 = common::gitlab_push_payload("group/rotate-proj", "main", "gl-sha-new");
+    let body2 = serde_json::to_vec(&payload2).unwrap();
+    let req2 = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", new_secret)
+        .header("x-gitlab-event-uuid", "gl-delivery-rotate-2")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(body2))
+        .unwrap();
+    let resp2 = app.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), 200);
+
+    let builds2 = common::wait_for_builds(&pool, &project_id, 2, 2000).await;
+    assert_eq!(builds2.len(), 2, "rotated token should still trigger a build");
+    assert_eq!(builds2[1]["commit_sha"], "gl-sha-new");
 }
 
 #[tokio::test]

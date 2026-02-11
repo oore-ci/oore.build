@@ -909,6 +909,10 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
     // CORS origins from env var(s), defaults to local web + hosted UI.
     let cors_origins = resolve_cors_origins();
     info!(origins = ?cors_origins, "configured CORS origins");
+    info!(
+        max_bytes = artifacts::MAX_LOCAL_UPLOAD_BYTES,
+        "configured local artifact upload size limit"
+    );
 
     let cors = CorsLayer::new()
         .allow_origin(cors_origins)
@@ -1025,8 +1029,8 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         .route(
             "/v1/artifacts/local-upload/{token}",
             axum::routing::put(artifacts::upload_local_artifact)
-                // Local artifact uploads can be large (APK/IPA), so disable default 2MB body cap.
-                .layer(DefaultBodyLimit::disable()),
+                // Local artifact uploads can be large (APK/IPA), but must remain bounded.
+                .layer(DefaultBodyLimit::max(artifacts::MAX_LOCAL_UPLOAD_BYTES)),
         )
         // Backend-agnostic local signed download URL (preferred)
         .route("/v1/artifacts/download/{token}", get(artifacts::download_local_artifact))

@@ -28,6 +28,9 @@ const UPLOAD_URL_TTL_SECS: u64 = 30 * 60;
 /// Download URL TTL: 15 minutes for downloads.
 const DOWNLOAD_URL_TTL_SECS: u64 = 15 * 60;
 
+/// Maximum accepted local artifact upload payload size (512 MiB).
+pub const MAX_LOCAL_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
+
 /// Valid artifact types.
 const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
 
@@ -100,13 +103,15 @@ pub async fn create_artifact(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Verify build exists and is assigned to this runner
     let build_row = sqlx::query("SELECT id, runner_id FROM builds WHERE id = ?1")
         .bind(&job_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch build");
@@ -140,7 +145,7 @@ pub async fn create_artifact(
         )
         .bind(&build_id)
         .bind(checksum_value)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to check duplicate artifact checksum");
@@ -205,7 +210,7 @@ pub async fn create_artifact(
     .bind(&checksum)
     .bind(&metadata_str)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await;
 
     if let Err(e) = insert_result {
@@ -218,7 +223,7 @@ pub async fn create_artifact(
                 )
                 .bind(&build_id)
                 .bind(checksum_value)
-                .fetch_optional(pool)
+                .fetch_optional(&pool)
                 .await
                 .map_err(|lookup_err| {
                     error!(error = %lookup_err, "failed to fetch deduplicated artifact");
@@ -286,14 +291,16 @@ pub async fn list_artifacts(
 ) -> ApiResult<ListArtifactsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     let rows = sqlx::query(
         "SELECT * FROM artifacts WHERE build_id = ?1 ORDER BY created_at ASC",
     )
     .bind(&build_id)
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to list artifacts");
@@ -313,13 +320,15 @@ pub async fn generate_download_link(
 ) -> ApiResult<ArtifactDownloadLinkResponse> {
     check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Look up artifact
     let row = sqlx::query("SELECT * FROM artifacts WHERE id = ?1")
         .bind(&artifact_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch artifact");
@@ -362,7 +371,7 @@ pub async fn generate_download_link(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "artifact_download_link_generated",
         "artifact",
@@ -391,6 +400,14 @@ pub async fn upload_local_artifact(
     Path(token): Path<String>,
     body: Bytes,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    if body.len() > MAX_LOCAL_UPLOAD_BYTES {
+        return Err(api_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            format!("Upload exceeds {} bytes", MAX_LOCAL_UPLOAD_BYTES),
+        ));
+    }
+
     let stored = {
         let storage = state.storage.read().await;
         storage

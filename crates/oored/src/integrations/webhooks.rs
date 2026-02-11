@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -20,6 +20,143 @@ const MAX_WEBHOOK_BODY_SIZE: usize = 1_048_576;
 
 /// Maximum age of a webhook event before rejection (5 minutes).
 const MAX_WEBHOOK_AGE_SECS: i64 = 300;
+/// Webhook secret cache TTL (seconds).
+const WEBHOOK_SECRET_CACHE_TTL_SECS: i64 = 60;
+
+#[derive(Debug, Clone)]
+struct CachedWebhookSecret {
+    integration_id: String,
+    secret: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderSecretCache {
+    refreshed_at: i64,
+    entries: Arc<Vec<CachedWebhookSecret>>,
+}
+
+impl Default for ProviderSecretCache {
+    fn default() -> Self {
+        Self {
+            refreshed_at: 0,
+            entries: Arc::new(Vec::new()),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct WebhookSecretCache {
+    github: ProviderSecretCache,
+    gitlab: ProviderSecretCache,
+}
+
+impl WebhookSecretCache {
+    fn provider(&self, provider: WebhookProvider) -> &ProviderSecretCache {
+        match provider {
+            WebhookProvider::Github => &self.github,
+            WebhookProvider::Gitlab => &self.gitlab,
+        }
+    }
+
+    fn provider_mut(&mut self, provider: WebhookProvider) -> &mut ProviderSecretCache {
+        match provider {
+            WebhookProvider::Github => &mut self.github,
+            WebhookProvider::Gitlab => &mut self.gitlab,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WebhookProvider {
+    Github,
+    Gitlab,
+}
+
+impl WebhookProvider {
+    fn as_str(self) -> &'static str {
+        match self {
+            WebhookProvider::Github => "github",
+            WebhookProvider::Gitlab => "gitlab",
+        }
+    }
+}
+
+static WEBHOOK_SECRET_CACHE: OnceLock<tokio::sync::RwLock<WebhookSecretCache>> = OnceLock::new();
+
+fn webhook_secret_cache() -> &'static tokio::sync::RwLock<WebhookSecretCache> {
+    WEBHOOK_SECRET_CACHE.get_or_init(|| tokio::sync::RwLock::new(WebhookSecretCache::default()))
+}
+
+async fn get_webhook_secrets(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    provider: WebhookProvider,
+    force_refresh: bool,
+) -> Result<Arc<Vec<CachedWebhookSecret>>, (StatusCode, Json<ApiError>)> {
+    let now = now_unix();
+
+    if !force_refresh {
+        let cached = {
+            let cache = webhook_secret_cache().read().await;
+            let slot = cache.provider(provider);
+            if now - slot.refreshed_at <= WEBHOOK_SECRET_CACHE_TTL_SECS {
+                Some(slot.entries.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(entries) = cached {
+            return Ok(entries);
+        }
+    }
+
+    let rows = sqlx::query(
+        "SELECT i.id, c.encrypted_value \
+         FROM integrations i \
+         JOIN integration_credentials c ON c.integration_id = i.id \
+         WHERE i.provider = ?1 AND i.status = 'active' \
+         AND c.credential_type = 'webhook_secret'",
+    )
+    .bind(provider.as_str())
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, provider = provider.as_str(), "failed to fetch webhook integrations");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Internal error")
+    })?;
+
+    let mut decrypted = Vec::with_capacity(rows.len());
+    for row in rows {
+        let integration_id: String = row.get("id");
+        let encrypted_secret: String = row.get("encrypted_value");
+        let secret = match crypto::decrypt(&encrypted_secret, encryption_key) {
+            Ok(s) => s.into_bytes(),
+            Err(e) => {
+                error!(
+                    error = %e,
+                    integration_id = %integration_id,
+                    provider = provider.as_str(),
+                    "failed to decrypt webhook secret"
+                );
+                continue;
+            }
+        };
+        decrypted.push(CachedWebhookSecret {
+            integration_id,
+            secret,
+        });
+    }
+
+    let entries = Arc::new(decrypted);
+    let mut cache = webhook_secret_cache().write().await;
+    let slot = cache.provider_mut(provider);
+    slot.refreshed_at = now;
+    slot.entries = entries.clone();
+    drop(cache);
+
+    Ok(entries)
+}
 
 /// Normalized webhook event for downstream processing.
 #[derive(Debug, Clone, Serialize)]
@@ -78,43 +215,38 @@ pub async fn github_webhook(
         api_err(StatusCode::BAD_REQUEST, "invalid_payload", "Invalid JSON payload")
     })?;
 
-    // Resolve the integration by checking webhook secrets
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    // Find all GitHub integrations with webhook secrets
-    let integrations = sqlx::query(
-        "SELECT i.id, c.encrypted_value \
-         FROM integrations i \
-         JOIN integration_credentials c ON c.integration_id = i.id \
-         WHERE i.provider = 'github' AND i.status = 'active' \
-         AND c.credential_type = 'webhook_secret'",
+    let secrets = get_webhook_secrets(
+        &pool,
+        &state.encryption_key,
+        WebhookProvider::Github,
+        false,
     )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch GitHub integrations");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Internal error")
-    })?;
+    .await?;
 
-    // Try each integration's webhook secret to find a match
-    let mut matched_integration_id: Option<String> = None;
+    let mut matched_integration_id = secrets
+        .iter()
+        .find(|candidate| verify_github_signature(signature, &body, &candidate.secret))
+        .map(|candidate| candidate.integration_id.clone());
 
-    for row in &integrations {
-        let integration_id: String = row.get("id");
-        let encrypted_secret: String = row.get("encrypted_value");
+    if matched_integration_id.is_none() {
+        let refreshed = get_webhook_secrets(
+            &pool,
+            &state.encryption_key,
+            WebhookProvider::Github,
+            true,
+        )
+        .await?;
 
-        let secret = match crypto::decrypt(&encrypted_secret, &state.encryption_key) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(error = %e, integration_id = %integration_id, "failed to decrypt webhook secret");
-                continue;
-            }
-        };
-
-        if verify_github_signature(signature, &body, secret.as_bytes()) {
-            matched_integration_id = Some(integration_id);
-            break;
+        if !Arc::ptr_eq(&secrets, &refreshed) {
+            matched_integration_id = refreshed
+                .iter()
+                .find(|candidate| verify_github_signature(signature, &body, &candidate.secret))
+                .map(|candidate| candidate.integration_id.clone());
         }
     }
 
@@ -131,7 +263,7 @@ pub async fn github_webhook(
         )
         .bind(&integration_id)
         .bind(&delivery_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(false);
 
@@ -155,7 +287,7 @@ pub async fn github_webhook(
     .bind(&event_type)
     .bind(payload.to_string())
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to store webhook record");
@@ -307,43 +439,38 @@ pub async fn gitlab_webhook(
         api_err(StatusCode::BAD_REQUEST, "invalid_payload", "Invalid JSON payload")
     })?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    // Find matching GitLab integration by checking webhook secrets
-    // GitLab webhook tokens are stored as 'webhook_secret' credential type
-    let integrations = sqlx::query(
-        "SELECT i.id, c.encrypted_value \
-         FROM integrations i \
-         JOIN integration_credentials c ON c.integration_id = i.id \
-         WHERE i.provider = 'gitlab' AND i.status = 'active' \
-         AND c.credential_type = 'webhook_secret'",
+    let secrets = get_webhook_secrets(
+        &pool,
+        &state.encryption_key,
+        WebhookProvider::Gitlab,
+        false,
     )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch GitLab integrations");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Internal error")
-    })?;
+    .await?;
 
-    let mut matched_integration_id: Option<String> = None;
+    let mut matched_integration_id = secrets
+        .iter()
+        .find(|candidate| constant_time_eq(gitlab_token.as_bytes(), &candidate.secret))
+        .map(|candidate| candidate.integration_id.clone());
 
-    for row in &integrations {
-        let integration_id: String = row.get("id");
-        let encrypted_secret: String = row.get("encrypted_value");
+    if matched_integration_id.is_none() {
+        let refreshed = get_webhook_secrets(
+            &pool,
+            &state.encryption_key,
+            WebhookProvider::Gitlab,
+            true,
+        )
+        .await?;
 
-        let secret = match crypto::decrypt(&encrypted_secret, &state.encryption_key) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(error = %e, integration_id = %integration_id, "failed to decrypt webhook secret");
-                continue;
-            }
-        };
-
-        // GitLab uses a simple token comparison
-        if constant_time_eq(gitlab_token.as_bytes(), secret.as_bytes()) {
-            matched_integration_id = Some(integration_id);
-            break;
+        if !Arc::ptr_eq(&secrets, &refreshed) {
+            matched_integration_id = refreshed
+                .iter()
+                .find(|candidate| constant_time_eq(gitlab_token.as_bytes(), &candidate.secret))
+                .map(|candidate| candidate.integration_id.clone());
         }
     }
 
@@ -360,7 +487,7 @@ pub async fn gitlab_webhook(
         )
         .bind(&integration_id)
         .bind(&event_uuid)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(false);
 
@@ -405,7 +532,7 @@ pub async fn gitlab_webhook(
     .bind(&event_type)
     .bind(payload.to_string())
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to store webhook record");

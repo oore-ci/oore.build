@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -25,6 +26,44 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 /// Maximum age (seconds) for a GitLab OAuth state token.
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
+
+fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
+fn configured_redirect_origins() -> Vec<url::Url> {
+    let raw_origins = std::env::var("OORE_AUTH_REDIRECT_ORIGINS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("OORE_CORS_ORIGINS")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
+
+    let mut origins = Vec::new();
+    for raw in raw_origins.split(',') {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match url::Url::parse(trimmed) {
+            Ok(url) => origins.push(url),
+            Err(err) => warn!(origin = trimmed, error = %err, "ignoring invalid redirect origin"),
+        }
+    }
+    if origins.is_empty() {
+        vec![url::Url::parse("http://localhost:3000")
+            .expect("default redirect origin must be valid")]
+    } else {
+        origins
+    }
+}
 
 /// `POST /v1/integrations/gitlab/start` — create GitLab integration (OAuth or token mode).
 ///
@@ -84,7 +123,10 @@ pub async fn gitlab_start(
     }
 
     // Validate token/credentials by calling GitLab API
-    let client = reqwest::Client::new();
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build HTTP client");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "http_client_error", "Failed to create HTTP client")
+    })?;
     let api_base = format!("{}/api/v4", host_url);
 
     let (display_name, username) = match auth_mode {
@@ -171,8 +213,10 @@ pub async fn gitlab_start(
         "active"
     };
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Insert integration
     sqlx::query(
@@ -186,7 +230,7 @@ pub async fn gitlab_start(
     .bind(&full_display_name)
     .bind(&auth.0.user_id)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to insert GitLab integration");
@@ -207,7 +251,7 @@ pub async fn gitlab_start(
     .bind(&integration_id)
     .bind(&encrypted_webhook_secret)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to store webhook secret");
@@ -230,7 +274,7 @@ pub async fn gitlab_start(
             .bind(&integration_id)
             .bind(&encrypted)
             .bind(now)
-            .execute(pool)
+            .execute(&pool)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to store access token");
@@ -256,7 +300,7 @@ pub async fn gitlab_start(
                 .bind(cred_type)
                 .bind(&encrypted)
                 .bind(now)
-                .execute(pool)
+                .execute(&pool)
                 .await
                 .map_err(|e| {
                     error!(error = %e, "failed to store credential");
@@ -279,7 +323,7 @@ pub async fn gitlab_start(
         .bind(&username)
         .bind(&username)
         .bind(now)
-        .execute(pool)
+        .execute(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to create default installation");
@@ -288,7 +332,7 @@ pub async fn gitlab_start(
 
         // Fetch accessible projects via GitLab API
         let token = req.access_token.as_ref().unwrap();
-        if let Err(e) = sync_gitlab_projects(&client, pool, &host_url, token, &inst_id, false, now).await {
+        if let Err(e) = sync_gitlab_projects(&client, &pool, &host_url, token, &inst_id, false, now).await {
             error!(error = ?e, "failed to sync GitLab projects (non-fatal)");
         }
     }
@@ -302,7 +346,7 @@ pub async fn gitlab_start(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "integration_created",
         "integration",
@@ -454,30 +498,29 @@ fn open_gitlab_state(token: &str, key: &[u8]) -> Result<GitLabOAuthState, String
     Ok(state)
 }
 
-/// Validate that a redirect URL belongs to the configured frontend origin.
-///
-/// The allowed origin comes from `OORE_CORS_ORIGIN` (default `http://localhost:3000`).
-/// Only URLs whose scheme + host + port match the allowed origin are accepted.
+/// Validate that a redirect URL belongs to configured trusted frontend origins.
 fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let allowed = std::env::var("OORE_CORS_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
-
     let parsed = url::Url::parse(url).map_err(|_| {
         api_err(StatusCode::BAD_REQUEST, "invalid_redirect_url", "redirect_url is not a valid URL")
     })?;
-
-    let allowed_parsed = url::Url::parse(&allowed).map_err(|_| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "config_error", "OORE_CORS_ORIGIN is not a valid URL")
-    })?;
-
-    if parsed.scheme() != allowed_parsed.scheme()
-        || parsed.host_str() != allowed_parsed.host_str()
-        || parsed.port() != allowed_parsed.port()
-    {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_redirect_url",
-            "redirect_url must match the configured frontend origin",
+            "redirect_url must not contain credentials",
+        ));
+    }
+
+    let matches_allowed = configured_redirect_origins().iter().any(|candidate| {
+        parsed.scheme() == candidate.scheme()
+            && parsed.host_str() == candidate.host_str()
+            && parsed.port_or_known_default() == candidate.port_or_known_default()
+    });
+    if !matches_allowed {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_url",
+            "redirect_url must match a configured redirect origin",
         ));
     }
 
@@ -505,13 +548,15 @@ pub async fn gitlab_authorize(
     // Validate redirect against configured frontend origin
     validate_redirect_origin(&req.redirect_url)?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Load the integration
     let row = sqlx::query("SELECT * FROM integrations WHERE id = ?1")
         .bind(&req.integration_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch integration");
@@ -536,7 +581,7 @@ pub async fn gitlab_authorize(
          WHERE integration_id = ?1 AND credential_type = 'oauth_client_id'",
     )
     .bind(&req.integration_id)
-    .fetch_optional(pool)
+    .fetch_optional(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch client_id");
@@ -647,7 +692,7 @@ pub async fn gitlab_callback(
     };
 
     // Validate the redirect_url from the sealed state against the configured frontend origin
-    if let Err(_) = validate_redirect_origin(&oauth_state.redirect_url) {
+    if validate_redirect_origin(&oauth_state.redirect_url).is_err() {
         warn!(redirect_url = %oauth_state.redirect_url, "callback redirect_url does not match configured origin");
         return Html(error_page(
             "Invalid redirect",
@@ -747,7 +792,7 @@ async fn exchange_gitlab_code(
         .unwrap_or_else(|_| "http://localhost:8787".to_string());
     let callback_url = format!("{}/v1/integrations/gitlab/callback", public_url);
 
-    let http_client = reqwest::Client::new();
+    let http_client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
     #[derive(Deserialize)]
     struct GitLabTokenResponse {
@@ -921,4 +966,28 @@ async fn exchange_gitlab_code(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_redirect_origin;
+
+    #[test]
+    fn redirect_origin_accepts_default_localhost_origin() {
+        assert!(validate_redirect_origin("http://localhost:3000/settings/integrations").is_ok());
+    }
+
+    #[test]
+    fn redirect_origin_rejects_untrusted_origin() {
+        let err = validate_redirect_origin("https://evil.example/callback")
+            .expect_err("untrusted origin should be rejected");
+        assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn redirect_origin_rejects_embedded_credentials() {
+        let err = validate_redirect_origin("http://user:pass@localhost:3000/settings")
+            .expect_err("credential-bearing URL should be rejected");
+        assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    }
 }

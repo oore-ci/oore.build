@@ -11,7 +11,7 @@ use oore_contract::{
     ApiError, AppendBuildLogsRequest, AppendBuildLogsResponse, BuildLogChunk, BuildLogsResponse,
 };
 use serde::Deserialize;
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
 use tokio::sync::Mutex;
 use tokio_stream::Stream;
 use tracing::{error, info, warn};
@@ -130,13 +130,15 @@ pub async fn append_build_logs(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Verify build exists and belongs to this runner
     let build_row = sqlx::query("SELECT runner_id FROM builds WHERE id = ?1")
         .bind(&job_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch build");
@@ -165,7 +167,7 @@ pub async fn append_build_logs(
     let current_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM build_logs WHERE build_id = ?1")
             .bind(&job_id)
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to count build logs");
@@ -195,39 +197,34 @@ pub async fn append_build_logs(
     let now = now_unix();
     let mut appended: i64 = 0;
 
-    for chunk in chunks_to_insert {
-        // Truncate content if longer than MAX_LINE_BYTES (UTF-8 safe)
-        let content = if chunk.content.len() > MAX_LINE_BYTES {
-            &chunk.content[..chunk.content.floor_char_boundary(MAX_LINE_BYTES)]
-        } else {
-            &chunk.content
-        };
-
-        let id = Uuid::new_v4().to_string();
-
-        // INSERT OR IGNORE to silently skip duplicate sequence numbers
-        let result =
-            sqlx::query("INSERT OR IGNORE INTO build_logs (id, build_id, sequence, content, stream, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
-                .bind(&id)
-                .bind(&job_id)
-                .bind(chunk.sequence)
-                .bind(content)
-                .bind(&chunk.stream)
-                .bind(now)
-                .execute(pool)
-                .await
-                .map_err(|e| {
-                    error!(error = %e, build_id = %job_id, "failed to insert build log chunk");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "store_error",
-                        "Failed to insert log chunk",
-                    )
-                })?;
-
-        if result.rows_affected() > 0 {
-            appended += 1;
-        }
+    // Batch insert to reduce per-row SQL overhead. 100 keeps us safely under
+    // SQLite's bind parameter limit (6 params/row => 600 params/query).
+    for batch in chunks_to_insert.chunks(100) {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "INSERT OR IGNORE INTO build_logs (id, build_id, sequence, content, stream, created_at) ",
+        );
+        qb.push_values(batch, |mut b, chunk| {
+            let content = if chunk.content.len() > MAX_LINE_BYTES {
+                &chunk.content[..chunk.content.floor_char_boundary(MAX_LINE_BYTES)]
+            } else {
+                &chunk.content
+            };
+            b.push_bind(Uuid::new_v4().to_string())
+                .push_bind(&job_id)
+                .push_bind(chunk.sequence)
+                .push_bind(content)
+                .push_bind(&chunk.stream)
+                .push_bind(now);
+        });
+        let result = qb.build().execute(&pool).await.map_err(|e| {
+            error!(error = %e, build_id = %job_id, "failed to insert build log chunk batch");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to insert log chunk",
+            )
+        })?;
+        appended += result.rows_affected() as i64;
     }
 
     info!(
@@ -249,13 +246,15 @@ pub async fn get_build_logs(
 ) -> ApiResult<BuildLogsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Verify build exists
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
         .bind(&build_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(false);
 
@@ -278,7 +277,7 @@ pub async fn get_build_logs(
     .bind(&build_id)
     .bind(after_seq)
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch build logs");
@@ -300,7 +299,7 @@ pub async fn get_build_logs(
 
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_logs WHERE build_id = ?1")
         .bind(&build_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(0);
 
@@ -316,11 +315,13 @@ pub async fn create_stream_token(
     check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
 
     // Verify build exists
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
         .bind(&build_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(false);
 
@@ -331,7 +332,6 @@ pub async fn create_stream_token(
             "Build not found",
         ));
     }
-    drop(store);
 
     let token = state.stream_tokens.create(&auth.0).await;
     let expires_at = now_unix() + STREAM_TOKEN_TTL_SECS;
@@ -404,22 +404,21 @@ pub async fn stream_build_logs(
     check_permission(&state.enforcer, &role, "builds", "read").await?;
 
     // Verify build exists
-    {
+    let pool = {
         let store = state.store.lock().await;
-        let pool = store.pool();
-        let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
-            .bind(&build_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(false);
-
-        if !exists {
-            return Err(api_err(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "Build not found",
-            ));
-        }
+        store.pool().clone()
+    };
+    let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+    if !exists {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Build not found",
+        ));
     }
 
     // Check for Last-Event-ID header for reconnection support
@@ -429,14 +428,14 @@ pub async fn stream_build_logs(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(-1);
 
-    let stream = build_log_sse_stream(state, build_id, last_event_id);
+    let stream = build_log_sse_stream(pool, build_id, last_event_id);
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
 /// Produce an SSE stream that polls the DB for new log entries.
 fn build_log_sse_stream(
-    state: Arc<AppState>,
+    pool: sqlx::SqlitePool,
     build_id: String,
     initial_last_seq: i64,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
@@ -447,9 +446,6 @@ fn build_log_sse_stream(
         loop {
             interval.tick().await;
 
-            let store = state.store.lock().await;
-            let pool = store.pool();
-
             // Fetch new log entries
             let rows = sqlx::query(
                 "SELECT sequence, content, stream FROM build_logs \
@@ -458,7 +454,7 @@ fn build_log_sse_stream(
             )
             .bind(&build_id)
             .bind(last_seq)
-            .fetch_all(pool)
+            .fetch_all(&pool)
             .await;
 
             match rows {
@@ -490,11 +486,8 @@ fn build_log_sse_stream(
             let status_result: Result<Option<String>, _> =
                 sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
                     .bind(&build_id)
-                    .fetch_optional(pool)
+                    .fetch_optional(&pool)
                     .await;
-
-            // Drop the store lock before potentially yielding the done event
-            drop(store);
 
             match status_result {
                 Ok(Some(status)) => {

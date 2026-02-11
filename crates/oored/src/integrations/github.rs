@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Query, State};
 use axum::http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode};
@@ -27,6 +28,104 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
 /// Maximum age (seconds) for GitHub install-callback browser cookie.
 const INSTALL_STATE_MAX_AGE_SECS: i64 = 1800; // 30 minutes
+
+fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
+fn configured_redirect_origins() -> Vec<url::Url> {
+    let raw_origins = std::env::var("OORE_AUTH_REDIRECT_ORIGINS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("OORE_CORS_ORIGINS")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
+
+    let mut origins = Vec::new();
+    for raw in raw_origins.split(',') {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match url::Url::parse(trimmed) {
+            Ok(url) => origins.push(url),
+            Err(err) => warn!(origin = trimmed, error = %err, "ignoring invalid redirect origin"),
+        }
+    }
+    if origins.is_empty() {
+        vec![url::Url::parse("http://localhost:3000")
+            .expect("default redirect origin must be valid")]
+    } else {
+        origins
+    }
+}
+
+fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let parsed = url::Url::parse(url).map_err(|_| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_url",
+            "redirect_url is not a valid URL",
+        )
+    })?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_url",
+            "redirect_url must not contain credentials",
+        ));
+    }
+
+    let allowed = configured_redirect_origins();
+    let matches_allowed = allowed.iter().any(|candidate| {
+        parsed.scheme() == candidate.scheme()
+            && parsed.host_str() == candidate.host_str()
+            && parsed.port_or_known_default() == candidate.port_or_known_default()
+    });
+    if !matches_allowed {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_url",
+            "redirect_url must match a configured redirect origin",
+        ));
+    }
+    Ok(())
+}
+
+fn cookie_secure_enabled(default_secure: bool) -> bool {
+    match std::env::var("OORE_COOKIE_SECURE") {
+        Ok(raw) => match parse_cookie_secure_override(&raw) {
+            Some(value) => value,
+            None => {
+                warn!(
+                    value = raw.trim(),
+                    "invalid OORE_COOKIE_SECURE value; using default behavior"
+                );
+                default_secure
+            }
+        },
+        Err(_) => default_secure,
+    }
+}
+
+fn parse_cookie_secure_override(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn secure_cookie_attr(secure: bool) -> &'static str {
+    if secure { "; Secure" } else { "" }
+}
 
 // ── State token ──────────────────────────────────────────────────
 
@@ -187,6 +286,7 @@ pub async fn github_start(
             "redirect_url is required",
         ));
     }
+    validate_redirect_origin(&req.redirect_url)?;
 
     let oauth_state = GitHubOAuthState {
         user_id: auth.0.user_id.clone(),
@@ -335,6 +435,20 @@ pub async fn github_callback(
             .into_response();
         }
     };
+    if validate_redirect_origin(&oauth_state.redirect_url).is_err() {
+        warn!(
+            redirect_url = %oauth_state.redirect_url,
+            "github callback redirect_url does not match configured origins"
+        );
+        return Html(error_page(
+            "Invalid redirect",
+            "The redirect URL does not match configured frontend origins.",
+        ))
+        .into_response();
+    }
+    let cookie_secure = cookie_secure_enabled(
+        base_url_from_webhook(&oauth_state.webhook_url).starts_with("https://"),
+    );
 
     // Exchange code for credentials
     match exchange_and_store(
@@ -364,7 +478,8 @@ pub async fn github_callback(
                 let mut resp = Redirect::to(&install_url).into_response();
                 if let Some(token) = sealed_install_state {
                     let cookie = format!(
-                        "oore_gh_install_state={token}; Max-Age={INSTALL_STATE_MAX_AGE_SECS}; Path=/v1/integrations/github/installed; HttpOnly; SameSite=Lax"
+                        "oore_gh_install_state={token}; Max-Age={INSTALL_STATE_MAX_AGE_SECS}; Path=/v1/integrations/github/installed; HttpOnly; SameSite=Lax{}",
+                        secure_cookie_attr(cookie_secure),
                     );
                     set_cookie_headers(&mut resp, &cookie);
                 }
@@ -383,7 +498,8 @@ pub async fn github_callback(
                 let mut resp = Redirect::to(&redirect_url).into_response();
                 if let Some(token) = sealed_install_state {
                     let cookie = format!(
-                        "oore_gh_install_state={token}; Max-Age={INSTALL_STATE_MAX_AGE_SECS}; Path=/v1/integrations/github/installed; HttpOnly; SameSite=Lax"
+                        "oore_gh_install_state={token}; Max-Age={INSTALL_STATE_MAX_AGE_SECS}; Path=/v1/integrations/github/installed; HttpOnly; SameSite=Lax{}",
+                        secure_cookie_attr(cookie_secure),
                     );
                     set_cookie_headers(&mut resp, &cookie);
                 }
@@ -522,10 +638,18 @@ pub async fn github_installed(
     );
 
     let mut resp = Html(html).into_response();
+    let cookie_secure = cookie_secure_enabled(
+        std::env::var("OORE_PUBLIC_URL")
+            .ok()
+            .is_some_and(|u| u.starts_with("https://")),
+    );
     // Clear install-state cookie after callback handling.
     set_cookie_headers(
         &mut resp,
-        "oore_gh_install_state=; Max-Age=0; Path=/v1/integrations/github/installed; HttpOnly; SameSite=Lax",
+        &format!(
+            "oore_gh_install_state=; Max-Age=0; Path=/v1/integrations/github/installed; HttpOnly; SameSite=Lax{}",
+            secure_cookie_attr(cookie_secure)
+        ),
     );
     resp
 }
@@ -538,7 +662,7 @@ async fn exchange_and_store(
     user_id: &str,
     user_email: &str,
 ) -> Result<Integration, String> {
-    let client = reqwest::Client::new();
+    let client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let conversion_url = format!(
         "https://api.github.com/app-manifests/{}/conversions",
         code
@@ -570,8 +694,10 @@ async fn exchange_and_store(
         .map(|o| format!("{} ({})", conversion.name, o.login))
         .unwrap_or_else(|| conversion.name.clone());
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     // Insert integration record
     sqlx::query(
@@ -584,7 +710,7 @@ async fn exchange_and_store(
     .bind(&conversion.slug)
     .bind(user_id)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| format!("Failed to create integration: {e}"))?;
 
@@ -608,7 +734,7 @@ async fn exchange_and_store(
         .bind(*cred_type)
         .bind(&encrypted)
         .bind(now)
-        .execute(pool)
+        .execute(&pool)
         .await
         .map_err(|e| format!("Failed to store {cred_type}: {e}"))?;
     }
@@ -626,7 +752,7 @@ async fn exchange_and_store(
         .bind(&integration_id)
         .bind(&encrypted)
         .bind(now)
-        .execute(pool)
+        .execute(&pool)
         .await
         .map_err(|e| format!("Failed to store webhook_secret: {e}"))?;
     }
@@ -639,7 +765,7 @@ async fn exchange_and_store(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(user_id),
         "integration_created",
         "integration",
@@ -796,7 +922,7 @@ async fn perform_sync(
     let jwt = generate_github_jwt(&app_id, &private_key)
         .map_err(|(_, e)| format!("JWT generation failed: {}", e.0.error))?;
 
-    let client = reqwest::Client::new();
+    let client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
     let resp = client
         .get("https://api.github.com/app/installations")
         .header("Authorization", format!("Bearer {jwt}"))
@@ -852,7 +978,7 @@ async fn perform_sync(
         .map_err(|e| format!("Failed to fetch installation: {e}"))?;
 
         installations.push(IntegrationInstallation {
-            id: actual_id,
+            id: actual_id.clone(),
             integration_id: integration_id.to_string(),
             external_id,
             account_name: gh_inst.account.login.clone(),
@@ -867,7 +993,7 @@ async fn perform_sync(
             &app_id,
             &private_key,
             gh_inst.id,
-            &installations.last().unwrap().id,
+            &actual_id,
             now,
         )
         .await
@@ -929,10 +1055,12 @@ pub async fn sync_installations(
 ) -> ApiResult<SyncInstallationsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    let installations = perform_sync(pool, &state.encryption_key, &integration_id)
+    let installations = perform_sync(&pool, &state.encryption_key, &integration_id)
         .await
         .map_err(|msg| {
             error!(error = %msg, "sync failed");
@@ -1093,3 +1221,47 @@ async fn sync_installation_repos(
 
 // ── HTML helpers (re-exported from parent module) ─────────────────
 use super::{error_page, favicon_data_uri, html_escape};
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_cookie_secure_override, validate_redirect_origin};
+
+    #[test]
+    fn redirect_origin_accepts_default_localhost_origin() {
+        assert!(validate_redirect_origin("http://localhost:3000/callback?ok=1").is_ok());
+    }
+
+    #[test]
+    fn redirect_origin_rejects_untrusted_origin() {
+        let err = validate_redirect_origin("https://evil.example/callback")
+            .expect_err("untrusted origin should be rejected");
+        assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn redirect_origin_rejects_embedded_credentials() {
+        let err = validate_redirect_origin("http://user:pass@localhost:3000/callback")
+            .expect_err("credential-bearing URL should be rejected");
+        assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn cookie_secure_override_true_values() {
+        for value in ["1", "true", "TRUE", " yes ", "on"] {
+            assert_eq!(parse_cookie_secure_override(value), Some(true));
+        }
+    }
+
+    #[test]
+    fn cookie_secure_override_false_values() {
+        for value in ["0", "false", "FALSE", " no ", "off"] {
+            assert_eq!(parse_cookie_secure_override(value), Some(false));
+        }
+    }
+
+    #[test]
+    fn cookie_secure_override_invalid_value() {
+        assert_eq!(parse_cookie_secure_override("maybe"), None);
+        assert_eq!(parse_cookie_secure_override(""), None);
+    }
+}
