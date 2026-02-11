@@ -28,7 +28,7 @@ EOF
   die "Created $ENV_FILE. Set OORE_WEBHOOK_SECRET, then rerun this installer."
 fi
 
-if ! grep -q '^OORE_WEBHOOK_SECRET=' "$ENV_FILE"; then
+if ! grep -Eq '^(export[[:space:]]+)?OORE_WEBHOOK_SECRET=' "$ENV_FILE"; then
   die "$ENV_FILE must include OORE_WEBHOOK_SECRET=..."
 fi
 

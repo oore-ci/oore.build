@@ -8,8 +8,11 @@ ENV_FILE="${OORE_WEBHOOK_ENV_FILE:-$STATE_DIR/webhook.env}"
 mkdir -p "$STATE_DIR"
 
 if [[ -f "$ENV_FILE" ]]; then
+  # Export sourced variables so they are visible to the embedded Python process.
+  set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
+  set +a
 fi
 
 : "${OORE_WEBHOOK_SECRET:?OORE_WEBHOOK_SECRET is required (set in environment or $ENV_FILE)}"
