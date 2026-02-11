@@ -82,7 +82,7 @@ oore.build is designed for local-network deployment:
 - The daemon listens on `127.0.0.1:8787` by default (localhost only)
 - For remote access, place the daemon behind a reverse proxy with TLS
 - Runner-to-daemon communication happens over your local network
-- The hosted UI at `ci.oore.build` connects directly to your daemon — no data proxied through Arya Labs
+- The hosted UI at `ci.oore.build` connects directly to your daemon — no data proxied through a third party
 
 ## Audit logging
 

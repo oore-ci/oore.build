@@ -344,7 +344,7 @@ export default defineConfig({
 
     footer: {
       message: "Self-hosted mobile CI, built for Flutter.",
-      copyright: "Copyright &copy; 2026 Arya Labs",
+      copyright: "Copyright &copy; 2026 devaryakjha",
     },
 
     search: {
