@@ -83,7 +83,8 @@ normalize_tag() {
 }
 
 prepare_worktree() {
-  git -C "$ROOT_DIR" fetch "$GIT_REMOTE" --tags
+  # Force-refresh tags so stale local tags do not block release automation.
+  git -C "$ROOT_DIR" fetch "$GIT_REMOTE" --tags --force
 
   if ! git -C "$ROOT_DIR" rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
     die "Tag not found: $RELEASE_TAG"
