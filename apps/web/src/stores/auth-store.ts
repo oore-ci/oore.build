@@ -19,6 +19,13 @@ interface AuthStoreState {
   clearAuth: () => void
 }
 
+export type LastAuthMethod = 'oidc'
+
+export interface LastAuthMeta {
+  method: LastAuthMethod
+  at: number
+}
+
 function tokenKey(instanceId: string | null): string {
   return instanceId ? `oore_auth_token_${instanceId}` : 'oore_auth_token'
 }
@@ -29,6 +36,16 @@ function expiresKey(instanceId: string | null): string {
 
 function userKey(instanceId: string | null): string {
   return instanceId ? `oore_auth_user_${instanceId}` : 'oore_auth_user'
+}
+
+function lastMethodKey(instanceId: string | null): string {
+  return instanceId
+    ? `oore_auth_last_method_${instanceId}`
+    : 'oore_auth_last_method'
+}
+
+function lastAtKey(instanceId: string | null): string {
+  return instanceId ? `oore_auth_last_at_${instanceId}` : 'oore_auth_last_at'
 }
 
 function loadToken(instanceId: string | null): string | null {
@@ -85,6 +102,19 @@ function saveAuth(
   }
 }
 
+function saveLastAuthMeta(
+  instanceId: string | null,
+  method: LastAuthMethod,
+  at: number,
+): void {
+  try {
+    localStorage.setItem(lastMethodKey(instanceId), method)
+    localStorage.setItem(lastAtKey(instanceId), String(at))
+  } catch {
+    // localStorage unavailable
+  }
+}
+
 export function clearAuthStorageForInstance(instanceId: string): void {
   try {
     localStorage.removeItem(tokenKey(instanceId))
@@ -92,6 +122,22 @@ export function clearAuthStorageForInstance(instanceId: string): void {
     localStorage.removeItem(userKey(instanceId))
   } catch {
     // localStorage unavailable
+  }
+}
+
+export function getLastAuthMetaForInstance(
+  instanceId: string | null,
+): LastAuthMeta | null {
+  if (!instanceId) return null
+  try {
+    const method = localStorage.getItem(lastMethodKey(instanceId))
+    const atRaw = localStorage.getItem(lastAtKey(instanceId))
+    if (method !== 'oidc' || !atRaw) return null
+    const at = Number(atRaw)
+    if (!Number.isFinite(at) || at <= 0) return null
+    return { method, at }
+  } catch {
+    return null
   }
 }
 
@@ -119,6 +165,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
 
   setAuth: (token, expiresAt, user) => {
     const { instanceId } = get()
+    saveLastAuthMeta(instanceId, 'oidc', Math.floor(Date.now() / 1000))
     saveAuth(instanceId, token, expiresAt, user)
     set({ token, expiresAt, user })
   },

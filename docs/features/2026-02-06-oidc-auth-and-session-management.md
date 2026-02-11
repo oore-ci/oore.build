@@ -14,7 +14,7 @@ Authenticated users can sign in through their organization's OIDC provider (e.g.
 
 ## UI Changes
 
-The frontend login flow consumes the OIDC start/callback endpoints programmatically. On sign-out, the frontend now clears local auth state and immediately redirects to `/login` without requiring a manual browser refresh.
+The frontend login flow consumes the OIDC start/callback endpoints programmatically. On sign-out, the frontend now clears local auth state and immediately redirects to `/login` without requiring a manual browser refresh. The `/login` view now includes a saved-instance switcher and an "Add Another Instance" action so operators can switch targets while logged out. The UI also surfaces the last successful sign-in timestamp on-device and confirms OIDC as the active sign-in method.
 
 ## API Changes
 
@@ -50,6 +50,8 @@ First implementation. Sessions are in-memory only and do not persist across daem
 - [x] Session tokens are hashed before storage
 - [x] `POST /v1/auth/logout` revokes the session
 - [x] Frontend sign-out transitions to `/login` immediately after logout state is cleared
+- [x] Logged-out `/login` view supports switching saved instances and adding another instance
+- [x] Login view shows the last successful sign-in timestamp (local device metadata) and OIDC method
 - [x] All auth endpoints return 409 when setup is not complete
 - [x] HTTP client prevents redirect-based SSRF
 - [x] OIDC discovery module validates required endpoints (authorization, token, JWKS)
