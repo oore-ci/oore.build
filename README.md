@@ -66,6 +66,13 @@ Feature docs are validated by:
 make run-daemon
 ```
 
+By default this runs with `RUST_LOG=info`. For higher verbosity or lower runtime overhead:
+
+```bash
+make run-daemon-debug    # RUST_LOG=debug
+make run-daemon-release  # Release build + RUST_LOG=info
+```
+
 ### 2. Open a setup window
 ```bash
 # Generate a bootstrap token valid for 15 minutes

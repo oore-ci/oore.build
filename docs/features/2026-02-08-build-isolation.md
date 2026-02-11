@@ -55,7 +55,8 @@ When Flutter version is resolved, runner executes `fvm use <version> --force` fi
 ## Security Considerations
 
 - **Process-level isolation**: each build runs in its own child process tree.
-- **Dedicated workspace**: `/tmp/oore-builds/{build_id}`.
+- **Dedicated workspace**: `/tmp/oore-builds.noindex/{build_id}`.
+- **Reduced Spotlight indexing churn**: runner uses a `.noindex` workspace root (`/tmp/oore-builds.noindex`) and writes `.metadata_never_index` at that root as a compatibility fallback.
 - **Deterministic cleanup**: workspace removed at end of run (including failures/cancellations).
 - **Fail-fast config validation**: malformed repo config fails build immediately, preventing accidental fallback to stale UI settings.
 - **Immutable snapshot**: fallback execution settings are captured at build creation time and cannot drift mid-run.
@@ -68,7 +69,7 @@ When Flutter version is resolved, runner executes `fvm use <version> --force` fi
 
 ## Acceptance Criteria
 
-- [x] Each build uses a unique ephemeral workspace under `/tmp/oore-builds/{build_id}`.
+- [x] Each build uses a unique ephemeral workspace under `/tmp/oore-builds.noindex/{build_id}`.
 - [x] Checkout uses commit-pinned fetch when `commit_sha` is present, branch fallback otherwise.
 - [x] Runner resolves config source as file-first with UI fallback only when file is absent.
 - [x] Invalid repository YAML fails the build immediately.
@@ -81,4 +82,4 @@ oore.build team
 
 ## Last Updated
 
-`2026-02-09`
+`2026-02-11`

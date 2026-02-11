@@ -56,6 +56,11 @@ Migration 007 adds the `build_logs` table. No data migration is needed — exist
 
 SSE streaming requires no additional infrastructure beyond the existing Axum HTTP server. Tokio's async runtime handles concurrent SSE connections efficiently.
 
+Runtime performance tuning (2026-02-11):
+
+- Frontend polling reconciliation now pauses while SSE is healthy and resumes only on disconnect/fallback, avoiding duplicate fetch pressure during active streams.
+- Backend SSE polling cadence is relaxed to 1 second, and build terminal-status checks are performed every 2 seconds instead of every stream tick.
+
 ## Acceptance Criteria
 
 - [x] Runner can upload ordered log chunks during build execution
@@ -74,4 +79,4 @@ Platform team
 
 ## Last Updated
 
-`2026-02-08`
+`2026-02-11`

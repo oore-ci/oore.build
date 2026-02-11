@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -34,7 +34,10 @@ const MAX_LOG_LINES_PER_BUILD: i64 = 10_000;
 const MAX_LINE_BYTES: usize = 4096;
 
 /// Polling interval for SSE log streaming.
-const SSE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const SSE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How often to query build status while streaming logs.
+const SSE_STATUS_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Streaming token TTL: 5 minutes.
 const STREAM_TOKEN_TTL_SECS: i64 = 300;
@@ -442,6 +445,8 @@ fn build_log_sse_stream(
     async_stream::stream! {
         let mut last_seq = initial_last_seq;
         let mut interval = tokio::time::interval(SSE_POLL_INTERVAL);
+        let mut last_status_check_at = Instant::now();
+        let mut check_status_now = true;
 
         loop {
             interval.tick().await;
@@ -482,33 +487,38 @@ fn build_log_sse_stream(
                 }
             }
 
-            // Check if build is in terminal state
-            let status_result: Result<Option<String>, _> =
-                sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
-                    .bind(&build_id)
-                    .fetch_optional(&pool)
-                    .await;
+            if check_status_now || last_status_check_at.elapsed() >= SSE_STATUS_CHECK_INTERVAL {
+                check_status_now = false;
+                last_status_check_at = Instant::now();
 
-            match status_result {
-                Ok(Some(status)) => {
-                    let is_terminal = matches!(
-                        status.as_str(),
-                        "succeeded" | "failed" | "canceled" | "timed_out" | "expired"
-                    );
-                    if is_terminal {
-                        let done_event = Event::default().event("done").data("build_finished");
+                // Check if build is in terminal state
+                let status_result: Result<Option<String>, _> =
+                    sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+                        .bind(&build_id)
+                        .fetch_optional(&pool)
+                        .await;
+
+                match status_result {
+                    Ok(Some(status)) => {
+                        let is_terminal = matches!(
+                            status.as_str(),
+                            "succeeded" | "failed" | "canceled" | "timed_out" | "expired"
+                        );
+                        if is_terminal {
+                            let done_event = Event::default().event("done").data("build_finished");
+                            yield Ok(done_event);
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        // Build was deleted
+                        let done_event = Event::default().event("done").data("build_not_found");
                         yield Ok(done_event);
                         break;
                     }
-                }
-                Ok(None) => {
-                    // Build was deleted
-                    let done_event = Event::default().event("done").data("build_not_found");
-                    yield Ok(done_event);
-                    break;
-                }
-                Err(e) => {
-                    warn!(error = %e, build_id = %build_id, "failed to check build status for SSE");
+                    Err(e) => {
+                        warn!(error = %e, build_id = %build_id, "failed to check build status for SSE");
+                    }
                 }
             }
         }

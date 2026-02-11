@@ -113,6 +113,7 @@ Start the development servers to verify the full stack:
 ```bash [Daemon]
 make run-daemon
 # Starts oored on 127.0.0.1:8787
+# Uses RUST_LOG=info by default
 # Default mode auto-starts an embedded local runner
 ```
 
@@ -142,7 +143,9 @@ All common commands are available as `make` targets from the repository root:
 | `make lint-web` | ESLint |
 | `make fix-web` | Prettier + ESLint auto-fix |
 | `make cargo-check` | Compile check all Rust crates |
-| `make run-daemon` | Run oored on 127.0.0.1:8787 |
+| `make run-daemon` | Run oored on 127.0.0.1:8787 (`RUST_LOG=info` by default) |
+| `make run-daemon-debug` | Run oored with verbose logs (`RUST_LOG=debug`) |
+| `make run-daemon-release` | Run optimized release binary (`--release`, `RUST_LOG=info`) |
 | `make register-runner` | Register an external runner (advanced) |
 | `make run-runner` | Start external runner process (advanced) |
 | `make run-cli` | Run `oore setup open --ttl 15m` |

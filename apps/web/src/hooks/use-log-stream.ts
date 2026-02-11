@@ -148,6 +148,8 @@ export function useLogStream(
         eventSourceRef.current = es
 
         es.addEventListener('open', () => {
+          // SSE is healthy, so suspend polling reconciliation until disconnect.
+          stopPolling()
           setIsStreaming(true)
           setError(null)
         })
@@ -176,6 +178,7 @@ export function useLogStream(
           eventSourceRef.current = null
           setIsStreaming(false)
           setError('Live stream disconnected. Continuing with polling.')
+          startPolling()
         })
       } catch {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- abort may happen concurrently

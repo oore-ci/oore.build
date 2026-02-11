@@ -22,6 +22,8 @@ const OORE_ANDROID_KEY_ALIAS_ENV: &str = "OORE_ANDROID_KEY_ALIAS";
 const OORE_ANDROID_KEY_PASSWORD_ENV: &str = "OORE_ANDROID_KEY_PASSWORD";
 const OORE_ANDROID_KEY_PROPERTIES_PATH_ENV: &str = "OORE_ANDROID_KEY_PROPERTIES_PATH";
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
+const BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
+const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -36,6 +38,20 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+fn try_mark_no_spotlight_index(path: &Path) {
+    let sentinel = path.join(SPOTLIGHT_NO_INDEX_SENTINEL);
+    if sentinel.exists() {
+        return;
+    }
+    if let Err(err) = fs::write(&sentinel, b"") {
+        eprintln!(
+            "Warning: failed to write Spotlight no-index marker {}: {}",
+            sentinel.display(),
+            err
+        );
+    }
 }
 
 pub async fn detect_capabilities() -> serde_json::Value {
@@ -1681,7 +1697,13 @@ async fn execute_build(
     daemon_url: &str,
     config: &RunnerConfig,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
-    let workspace = PathBuf::from(format!("/tmp/oore-builds/{}", job.build_id));
+    let workspace_root = PathBuf::from(BUILD_WORKSPACE_ROOT);
+    if let Err(e) = fs::create_dir_all(&workspace_root) {
+        return (vec![], Err(e.into()));
+    }
+    try_mark_no_spotlight_index(&workspace_root);
+
+    let workspace = workspace_root.join(&job.build_id);
     if let Err(e) = fs::create_dir_all(&workspace) {
         return (vec![], Err(e.into()));
     }
