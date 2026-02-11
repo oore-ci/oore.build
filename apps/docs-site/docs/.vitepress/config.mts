@@ -6,11 +6,6 @@ export default defineConfig({
     "Self-hosted, Flutter-first mobile CI and internal app distribution platform",
   cleanUrls: true,
 
-  // Ignore dead links in old pages that haven't been migrated yet.
-  // These pages reference removed guide/, api/, cli/ directories.
-  // Once all waves are complete and old pages are deleted, this can be removed.
-  ignoreDeadLinks: true,
-
   head: [
     [
       "link",
@@ -110,6 +105,7 @@ export default defineConfig({
       { text: "Guides", link: "/guides/oidc/" },
       { text: "Reference", link: "/reference/api/" },
       { text: "Concepts", link: "/concepts/architecture" },
+      { text: "Operations", link: "/operations/deployment" },
       {
         text: "GitHub",
         link: "https://github.com/devaryakjha/oore.build",
@@ -130,8 +126,14 @@ export default defineConfig({
             },
             { text: "Connect GitHub", link: "/getting-started/connect-github" },
             { text: "First Build", link: "/getting-started/first-build" },
-            { text: "First Signed Build", link: "/getting-started/first-signed-build" },
-            { text: "Invite Your Team", link: "/getting-started/invite-your-team" },
+            {
+              text: "First Signed Build",
+              link: "/getting-started/first-signed-build",
+            },
+            {
+              text: "Invite Your Team",
+              link: "/getting-started/invite-your-team",
+            },
           ],
         },
       ],
@@ -152,33 +154,75 @@ export default defineConfig({
           items: [
             { text: "GitHub App", link: "/guides/integrations/github-app" },
             { text: "GitLab", link: "/guides/integrations/gitlab" },
+            { text: "Webhooks", link: "/guides/integrations/webhooks" },
           ],
         },
         {
           text: "Projects",
           items: [
-            { text: "Create a Project", link: "/guides/projects/create-project" },
-            { text: "Pipeline Config (.oore.yaml)", link: "/guides/projects/pipeline-config" },
-            { text: "Pipeline via UI", link: "/guides/projects/pipeline-ui-fallback" },
+            {
+              text: "Create a Project",
+              link: "/guides/projects/create-project",
+            },
+            {
+              text: "Pipeline Config (.oore.yaml)",
+              link: "/guides/projects/pipeline-config",
+            },
+            {
+              text: "Pipeline via UI",
+              link: "/guides/projects/pipeline-ui-fallback",
+            },
             { text: "Trigger Builds", link: "/guides/projects/trigger-builds" },
+            { text: "Cancel Builds", link: "/guides/projects/cancel-builds" },
           ],
         },
         {
           text: "Signing",
           items: [
-            { text: "Android Keystore", link: "/guides/signing/android-keystore" },
+            {
+              text: "Android Keystore",
+              link: "/guides/signing/android-keystore",
+            },
             { text: "Android Gradle", link: "/guides/signing/android-gradle" },
-            { text: "iOS Certificates", link: "/guides/signing/ios-certificates" },
-            { text: "iOS Manual Signing", link: "/guides/signing/ios-manual-signing" },
+            {
+              text: "iOS Certificates",
+              link: "/guides/signing/ios-certificates",
+            },
+            {
+              text: "iOS Manual Signing",
+              link: "/guides/signing/ios-manual-signing",
+            },
             { text: "iOS API Signing", link: "/guides/signing/ios-api-signing" },
-            { text: "iOS Device Registration", link: "/guides/signing/ios-device-registration" },
+            {
+              text: "iOS Device Registration",
+              link: "/guides/signing/ios-device-registration",
+            },
+          ],
+        },
+        {
+          text: "Runners",
+          items: [
+            {
+              text: "Embedded Runner",
+              link: "/guides/runners/embedded-runner",
+            },
+            {
+              text: "External Runner",
+              link: "/guides/runners/external-runner",
+            },
           ],
         },
         {
           text: "Artifacts",
           items: [
-            { text: "Configure Storage", link: "/guides/artifacts/configure-storage" },
-            { text: "Download Artifacts", link: "/guides/artifacts/download-artifacts" },
+            {
+              text: "Configure Storage",
+              link: "/guides/artifacts/configure-storage",
+            },
+            {
+              text: "Download Artifacts",
+              link: "/guides/artifacts/download-artifacts",
+            },
           ],
         },
         {
@@ -192,8 +236,14 @@ export default defineConfig({
         {
           text: "Multi-Instance",
           items: [
-            { text: "Add Instance", link: "/guides/multi-instance/add-instance" },
-            { text: "Switch Instances", link: "/guides/multi-instance/switch-instances" },
+            {
+              text: "Add Instance",
+              link: "/guides/multi-instance/add-instance",
+            },
+            {
+              text: "Switch Instances",
+              link: "/guides/multi-instance/switch-instances",
+            },
           ],
         },
       ],
@@ -212,6 +262,7 @@ export default defineConfig({
             { text: "Build Logs", link: "/reference/api/logs" },
             { text: "Runners", link: "/reference/api/runners" },
             { text: "Artifacts", link: "/reference/api/artifacts" },
+            { text: "Settings", link: "/reference/api/settings" },
           ],
         },
         {
@@ -219,13 +270,24 @@ export default defineConfig({
           items: [
             { text: "Overview", link: "/reference/cli/" },
             { text: "oore setup", link: "/reference/cli/oore-setup" },
+            { text: "oore doctor", link: "/reference/cli/oore-doctor" },
+            { text: "oore login", link: "/reference/cli/oore-login" },
+            { text: "oore status", link: "/reference/cli/oore-status" },
+            { text: "oore config", link: "/reference/cli/oore-config" },
           ],
         },
         {
           text: "Configuration",
           items: [
             { text: ".oore.yaml", link: "/reference/config/oore-yaml" },
-            { text: "Environment Variables", link: "/reference/config/environment-variables" },
+            {
+              text: "Environment Variables",
+              link: "/reference/config/environment-variables",
+            },
+            {
+              text: "Daemon Config",
+              link: "/reference/config/daemon-config",
+            },
           ],
         },
         {
@@ -234,6 +296,7 @@ export default defineConfig({
             { text: "Setup States", link: "/reference/setup-states" },
             { text: "Build States", link: "/reference/build-states" },
             { text: "Roles & Permissions", link: "/reference/rbac" },
+            { text: "Error Codes", link: "/reference/error-codes" },
           ],
         },
       ],
@@ -243,47 +306,27 @@ export default defineConfig({
           items: [
             { text: "Architecture", link: "/concepts/architecture" },
             { text: "Build Execution", link: "/concepts/build-execution" },
-            { text: "Multi-Instance", link: "/concepts/multi-instance" },
+            { text: "Runner Protocol", link: "/concepts/runner-protocol" },
+            {
+              text: "File-First Config",
+              link: "/concepts/file-first-config",
+            },
             { text: "Code Signing", link: "/concepts/signing-overview" },
+            { text: "Artifact Access", link: "/concepts/artifact-access" },
+            { text: "Multi-Instance", link: "/concepts/multi-instance" },
             { text: "Security Model", link: "/concepts/security-model" },
           ],
         },
       ],
-      // Legacy pages (not yet migrated — will be removed after Wave 5)
-      "/architecture/": [
+      "/operations/": [
         {
-          text: "Architecture (Legacy)",
+          text: "Operations",
           items: [
-            { text: "Overview", link: "/architecture/overview" },
-            { text: "Backend", link: "/architecture/backend" },
-            { text: "Frontend", link: "/architecture/frontend" },
-            { text: "CLI", link: "/architecture/cli" },
-          ],
-        },
-      ],
-      "/features/": [
-        {
-          text: "Features (Legacy)",
-          items: [
-            { text: "Setup Wizard", link: "/features/setup-wizard" },
-            { text: "OIDC Authentication", link: "/features/oidc-authentication" },
-            { text: "Setup Wizard UI", link: "/features/setup-wizard-ui" },
-            { text: "Multi-Instance", link: "/features/multi-instance" },
-            { text: "Roles & Permissions", link: "/features/rbac" },
-            { text: "User Management", link: "/features/user-management" },
-            { text: "Runner Management", link: "/features/runner-management" },
-            { text: "Android Signing", link: "/features/android-signing" },
-            { text: "iOS Signing", link: "/features/ios-signing" },
-            { text: "Artifact Storage", link: "/features/artifact-storage-management" },
-            { text: "File-First Pipeline Config", link: "/features/file-first-pipeline-config" },
-          ],
-        },
-      ],
-      "/security/": [
-        {
-          text: "Security (Legacy)",
-          items: [
-            { text: "Overview", link: "/security/overview" },
+            { text: "Deployment", link: "/operations/deployment" },
+            { text: "Backup & Restore", link: "/operations/backup-restore" },
+            { text: "Upgrade", link: "/operations/upgrade" },
+            { text: "Monitoring", link: "/operations/monitoring" },
+            { text: "Troubleshooting", link: "/operations/troubleshooting" },
           ],
         },
       ],
