@@ -7,6 +7,7 @@
 <p align="center">Self-hosted, Flutter-first mobile CI and internal app distribution platform.</p>
 
 <p align="center">
+  <a href="https://docs.oore.build">Documentation</a> &middot;
   <a href="https://zerodha.tech"><img src="https://zerodha.tech/static/images/github-badge.svg" /></a>
 </p>
 
