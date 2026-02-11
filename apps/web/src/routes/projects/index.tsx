@@ -142,7 +142,9 @@ function ProjectsListPage() {
                     >
                       <TableCell>
                         <div>
-                          <p className="font-medium group-hover:underline">{project.name}</p>
+                          <p className="font-medium group-hover:underline">
+                            {project.name}
+                          </p>
                           <p className="font-mono text-[11px] text-muted-foreground">
                             {project.id.slice(0, 8)}
                           </p>

@@ -412,7 +412,10 @@ function EventTimeline({
         ) : (
           <div className="relative space-y-0">
             {events.map((event, i) => (
-              <div key={event.id} className="relative flex gap-3 pb-4 last:pb-0">
+              <div
+                key={event.id}
+                className="relative flex gap-3 pb-4 last:pb-0"
+              >
                 {/* Vertical line */}
                 {i < events.length - 1 ? (
                   <div className="absolute left-[5px] top-3 bottom-0 w-px bg-border" />

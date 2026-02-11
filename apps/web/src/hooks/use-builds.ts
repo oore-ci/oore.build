@@ -106,9 +106,9 @@ export function useCreateBuild() {
         queryKey: [instanceId, 'builds'],
       })
 
-      const queriesData = queryClient.getQueriesData<
-        ListBuildsResponse
-      >({ queryKey: [instanceId, 'builds'] })
+      const queriesData = queryClient.getQueriesData<ListBuildsResponse>({
+        queryKey: [instanceId, 'builds'],
+      })
 
       const optimisticBuild: Build = {
         id: `optimistic-${Date.now()}`,

@@ -8,7 +8,7 @@ import {
   ArrowUp01Icon,
 } from '@hugeicons/core-free-icons'
 
-import type {PipelineFormValues} from '@/lib/pipeline-schema';
+import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -37,11 +37,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  
-  TRIGGER_EVENTS,
-  pipelineFormSchema
-} from '@/lib/pipeline-schema'
+import { TRIGGER_EVENTS, pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseEnvVars,
   parseMultiline,
@@ -133,7 +129,8 @@ export default function PipelineForm({
     shouldUnregister: false,
   })
 
-  const [selectedEvents, setSelectedEvents] = useState<Array<string>>(initialEvents)
+  const [selectedEvents, setSelectedEvents] =
+    useState<Array<string>>(initialEvents)
   const [cancelPrevious, setCancelPrevious] = useState(initialCancelPrevious)
   const [releaseKeystoreFile, setReleaseKeystoreFile] = useState<File | null>(
     null,

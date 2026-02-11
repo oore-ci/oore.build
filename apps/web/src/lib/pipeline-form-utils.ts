@@ -37,7 +37,9 @@ export function parseEnvVars(
     })
 }
 
-export function selectedPlatforms(data: PipelineFormValues): Array<BuildPlatform> {
+export function selectedPlatforms(
+  data: PipelineFormValues,
+): Array<BuildPlatform> {
   const platforms: Array<BuildPlatform> = []
   if (data.platform_android) platforms.push('android')
   if (data.platform_ios) platforms.push('ios')
@@ -50,7 +52,9 @@ export function applyArgs(base: string, args: Array<string>): string {
   return `${base} ${args.join(' ')}`
 }
 
-export function previewPlatformCommands(data: PipelineFormValues): Array<string> {
+export function previewPlatformCommands(
+  data: PipelineFormValues,
+): Array<string> {
   const platforms = selectedPlatforms(data)
   const commands: Array<string> = []
   for (const platform of platforms) {
@@ -85,7 +89,9 @@ export function previewPlatformCommands(data: PipelineFormValues): Array<string>
   return commands.filter(Boolean)
 }
 
-export function defaultArtifactPatterns(platforms: Array<BuildPlatform>): Array<string> {
+export function defaultArtifactPatterns(
+  platforms: Array<BuildPlatform>,
+): Array<string> {
   const patterns = new Set<string>()
   if (platforms.includes('android')) patterns.add('*.apk')
   if (platforms.includes('ios')) patterns.add('*.ipa')

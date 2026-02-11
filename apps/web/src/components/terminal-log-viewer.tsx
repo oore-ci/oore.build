@@ -424,10 +424,11 @@ export default function TerminalLogViewer({
             <button
               type="button"
               onClick={() => setSelectedStep('all')}
-              className={`flex items-center justify-between px-3 py-1.5 text-left text-xs transition-colors ${selectedStep === 'all'
-                ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
-                : 'border-l-2 border-l-transparent text-[oklch(0.78_0_0)] hover:bg-[oklch(0.19_0_0)] hover:text-[oklch(0.90_0_0)]'
-                }`}
+              className={`flex items-center justify-between px-3 py-1.5 text-left text-xs transition-colors ${
+                selectedStep === 'all'
+                  ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
+                  : 'border-l-2 border-l-transparent text-[oklch(0.78_0_0)] hover:bg-[oklch(0.19_0_0)] hover:text-[oklch(0.90_0_0)]'
+              }`}
             >
               <span className="font-medium">All logs</span>
               <span className="font-mono text-[10px] text-[oklch(0.65_0_0)]">
@@ -439,10 +440,11 @@ export default function TerminalLogViewer({
                 key={group.name}
                 type="button"
                 onClick={() => setSelectedStep(group.name)}
-                className={`flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${selectedStep === group.name
-                  ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
-                  : 'border-l-2 border-l-transparent text-[oklch(0.78_0_0)] hover:bg-[oklch(0.19_0_0)] hover:text-[oklch(0.90_0_0)]'
-                  }`}
+                className={`flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                  selectedStep === group.name
+                    ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
+                    : 'border-l-2 border-l-transparent text-[oklch(0.78_0_0)] hover:bg-[oklch(0.19_0_0)] hover:text-[oklch(0.90_0_0)]'
+                }`}
                 title={group.command}
               >
                 <StepStatusIcon status={group.status} />
@@ -516,12 +518,13 @@ export default function TerminalLogViewer({
                         width: '100%',
                         transform: `translateY(${virtualRow.start}px)`,
                       }}
-                      className={`flex font-mono text-[13px] leading-[20px] ${isStderr
-                        ? 'text-[oklch(0.80_0.15_25)]'
-                        : isError
-                          ? 'text-[oklch(0.80_0.15_25)] bg-[oklch(0.80_0.15_25/0.06)]'
-                          : 'text-[oklch(0.88_0_0)]'
-                        }`}
+                      className={`flex font-mono text-[13px] leading-[20px] ${
+                        isStderr
+                          ? 'text-[oklch(0.80_0.15_25)]'
+                          : isError
+                            ? 'text-[oklch(0.80_0.15_25)] bg-[oklch(0.80_0.15_25/0.06)]'
+                            : 'text-[oklch(0.88_0_0)]'
+                      }`}
                     >
                       <span
                         className="shrink-0 select-none text-right text-[oklch(0.48_0_0)] pr-3 pl-3"

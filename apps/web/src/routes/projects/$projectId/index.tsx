@@ -415,7 +415,9 @@ function ProjectDetailPage() {
               <CardContent>
                 {builds.length === 0 ? (
                   <div className="space-y-2 py-6 text-center">
-                    <p className="text-sm text-muted-foreground">No builds yet.</p>
+                    <p className="text-sm text-muted-foreground">
+                      No builds yet.
+                    </p>
                     {canTriggerBuild && pipelines.length > 0 ? (
                       <Button size="sm" onClick={() => openTriggerBuild()}>
                         <HugeiconsIcon icon={PlayIcon} size={14} />
@@ -456,7 +458,9 @@ function ProjectDetailPage() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline">{build.trigger_type}</Badge>
+                            <Badge variant="outline">
+                              {build.trigger_type}
+                            </Badge>
                           </TableCell>
                           <TableCell className="font-mono text-xs text-muted-foreground">
                             {build.branch ?? 'n/a'}

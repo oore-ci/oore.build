@@ -9,8 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { getLastAuthMetaForInstance, useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance } from '@/stores/instance-store'
-import { useInstanceStore } from '@/stores/instance-store'
+import { useActiveInstance, useInstanceStore  } from '@/stores/instance-store'
 import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/login')({

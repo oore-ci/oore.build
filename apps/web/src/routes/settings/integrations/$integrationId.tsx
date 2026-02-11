@@ -93,11 +93,7 @@ function IntegrationDetailPage() {
         detail.integration.display_name ?? detail.integration.provider,
       )
     }
-  }, [
-    detail?.integration.display_name,
-    detail?.integration.provider,
-    setLabel,
-  ])
+  }, [detail?.integration.display_name, detail?.integration.provider, setLabel])
 
   useEffect(() => {
     if (search.installed === 'true') {

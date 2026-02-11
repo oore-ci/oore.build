@@ -61,7 +61,10 @@ export default function ProjectCard({
             </span>
           ) : null}
           {lastBuildStatus ? (
-            <Badge variant={getStatusVariant(lastBuildStatus)} className="text-[10px]">
+            <Badge
+              variant={getStatusVariant(lastBuildStatus)}
+              className="text-[10px]"
+            >
               {lastBuildStatus}
             </Badge>
           ) : (

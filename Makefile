@@ -1,4 +1,4 @@
-.PHONY: dev-web dev-docs build-web build-docs build check \
+.PHONY: dev-web dev-docs build-web build-demo deploy-demo build-docs build check \
        test-web lint-web fix-web \
        test-docs lint-docs fix-docs \
        cargo-check run-daemon run-runner register-runner run-cli doctor \
@@ -15,6 +15,12 @@ dev-web:
 
 build-web:
 	bun run build:web
+
+build-demo:
+	cd apps/web && VITE_DEMO_MODE=true bun run build
+
+deploy-demo: build-demo
+	wrangler pages deploy apps/web/dist --project-name=oore-demo
 
 test-web:
 	cd apps/web && bun run test

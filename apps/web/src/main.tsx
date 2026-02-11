@@ -28,16 +28,25 @@ declare module '@tanstack/react-router' {
   }
 }
 
-// Render the app
-const rootElement = document.getElementById('app')
-if (rootElement && !rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement)
-  root.render(
-    <StrictMode>
-      <RouterProvider router={router} />
-    </StrictMode>,
-  )
+// Boot the app — conditionally enables demo mode before rendering
+async function boot() {
+  if (import.meta.env.VITE_DEMO_MODE === 'true') {
+    const { enableDemoMode } = await import('./demo/enable-demo')
+    await enableDemoMode()
+  }
+
+  const rootElement = document.getElementById('app')
+  if (rootElement && !rootElement.innerHTML) {
+    const root = ReactDOM.createRoot(rootElement)
+    root.render(
+      <StrictMode>
+        <RouterProvider router={router} />
+      </StrictMode>,
+    )
+  }
 }
+
+void boot()
 
 // If you want to start measuring performance in your app, pass a function
 // to log results (for example: reportWebVitals(console.log))

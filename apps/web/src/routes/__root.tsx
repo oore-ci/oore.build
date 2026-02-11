@@ -152,6 +152,21 @@ function RootLayout() {
           }}
         />
         <Toaster />
+        {import.meta.env.VITE_DEMO_MODE === 'true' && (
+          <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
+            <span className="size-1.5 animate-pulse bg-primary" />
+            Demo Mode
+            <span className="text-muted-foreground/50">—</span>
+            <a
+              href="https://oore.build"
+              className="text-primary underline underline-offset-2"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Learn more
+            </a>
+          </div>
+        )}
         <Suspense>
           <DevTools />
         </Suspense>
