@@ -33,6 +33,19 @@ const MAX_LOG_LINES_PER_BUILD: i64 = 10_000;
 /// Maximum content length per log line in bytes.
 const MAX_LINE_BYTES: usize = 4096;
 
+fn truncate_utf8_bytes(input: &str, max_bytes: usize) -> &str {
+    if input.len() <= max_bytes {
+        return input;
+    }
+
+    let mut boundary = max_bytes.min(input.len());
+    while boundary > 0 && !input.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+
+    &input[..boundary]
+}
+
 /// Polling interval for SSE log streaming.
 const SSE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -207,11 +220,7 @@ pub async fn append_build_logs(
             "INSERT OR IGNORE INTO build_logs (id, build_id, sequence, content, stream, created_at) ",
         );
         qb.push_values(batch, |mut b, chunk| {
-            let content = if chunk.content.len() > MAX_LINE_BYTES {
-                &chunk.content[..chunk.content.floor_char_boundary(MAX_LINE_BYTES)]
-            } else {
-                &chunk.content
-            };
+            let content = truncate_utf8_bytes(&chunk.content, MAX_LINE_BYTES);
             b.push_bind(Uuid::new_v4().to_string())
                 .push_bind(&job_id)
                 .push_bind(chunk.sequence)
