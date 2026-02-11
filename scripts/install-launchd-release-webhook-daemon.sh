@@ -41,7 +41,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
   if [[ -f "$USER_ENV_FILE" ]] && grep -Eq '^(export[[:space:]]+)?OORE_WEBHOOK_SECRET=' "$USER_ENV_FILE"; then
     cp "$USER_ENV_FILE" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
-    chown root:wheel "$ENV_FILE"
+    chown "$BUILD_USER":staff "$ENV_FILE"
     log "Copied webhook secret from $USER_ENV_FILE to $ENV_FILE"
   else
     cat > "$ENV_FILE" <<'EOF'
@@ -49,7 +49,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # OORE_WEBHOOK_SECRET=replace-with-strong-random-secret
 EOF
     chmod 600 "$ENV_FILE"
-    chown root:wheel "$ENV_FILE"
+    chown "$BUILD_USER":staff "$ENV_FILE"
     die "Created $ENV_FILE. Set OORE_WEBHOOK_SECRET, then rerun installer."
   fi
 fi
@@ -57,6 +57,10 @@ fi
 if ! grep -Eq '^(export[[:space:]]+)?OORE_WEBHOOK_SECRET=' "$ENV_FILE"; then
   die "$ENV_FILE must include OORE_WEBHOOK_SECRET=..."
 fi
+
+# LaunchDaemon runs the process as BUILD_USER, so the secret file must be readable by that user.
+chown "$BUILD_USER":staff "$ENV_FILE"
+chmod 600 "$ENV_FILE"
 
 touch "$LOG_FILE"
 chmod 644 "$LOG_FILE"
