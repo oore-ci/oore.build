@@ -109,6 +109,7 @@ export default defineConfig({
       { text: "Getting Started", link: "/getting-started/" },
       { text: "Guides", link: "/guides/oidc/" },
       { text: "Reference", link: "/reference/api/" },
+      { text: "Concepts", link: "/concepts/architecture" },
       {
         text: "GitHub",
         link: "https://github.com/devaryakjha/oore.build",
@@ -127,13 +128,8 @@ export default defineConfig({
               text: "Set Up Your Instance",
               link: "/getting-started/first-instance",
             },
-          ],
-        },
-        {
-          text: "Guides",
-          items: [
-            { text: "Configure OIDC", link: "/guides/oidc/" },
-            { text: "Google OIDC", link: "/guides/oidc/google" },
+            { text: "Connect GitHub", link: "/getting-started/connect-github" },
+            { text: "First Build", link: "/getting-started/first-build" },
           ],
         },
       ],
@@ -145,13 +141,41 @@ export default defineConfig({
             { text: "Google", link: "/guides/oidc/google" },
           ],
         },
+        {
+          text: "Integrations",
+          items: [
+            { text: "GitHub App", link: "/guides/integrations/github-app" },
+            { text: "GitLab", link: "/guides/integrations/gitlab" },
+          ],
+        },
+        {
+          text: "Projects",
+          items: [
+            { text: "Create a Project", link: "/guides/projects/create-project" },
+            { text: "Pipeline Config (.oore.yaml)", link: "/guides/projects/pipeline-config" },
+            { text: "Pipeline via UI", link: "/guides/projects/pipeline-ui-fallback" },
+            { text: "Trigger Builds", link: "/guides/projects/trigger-builds" },
+          ],
+        },
+        {
+          text: "Multi-Instance",
+          items: [
+            { text: "Add Instance", link: "/guides/multi-instance/add-instance" },
+            { text: "Switch Instances", link: "/guides/multi-instance/switch-instances" },
+          ],
+        },
       ],
       "/reference/": [
         {
           text: "API Reference",
           items: [
             { text: "Overview", link: "/reference/api/" },
-            { text: "Setup API", link: "/reference/api/setup" },
+            { text: "Setup", link: "/reference/api/setup" },
+            { text: "Projects", link: "/reference/api/projects" },
+            { text: "Pipelines", link: "/reference/api/pipelines" },
+            { text: "Builds", link: "/reference/api/builds" },
+            { text: "Integrations", link: "/reference/api/integrations" },
+            { text: "Build Logs", link: "/reference/api/logs" },
           ],
         },
         {
@@ -162,9 +186,26 @@ export default defineConfig({
           ],
         },
         {
+          text: "Configuration",
+          items: [
+            { text: ".oore.yaml", link: "/reference/config/oore-yaml" },
+          ],
+        },
+        {
           text: "State Machines",
           items: [
             { text: "Setup States", link: "/reference/setup-states" },
+            { text: "Build States", link: "/reference/build-states" },
+          ],
+        },
+      ],
+      "/concepts/": [
+        {
+          text: "Concepts",
+          items: [
+            { text: "Architecture", link: "/concepts/architecture" },
+            { text: "Build Execution", link: "/concepts/build-execution" },
+            { text: "Multi-Instance", link: "/concepts/multi-instance" },
           ],
         },
       ],
