@@ -10,11 +10,11 @@
 use std::time::Instant;
 
 use axum::{
+    Router,
     extract::{MatchedPath, Request, State},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use metrics::{counter, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
@@ -27,9 +27,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 /// layer is added that exports spans via OTLP/gRPC. Otherwise only the
 /// human-readable `fmt` layer is installed.
 pub fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::EnvFilter;
 
     let fmt_layer = tracing_subscriber::fmt::layer();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -72,14 +72,12 @@ where
 {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_otlp::SpanExporter;
-    use opentelemetry_sdk::trace::SdkTracerProvider;
     use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
 
     let exporter = SpanExporter::builder().with_tonic().build()?;
 
-    let resource = Resource::builder()
-        .with_service_name("oored")
-        .build();
+    let resource = Resource::builder().with_service_name("oored").build();
 
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
@@ -153,11 +151,7 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
 
     let status = response.status().as_u16().to_string();
 
-    let labels = [
-        ("method", method),
-        ("path", path),
-        ("status", status),
-    ];
+    let labels = [("method", method), ("path", path), ("status", status)];
 
     counter!("http_requests_total", &labels).increment(1);
     histogram!("http_request_duration_seconds", &labels).record(elapsed);

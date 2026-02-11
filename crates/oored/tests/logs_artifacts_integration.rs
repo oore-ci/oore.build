@@ -36,11 +36,7 @@ async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String 
 }
 
 /// Register a runner and return (runner_id, runner_token).
-async fn register_runner(
-    app: &axum::Router,
-    session_token: &str,
-    name: &str,
-) -> (String, String) {
+async fn register_runner(app: &axum::Router, session_token: &str, name: &str) -> (String, String) {
     let body = serde_json::json!({
         "name": name,
         "capabilities": { "os": "macos", "arch": "arm64" }
@@ -50,7 +46,10 @@ async fn register_runner(
         .uri("/v1/runners/register")
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -150,12 +149,13 @@ async fn test_append_build_logs() {
     });
 
     let req = Request::builder()
-        .uri(format!(
-            "/v1/runners/{runner_id}/jobs/{build_id}/logs"
-        ))
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -182,7 +182,10 @@ async fn test_append_logs_dedup() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -203,7 +206,10 @@ async fn test_append_logs_dedup() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -224,7 +230,10 @@ async fn test_append_logs_empty_chunks() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -286,7 +295,10 @@ async fn test_get_build_logs() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -297,7 +309,10 @@ async fn test_get_build_logs() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/logs"))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -331,7 +346,10 @@ async fn test_get_build_logs_pagination() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -343,7 +361,10 @@ async fn test_get_build_logs_pagination() {
             "/v1/builds/{build_id}/logs?after_sequence=1&limit=2"
         ))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -355,18 +376,24 @@ async fn test_get_build_logs_pagination() {
     assert_eq!(logs.len(), 2, "should return exactly 2 logs");
     assert_eq!(logs[0]["sequence"].as_i64().unwrap(), 2);
     assert_eq!(logs[1]["sequence"].as_i64().unwrap(), 3);
-    assert_eq!(json["total"].as_i64().unwrap(), 5, "total should reflect all logs");
+    assert_eq!(
+        json["total"].as_i64().unwrap(),
+        5,
+        "total should reflect all logs"
+    );
 }
 
 #[tokio::test]
 async fn test_get_logs_build_not_found() {
-    let (app, _pool, session_token, _runner_id, _runner_token, _build_id) =
-        full_scaffold().await;
+    let (app, _pool, session_token, _runner_id, _runner_token, _build_id) = full_scaffold().await;
 
     let req = Request::builder()
         .uri("/v1/builds/nonexistent-build-id/logs")
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -383,7 +410,10 @@ async fn test_create_stream_token() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/stream-token"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -401,13 +431,15 @@ async fn test_create_stream_token() {
 
 #[tokio::test]
 async fn test_create_stream_token_build_not_found() {
-    let (app, _pool, session_token, _runner_id, _runner_token, _build_id) =
-        full_scaffold().await;
+    let (app, _pool, session_token, _runner_id, _runner_token, _build_id) = full_scaffold().await;
 
     let req = Request::builder()
         .uri("/v1/builds/nonexistent-id/stream-token")
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -417,8 +449,7 @@ async fn test_create_stream_token_build_not_found() {
 
 #[tokio::test]
 async fn test_stream_token_unauthenticated() {
-    let (app, _pool, _session_token, _runner_id, _runner_token, build_id) =
-        full_scaffold().await;
+    let (app, _pool, _session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
 
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/stream-token"))
@@ -476,12 +507,13 @@ async fn test_create_artifact() {
     });
 
     let req = Request::builder()
-        .uri(format!(
-            "/v1/runners/{runner_id}/jobs/{build_id}/artifacts"
-        ))
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -512,7 +544,10 @@ async fn test_create_artifact_invalid_type() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -536,7 +571,10 @@ async fn test_create_artifact_empty_name() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -563,7 +601,10 @@ async fn test_create_artifact_cross_runner_blocked() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {other_runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {other_runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -586,7 +627,10 @@ async fn test_create_artifact_checksum_dedup() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -606,7 +650,10 @@ async fn test_create_artifact_checksum_dedup() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -621,7 +668,10 @@ async fn test_create_artifact_checksum_dedup() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/artifacts"))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -651,7 +701,10 @@ async fn test_list_artifacts() {
             .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
             .method("POST")
             .header(http::header::CONTENT_TYPE, "application/json")
-            .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+            .header(
+                http::header::AUTHORIZATION,
+                format!("Bearer {runner_token}"),
+            )
             .body(Body::from(serde_json::to_string(&body).unwrap()))
             .unwrap();
 
@@ -663,7 +716,10 @@ async fn test_list_artifacts() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/artifacts"))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -684,7 +740,10 @@ async fn test_list_artifacts_empty() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/artifacts"))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -712,7 +771,10 @@ async fn test_download_link_no_storage() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -725,7 +787,10 @@ async fn test_download_link_no_storage() {
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -742,13 +807,15 @@ async fn test_download_link_no_storage() {
 
 #[tokio::test]
 async fn test_download_link_artifact_not_found() {
-    let (app, _pool, session_token, _runner_id, _runner_token, _build_id) =
-        full_scaffold().await;
+    let (app, _pool, session_token, _runner_id, _runner_token, _build_id) = full_scaffold().await;
 
     let req = Request::builder()
         .uri("/v1/artifacts/nonexistent-id/download-link")
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -775,7 +842,10 @@ async fn test_full_log_and_artifact_flow() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&log_body).unwrap()))
         .unwrap();
 
@@ -795,7 +865,10 @@ async fn test_full_log_and_artifact_flow() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
         .unwrap();
 
@@ -806,7 +879,10 @@ async fn test_full_log_and_artifact_flow() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/logs"))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -820,7 +896,10 @@ async fn test_full_log_and_artifact_flow() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/artifacts"))
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -836,7 +915,10 @@ async fn test_full_log_and_artifact_flow() {
     let req = Request::builder()
         .uri(format!("/v1/builds/{build_id}/stream-token"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 

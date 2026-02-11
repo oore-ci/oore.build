@@ -8,9 +8,7 @@ use anyhow::Context;
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::config::{Credentials, Region};
 use aws_sdk_s3::presigning::PresigningConfig;
-use oore_contract::{
-    ArtifactStorageProvider, ArtifactStorageSettings, ArtifactStorageSource,
-};
+use oore_contract::{ArtifactStorageProvider, ArtifactStorageSettings, ArtifactStorageSource};
 use sqlx::Row;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -63,8 +61,13 @@ pub struct StorageClient {
 
 impl StorageClient {
     pub fn new(config: StorageConfig) -> Self {
-        let credentials =
-            Credentials::new(&config.access_key_id, &config.secret_access_key, None, None, "oore");
+        let credentials = Credentials::new(
+            &config.access_key_id,
+            &config.secret_access_key,
+            None,
+            None,
+            "oore",
+        );
 
         let mut s3_config_builder = aws_sdk_s3::config::Builder::new()
             .behavior_version(BehaviorVersion::latest())
@@ -211,7 +214,10 @@ impl LocalStorageClient {
 
     pub async fn generate_upload_url(&self, key: &str, ttl_secs: u64) -> String {
         let token = Self::issue_token(&self.upload_tokens, key, ttl_secs).await;
-        format!("{}/v1/artifacts/local-upload/{}", self.public_base_url, token)
+        format!(
+            "{}/v1/artifacts/local-upload/{}",
+            self.public_base_url, token
+        )
     }
 
     pub async fn generate_download_url(&self, key: &str, ttl_secs: u64) -> String {
@@ -322,11 +328,7 @@ impl StorageBackend {
         }
     }
 
-    pub async fn handle_local_upload(
-        &self,
-        token: &str,
-        bytes: &[u8],
-    ) -> anyhow::Result<bool> {
+    pub async fn handle_local_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
         match self {
             Self::Local(client) => client.handle_upload(token, bytes).await,
             _ => Ok(false),
@@ -381,7 +383,9 @@ fn default_local_artifacts_dir() -> PathBuf {
     base.join("oore").join("artifacts")
 }
 
-pub fn build_backend_from_config(config: &EffectiveStorageConfig) -> anyhow::Result<StorageBackend> {
+pub fn build_backend_from_config(
+    config: &EffectiveStorageConfig,
+) -> anyhow::Result<StorageBackend> {
     match config.provider {
         ArtifactStorageProvider::Disabled => Ok(StorageBackend::Disabled),
         ArtifactStorageProvider::Local => {
@@ -447,8 +451,8 @@ pub async fn load_effective_config(
 
     if let Some(row) = row {
         let provider_str: String = row.get("provider");
-        let provider = ArtifactStorageProvider::from_str(&provider_str)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let provider =
+            ArtifactStorageProvider::from_str(&provider_str).map_err(|e| anyhow::anyhow!(e))?;
 
         let access_key_id = match row.get::<Option<String>, _>("s3_access_key_encrypted") {
             Some(encrypted) => Some(
@@ -506,10 +510,7 @@ pub async fn load_effective_config(
     })
 }
 
-pub async fn load_backend(
-    pool: &sqlx::SqlitePool,
-    encryption_key: &[u8],
-) -> StorageBackend {
+pub async fn load_backend(pool: &sqlx::SqlitePool, encryption_key: &[u8]) -> StorageBackend {
     match load_effective_config(pool, encryption_key).await {
         Ok(cfg) => match build_backend_from_config(&cfg) {
             Ok(backend) => backend,

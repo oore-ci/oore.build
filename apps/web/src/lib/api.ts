@@ -26,6 +26,7 @@ import type {
   InviteUserResponse,
   ListArtifactsResponse,
   ListBuildsResponse,
+  ListPipelineIosDevicesResponse,
   ListInstallationsResponse,
   ListIntegrationsResponse,
   ListPipelinesResponse,
@@ -37,6 +38,7 @@ import type {
   OidcConfigureRequest,
   OidcConfigureResponse,
   PipelineAndroidSigningResponse,
+  PipelineIosSigningResponse,
   PipelineDetailResponse,
   ProjectDetailResponse,
   ReEnableUserResponse,
@@ -48,6 +50,7 @@ import type {
   UpdateArtifactStorageSettingsRequest,
   UpdateInstancePreferencesRequest,
   UpdatePipelineAndroidSigningRequest,
+  UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
   UpdateRunnerRequest,
@@ -57,6 +60,9 @@ import type {
   UserProfileResponse,
   ValidatePipelineRequest,
   ValidatePipelineResponse,
+  RegisterIosDeviceRequest,
+  RegisterIosDeviceResponse,
+  SyncPipelineIosSigningResponse,
 } from '@/lib/types'
 
 // ── Error class ─────────────────────────────────────────────────
@@ -838,6 +844,80 @@ export function updatePipelineAndroidSigning(
     `/v1/pipelines/${pipelineId}/android-signing`,
     {
       method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function getPipelineIosSigning(
+  baseUrl: string,
+  token: string,
+  pipelineId: string,
+): Promise<PipelineIosSigningResponse> {
+  return request<PipelineIosSigningResponse>(
+    baseUrl,
+    `/v1/pipelines/${pipelineId}/ios-signing`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function updatePipelineIosSigning(
+  baseUrl: string,
+  token: string,
+  pipelineId: string,
+  data: UpdatePipelineIosSigningRequest,
+): Promise<PipelineIosSigningResponse> {
+  return request<PipelineIosSigningResponse>(
+    baseUrl,
+    `/v1/pipelines/${pipelineId}/ios-signing`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function syncPipelineIosSigning(
+  baseUrl: string,
+  token: string,
+  pipelineId: string,
+): Promise<SyncPipelineIosSigningResponse> {
+  return request<SyncPipelineIosSigningResponse>(
+    baseUrl,
+    `/v1/pipelines/${pipelineId}/ios-signing/sync`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify({}),
+    },
+  )
+}
+
+export function listPipelineIosDevices(
+  baseUrl: string,
+  token: string,
+  pipelineId: string,
+): Promise<ListPipelineIosDevicesResponse> {
+  return request<ListPipelineIosDevicesResponse>(
+    baseUrl,
+    `/v1/pipelines/${pipelineId}/ios-signing/devices`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function registerPipelineIosDevice(
+  baseUrl: string,
+  token: string,
+  pipelineId: string,
+  data: RegisterIosDeviceRequest,
+): Promise<RegisterIosDeviceResponse> {
+  return request<RegisterIosDeviceResponse>(
+    baseUrl,
+    `/v1/pipelines/${pipelineId}/ios-signing/devices/register`,
+    {
+      method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use base64::Engine as _;
 use oore_contract::{
     AndroidSigningBuildType, AndroidSigningProfile, AndroidSigningProfileInput, ApiError,
@@ -109,7 +109,9 @@ fn row_to_public_profile(
         has_store_password: row
             .get::<Option<String>, _>("store_password_encrypted")
             .is_some(),
-        has_key_password: row.get::<Option<String>, _>("key_password_encrypted").is_some(),
+        has_key_password: row
+            .get::<Option<String>, _>("key_password_encrypted")
+            .is_some(),
         updated_at: Some(row.get("updated_at")),
     })
 }
@@ -142,8 +144,8 @@ fn row_to_runner_profile(
         decrypt_opt(keystore_encrypted, key)?.ok_or_else(|| anyhow::anyhow!("missing keystore"))?;
     let store_password = decrypt_opt(store_password_encrypted, key)?
         .ok_or_else(|| anyhow::anyhow!("missing store password"))?;
-    let key_alias =
-        decrypt_opt(key_alias_encrypted, key)?.ok_or_else(|| anyhow::anyhow!("missing key alias"))?;
+    let key_alias = decrypt_opt(key_alias_encrypted, key)?
+        .ok_or_else(|| anyhow::anyhow!("missing key alias"))?;
     let key_password = decrypt_opt(key_password_encrypted, key)?
         .ok_or_else(|| anyhow::anyhow!("missing key password"))?;
 
@@ -161,7 +163,10 @@ fn row_to_runner_profile(
 async fn load_profile_rows(
     pool: &SqlitePool,
     pipeline_id: &str,
-) -> anyhow::Result<(Option<sqlx::sqlite::SqliteRow>, Option<sqlx::sqlite::SqliteRow>)> {
+) -> anyhow::Result<(
+    Option<sqlx::sqlite::SqliteRow>,
+    Option<sqlx::sqlite::SqliteRow>,
+)> {
     let rows = sqlx::query(
         "SELECT * FROM pipeline_android_signing_profiles WHERE pipeline_id = ?1 ORDER BY build_type ASC",
     )
@@ -411,15 +416,22 @@ pub async fn get_pipeline_android_signing(
         store.pool().clone()
     };
 
-    if !ensure_pipeline_exists(&pool, &pipeline_id).await.map_err(|e| {
-        error!(error = %e, "failed to verify pipeline");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to load Android signing settings",
-        )
-    })? {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"));
+    if !ensure_pipeline_exists(&pool, &pipeline_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to verify pipeline");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load Android signing settings",
+            )
+        })?
+    {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Pipeline not found",
+        ));
     }
 
     let (debug_row, release_row) = load_profile_rows(&pool, &pipeline_id).await.map_err(|e| {
@@ -486,15 +498,22 @@ pub async fn update_pipeline_android_signing(
         store.pool().clone()
     };
 
-    if !ensure_pipeline_exists(&pool, &pipeline_id).await.map_err(|e| {
-        error!(error = %e, "failed to verify pipeline");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to save Android signing settings",
-        )
-    })? {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"));
+    if !ensure_pipeline_exists(&pool, &pipeline_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to verify pipeline");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to save Android signing settings",
+            )
+        })?
+    {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Pipeline not found",
+        ));
     }
 
     let debug_updated = req.debug.is_some();

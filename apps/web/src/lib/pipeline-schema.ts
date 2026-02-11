@@ -19,6 +19,13 @@ export const pipelineFormSchema = z
     android_signing_debug_store_password: z.string().optional(),
     android_signing_debug_key_alias: z.string().optional(),
     android_signing_debug_key_password: z.string().optional(),
+    ios_signing_enabled: z.boolean(),
+    ios_signing_mode: z.enum(['manual', 'api', 'hybrid']),
+    ios_signing_team_id: z.string().optional(),
+    ios_signing_bundle_ids: z.string().optional(),
+    ios_signing_p12_password: z.string().optional(),
+    ios_signing_api_key_id: z.string().optional(),
+    ios_signing_api_issuer_id: z.string().optional(),
     flutter_version: z
       .string()
       .optional()
@@ -51,6 +58,48 @@ export const pipelineFormSchema = z
         message: 'Config path is required when explicit mode is selected',
         path: ['config_path'],
       })
+    }
+    if (data.ios_signing_enabled && !data.platform_ios) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'iOS signing requires iOS platform to be enabled',
+        path: ['ios_signing_enabled'],
+      })
+    }
+    if (data.ios_signing_enabled) {
+      if (!data.ios_signing_team_id?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Team ID is required when iOS signing is enabled',
+          path: ['ios_signing_team_id'],
+        })
+      }
+      if (!data.ios_signing_bundle_ids?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'At least one bundle ID is required',
+          path: ['ios_signing_bundle_ids'],
+        })
+      }
+      if (
+        data.ios_signing_mode === 'api' ||
+        data.ios_signing_mode === 'hybrid'
+      ) {
+        if (!data.ios_signing_api_key_id?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'API Key ID is required for API/Hybrid mode',
+            path: ['ios_signing_api_key_id'],
+          })
+        }
+        if (!data.ios_signing_api_issuer_id?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Issuer ID is required for API/Hybrid mode',
+            path: ['ios_signing_api_issuer_id'],
+          })
+        }
+      }
     }
   })
 

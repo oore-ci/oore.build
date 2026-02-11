@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use axum::http::request::Parts;
-use axum::Json;
 use oore_contract::ApiError;
 
+use crate::AppState;
 use crate::session::SessionInfo;
 use crate::util::{api_err, extract_bearer};
-use crate::AppState;
 
 /// Axum extractor that validates the bearer token and returns session info.
 ///

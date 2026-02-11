@@ -115,6 +115,23 @@ export async function fileToBase64(file: File): Promise<string> {
   return btoa(binary)
 }
 
+export function parseBundleIdsInput(raw?: string): Array<string> {
+  if (!raw) return []
+  const seen = new Set<string>()
+  const out: Array<string> = []
+  for (const part of raw.split(/[\n,]/g)) {
+    const trimmed = part.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
+  }
+  return out
+}
+
+export async function fileToUtf8(file: File): Promise<string> {
+  return await file.text()
+}
+
 export function toMultiline(values: Array<string>): string {
   return values.join('\n')
 }

@@ -104,7 +104,11 @@ async fn test_github_webhook_idempotency() {
     // Give async processing a moment, then confirm no extra build
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let builds_after = common::wait_for_builds(&pool, &project_id, 1, 500).await;
-    assert_eq!(builds_after.len(), 1, "duplicate should not create extra build");
+    assert_eq!(
+        builds_after.len(),
+        1,
+        "duplicate should not create extra build"
+    );
 }
 
 #[tokio::test]
@@ -115,8 +119,7 @@ async fn test_github_webhook_invalid_signature() {
     let pool = common::connect_pool(&db_path).await;
 
     let user_id = common::seed_test_user(&pool).await;
-    let _integration_id =
-        common::seed_github_integration(&pool, &user_id, "real-secret").await;
+    let _integration_id = common::seed_github_integration(&pool, &user_id, "real-secret").await;
 
     let payload = common::github_push_payload("test-org/repo", "main", "aaa");
     let body_bytes = serde_json::to_vec(&payload).unwrap();
@@ -199,7 +202,11 @@ async fn test_github_webhook_secret_rotation_refreshes_cache_without_restart() {
     assert_eq!(resp2.status(), 200);
 
     let builds2 = common::wait_for_builds(&pool, &project_id, 2, 2000).await;
-    assert_eq!(builds2.len(), 2, "rotated secret should still trigger a build");
+    assert_eq!(
+        builds2.len(),
+        2,
+        "rotated secret should still trigger a build"
+    );
     assert_eq!(builds2[1]["commit_sha"], "sha-new");
 }
 
@@ -260,8 +267,7 @@ async fn test_github_webhook_invalid_json() {
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gh-test-secret-badjson";
-    let _integration_id =
-        common::seed_github_integration(&pool, &user_id, secret).await;
+    let _integration_id = common::seed_github_integration(&pool, &user_id, secret).await;
 
     let bad_json = b"not valid json{{{";
     let signature = common::github_hmac_signature(bad_json, secret);
@@ -372,7 +378,11 @@ async fn test_gitlab_webhook_idempotency() {
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let builds_after = common::wait_for_builds(&pool, &project_id, 1, 500).await;
-    assert_eq!(builds_after.len(), 1, "duplicate should not create extra build");
+    assert_eq!(
+        builds_after.len(),
+        1,
+        "duplicate should not create extra build"
+    );
 }
 
 #[tokio::test]
@@ -434,7 +444,11 @@ async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
     assert_eq!(resp2.status(), 200);
 
     let builds2 = common::wait_for_builds(&pool, &project_id, 2, 2000).await;
-    assert_eq!(builds2.len(), 2, "rotated token should still trigger a build");
+    assert_eq!(
+        builds2.len(),
+        2,
+        "rotated token should still trigger a build"
+    );
     assert_eq!(builds2[1]["commit_sha"], "gl-sha-new");
 }
 
@@ -446,8 +460,7 @@ async fn test_gitlab_webhook_wrong_token() {
     let pool = common::connect_pool(&db_path).await;
 
     let user_id = common::seed_test_user(&pool).await;
-    let _integration_id =
-        common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
+    let _integration_id = common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
 
     let payload = common::gitlab_push_payload("group/repo", "main", "sha1");
     let body_bytes = serde_json::to_vec(&payload).unwrap();
@@ -499,8 +512,7 @@ async fn test_gitlab_webhook_stale_event() {
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gl-stale-secret";
-    let _integration_id =
-        common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    let _integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
 
     // Create a payload with a timestamp 6 minutes in the past
     let stale_time = chrono::Utc::now() - chrono::Duration::seconds(360);
@@ -720,12 +732,11 @@ async fn test_gitlab_oauth_failure_keeps_integration_inactive() {
     );
 
     // Verify the integration is still inactive — user can retry authorization
-    let row: (String,) =
-        sqlx::query_as("SELECT status FROM integrations WHERE id = ?1")
-            .bind(&integration_id)
-            .fetch_one(&pool)
-            .await
-            .expect("failed to query integration status");
+    let row: (String,) = sqlx::query_as("SELECT status FROM integrations WHERE id = ?1")
+        .bind(&integration_id)
+        .fetch_one(&pool)
+        .await
+        .expect("failed to query integration status");
     assert_eq!(
         row.0, "inactive",
         "integration should remain inactive after failed OAuth exchange"

@@ -1519,6 +1519,224 @@ pub struct RunnerAndroidSigningResponse {
     pub release: Option<RunnerAndroidSigningProfile>,
 }
 
+// ── Pipeline iOS signing types ──────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IosSigningMode {
+    #[default]
+    Manual,
+    Api,
+    Hybrid,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct IosCertificateInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p12_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p12_base64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p12_password: Option<String>,
+}
+
+impl fmt::Debug for IosCertificateInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IosCertificateInput")
+            .field("p12_filename", &self.p12_filename)
+            .field("p12_base64", &"[REDACTED]")
+            .field("p12_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct IosProvisioningProfileInput {
+    pub bundle_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_base64: Option<String>,
+}
+
+impl fmt::Debug for IosProvisioningProfileInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IosProvisioningProfileInput")
+            .field("bundle_id", &self.bundle_id)
+            .field("profile_filename", &self.profile_filename)
+            .field("profile_base64", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct IosApiCredentialInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key_base64: Option<String>,
+}
+
+impl fmt::Debug for IosApiCredentialInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IosApiCredentialInput")
+            .field("key_id", &self.key_id)
+            .field("issuer_id", &self.issuer_id)
+            .field("private_key_base64", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IosBundleProfileMappingInput {
+    pub bundle_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_filename: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdatePipelineIosSigningRequest {
+    #[serde(default)]
+    pub enabled: bool,
+    pub mode: IosSigningMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub bundle_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<IosCertificateInput>,
+    #[serde(default)]
+    pub provisioning_profiles: Vec<IosProvisioningProfileInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_credentials: Option<IosApiCredentialInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IosProvisioningProfileSummary {
+    pub bundle_id: String,
+    pub has_profile: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineIosSigningResponse {
+    pub pipeline_id: String,
+    pub enabled: bool,
+    pub mode: IosSigningMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    pub export_method: String,
+    #[serde(default)]
+    pub bundle_ids: Vec<String>,
+    pub has_p12: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p12_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p12_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p12_expires_at: Option<i64>,
+    pub has_p12_password: bool,
+    pub has_api_key: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_issuer_id: Option<String>,
+    #[serde(default)]
+    pub provisioning_profiles: Vec<IosProvisioningProfileSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerIosProvisioningProfile {
+    pub bundle_id: String,
+    pub profile_filename: String,
+    pub profile_base64: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerIosSigningBundle {
+    pub enabled: bool,
+    pub mode: IosSigningMode,
+    pub team_id: String,
+    pub export_method: String,
+    pub p12_filename: String,
+    pub p12_base64: String,
+    pub p12_password: String,
+    #[serde(default)]
+    pub provisioning_profiles: Vec<RunnerIosProvisioningProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerIosSigningResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<RunnerIosSigningBundle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisteredIosDevice {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    pub udid: String,
+    pub name: String,
+    pub platform: String,
+    pub status: String,
+    pub added_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_synced_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListPipelineIosDevicesResponse {
+    pub pipeline_id: String,
+    #[serde(default)]
+    pub devices: Vec<RegisteredIosDevice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterIosDeviceRequest {
+    pub udid: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterIosDeviceResponse {
+    pub pipeline_id: String,
+    pub device: RegisteredIosDevice,
+    pub profile_sync_triggered: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncPipelineIosSigningResponse {
+    pub pipeline_id: String,
+    pub ok: bool,
+    pub updated_profiles: usize,
+    #[serde(default)]
+    pub synced_bundle_ids: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
 // ── Build log types ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1724,5 +1942,41 @@ mod tests {
         assert!(debug.enabled);
         assert_eq!(debug.keystore_filename.as_deref(), Some("debug.jks"));
         assert_eq!(debug.key_alias.as_deref(), Some("debugAlias"));
+    }
+
+    #[test]
+    fn ios_signing_request_round_trip_json() {
+        let request = UpdatePipelineIosSigningRequest {
+            enabled: true,
+            mode: IosSigningMode::Hybrid,
+            team_id: Some("TEAM1234".to_string()),
+            bundle_ids: vec!["com.example.app".to_string()],
+            certificate: Some(IosCertificateInput {
+                p12_filename: Some("dist.p12".to_string()),
+                p12_base64: Some("ZmFrZS1wMTI=".to_string()),
+                p12_password: Some("secret-pass".to_string()),
+            }),
+            provisioning_profiles: vec![IosProvisioningProfileInput {
+                bundle_id: "com.example.app".to_string(),
+                profile_filename: Some("app.mobileprovision".to_string()),
+                profile_base64: Some("ZmFrZS1wcm9maWxl".to_string()),
+            }],
+            api_credentials: Some(IosApiCredentialInput {
+                key_id: Some("ABC123XYZ".to_string()),
+                issuer_id: Some("00000000-0000-0000-0000-000000000000".to_string()),
+                private_key_base64: Some("ZmFrZS1wOA==".to_string()),
+            }),
+        };
+
+        let json = serde_json::to_string(&request).expect("serialize");
+        let parsed: UpdatePipelineIosSigningRequest =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!(parsed.enabled);
+        assert_eq!(parsed.mode, IosSigningMode::Hybrid);
+        assert_eq!(parsed.team_id.as_deref(), Some("TEAM1234"));
+        assert_eq!(parsed.bundle_ids, vec!["com.example.app".to_string()]);
+        assert_eq!(parsed.provisioning_profiles.len(), 1);
+        let api = parsed.api_credentials.expect("api credentials");
+        assert_eq!(api.key_id.as_deref(), Some("ABC123XYZ"));
     }
 }

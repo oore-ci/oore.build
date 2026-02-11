@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use oore_contract::{
     ApiError, Artifact, ArtifactDownloadLinkResponse, CreateArtifactRequest,
     CreateArtifactResponse, ListArtifactsResponse,
@@ -13,12 +13,12 @@ use sqlx::Row;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -36,9 +36,7 @@ const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
 
 fn is_unique_constraint(err: &sqlx::Error) -> bool {
     match err {
-        sqlx::Error::Database(db_err) => {
-            db_err.message().contains("UNIQUE constraint failed")
-        }
+        sqlx::Error::Database(db_err) => db_err.message().contains("UNIQUE constraint failed"),
         _ => false,
     }
 }
@@ -47,8 +45,7 @@ fn is_unique_constraint(err: &sqlx::Error) -> bool {
 
 fn row_to_artifact(row: &sqlx::sqlite::SqliteRow) -> Artifact {
     let metadata_str: String = row.get("metadata");
-    let metadata: serde_json::Value =
-        serde_json::from_str(&metadata_str).unwrap_or_default();
+    let metadata: serde_json::Value = serde_json::from_str(&metadata_str).unwrap_or_default();
 
     Artifact {
         id: row.get("id"),
@@ -115,7 +112,11 @@ pub async fn create_artifact(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch build");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
@@ -154,8 +155,7 @@ pub async fn create_artifact(
                 "store_error",
                 "Failed to create artifact",
             )
-        })?
-        {
+        })? {
             let artifact = row_to_artifact(&existing_row);
             info!(
                 build_id = %build_id,
@@ -176,8 +176,7 @@ pub async fn create_artifact(
     // S3 key format: artifacts/{build_id}/{artifact_id}/{name}
     let file_path = format!("artifacts/{build_id}/{artifact_id}/{name}");
 
-    let metadata_str =
-        serde_json::to_string(&req.metadata).unwrap_or_else(|_| "{}".to_string());
+    let metadata_str = serde_json::to_string(&req.metadata).unwrap_or_else(|_| "{}".to_string());
 
     // Generate upload URL first — if this fails we avoid leaving an orphan DB row.
     let upload_url = {
@@ -232,8 +231,7 @@ pub async fn create_artifact(
                         "store_error",
                         "Failed to create artifact",
                     )
-                })?
-                {
+                })? {
                     let artifact = row_to_artifact(&existing_row);
                     info!(
                         build_id = %build_id,
@@ -296,16 +294,18 @@ pub async fn list_artifacts(
         store.pool().clone()
     };
 
-    let rows = sqlx::query(
-        "SELECT * FROM artifacts WHERE build_id = ?1 ORDER BY created_at ASC",
-    )
-    .bind(&build_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to list artifacts");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list artifacts")
-    })?;
+    let rows = sqlx::query("SELECT * FROM artifacts WHERE build_id = ?1 ORDER BY created_at ASC")
+        .bind(&build_id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to list artifacts");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list artifacts",
+            )
+        })?;
 
     let artifacts = rows.iter().map(row_to_artifact).collect();
 
@@ -332,7 +332,11 @@ pub async fn generate_download_link(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch artifact");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch artifact")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch artifact",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Artifact not found"))?;
 
@@ -443,17 +447,14 @@ pub async fn download_local_artifact(
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let payload = {
         let storage = state.storage.read().await;
-        storage
-            .handle_local_download(&token)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed local artifact download");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "storage_error",
-                    "Failed to load artifact",
-                )
-            })?
+        storage.handle_local_download(&token).await.map_err(|e| {
+            error!(error = %e, "failed local artifact download");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Failed to load artifact",
+            )
+        })?
     };
 
     let Some(payload) = payload else {

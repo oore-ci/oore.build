@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Query, State};
-use axum::http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode};
-use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header::SET_COOKIE};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use oore_contract::{
     ApiError, GitHubAppCompleteRequest, GitHubAppCompleteResponse, GitHubAppStartRequest,
     GitHubAppStartResponse, Integration, IntegrationInstallation, SyncInstallationsRequest,
@@ -15,12 +15,12 @@ use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -60,8 +60,10 @@ fn configured_redirect_origins() -> Vec<url::Url> {
         }
     }
     if origins.is_empty() {
-        vec![url::Url::parse("http://localhost:3000")
-            .expect("default redirect origin must be valid")]
+        vec![
+            url::Url::parse("http://localhost:3000")
+                .expect("default redirect origin must be valid"),
+        ]
     } else {
         origins
     }
@@ -157,8 +159,7 @@ fn seal_state(state: &GitHubOAuthState, key: &[u8]) -> Result<String, anyhow::Er
 fn open_state(token: &str, key: &[u8]) -> Result<GitHubOAuthState, String> {
     let decoded = urlencoding::decode(token).map_err(|e| format!("url decode: {e}"))?;
     let json = crypto::decrypt(&decoded, key).map_err(|e| format!("decrypt: {e}"))?;
-    let state: GitHubOAuthState =
-        serde_json::from_str(&json).map_err(|e| format!("parse: {e}"))?;
+    let state: GitHubOAuthState = serde_json::from_str(&json).map_err(|e| format!("parse: {e}"))?;
 
     let now = now_unix();
     if now - state.created_at > STATE_MAX_AGE_SECS {
@@ -331,7 +332,11 @@ pub async fn github_create_page(
         Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "invalid github create state token");
-            return Html(error_page("Invalid or expired link", "Please go back and try again.")).into_response();
+            return Html(error_page(
+                "Invalid or expired link",
+                "Please go back and try again.",
+            ))
+            .into_response();
         }
     };
 
@@ -451,14 +456,7 @@ pub async fn github_callback(
     );
 
     // Exchange code for credentials
-    match exchange_and_store(
-        &state,
-        &code,
-        &oauth_state.user_id,
-        &oauth_state.user_email,
-    )
-    .await
-    {
+    match exchange_and_store(&state, &code, &oauth_state.user_id, &oauth_state.user_email).await {
         Ok(integration) => {
             info!(
                 integration_id = %integration.id,
@@ -470,7 +468,8 @@ pub async fn github_callback(
                 integration_id: integration.id.clone(),
                 created_at: now_unix(),
             };
-            let sealed_install_state = seal_install_state(&install_state, &state.encryption_key).ok();
+            let sealed_install_state =
+                seal_install_state(&install_state, &state.encryption_key).ok();
 
             // Redirect to GitHub install page so user can install the app on their org/account
             if let Some(ref slug) = integration.app_slug {
@@ -510,7 +509,10 @@ pub async fn github_callback(
             error!(error = %msg, "GitHub callback exchange failed");
             Html(error_page(
                 "Setup failed",
-                &format!("Failed to complete GitHub App setup: {}. Please try again.", msg),
+                &format!(
+                    "Failed to complete GitHub App setup: {}. Please try again.",
+                    msg
+                ),
             ))
             .into_response()
         }
@@ -586,11 +588,14 @@ pub async fn github_installed(
         }
     }
 
-    let frontend_base = std::env::var("OORE_CORS_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let frontend_base =
+        std::env::var("OORE_CORS_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     let redirect_target = if let Some(ref id) = integration_id {
-        format!("{}/settings/integrations/{}?installed=true", frontend_base, id)
+        format!(
+            "{}/settings/integrations/{}?installed=true",
+            frontend_base, id
+        )
     } else {
         format!("{}/settings/integrations?github=success", frontend_base)
     };
@@ -663,10 +668,7 @@ async fn exchange_and_store(
     user_email: &str,
 ) -> Result<Integration, String> {
     let client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
-    let conversion_url = format!(
-        "https://api.github.com/app-manifests/{}/conversions",
-        code
-    );
+    let conversion_url = format!("https://api.github.com/app-manifests/{}/conversions", code);
 
     let resp = client
         .post(&conversion_url)
@@ -683,8 +685,10 @@ async fn exchange_and_store(
         return Err(format!("GitHub returned {status}"));
     }
 
-    let conversion: GitHubManifestConversionResponse =
-        resp.json().await.map_err(|e| format!("Failed to parse GitHub response: {e}"))?;
+    let conversion: GitHubManifestConversionResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse GitHub response: {e}"))?;
 
     let now = now_unix();
     let integration_id = Uuid::new_v4().to_string();
@@ -829,12 +833,9 @@ pub async fn github_complete(
         ));
     }
 
-    let integration =
-        exchange_and_store(&state, &req.code, &auth.0.user_id, &auth.0.email)
-            .await
-            .map_err(|msg| {
-                api_err(StatusCode::BAD_GATEWAY, "github_conversion_failed", msg)
-            })?;
+    let integration = exchange_and_store(&state, &req.code, &auth.0.user_id, &auth.0.email)
+        .await
+        .map_err(|msg| api_err(StatusCode::BAD_GATEWAY, "github_conversion_failed", msg))?;
 
     Ok(Json(GitHubAppCompleteResponse { integration }))
 }
@@ -850,7 +851,10 @@ struct GitHubInstallation {
 }
 
 /// Generate a GitHub App JWT for authenticating as the app.
-fn generate_github_jwt(app_id: &str, private_key_pem: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
+fn generate_github_jwt(
+    app_id: &str,
+    private_key_pem: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
     use jsonwebtoken::{Algorithm, EncodingKey, Header};
 
     #[derive(Serialize)]
@@ -869,13 +873,21 @@ fn generate_github_jwt(app_id: &str, private_key_pem: &str) -> Result<String, (S
 
     let key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes()).map_err(|e| {
         error!(error = %e, "failed to parse GitHub App private key");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "key_error", "Invalid GitHub App private key")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "key_error",
+            "Invalid GitHub App private key",
+        )
     })?;
 
     let header = Header::new(Algorithm::RS256);
     jsonwebtoken::encode(&header, &claims, &key).map_err(|e| {
         error!(error = %e, "failed to generate GitHub JWT");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "jwt_error", "Failed to generate authentication token")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "jwt_error",
+            "Failed to generate authentication token",
+        )
     })
 }
 
@@ -939,7 +951,9 @@ async fn perform_sync(
         return Err(format!("GitHub returned {status}"));
     }
 
-    let gh_installations: Vec<GitHubInstallation> = resp.json().await
+    let gh_installations: Vec<GitHubInstallation> = resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse GitHub response: {e}"))?;
 
     let now = now_unix();
@@ -1094,7 +1108,11 @@ async fn sync_installation_repos(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to get installation access token");
-            api_err(StatusCode::BAD_GATEWAY, "github_api_error", "Failed to get access token")
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_api_error",
+                "Failed to get access token",
+            )
         })?;
 
     if !token_resp.status().is_success() {
@@ -1113,7 +1131,11 @@ async fn sync_installation_repos(
 
     let token: TokenResponse = token_resp.json().await.map_err(|e| {
         error!(error = %e, "failed to parse access token response");
-        api_err(StatusCode::BAD_GATEWAY, "github_parse_error", "Failed to parse token response")
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "github_parse_error",
+            "Failed to parse token response",
+        )
     })?;
 
     let repos_resp = client
@@ -1125,7 +1147,11 @@ async fn sync_installation_repos(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to list installation repos");
-            api_err(StatusCode::BAD_GATEWAY, "github_api_error", "Failed to list repositories")
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_api_error",
+                "Failed to list repositories",
+            )
         })?;
 
     if !repos_resp.status().is_success() {
@@ -1153,7 +1179,11 @@ async fn sync_installation_repos(
 
     let repos: ReposResponse = repos_resp.json().await.map_err(|e| {
         error!(error = %e, "failed to parse repos response");
-        api_err(StatusCode::BAD_GATEWAY, "github_parse_error", "Failed to parse repos response")
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "github_parse_error",
+            "Failed to parse repos response",
+        )
     })?;
 
     let mut synced_repo_ids: Vec<String> = Vec::new();
@@ -1199,7 +1229,11 @@ async fn sync_installation_repos(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to clean up stale repos");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to clean up stale repositories")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to clean up stale repositories",
+        )
     })?;
 
     if deleted.rows_affected() > 0 {

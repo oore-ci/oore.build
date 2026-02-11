@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::Json;
 use oore_contract::{
     ApiError, GitLabAuthorizeRequest, GitLabAuthorizeResponse, GitLabCompleteResponse,
     GitLabStartRequest, Integration,
@@ -15,12 +15,12 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::error_page;
+use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -58,8 +58,10 @@ fn configured_redirect_origins() -> Vec<url::Url> {
         }
     }
     if origins.is_empty() {
-        vec![url::Url::parse("http://localhost:3000")
-            .expect("default redirect origin must be valid")]
+        vec![
+            url::Url::parse("http://localhost:3000")
+                .expect("default redirect origin must be valid"),
+        ]
     } else {
         origins
     }
@@ -81,10 +83,18 @@ pub async fn gitlab_start(
     // Validate host URL
     let host_url = req.host_url.trim_end_matches('/').to_string();
     if host_url.is_empty() {
-        return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "host_url is required"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "host_url is required",
+        ));
     }
     if url::Url::parse(&host_url).is_err() {
-        return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "host_url is not a valid URL"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "host_url is not a valid URL",
+        ));
     }
 
     if req.webhook_secret.trim().is_empty() {
@@ -108,15 +118,27 @@ pub async fn gitlab_start(
     match auth_mode {
         "oauth_app" => {
             if req.client_id.as_ref().map_or(true, |s| s.is_empty()) {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "client_id required for OAuth mode"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "client_id required for OAuth mode",
+                ));
             }
             if req.client_secret.as_ref().map_or(true, |s| s.is_empty()) {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "client_secret required for OAuth mode"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "client_secret required for OAuth mode",
+                ));
             }
         }
         "personal_token" => {
             if req.access_token.as_ref().map_or(true, |s| s.is_empty()) {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "access_token required for token mode"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "access_token required for token mode",
+                ));
             }
         }
         _ => unreachable!(),
@@ -125,7 +147,11 @@ pub async fn gitlab_start(
     // Validate token/credentials by calling GitLab API
     let client = build_http_client().map_err(|e| {
         error!(error = %e, "failed to build HTTP client");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "http_client_error", "Failed to create HTTP client")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create HTTP client",
+        )
     })?;
     let api_base = format!("{}/api/v4", host_url);
 
@@ -140,7 +166,11 @@ pub async fn gitlab_start(
                 .await
                 .map_err(|e| {
                     error!(error = %e, "GitLab API request failed");
-                    api_err(StatusCode::BAD_GATEWAY, "gitlab_api_error", "Failed to communicate with GitLab")
+                    api_err(
+                        StatusCode::BAD_GATEWAY,
+                        "gitlab_api_error",
+                        "Failed to communicate with GitLab",
+                    )
                 })?;
 
             if !resp.status().is_success() {
@@ -160,7 +190,11 @@ pub async fn gitlab_start(
 
             let user: GitLabUser = resp.json().await.map_err(|e| {
                 error!(error = %e, "failed to parse GitLab user response");
-                api_err(StatusCode::BAD_GATEWAY, "gitlab_parse_error", "Failed to parse GitLab response")
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "gitlab_parse_error",
+                    "Failed to parse GitLab response",
+                )
             })?;
 
             let display = user.name.unwrap_or_else(|| user.username.clone());
@@ -177,7 +211,11 @@ pub async fn gitlab_start(
                 .await
                 .map_err(|e| {
                     error!(error = %e, "GitLab API request failed");
-                    api_err(StatusCode::BAD_GATEWAY, "gitlab_api_error", "Failed to communicate with GitLab")
+                    api_err(
+                        StatusCode::BAD_GATEWAY,
+                        "gitlab_api_error",
+                        "Failed to communicate with GitLab",
+                    )
                 })?;
 
             if !resp.status().is_success() {
@@ -195,7 +233,11 @@ pub async fn gitlab_start(
 
             let version: GitLabVersion = resp.json().await.map_err(|e| {
                 error!(error = %e, "failed to parse GitLab version response");
-                api_err(StatusCode::BAD_GATEWAY, "gitlab_parse_error", "Failed to parse GitLab response")
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "gitlab_parse_error",
+                    "Failed to parse GitLab response",
+                )
             })?;
 
             let display = format!("GitLab {}", version.version);
@@ -238,10 +280,15 @@ pub async fn gitlab_start(
     })?;
 
     // Store credentials
-    let encrypted_webhook_secret = crypto::encrypt(req.webhook_secret.trim(), &state.encryption_key).map_err(|e| {
-        error!(error = %e, "failed to encrypt webhook secret");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt credentials")
-    })?;
+    let encrypted_webhook_secret =
+        crypto::encrypt(req.webhook_secret.trim(), &state.encryption_key).map_err(|e| {
+            error!(error = %e, "failed to encrypt webhook secret");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "encryption_error",
+                "Failed to encrypt credentials",
+            )
+        })?;
 
     sqlx::query(
         "INSERT INTO integration_credentials (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
@@ -263,7 +310,11 @@ pub async fn gitlab_start(
             let token = req.access_token.as_ref().unwrap();
             let encrypted = crypto::encrypt(token, &state.encryption_key).map_err(|e| {
                 error!(error = %e, "failed to encrypt access token");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt credentials")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption_error",
+                    "Failed to encrypt credentials",
+                )
             })?;
 
             sqlx::query(
@@ -285,7 +336,10 @@ pub async fn gitlab_start(
             let client_id = req.client_id.as_ref().unwrap();
             let client_secret = req.client_secret.as_ref().unwrap();
 
-            for (cred_type, value) in [("oauth_client_id", client_id), ("oauth_client_secret", client_secret)] {
+            for (cred_type, value) in [
+                ("oauth_client_id", client_id),
+                ("oauth_client_secret", client_secret),
+            ] {
                 let encrypted = crypto::encrypt(value, &state.encryption_key).map_err(|e| {
                     error!(error = %e, credential_type = %cred_type, "failed to encrypt credential");
                     api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt credentials")
@@ -332,7 +386,9 @@ pub async fn gitlab_start(
 
         // Fetch accessible projects via GitLab API
         let token = req.access_token.as_ref().unwrap();
-        if let Err(e) = sync_gitlab_projects(&client, &pool, &host_url, token, &inst_id, false, now).await {
+        if let Err(e) =
+            sync_gitlab_projects(&client, &pool, &host_url, token, &inst_id, false, now).await
+        {
             error!(error = ?e, "failed to sync GitLab projects (non-fatal)");
         }
     }
@@ -396,7 +452,9 @@ async fn sync_gitlab_projects(
     let api_base = format!("{}/api/v4", host_url);
 
     let mut req_builder = client
-        .get(format!("{api_base}/projects?membership=true&per_page=100&simple=true"))
+        .get(format!(
+            "{api_base}/projects?membership=true&per_page=100&simple=true"
+        ))
         .header("User-Agent", "oore-ci");
 
     if use_bearer_auth {
@@ -405,13 +463,14 @@ async fn sync_gitlab_projects(
         req_builder = req_builder.header("PRIVATE-TOKEN", token);
     }
 
-    let resp = req_builder
-        .send()
-        .await
-        .map_err(|e| {
-            error!(error = %e, "GitLab projects API failed");
-            api_err(StatusCode::BAD_GATEWAY, "gitlab_api_error", "Failed to list GitLab projects")
-        })?;
+    let resp = req_builder.send().await.map_err(|e| {
+        error!(error = %e, "GitLab projects API failed");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            "Failed to list GitLab projects",
+        )
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -433,7 +492,11 @@ async fn sync_gitlab_projects(
 
     let projects: Vec<GitLabProject> = resp.json().await.map_err(|e| {
         error!(error = %e, "failed to parse GitLab projects");
-        api_err(StatusCode::BAD_GATEWAY, "gitlab_parse_error", "Failed to parse GitLab response")
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_parse_error",
+            "Failed to parse GitLab response",
+        )
     })?;
 
     for project in &projects {
@@ -487,8 +550,7 @@ fn seal_gitlab_state(state: &GitLabOAuthState, key: &[u8]) -> Result<String, any
 fn open_gitlab_state(token: &str, key: &[u8]) -> Result<GitLabOAuthState, String> {
     let decoded = urlencoding::decode(token).map_err(|e| format!("url decode: {e}"))?;
     let json = crypto::decrypt(&decoded, key).map_err(|e| format!("decrypt: {e}"))?;
-    let state: GitLabOAuthState =
-        serde_json::from_str(&json).map_err(|e| format!("parse: {e}"))?;
+    let state: GitLabOAuthState = serde_json::from_str(&json).map_err(|e| format!("parse: {e}"))?;
 
     let now = now_unix();
     if now - state.created_at > STATE_MAX_AGE_SECS {
@@ -501,7 +563,11 @@ fn open_gitlab_state(token: &str, key: &[u8]) -> Result<GitLabOAuthState, String
 /// Validate that a redirect URL belongs to configured trusted frontend origins.
 fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
     let parsed = url::Url::parse(url).map_err(|_| {
-        api_err(StatusCode::BAD_REQUEST, "invalid_redirect_url", "redirect_url is not a valid URL")
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_url",
+            "redirect_url is not a valid URL",
+        )
     })?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(api_err(
@@ -539,10 +605,18 @@ pub async fn gitlab_authorize(
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
 
     if req.integration_id.is_empty() {
-        return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "integration_id is required"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "integration_id is required",
+        ));
     }
     if req.redirect_url.is_empty() {
-        return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "redirect_url is required"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "redirect_url is required",
+        ));
     }
 
     // Validate redirect against configured frontend origin
@@ -560,7 +634,11 @@ pub async fn gitlab_authorize(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch integration");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch integration")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch integration",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"))?;
 
@@ -569,10 +647,18 @@ pub async fn gitlab_authorize(
     let host_url: String = row.get("host_url");
 
     if auth_mode != "oauth_app" {
-        return Err(api_err(StatusCode::BAD_REQUEST, "invalid_auth_mode", "Integration is not OAuth mode"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_auth_mode",
+            "Integration is not OAuth mode",
+        ));
     }
     if status != "inactive" {
-        return Err(api_err(StatusCode::CONFLICT, "already_active", "Integration is already active"));
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "already_active",
+            "Integration is already active",
+        ));
     }
 
     // Decrypt client_id
@@ -585,18 +671,32 @@ pub async fn gitlab_authorize(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch client_id");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch credentials")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch credentials",
+        )
     })?
-    .ok_or_else(|| api_err(StatusCode::INTERNAL_SERVER_ERROR, "missing_credentials", "OAuth client_id not found"))?;
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "missing_credentials",
+            "OAuth client_id not found",
+        )
+    })?;
 
     let client_id = crypto::decrypt(&encrypted_client_id, &state.encryption_key).map_err(|e| {
         error!(error = %e, "failed to decrypt client_id");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to decrypt credentials")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to decrypt credentials",
+        )
     })?;
 
     // Build callback URL
-    let public_url = std::env::var("OORE_PUBLIC_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let public_url =
+        std::env::var("OORE_PUBLIC_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
     let callback_url = format!("{}/v1/integrations/gitlab/callback", public_url);
 
     // Seal the state token
@@ -608,7 +708,11 @@ pub async fn gitlab_authorize(
 
     let state_token = seal_gitlab_state(&oauth_state, &state.encryption_key).map_err(|e| {
         error!(error = %e, "failed to seal GitLab OAuth state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to create state token")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to create state token",
+        )
     })?;
 
     // Build the authorize URL
@@ -648,7 +752,10 @@ pub async fn gitlab_callback(
 ) -> Response {
     // Handle GitLab error response
     if let Some(ref err) = params.error {
-        let desc = params.error_description.as_deref().unwrap_or("Unknown error");
+        let desc = params
+            .error_description
+            .as_deref()
+            .unwrap_or("Unknown error");
         warn!(error = %err, description = %desc, "GitLab OAuth error");
         return Html(error_page(
             "GitLab Authorization Failed",
@@ -788,11 +895,12 @@ async fn exchange_gitlab_code(
     };
 
     // ── Phase 2: Outbound HTTP — token exchange (no lock held) ──
-    let public_url = std::env::var("OORE_PUBLIC_URL")
-        .unwrap_or_else(|_| "http://localhost:8787".to_string());
+    let public_url =
+        std::env::var("OORE_PUBLIC_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
     let callback_url = format!("{}/v1/integrations/gitlab/callback", public_url);
 
-    let http_client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    let http_client =
+        build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
     #[derive(Deserialize)]
     struct GitLabTokenResponse {
@@ -943,7 +1051,13 @@ async fn exchange_gitlab_code(
 
     // Sync projects with bearer auth (non-fatal)
     if let Err(e) = sync_gitlab_projects(
-        &http_client, &pool, &host_url, &tokens.access_token, &inst_id, true, now,
+        &http_client,
+        &pool,
+        &host_url,
+        &tokens.access_token,
+        &inst_id,
+        true,
+        now,
     )
     .await
     {

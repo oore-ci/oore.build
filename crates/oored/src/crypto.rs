@@ -5,7 +5,7 @@ use anyhow::{Context, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use oore_contract::KeyStorageMode;
-use ring::aead::{self, Aad, BoundKey, Nonce, NonceSequence, NONCE_LEN, UnboundKey, AES_256_GCM};
+use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 #[cfg(target_os = "macos")]
 use security_framework::passwords::{
@@ -41,8 +41,8 @@ impl NonceSequence for SingleNonce {
 ///
 /// The key is stored at `{data_dir}/oore/encryption.key`.
 pub fn resolve_key_path() -> anyhow::Result<PathBuf> {
-    let data_dir = dirs::data_dir()
-        .context("could not determine platform data directory (dirs::data_dir)")?;
+    let data_dir =
+        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
     Ok(data_dir.join("oore").join("encryption.key"))
 }
 
@@ -270,10 +270,7 @@ pub fn load_runtime_key_with_mode(mode: KeyStorageMode) -> anyhow::Result<Runtim
     }
 }
 
-pub fn persist_current_key_for_mode(
-    key: &[u8],
-    mode: KeyStorageMode,
-) -> anyhow::Result<KeySource> {
+pub fn persist_current_key_for_mode(key: &[u8], mode: KeyStorageMode) -> anyhow::Result<KeySource> {
     let legacy_file_path = resolve_key_path()?;
 
     match mode {

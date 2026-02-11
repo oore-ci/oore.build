@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use oore_contract::{
     ApiError, CreateProjectRequest, CreateProjectResponse, ListProjectsResponse, Project,
     ProjectDetailResponse, UpdateProjectRequest,
@@ -12,11 +12,11 @@ use sqlx::Row;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -177,7 +177,11 @@ pub async fn list_projects(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to list projects");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list projects")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list projects",
+            )
         })?;
 
         (total, rows)
@@ -187,17 +191,20 @@ pub async fn list_projects(
             .await
             .unwrap_or(0);
 
-        let rows = sqlx::query(
-            "SELECT * FROM projects ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to list projects");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list projects")
-        })?;
+        let rows =
+            sqlx::query("SELECT * FROM projects ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to list projects");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to list projects",
+                    )
+                })?;
 
         (total, rows)
     };
@@ -224,7 +231,11 @@ pub async fn get_project(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch project");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch project")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch project",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"))?;
 
@@ -237,12 +248,11 @@ pub async fn get_project(
             .await
             .unwrap_or(0);
 
-    let build_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE project_id = ?1")
-            .bind(&project_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+    let build_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE project_id = ?1")
+        .bind(&project_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     Ok(Json(ProjectDetailResponse {
         project,
@@ -271,7 +281,11 @@ pub async fn update_project(
         .unwrap_or(false);
 
     if !exists {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
     }
 
     // Validate name if provided
@@ -338,7 +352,11 @@ pub async fn update_project(
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to fetch project");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch project")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch project",
+                )
             })?;
         return Ok(Json(CreateProjectResponse {
             project: row_to_project(&row),
@@ -363,7 +381,11 @@ pub async fn update_project(
 
     q.execute(pool).await.map_err(|e| {
         error!(error = %e, "failed to update project");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update project")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update project",
+        )
     })?;
 
     let details = serde_json::json!({
@@ -388,7 +410,11 @@ pub async fn update_project(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to reload project");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to reload project")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to reload project",
+            )
         })?;
 
     Ok(Json(CreateProjectResponse {
@@ -411,7 +437,11 @@ pub async fn delete_project(
     // and project delete are atomic (prevents race with concurrent build creation).
     let mut tx = pool.begin().await.map_err(|e| {
         error!(error = %e, "failed to begin transaction");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to delete project")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete project",
+        )
     })?;
 
     // Verify project exists
@@ -422,7 +452,11 @@ pub async fn delete_project(
         .unwrap_or(false);
 
     if !exists {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
     }
 
     // Check for non-terminal builds
@@ -453,7 +487,11 @@ pub async fn delete_project(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to clean up builds for project");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to delete project")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete project",
+        )
     })?;
 
     sqlx::query("DELETE FROM projects WHERE id = ?1")
@@ -462,12 +500,20 @@ pub async fn delete_project(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to delete project");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to delete project")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to delete project",
+            )
         })?;
 
     tx.commit().await.map_err(|e| {
         error!(error = %e, "failed to commit delete transaction");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to delete project")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete project",
+        )
     })?;
 
     let details = serde_json::json!({

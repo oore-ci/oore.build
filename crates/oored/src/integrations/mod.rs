@@ -57,9 +57,9 @@ pub(crate) fn error_page(title: &str, message: &str) -> String {
     )
 }
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use oore_contract::{
     ApiError, Integration, IntegrationDetailResponse, IntegrationInstallation,
     IntegrationRepository, ListInstallationsResponse, ListIntegrationsResponse,
@@ -69,11 +69,11 @@ use serde::Deserialize;
 use sqlx::Row;
 use tracing::{error, info};
 
+use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::api_err;
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -171,29 +171,40 @@ pub async fn list_integrations(
                 .await
                 .map_err(|e| {
                     error!(error = %e, "failed to count integrations");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to count integrations")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to count integrations",
+                    )
                 })?;
 
         (rows, total)
     } else {
-        let rows = sqlx::query(
-            "SELECT * FROM integrations ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to list integrations");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list integrations")
-        })?;
+        let rows =
+            sqlx::query("SELECT * FROM integrations ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to list integrations");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to list integrations",
+                    )
+                })?;
 
         let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM integrations")
             .fetch_one(pool)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to count integrations");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to count integrations")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to count integrations",
+                )
             })?;
 
         (rows, total)
@@ -224,7 +235,11 @@ pub async fn get_integration(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch integration");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch integration")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch integration",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"))?;
 
@@ -282,7 +297,11 @@ pub async fn delete_integration(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch integration");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch integration")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch integration",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"))?;
 
@@ -296,7 +315,11 @@ pub async fn delete_integration(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to delete integration");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to delete integration")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to delete integration",
+            )
         })?;
 
     let details = serde_json::json!({
@@ -340,7 +363,11 @@ pub async fn list_repositories(
         .unwrap_or(false);
 
     if !exists {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Integration not found",
+        ));
     }
 
     let limit = params.limit.unwrap_or(100).min(500);
@@ -360,7 +387,11 @@ pub async fn list_repositories(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to list repositories");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list repositories")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list repositories",
+        )
     })?;
 
     let repositories = rows.iter().map(row_to_repository).collect();
@@ -387,7 +418,11 @@ pub async fn list_installations(
         .unwrap_or(false);
 
     if !exists {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Integration not found",
+        ));
     }
 
     let rows = sqlx::query(

@@ -2553,6 +2553,7 @@ dependencies = [
  "base64 0.22.1",
  "hex",
  "oore-contract",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

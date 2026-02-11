@@ -118,14 +118,34 @@ impl SetupStore {
         // OIDC config
         .bind(state.oidc_config.as_ref().map(|c| &c.issuer_url))
         .bind(state.oidc_config.as_ref().map(|c| &c.client_id))
-        .bind(state.oidc_config.as_ref().map(|c| c.has_client_secret as i32))
-        .bind(state.oidc_config.as_ref().map(|c| &c.authorization_endpoint))
+        .bind(
+            state
+                .oidc_config
+                .as_ref()
+                .map(|c| c.has_client_secret as i32),
+        )
+        .bind(
+            state
+                .oidc_config
+                .as_ref()
+                .map(|c| &c.authorization_endpoint),
+        )
         .bind(state.oidc_config.as_ref().map(|c| &c.token_endpoint))
-        .bind(state.oidc_config.as_ref().and_then(|c| c.userinfo_endpoint.as_ref()))
+        .bind(
+            state
+                .oidc_config
+                .as_ref()
+                .and_then(|c| c.userinfo_endpoint.as_ref()),
+        )
         .bind(state.oidc_config.as_ref().map(|c| &c.jwks_uri))
         .bind(state.oidc_config.as_ref().map(|c| c.configured_at))
         // OIDC secret
-        .bind(state.oidc_secret.as_ref().map(|s| &s.encrypted_client_secret))
+        .bind(
+            state
+                .oidc_secret
+                .as_ref()
+                .map(|s| &s.encrypted_client_secret),
+        )
         .bind(state.oidc_secret.as_ref().map(|s| s.stored_at))
         // Owner
         .bind(state.owner.as_ref().map(|o| &o.email))
@@ -166,7 +186,10 @@ impl SetupStore {
             return Ok(());
         }
 
-        let owner = sf.owner.as_ref().context("setup is Ready but no owner record exists")?;
+        let owner = sf
+            .owner
+            .as_ref()
+            .context("setup is Ready but no owner record exists")?;
         let oidc_subject = owner
             .oidc_subject
             .as_ref()
@@ -189,8 +212,15 @@ impl SetupStore {
         .context("failed to backfill owner user")?;
 
         // Audit log
-        write_audit_log(&self.pool, Some(&user_id), "owner_backfilled", "user", Some(&user_id), None)
-            .await?;
+        write_audit_log(
+            &self.pool,
+            Some(&user_id),
+            "owner_backfilled",
+            "user",
+            Some(&user_id),
+            None,
+        )
+        .await?;
 
         info!(email = %owner.email, "backfilled owner user from setup state");
         Ok(())
@@ -226,7 +256,10 @@ impl SetupStore {
         self.save(&state).await?;
 
         // Verify the round-trip so we fail loudly on serialization bugs.
-        let loaded = self.load().await.context("failed to reload newly created state")?;
+        let loaded = self
+            .load()
+            .await
+            .context("failed to reload newly created state")?;
         if loaded.instance_id != state.instance_id {
             bail!("state round-trip verification failed");
         }
@@ -296,7 +329,8 @@ fn row_to_state_file(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<SetupState
         let hash: Option<String> = row.try_get("bootstrap_token_hash")?;
         hash.map(|hash| {
             let expires_at: i64 = row.try_get("bootstrap_token_expires_at").unwrap_or(0);
-            let consumed_at: Option<i64> = row.try_get("bootstrap_token_consumed_at").unwrap_or(None);
+            let consumed_at: Option<i64> =
+                row.try_get("bootstrap_token_consumed_at").unwrap_or(None);
             BootstrapTokenRecord {
                 hash,
                 expires_at,
@@ -320,8 +354,9 @@ fn row_to_state_file(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<SetupState
         issuer_url.map(|issuer_url| {
             let client_id: String = row.try_get("oidc_client_id").unwrap_or_default();
             let has_client_secret: i32 = row.try_get("oidc_has_client_secret").unwrap_or(0);
-            let authorization_endpoint: String =
-                row.try_get("oidc_authorization_endpoint").unwrap_or_default();
+            let authorization_endpoint: String = row
+                .try_get("oidc_authorization_endpoint")
+                .unwrap_or_default();
             let token_endpoint: String = row.try_get("oidc_token_endpoint").unwrap_or_default();
             let userinfo_endpoint: Option<String> =
                 row.try_get("oidc_userinfo_endpoint").unwrap_or(None);
@@ -370,8 +405,7 @@ fn row_to_state_file(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<SetupState
     let updated_at: i64 = row.try_get("updated_at")?;
 
     Ok(SetupStateFile {
-        schema_version: u32::try_from(schema_version)
-            .context("schema_version out of u32 range")?,
+        schema_version: u32::try_from(schema_version).context("schema_version out of u32 range")?,
         instance_id,
         setup_state,
         bootstrap_token,

@@ -7,6 +7,7 @@ import type {
   CreatePipelineRequest,
   TriggerConfig,
   UpdatePipelineAndroidSigningRequest,
+  UpdatePipelineIosSigningRequest,
 } from '@/lib/types'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import {
@@ -16,11 +17,14 @@ import {
 import {
   useCreatePipeline,
   useUpdatePipelineAndroidSigning,
+  useUpdatePipelineIosSigning,
   useValidatePipeline,
 } from '@/hooks/use-pipelines'
 import {
   defaultArtifactPatterns,
   fileToBase64,
+  fileToUtf8,
+  parseBundleIdsInput,
   parseCsv,
   parseEnvVars,
   parseMultiline,
@@ -55,6 +59,13 @@ const emptyDefaults: PipelineFormValues = {
   android_signing_debug_store_password: '',
   android_signing_debug_key_alias: '',
   android_signing_debug_key_password: '',
+  ios_signing_enabled: false,
+  ios_signing_mode: 'manual',
+  ios_signing_team_id: '',
+  ios_signing_bundle_ids: '',
+  ios_signing_p12_password: '',
+  ios_signing_api_key_id: '',
+  ios_signing_api_issuer_id: '',
   flutter_version: '',
   enable_customization: false,
   pre_build_commands: '',
@@ -78,6 +89,7 @@ function NewPipelinePage() {
   const createMutation = useCreatePipeline()
   const validateMutation = useValidatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
+  const updateIosSigningMutation = useUpdatePipelineIosSigning()
   const [validationErrors, setValidationErrors] = useState<Array<string>>([])
 
   async function handleSubmit(
@@ -86,6 +98,11 @@ function NewPipelinePage() {
     cancelPrevious: boolean,
     releaseKeystoreFile: File | null,
     debugKeystoreFile: File | null,
+    iosSigningFiles: {
+      p12File: File | null
+      apiKeyFile: File | null
+      profileFiles: Record<string, File | null>
+    },
   ) {
     const platforms = selectedPlatforms(data)
     if (platforms.length === 0) {
@@ -164,16 +181,23 @@ function NewPipelinePage() {
 
     setValidationErrors([])
 
-    const signingPayload = await buildSigningPayload(
+    const signingPayload = await buildAndroidSigningPayload(
       data,
       releaseKeystoreFile,
       debugKeystoreFile,
+    )
+    const iosSigningPayload = await buildIosSigningPayload(
+      data,
+      iosSigningFiles,
     )
     if (
       (data.android_signing_release_enabled ||
         data.android_signing_debug_enabled) &&
       !signingPayload
     ) {
+      return
+    }
+    if (data.platform_ios && data.ios_signing_enabled && !iosSigningPayload) {
       return
     }
 
@@ -188,6 +212,12 @@ function NewPipelinePage() {
           data: signingPayload,
         })
       }
+      if (iosSigningPayload) {
+        await updateIosSigningMutation.mutateAsync({
+          pipelineId: created.pipeline.id,
+          data: iosSigningPayload,
+        })
+      }
       toast.success('Pipeline created')
       void navigate({ to: '/projects/$projectId', params: { projectId } })
     } catch (err) {
@@ -196,7 +226,7 @@ function NewPipelinePage() {
     }
   }
 
-  async function buildSigningPayload(
+  async function buildAndroidSigningPayload(
     data: PipelineFormValues,
     releaseKeystoreFile: File | null,
     debugKeystoreFile: File | null,
@@ -230,13 +260,7 @@ function NewPipelinePage() {
       !!debugStorePassword ||
       !!debugKeyPassword
 
-    if (anySigningInput && !data.platform_android) {
-      setValidationErrors([
-        'Android signing profiles require Android platform to be enabled',
-      ])
-      return null
-    }
-
+    if (!data.platform_android) return null
     if (!anySigningInput) return null
 
     const profileErrors: Array<string> = []
@@ -307,6 +331,117 @@ function NewPipelinePage() {
     return { debug, release }
   }
 
+  async function buildIosSigningPayload(
+    data: PipelineFormValues,
+    iosSigningFiles: {
+      p12File: File | null
+      apiKeyFile: File | null
+      profileFiles: Record<string, File | null>
+    },
+  ): Promise<UpdatePipelineIosSigningRequest | null> {
+    const bundleIds = parseBundleIdsInput(data.ios_signing_bundle_ids)
+    const teamId = trimToUndefined(data.ios_signing_team_id)
+    const p12Password = trimToUndefined(data.ios_signing_p12_password)
+    const apiKeyId = trimToUndefined(data.ios_signing_api_key_id)
+    const apiIssuerId = trimToUndefined(data.ios_signing_api_issuer_id)
+
+    const anyIosInput =
+      data.ios_signing_enabled ||
+      bundleIds.length > 0 ||
+      !!teamId ||
+      !!iosSigningFiles.p12File ||
+      !!p12Password ||
+      !!apiKeyId ||
+      !!apiIssuerId ||
+      !!iosSigningFiles.apiKeyFile ||
+      Object.values(iosSigningFiles.profileFiles).some(Boolean)
+
+    if (!data.platform_ios) return null
+    if (!anyIosInput) return null
+
+    const errors: Array<string> = []
+    if (data.ios_signing_enabled) {
+      if (!teamId) errors.push('iOS signing requires Team ID')
+      if (bundleIds.length === 0)
+        errors.push('iOS signing requires at least one bundle identifier')
+    }
+
+    if (
+      data.ios_signing_enabled &&
+      (data.ios_signing_mode === 'manual' || data.ios_signing_mode === 'hybrid')
+    ) {
+      if (!iosSigningFiles.p12File)
+        errors.push('Manual/Hybrid iOS signing requires a .p12 certificate file')
+      if (!p12Password)
+        errors.push('Manual/Hybrid iOS signing requires p12 password')
+      if (bundleIds.some((bundleId) => !iosSigningFiles.profileFiles[bundleId])) {
+        errors.push(
+          'Manual/Hybrid iOS signing requires provisioning profile files for all bundle IDs',
+        )
+      }
+    }
+
+    if (
+      data.ios_signing_enabled &&
+      (data.ios_signing_mode === 'api' || data.ios_signing_mode === 'hybrid')
+    ) {
+      if (!apiKeyId) errors.push('API/Hybrid iOS signing requires API key ID')
+      if (!apiIssuerId) errors.push('API/Hybrid iOS signing requires API issuer ID')
+      if (!iosSigningFiles.apiKeyFile)
+        errors.push('API/Hybrid iOS signing requires .p8 private key file')
+    }
+
+    if (errors.length > 0) {
+      setValidationErrors(errors)
+      return null
+    }
+
+    const provisioningProfiles: Array<{
+      bundle_id: string
+      profile_filename?: string
+      profile_base64?: string
+    }> = []
+    for (const bundleId of bundleIds) {
+      const profileFile = iosSigningFiles.profileFiles[bundleId]
+      if (!profileFile) continue
+      provisioningProfiles.push({
+        bundle_id: bundleId,
+        profile_filename: profileFile.name,
+        profile_base64: await fileToBase64(profileFile),
+      })
+    }
+
+    const apiPrivateKey = iosSigningFiles.apiKeyFile
+      ? await fileToUtf8(iosSigningFiles.apiKeyFile)
+      : undefined
+
+    return {
+      enabled: data.ios_signing_enabled,
+      mode: data.ios_signing_mode,
+      team_id: teamId,
+      bundle_ids: bundleIds,
+      certificate:
+        iosSigningFiles.p12File || p12Password
+          ? {
+              p12_filename: iosSigningFiles.p12File?.name,
+              p12_base64: iosSigningFiles.p12File
+                ? await fileToBase64(iosSigningFiles.p12File)
+                : undefined,
+              p12_password: p12Password,
+            }
+          : undefined,
+      provisioning_profiles: provisioningProfiles,
+      api_credentials:
+        apiKeyId || apiIssuerId || apiPrivateKey
+          ? {
+              key_id: apiKeyId,
+              issuer_id: apiIssuerId,
+              private_key_base64: apiPrivateKey ? btoa(apiPrivateKey) : undefined,
+            }
+          : undefined,
+    }
+  }
+
   return (
     <PageLayout width="wide">
       <PageHeader
@@ -325,7 +460,9 @@ function NewPipelinePage() {
           }
           submitLabel="Create"
           isPending={
-            createMutation.isPending || updateSigningMutation.isPending
+            createMutation.isPending ||
+            updateSigningMutation.isPending ||
+            updateIosSigningMutation.isPending
           }
           validationErrors={validationErrors}
         />

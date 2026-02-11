@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use oore_contract::{
     ApiError, AuthenticatedUser, LogoutResponse, OidcCallbackResponse, OidcStartResponse,
     SetupState,
@@ -80,9 +80,7 @@ pub fn build_http_client() -> Result<reqwest::Client, (StatusCode, Json<ApiError
 /// When `allow_setup` is false (default for regular auth endpoints), returns
 /// an error unless `setup_state == Ready`. When `allow_setup` is true (used
 /// by setup OIDC verification), also allows `IdpConfigured` state.
-async fn load_oidc_config(
-    state: &AppState,
-) -> Result<OidcConfig, (StatusCode, Json<ApiError>)> {
+async fn load_oidc_config(state: &AppState) -> Result<OidcConfig, (StatusCode, Json<ApiError>)> {
     load_oidc_config_inner(state, false).await
 }
 
@@ -134,13 +132,13 @@ async fn load_oidc_config_inner(
     let secret = if let Some(s) = sf.oidc_secret.as_ref() {
         let decrypted = crate::crypto::decrypt(&s.encrypted_client_secret, &state.encryption_key)
             .map_err(|e| {
-                error!(error = %e, "failed to decrypt OIDC client secret");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "decryption_error",
-                    "Failed to decrypt OIDC client secret",
-                )
-            })?;
+            error!(error = %e, "failed to decrypt OIDC client secret");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "decryption_error",
+                "Failed to decrypt OIDC client secret",
+            )
+        })?;
         Some(decrypted)
     } else {
         None
@@ -200,9 +198,7 @@ pub async fn oidc_start(
 
     // Build OIDC client from discovered metadata
     let oidc_client_id = ClientId::new(oidc_config.client_id);
-    let oidc_client_secret = oidc_config
-        .client_secret
-        .map(ClientSecret::new);
+    let oidc_client_secret = oidc_config.client_secret.map(ClientSecret::new);
 
     let client = openidconnect::core::CoreClient::from_provider_metadata(
         provider_metadata,
@@ -284,7 +280,10 @@ pub async fn oidc_callback(
     let pending = {
         let mut pending_map = state.pending_auth.lock().await;
         pending_map.remove(&params.state).ok_or_else(|| {
-            warn!(state_len = params.state.len(), "unknown or expired OIDC state parameter");
+            warn!(
+                state_len = params.state.len(),
+                "unknown or expired OIDC state parameter"
+            );
             api_err(
                 StatusCode::BAD_REQUEST,
                 "invalid_state",
@@ -329,9 +328,7 @@ pub async fn oidc_callback(
         })?;
 
     let oidc_client_id = ClientId::new(oidc_config.client_id);
-    let oidc_client_secret = oidc_config
-        .client_secret
-        .map(ClientSecret::new);
+    let oidc_client_secret = oidc_config.client_secret.map(ClientSecret::new);
 
     let client = openidconnect::core::CoreClient::from_provider_metadata(
         provider_metadata,
@@ -420,7 +417,11 @@ pub async fn oidc_callback(
                 .decode(parts[1])
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                .and_then(|val| val.get("picture").and_then(|v| v.as_str()).map(String::from))
+                .and_then(|val| {
+                    val.get("picture")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
         } else {
             None
         }
@@ -471,7 +472,11 @@ pub async fn oidc_callback(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to look up invited user");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to look up user")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to look up user",
+            )
         })?;
 
         if let Some(inv_row) = invited {
@@ -494,7 +499,8 @@ pub async fn oidc_callback(
                 api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to activate user")
             })?;
 
-            let _ = write_audit_log(pool, Some(&uid), "user_activated", "user", Some(&uid), None).await;
+            let _ =
+                write_audit_log(pool, Some(&uid), "user_activated", "user", Some(&uid), None).await;
 
             (uid, uemail, urole, picture_url)
         } else {
@@ -516,7 +522,11 @@ pub async fn oidc_callback(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to create session");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "session_error", "Failed to create session")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "session_error",
+                "Failed to create session",
+            )
         })?;
 
     let session_info = state
@@ -525,11 +535,19 @@ pub async fn oidc_callback(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to validate just-created session");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "session_error", "Failed to validate session")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "session_error",
+                "Failed to validate session",
+            )
         })?
         .ok_or_else(|| {
             error!("just-created session could not be validated — possible race condition");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "session_error", "Session created but could not be validated")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "session_error",
+                "Session created but could not be validated",
+            )
         })?;
 
     Ok(Json(OidcCallbackResponse {
@@ -562,14 +580,14 @@ pub async fn logout(
     })?;
 
     // Validate the session exists before revoking
-    let session = state
-        .sessions
-        .validate_session(token)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "session validation failed");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "session_error", "Session validation failed")
-        })?;
+    let session = state.sessions.validate_session(token).await.map_err(|e| {
+        error!(error = %e, "session validation failed");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "session_error",
+            "Session validation failed",
+        )
+    })?;
 
     if session.is_none() {
         return Err(api_err(
@@ -581,7 +599,11 @@ pub async fn logout(
 
     state.sessions.revoke_session(token).await.map_err(|e| {
         error!(error = %e, "session revocation failed");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "session_error", "Session revocation failed")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "session_error",
+            "Session revocation failed",
+        )
     })?;
 
     Ok(Json(LogoutResponse { ok: true }))

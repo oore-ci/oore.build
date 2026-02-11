@@ -5,8 +5,8 @@ mod common;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
-    body_json, connect_pool, create_test_app, now_unix, seed_github_integration, seed_project_chain,
-    seed_test_user,
+    body_json, connect_pool, create_test_app, now_unix, seed_github_integration,
+    seed_project_chain, seed_test_user,
 };
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -31,11 +31,7 @@ async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String 
     token
 }
 
-async fn register_runner(
-    app: &axum::Router,
-    session_token: &str,
-    name: &str,
-) -> (String, String) {
+async fn register_runner(app: &axum::Router, session_token: &str, name: &str) -> (String, String) {
     let body = serde_json::json!({
         "name": name,
         "capabilities": { "os": "macos", "arch": "arm64" }
@@ -45,7 +41,10 @@ async fn register_runner(
         .uri("/v1/runners/register")
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -114,7 +113,10 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
         .uri("/v1/settings/artifact-storage")
         .method("PUT")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {owner_session}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
         .body(Body::from(serde_json::to_string(&update_body).unwrap()))
         .unwrap();
 
@@ -134,7 +136,10 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
         .unwrap();
 
@@ -158,7 +163,10 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {owner_session}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -192,8 +200,13 @@ async fn test_local_storage_large_artifact_upload_download() {
     let owner_session = create_session_token(&pool, &owner_id).await;
 
     let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
-    let (project_id, pipeline_id) =
-        seed_project_chain(&pool, &integration_id, &owner_id, "test/local-artifacts-large").await;
+    let (project_id, pipeline_id) = seed_project_chain(
+        &pool,
+        &integration_id,
+        &owner_id,
+        "test/local-artifacts-large",
+    )
+    .await;
 
     let (runner_id, runner_token) = register_runner(&app, &owner_session, "local-runner").await;
     let build_id = seed_running_build(&pool, &project_id, &pipeline_id, &runner_id).await;
@@ -208,7 +221,10 @@ async fn test_local_storage_large_artifact_upload_download() {
         .uri("/v1/settings/artifact-storage")
         .method("PUT")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {owner_session}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
         .body(Body::from(serde_json::to_string(&update_body).unwrap()))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -225,7 +241,10 @@ async fn test_local_storage_large_artifact_upload_download() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -247,7 +266,10 @@ async fn test_local_storage_large_artifact_upload_download() {
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {owner_session}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -322,7 +344,10 @@ async fn test_owner_can_update_instance_preferences_key_storage_mode() {
         .uri("/v1/settings/preferences")
         .method("PUT")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {owner_session}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
                 "key_storage_mode": "file"
@@ -337,12 +362,18 @@ async fn test_owner_can_update_instance_preferences_key_storage_mode() {
         json["preferences"]["key_storage_mode"].as_str().unwrap(),
         "file"
     );
-    assert_eq!(json["preferences"]["restart_required"].as_bool(), Some(true));
+    assert_eq!(
+        json["preferences"]["restart_required"].as_bool(),
+        Some(true)
+    );
 
     let req = Request::builder()
         .uri("/v1/settings/preferences")
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {owner_session}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();

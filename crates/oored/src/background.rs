@@ -96,19 +96,18 @@ async fn build_timeout_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
         let now = now_unix();
         let cutoff = now - BUILD_TIMEOUT_SECS;
 
-        let rows = match sqlx::query(
-            "SELECT id FROM builds WHERE status = 'running' AND started_at < ?1",
-        )
-        .bind(cutoff)
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                error!(error = %e, "build_timeout_monitor: failed to query running builds");
-                continue;
-            }
-        };
+        let rows =
+            match sqlx::query("SELECT id FROM builds WHERE status = 'running' AND started_at < ?1")
+                .bind(cutoff)
+                .fetch_all(&pool)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    error!(error = %e, "build_timeout_monitor: failed to query running builds");
+                    continue;
+                }
+            };
 
         for row in rows {
             let build_id: String = row.get("id");

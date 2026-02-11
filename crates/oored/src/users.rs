@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use oore_contract::{
     ApiError, InviteUserRequest, InviteUserResponse, ListUsersResponse, ReEnableUserResponse,
     UpdateUserRoleRequest, UpdateUserRoleResponse, User, UserProfileResponse,
@@ -11,11 +11,11 @@ use sqlx::Row;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -50,7 +50,11 @@ async fn fetch_user_by_id(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch user");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch user")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch user",
+        )
     })?
     .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "user_not_found", "User not found"))?;
 
@@ -86,7 +90,11 @@ pub async fn list_users(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to list users");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list users")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list users",
+        )
     })?;
 
     let users = rows.iter().map(row_to_user).collect();
@@ -104,7 +112,11 @@ pub async fn invite_user(
 
     // Validate email
     if req.email.is_empty() || !req.email.contains('@') || req.email.len() > 256 {
-        return Err(api_err(StatusCode::BAD_REQUEST, "invalid_email", "Invalid email address"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_email",
+            "Invalid email address",
+        ));
     }
 
     // Validate role — cannot invite as owner
@@ -127,11 +139,19 @@ pub async fn invite_user(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to check duplicate email");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to check user")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to check user",
+            )
         })?;
 
     if count > 0 {
-        return Err(api_err(StatusCode::CONFLICT, "email_exists", "A user with this email already exists"));
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "email_exists",
+            "A user with this email already exists",
+        ));
     }
 
     let user_id = Uuid::new_v4().to_string();
@@ -161,7 +181,15 @@ pub async fn invite_user(
         "invited_by": auth.0.email,
     })
     .to_string();
-    let _ = write_audit_log(pool, Some(&auth.0.user_id), "user_invited", "user", Some(&user_id), Some(&details)).await;
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "user_invited",
+        "user",
+        Some(&user_id),
+        Some(&details),
+    )
+    .await;
 
     info!(email = %req.email, role = %role, invited_by = %auth.0.email, "user invited");
 
@@ -206,15 +234,18 @@ pub async fn update_user_role(
     let pool = store.pool();
 
     // Check target user exists and isn't the owner
-    let target_role: Option<String> =
-        sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
-            .bind(&user_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to look up user");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to look up user")
-            })?;
+    let target_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
+        .bind(&user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to look up user");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to look up user",
+            )
+        })?;
 
     let current_role = target_role
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "user_not_found", "User not found"))?;
@@ -241,7 +272,11 @@ pub async fn update_user_role(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to update user role");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update user role")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update user role",
+            )
         })?;
 
     let details = serde_json::json!({
@@ -250,7 +285,15 @@ pub async fn update_user_role(
         "changed_by": auth.0.email,
     })
     .to_string();
-    let _ = write_audit_log(pool, Some(&auth.0.user_id), "role_changed", "user", Some(&user_id), Some(&details)).await;
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "role_changed",
+        "user",
+        Some(&user_id),
+        Some(&details),
+    )
+    .await;
 
     info!(user_id = %user_id, from = %current_role, to = %role, "user role changed");
     drop(store);
@@ -280,15 +323,18 @@ pub async fn delete_user(
     let pool = store.pool();
 
     // Check target user exists and isn't the owner
-    let target_role: Option<String> =
-        sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
-            .bind(&user_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to look up user");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to look up user")
-            })?;
+    let target_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
+        .bind(&user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to look up user");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to look up user",
+            )
+        })?;
 
     let current_role = target_role
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "user_not_found", "User not found"))?;
@@ -314,20 +360,40 @@ pub async fn delete_user(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to disable user");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to disable user")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to disable user",
+            )
         })?;
 
     // Cascade: revoke all sessions for this user
-    state.sessions.revoke_user_sessions(&user_id).await.map_err(|e| {
-        error!(error = %e, "failed to revoke user sessions");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "session_error", "Failed to revoke sessions")
-    })?;
+    state
+        .sessions
+        .revoke_user_sessions(&user_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to revoke user sessions");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "session_error",
+                "Failed to revoke sessions",
+            )
+        })?;
 
     let details = serde_json::json!({
         "disabled_by": auth.0.email,
     })
     .to_string();
-    let _ = write_audit_log(pool, Some(&auth.0.user_id), "user_disabled", "user", Some(&user_id), Some(&details)).await;
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "user_disabled",
+        "user",
+        Some(&user_id),
+        Some(&details),
+    )
+    .await;
 
     info!(user_id = %user_id, disabled_by = %auth.0.email, "user disabled");
 
@@ -361,7 +427,11 @@ pub async fn re_enable_user(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to look up user");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to look up user")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to look up user",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "user_not_found", "User not found"))?;
 
@@ -399,14 +469,26 @@ pub async fn re_enable_user(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to enable user");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to enable user")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to enable user",
+            )
         })?;
 
     let details = serde_json::json!({
         "enabled_by": auth.0.email,
     })
     .to_string();
-    let _ = write_audit_log(pool, Some(&auth.0.user_id), "user_enabled", "user", Some(&user_id), Some(&details)).await;
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "user_enabled",
+        "user",
+        Some(&user_id),
+        Some(&details),
+    )
+    .await;
 
     info!(user_id = %user_id, enabled_by = %auth.0.email, "user re-enabled");
     drop(store);

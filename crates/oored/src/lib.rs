@@ -1,3 +1,4 @@
+pub mod apple_api;
 pub mod artifacts;
 pub mod auth;
 pub mod background;
@@ -10,6 +11,7 @@ pub mod integrations;
 pub mod logs;
 pub mod observability;
 pub mod oidc;
+pub mod pipeline_ios_signing;
 pub mod pipeline_signing;
 pub mod pipelines;
 pub mod projects;
@@ -27,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware as axum_mw;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -35,9 +37,8 @@ use metrics_exporter_prometheus::PrometheusHandle;
 use oore_contract::{
     ApiError, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse, OidcConfigRecord,
     OidcConfigureRequest, OidcConfigureResponse, OidcSecretRecord, OwnerRecord,
-    SetupCompleteResponse, SetupOidcStartRequest,
-    SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
-    SetupSessionRecord, SetupState, SetupStateFile, SetupStatus,
+    SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest,
+    SetupOidcVerifyResponse, SetupSessionRecord, SetupState, SetupStateFile, SetupStatus,
 };
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
@@ -144,7 +145,11 @@ fn should_skip_oidc_discovery(state: &AppState) -> bool {
 /// Validate a redirect_uri: must be http://localhost or http://127.0.0.1 (any port).
 pub fn validate_redirect_uri(uri: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
     let parsed = url::Url::parse(uri).map_err(|_| {
-        api_err(StatusCode::BAD_REQUEST, "invalid_redirect_uri", "redirect_uri is not a valid URL")
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_uri",
+            "redirect_uri is not a valid URL",
+        )
     })?;
 
     if parsed.scheme() != "http" {
@@ -185,20 +190,36 @@ fn validate_session(
     headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let token = extract_bearer(headers).ok_or_else(|| {
-        api_err(StatusCode::UNAUTHORIZED, "missing_auth", "Authorization header required")
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "missing_auth",
+            "Authorization header required",
+        )
     })?;
 
     let session = state_file.setup_session.as_ref().ok_or_else(|| {
-        api_err(StatusCode::UNAUTHORIZED, "no_session", "No active setup session")
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "no_session",
+            "No active setup session",
+        )
     })?;
 
     let hashed = hash_token(token);
     if hashed != session.hash {
-        return Err(api_err(StatusCode::UNAUTHORIZED, "invalid_session", "Invalid session token"));
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_session",
+            "Invalid session token",
+        ));
     }
 
     if now_unix() > session.expires_at {
-        return Err(api_err(StatusCode::UNAUTHORIZED, "session_expired", "Setup session has expired"));
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "session_expired",
+            "Setup session has expired",
+        ));
     }
 
     // Sliding window: bump session expiry on each successful validation
@@ -219,10 +240,17 @@ async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStat
     let store = state.store.lock().await;
     let sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load setup state",
+        )
     })?;
 
-    Ok(Json(SetupStatus::from_state(sf.instance_id, sf.setup_state)))
+    Ok(Json(SetupStatus::from_state(
+        sf.instance_id,
+        sf.setup_state,
+    )))
 }
 
 async fn verify_bootstrap_token(
@@ -246,27 +274,47 @@ async fn verify_bootstrap_token(
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load setup state",
+        )
     })?;
 
     // Setup must not be complete — all setup endpoints are disabled after ready
     if sf.setup_state == SetupState::Ready {
-        return Err(api_err(StatusCode::CONFLICT, "already_configured", "Setup is already complete"));
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "already_configured",
+            "Setup is already complete",
+        ));
     }
 
     // Bootstrap token record must exist
     let bt = sf.bootstrap_token.as_ref().ok_or_else(|| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "no_bootstrap_token", "No bootstrap token has been generated")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no_bootstrap_token",
+            "No bootstrap token has been generated",
+        )
     })?;
 
     // Must not already be consumed
     if bt.consumed_at.is_some() {
-        return Err(api_err(StatusCode::GONE, "token_consumed", "Bootstrap token has already been consumed"));
+        return Err(api_err(
+            StatusCode::GONE,
+            "token_consumed",
+            "Bootstrap token has already been consumed",
+        ));
     }
 
     // Must not be expired
     if now_unix() > bt.expires_at {
-        return Err(api_err(StatusCode::GONE, "token_expired", "Bootstrap token has expired"));
+        return Err(api_err(
+            StatusCode::GONE,
+            "token_expired",
+            "Bootstrap token has expired",
+        ));
     }
 
     // Hash must match
@@ -277,7 +325,11 @@ async fn verify_bootstrap_token(
         let count = failures.entry(token_hash_for_tracking).or_insert(0);
         *count += 1;
         warn!(attempts = *count, "invalid bootstrap token attempt");
-        return Err(api_err(StatusCode::UNAUTHORIZED, "invalid_token", "Bootstrap token is invalid"));
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_token",
+            "Bootstrap token is invalid",
+        ));
     }
 
     // Mark token as consumed
@@ -298,7 +350,11 @@ async fn verify_bootstrap_token(
 
     store.save(&sf).await.map_err(|e| {
         error!(error = %e, "failed to save setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to save setup state",
+        )
     })?;
 
     Ok(Json(BootstrapTokenVerifyResponse {
@@ -350,19 +406,30 @@ async fn configure_oidc(
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load setup state",
+        )
     })?;
 
     // State gates first — deterministic 409 regardless of session state
     if sf.setup_state == SetupState::Ready {
-        return Err(api_err(StatusCode::CONFLICT, "already_configured", "Setup is already complete"));
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "already_configured",
+            "Setup is already complete",
+        ));
     }
 
     if sf.setup_state != SetupState::BootstrapPending {
         return Err(api_err(
             StatusCode::CONFLICT,
             "invalid_state",
-            format!("OIDC can only be configured in bootstrap_pending state, current: {}", sf.setup_state),
+            format!(
+                "OIDC can only be configured in bootstrap_pending state, current: {}",
+                sf.setup_state
+            ),
         ));
     }
 
@@ -384,10 +451,16 @@ async fn configure_oidc(
                 format!("{}/jwks", req.issuer_url),
             )
         } else {
-            let discovered = oidc::discover_provider(&req.issuer_url).await.map_err(|e| {
-                error!(error = %e, "OIDC discovery failed");
-                api_err(StatusCode::BAD_REQUEST, "oidc_discovery_failed", "Failed to discover OIDC provider")
-            })?;
+            let discovered = oidc::discover_provider(&req.issuer_url)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "OIDC discovery failed");
+                    api_err(
+                        StatusCode::BAD_REQUEST,
+                        "oidc_discovery_failed",
+                        "Failed to discover OIDC provider",
+                    )
+                })?;
             (
                 discovered.issuer,
                 discovered.authorization_endpoint,
@@ -414,7 +487,11 @@ async fn configure_oidc(
         // at end of scope naturally. The encryption key is already Zeroizing.
         let encrypted = crypto::encrypt(&secret, &state.encryption_key).map_err(|e| {
             error!(error = %e, "failed to encrypt client secret");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt client secret")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "encryption_error",
+                "Failed to encrypt client secret",
+            )
         })?;
         sf.oidc_secret = Some(OidcSecretRecord {
             encrypted_client_secret: encrypted,
@@ -427,7 +504,11 @@ async fn configure_oidc(
 
     store.save(&sf).await.map_err(|e| {
         error!(error = %e, "failed to save setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to save setup state",
+        )
     })?;
 
     Ok(Json(OidcConfigureResponse {
@@ -457,18 +538,29 @@ async fn setup_oidc_start(
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load setup state",
+            )
         })?;
 
         if sf.setup_state == SetupState::Ready {
-            return Err(api_err(StatusCode::CONFLICT, "already_configured", "Setup is already complete"));
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "already_configured",
+                "Setup is already complete",
+            ));
         }
 
         if sf.setup_state != SetupState::IdpConfigured {
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "invalid_state",
-                format!("Owner OIDC can only be started in idp_configured state, current: {}", sf.setup_state),
+                format!(
+                    "Owner OIDC can only be started in idp_configured state, current: {}",
+                    sf.setup_state
+                ),
             ));
         }
 
@@ -477,7 +569,11 @@ async fn setup_oidc_start(
         // Persist the bumped session expiry
         store.save(&sf).await.map_err(|e| {
             error!(error = %e, "failed to save setup state");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to save setup state",
+            )
         })?;
     }
 
@@ -494,7 +590,11 @@ async fn setup_oidc_start(
 
         let auth_url = format!(
             "{}/o/oauth2/v2/auth?client_id={}&redirect_uri={}&state={}&nonce={}",
-            oidc_config.issuer_url, oidc_config.client_id, req.redirect_uri, state_value, nonce.secret()
+            oidc_config.issuer_url,
+            oidc_config.client_id,
+            req.redirect_uri,
+            state_value,
+            nonce.secret()
         );
 
         {
@@ -531,7 +631,11 @@ async fn setup_oidc_start(
     // Real discovery flow
     let issuer = IssuerUrl::new(oidc_config.issuer_url).map_err(|e| {
         error!(error = %e, "invalid issuer URL");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "oidc_config_error", "Invalid OIDC issuer URL")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "oidc_config_error",
+            "Invalid OIDC issuer URL",
+        )
     })?;
 
     let http_client = build_http_client()?;
@@ -539,7 +643,11 @@ async fn setup_oidc_start(
         .await
         .map_err(|e| {
             error!(error = %e, "OIDC discovery failed");
-            api_err(StatusCode::BAD_GATEWAY, "oidc_discovery_error", "Failed to discover OIDC provider")
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "oidc_discovery_error",
+                "Failed to discover OIDC provider",
+            )
         })?;
 
     let oidc_client_id = ClientId::new(oidc_config.client_id);
@@ -552,7 +660,11 @@ async fn setup_oidc_start(
     )
     .set_redirect_uri(RedirectUrl::new(req.redirect_uri.clone()).map_err(|e| {
         error!(error = %e, "invalid redirect URI");
-        api_err(StatusCode::BAD_REQUEST, "invalid_redirect_uri", "Invalid redirect URI")
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_uri",
+            "Invalid redirect URI",
+        )
     })?);
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -620,18 +732,29 @@ async fn setup_oidc_verify(
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load setup state",
+            )
         })?;
 
         if sf.setup_state == SetupState::Ready {
-            return Err(api_err(StatusCode::CONFLICT, "already_configured", "Setup is already complete"));
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "already_configured",
+                "Setup is already complete",
+            ));
         }
 
         if sf.setup_state != SetupState::IdpConfigured {
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "invalid_state",
-                format!("Owner OIDC verify requires idp_configured state, current: {}", sf.setup_state),
+                format!(
+                    "Owner OIDC verify requires idp_configured state, current: {}",
+                    sf.setup_state
+                ),
             ));
         }
 
@@ -639,7 +762,11 @@ async fn setup_oidc_verify(
 
         store.save(&sf).await.map_err(|e| {
             error!(error = %e, "failed to save setup state");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to save setup state",
+            )
         })?;
     }
 
@@ -649,12 +776,20 @@ async fn setup_oidc_verify(
     let pending = {
         let mut pending_map = state.pending_auth.lock().await;
         pending_map.remove(&req.state).ok_or_else(|| {
-            api_err(StatusCode::BAD_REQUEST, "invalid_state", "Unknown or expired OIDC state parameter")
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_state",
+                "Unknown or expired OIDC state parameter",
+            )
         })?
     };
 
     if now_unix() - pending.created_at >= 600 {
-        return Err(api_err(StatusCode::BAD_REQUEST, "auth_expired", "OIDC authorization request has expired"));
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "auth_expired",
+            "OIDC authorization request has expired",
+        ));
     }
 
     info!("verify-oidc: pending auth found, starting token exchange");
@@ -663,14 +798,21 @@ async fn setup_oidc_verify(
     let (email, subject) = if should_skip_oidc_discovery(&state) {
         // In test mode, derive owner email/subject from the code
         // Convention: code format is "test-code" and we use known test values
-        ("admin@example.com".to_string(), format!("test-subject-{}", &req.code))
+        (
+            "admin@example.com".to_string(),
+            format!("test-subject-{}", &req.code),
+        )
     } else {
         // Real OIDC token exchange
         let oidc_config = load_oidc_config_for_setup(&state).await?;
 
         let issuer = IssuerUrl::new(oidc_config.issuer_url.clone()).map_err(|e| {
             error!(error = %e, "invalid issuer URL");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "oidc_config_error", "Invalid OIDC issuer URL")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "oidc_config_error",
+                "Invalid OIDC issuer URL",
+            )
         })?;
 
         info!(issuer = %oidc_config.issuer_url, "verify-oidc: starting OIDC discovery");
@@ -680,7 +822,11 @@ async fn setup_oidc_verify(
             .await
             .map_err(|e| {
                 error!(error = %e, "OIDC discovery failed");
-                api_err(StatusCode::BAD_GATEWAY, "oidc_discovery_error", "Failed to discover OIDC provider")
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "oidc_discovery_error",
+                    "Failed to discover OIDC provider",
+                )
             })?;
 
         info!("verify-oidc: discovery complete, exchanging code for tokens");
@@ -695,14 +841,22 @@ async fn setup_oidc_verify(
         )
         .set_redirect_uri(RedirectUrl::new(pending.redirect_uri).map_err(|e| {
             error!(error = %e, "invalid redirect URI");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "oidc_config_error", "Invalid redirect URI")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "oidc_config_error",
+                "Invalid redirect URI",
+            )
         })?);
 
         let code_request = client
             .exchange_code(AuthorizationCode::new(req.code))
             .map_err(|e| {
                 error!(error = %e, "OIDC token endpoint not configured");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "oidc_config_error", "Token endpoint not available")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "oidc_config_error",
+                    "Token endpoint not available",
+                )
             })?;
 
         let token_response = code_request
@@ -711,28 +865,46 @@ async fn setup_oidc_verify(
             .await
             .map_err(|e| {
                 error!(error = %e, "OIDC token exchange failed");
-                api_err(StatusCode::BAD_GATEWAY, "token_exchange_error", "Failed to exchange authorization code")
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "token_exchange_error",
+                    "Failed to exchange authorization code",
+                )
             })?;
 
         info!("verify-oidc: token exchange complete, verifying ID token");
 
         let id_token = token_response.id_token().ok_or_else(|| {
             error!("no ID token in OIDC token response");
-            api_err(StatusCode::BAD_GATEWAY, "missing_id_token", "Identity provider did not return an ID token")
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "missing_id_token",
+                "Identity provider did not return an ID token",
+            )
         })?;
 
         let id_token_verifier = client.id_token_verifier();
-        let claims = id_token.claims(&id_token_verifier, &pending.nonce).map_err(|e| {
-            error!(error = %e, "ID token verification failed");
-            api_err(StatusCode::BAD_GATEWAY, "id_token_verification_error", "Failed to verify ID token")
-        })?;
+        let claims = id_token
+            .claims(&id_token_verifier, &pending.nonce)
+            .map_err(|e| {
+                error!(error = %e, "ID token verification failed");
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "id_token_verification_error",
+                    "Failed to verify ID token",
+                )
+            })?;
 
         let subject = claims.subject().to_string();
         let email = claims
             .email()
             .map(|addr: &EndUserEmail| addr.to_string())
             .ok_or_else(|| {
-                api_err(StatusCode::BAD_GATEWAY, "missing_email", "ID token missing email claim")
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "missing_email",
+                    "ID token missing email claim",
+                )
             })?;
 
         info!(email = %email, subject = %subject, "verify-oidc: ID token verified");
@@ -744,7 +916,11 @@ async fn setup_oidc_verify(
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load setup state",
+        )
     })?;
 
     let now = now_unix();
@@ -759,7 +935,11 @@ async fn setup_oidc_verify(
 
     store.save(&sf).await.map_err(|e| {
         error!(error = %e, "failed to save setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to save setup state",
+        )
     })?;
 
     info!(email = %email, "verify-oidc: owner created, state -> OwnerCreated");
@@ -779,19 +959,30 @@ async fn complete_setup(
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load setup state",
+        )
     })?;
 
     // State gates first — deterministic 409 regardless of session state
     if sf.setup_state == SetupState::Ready {
-        return Err(api_err(StatusCode::CONFLICT, "already_configured", "Setup is already complete"));
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "already_configured",
+            "Setup is already complete",
+        ));
     }
 
     if sf.setup_state != SetupState::OwnerCreated {
         return Err(api_err(
             StatusCode::CONFLICT,
             "invalid_state",
-            format!("Setup can only be completed in owner_created state, current: {}", sf.setup_state),
+            format!(
+                "Setup can only be completed in owner_created state, current: {}",
+                sf.setup_state
+            ),
         ));
     }
 
@@ -806,7 +997,11 @@ async fn complete_setup(
 
     store.save(&sf).await.map_err(|e| {
         error!(error = %e, "failed to save setup state");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to save setup state")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to save setup state",
+        )
     })?;
 
     // Insert owner into users table
@@ -831,7 +1026,15 @@ async fn complete_setup(
                 api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to create owner user")
             })?;
 
-            let _ = write_audit_log(pool, Some(&user_id), "owner_created", "user", Some(&user_id), None).await;
+            let _ = write_audit_log(
+                pool,
+                Some(&user_id),
+                "owner_created",
+                "user",
+                Some(&user_id),
+                None,
+            )
+            .await;
 
             info!(email = %owner.email, "owner user created in users table");
         }
@@ -847,7 +1050,11 @@ async fn complete_setup(
 
 /// Build the Axum router with all setup and auth endpoints, given a `SetupStore`,
 /// the AES-256 encryption key for secrets at rest, and a Prometheus metrics handle.
-pub async fn build_router(store: SetupStore, encryption_key: Vec<u8>, metrics_handle: PrometheusHandle) -> Router {
+pub async fn build_router(
+    store: SetupStore,
+    encryption_key: Vec<u8>,
+    metrics_handle: PrometheusHandle,
+) -> Router {
     build_router_inner(store, encryption_key, false, metrics_handle).await
 }
 
@@ -869,9 +1076,16 @@ pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Ro
     build_router_inner(store, encryption_key, true, metrics_handle).await
 }
 
-async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oidc_discovery: bool, metrics_handle: PrometheusHandle) -> Router {
+async fn build_router_inner(
+    store: SetupStore,
+    encryption_key: Vec<u8>,
+    _skip_oidc_discovery: bool,
+    metrics_handle: PrometheusHandle,
+) -> Router {
     let session_store = SessionStore::new(store.pool().clone());
-    let enforcer = rbac::init_enforcer().await.expect("failed to initialise RBAC enforcer");
+    let enforcer = rbac::init_enforcer()
+        .await
+        .expect("failed to initialise RBAC enforcer");
     let sched = scheduler::Scheduler::new(1000);
 
     // Reload pending builds from DB into scheduler queue
@@ -928,21 +1142,39 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
 
     // Webhook routes are mounted OUTSIDE the CORS layer since they're called by providers
     let webhook_routes = Router::new()
-        .route("/v1/webhooks/github", post(integrations::webhooks::github_webhook))
-        .route("/v1/webhooks/gitlab", post(integrations::webhooks::gitlab_webhook))
+        .route(
+            "/v1/webhooks/github",
+            post(integrations::webhooks::github_webhook),
+        )
+        .route(
+            "/v1/webhooks/gitlab",
+            post(integrations::webhooks::gitlab_webhook),
+        )
         .with_state(shared_state.clone());
 
     // GitHub App manifest flow routes — browser-navigated, return HTML, no auth middleware
     // (authentication is via encrypted state token in query params)
     let github_flow_routes = Router::new()
-        .route("/v1/integrations/github/create", get(integrations::github::github_create_page))
-        .route("/v1/integrations/github/callback", get(integrations::github::github_callback))
-        .route("/v1/integrations/github/installed", get(integrations::github::github_installed))
+        .route(
+            "/v1/integrations/github/create",
+            get(integrations::github::github_create_page),
+        )
+        .route(
+            "/v1/integrations/github/callback",
+            get(integrations::github::github_callback),
+        )
+        .route(
+            "/v1/integrations/github/installed",
+            get(integrations::github::github_installed),
+        )
         .with_state(shared_state.clone());
 
     // GitLab OAuth callback route — browser-navigated, unauthenticated
     let gitlab_flow_routes = Router::new()
-        .route("/v1/integrations/gitlab/callback", get(integrations::gitlab::gitlab_callback))
+        .route(
+            "/v1/integrations/gitlab/callback",
+            get(integrations::gitlab::gitlab_callback),
+        )
         .with_state(shared_state.clone());
 
     Router::new()
@@ -964,8 +1196,14 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         .route("/v1/users/me", get(users::get_me))
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
-        .route("/v1/users/{user_id}/role", axum::routing::patch(users::update_user_role))
-        .route("/v1/users/{user_id}", axum::routing::delete(users::delete_user))
+        .route(
+            "/v1/users/{user_id}/role",
+            axum::routing::patch(users::update_user_role),
+        )
+        .route(
+            "/v1/users/{user_id}",
+            axum::routing::delete(users::delete_user),
+        )
         .route("/v1/users/{user_id}/enable", post(users::re_enable_user))
         // Instance settings endpoints
         .route(
@@ -981,51 +1219,147 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
         // Integration management endpoints
         .route("/v1/integrations", get(integrations::list_integrations))
         .route("/v1/integrations/{id}", get(integrations::get_integration))
-        .route("/v1/integrations/{id}", axum::routing::delete(integrations::delete_integration))
-        .route("/v1/integrations/{id}/repositories", get(integrations::list_repositories))
-        .route("/v1/integrations/github/start", post(integrations::github::github_start))
-        .route("/v1/integrations/github/complete", post(integrations::github::github_complete))
-        .route("/v1/integrations/{id}/installations", get(integrations::list_installations).post(integrations::github::sync_installations))
-        .route("/v1/integrations/gitlab/start", post(integrations::gitlab::gitlab_start))
-        .route("/v1/integrations/gitlab/authorize", post(integrations::gitlab::gitlab_authorize))
+        .route(
+            "/v1/integrations/{id}",
+            axum::routing::delete(integrations::delete_integration),
+        )
+        .route(
+            "/v1/integrations/{id}/repositories",
+            get(integrations::list_repositories),
+        )
+        .route(
+            "/v1/integrations/github/start",
+            post(integrations::github::github_start),
+        )
+        .route(
+            "/v1/integrations/github/complete",
+            post(integrations::github::github_complete),
+        )
+        .route(
+            "/v1/integrations/{id}/installations",
+            get(integrations::list_installations).post(integrations::github::sync_installations),
+        )
+        .route(
+            "/v1/integrations/gitlab/start",
+            post(integrations::gitlab::gitlab_start),
+        )
+        .route(
+            "/v1/integrations/gitlab/authorize",
+            post(integrations::gitlab::gitlab_authorize),
+        )
         // Project endpoints
-        .route("/v1/projects", get(projects::list_projects).post(projects::create_project))
-        .route("/v1/projects/{project_id}", get(projects::get_project).patch(projects::update_project).delete(projects::delete_project))
+        .route(
+            "/v1/projects",
+            get(projects::list_projects).post(projects::create_project),
+        )
+        .route(
+            "/v1/projects/{project_id}",
+            get(projects::get_project)
+                .patch(projects::update_project)
+                .delete(projects::delete_project),
+        )
         // Pipeline endpoints
-        .route("/v1/projects/{project_id}/pipelines", get(pipelines::list_pipelines).post(pipelines::create_pipeline))
-        .route("/v1/pipelines/{pipeline_id}", get(pipelines::get_pipeline).patch(pipelines::update_pipeline).delete(pipelines::delete_pipeline))
+        .route(
+            "/v1/projects/{project_id}/pipelines",
+            get(pipelines::list_pipelines).post(pipelines::create_pipeline),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}",
+            get(pipelines::get_pipeline)
+                .patch(pipelines::update_pipeline)
+                .delete(pipelines::delete_pipeline),
+        )
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
         .route(
             "/v1/pipelines/{pipeline_id}/android-signing",
             get(pipeline_signing::get_pipeline_android_signing)
                 .put(pipeline_signing::update_pipeline_android_signing),
         )
+        .route(
+            "/v1/pipelines/{pipeline_id}/ios-signing",
+            get(pipeline_ios_signing::get_pipeline_ios_signing)
+                .put(pipeline_ios_signing::update_pipeline_ios_signing)
+                .layer(DefaultBodyLimit::max(
+                    pipeline_ios_signing::MAX_IOS_SIGNING_REQUEST_BYTES,
+                )),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/ios-signing/sync",
+            post(pipeline_ios_signing::sync_pipeline_ios_signing).layer(DefaultBodyLimit::max(
+                pipeline_ios_signing::MAX_IOS_SIGNING_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/ios-signing/devices",
+            get(pipeline_ios_signing::list_pipeline_ios_devices),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/ios-signing/devices/register",
+            post(pipeline_ios_signing::register_pipeline_ios_device),
+        )
         // Build endpoints
-        .route("/v1/projects/{project_id}/builds", post(builds::create_build))
+        .route(
+            "/v1/projects/{project_id}/builds",
+            post(builds::create_build),
+        )
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
         // Runner endpoints
         .route("/v1/runners/register", post(runners::register_runner))
-        .route("/v1/runners/{runner_id}", axum::routing::patch(runners::update_runner))
-        .route("/v1/runners/{runner_id}/heartbeat", post(runners::runner_heartbeat))
+        .route(
+            "/v1/runners/{runner_id}",
+            axum::routing::patch(runners::update_runner),
+        )
+        .route(
+            "/v1/runners/{runner_id}/heartbeat",
+            post(runners::runner_heartbeat),
+        )
         .route("/v1/runners/{runner_id}/claim", post(runners::claim_job))
-        .route("/v1/runners/{runner_id}/jobs/{job_id}/status", post(runners::update_job_status))
-        .route("/v1/runners/{runner_id}/jobs/{job_id}", get(runners::get_job_status))
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/status",
+            post(runners::update_job_status),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}",
+            get(runners::get_job_status),
+        )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/android-signing",
             get(pipeline_signing::get_job_android_signing),
         )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/ios-signing",
+            get(pipeline_ios_signing::get_job_ios_signing),
+        )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints
-        .route("/v1/runners/{runner_id}/jobs/{job_id}/logs", post(logs::append_build_logs))
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/logs",
+            post(logs::append_build_logs),
+        )
         .route("/v1/builds/{build_id}/logs", get(logs::get_build_logs))
-        .route("/v1/builds/{build_id}/logs/stream", get(logs::stream_build_logs))
-        .route("/v1/builds/{build_id}/stream-token", post(logs::create_stream_token))
+        .route(
+            "/v1/builds/{build_id}/logs/stream",
+            get(logs::stream_build_logs),
+        )
+        .route(
+            "/v1/builds/{build_id}/stream-token",
+            post(logs::create_stream_token),
+        )
         // Artifact endpoints
-        .route("/v1/runners/{runner_id}/jobs/{job_id}/artifacts", post(artifacts::create_artifact))
-        .route("/v1/builds/{build_id}/artifacts", get(artifacts::list_artifacts))
-        .route("/v1/artifacts/{artifact_id}/download-link", post(artifacts::generate_download_link))
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts",
+            post(artifacts::create_artifact),
+        )
+        .route(
+            "/v1/builds/{build_id}/artifacts",
+            get(artifacts::list_artifacts),
+        )
+        .route(
+            "/v1/artifacts/{artifact_id}/download-link",
+            post(artifacts::generate_download_link),
+        )
         .route(
             "/v1/artifacts/local-upload/{token}",
             axum::routing::put(artifacts::upload_local_artifact)
@@ -1033,9 +1367,15 @@ async fn build_router_inner(store: SetupStore, encryption_key: Vec<u8>, _skip_oi
                 .layer(DefaultBodyLimit::max(artifacts::MAX_LOCAL_UPLOAD_BYTES)),
         )
         // Backend-agnostic local signed download URL (preferred)
-        .route("/v1/artifacts/download/{token}", get(artifacts::download_local_artifact))
+        .route(
+            "/v1/artifacts/download/{token}",
+            get(artifacts::download_local_artifact),
+        )
         // Backward-compatible legacy local download path
-        .route("/v1/artifacts/local-download/{token}", get(artifacts::download_local_artifact))
+        .route(
+            "/v1/artifacts/local-download/{token}",
+            get(artifacts::download_local_artifact),
+        )
         .layer(cors)
         .with_state(shared_state)
         // Merge webhook routes (outside CORS)

@@ -31,7 +31,7 @@ import { Route as SettingsIntegrationsGithubRouteImport } from './routes/setting
 import { Route as SettingsIntegrationsIntegrationIdRouteImport } from './routes/settings/integrations/$integrationId'
 import { Route as ProjectsProjectIdPipelinesNewRouteImport } from './routes/projects/$projectId/pipelines/new'
 import { Route as ProjectsProjectIdPipelinesPipelineIdRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId'
-import { Route as ProjectsProjectIdPipelinesPipelineIdEditRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId.edit'
+import { Route as ProjectsProjectIdPipelinesPipelineIdEditRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId_.edit'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -151,9 +151,9 @@ const ProjectsProjectIdPipelinesPipelineIdRoute =
   } as any)
 const ProjectsProjectIdPipelinesPipelineIdEditRoute =
   ProjectsProjectIdPipelinesPipelineIdEditRouteImport.update({
-    id: '/edit',
-    path: '/edit',
-    getParentRoute: () => ProjectsProjectIdPipelinesPipelineIdRoute,
+    id: '/projects/$projectId/pipelines/$pipelineId_/edit',
+    path: '/projects/$projectId/pipelines/$pipelineId/edit',
+    getParentRoute: () => rootRouteImport,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -177,7 +177,7 @@ export interface FileRoutesByFullPath {
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
@@ -201,7 +201,7 @@ export interface FileRoutesByTo {
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations': typeof SettingsIntegrationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
@@ -227,9 +227,9 @@ export interface FileRoutesById {
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
-  '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+  '/projects/$projectId/pipelines/$pipelineId_/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -305,7 +305,7 @@ export interface FileRouteTypes {
     | '/settings/integrations/'
     | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
-    | '/projects/$projectId/pipelines/$pipelineId/edit'
+    | '/projects/$projectId/pipelines/$pipelineId_/edit'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -325,8 +325,9 @@ export interface RootRouteChildren {
   SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
-  ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteWithChildren
+  ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
   ProjectsProjectIdPipelinesNewRoute: typeof ProjectsProjectIdPipelinesNewRoute
+  ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -485,12 +486,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/projects/$projectId/pipelines/$pipelineId/edit': {
-      id: '/projects/$projectId/pipelines/$pipelineId/edit'
-      path: '/edit'
+    '/projects/$projectId/pipelines/$pipelineId_/edit': {
+      id: '/projects/$projectId/pipelines/$pipelineId_/edit'
+      path: '/projects/$projectId/pipelines/$pipelineId/edit'
       fullPath: '/projects/$projectId/pipelines/$pipelineId/edit'
       preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRouteImport
-      parentRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -511,21 +512,6 @@ const SetupRouteChildren: SetupRouteChildren = {
 
 const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 
-interface ProjectsProjectIdPipelinesPipelineIdRouteChildren {
-  ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
-}
-
-const ProjectsProjectIdPipelinesPipelineIdRouteChildren: ProjectsProjectIdPipelinesPipelineIdRouteChildren =
-  {
-    ProjectsProjectIdPipelinesPipelineIdEditRoute:
-      ProjectsProjectIdPipelinesPipelineIdEditRoute,
-  }
-
-const ProjectsProjectIdPipelinesPipelineIdRouteWithChildren =
-  ProjectsProjectIdPipelinesPipelineIdRoute._addFileChildren(
-    ProjectsProjectIdPipelinesPipelineIdRouteChildren,
-  )
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
@@ -545,8 +531,10 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
   ProjectsProjectIdPipelinesPipelineIdRoute:
-    ProjectsProjectIdPipelinesPipelineIdRouteWithChildren,
+    ProjectsProjectIdPipelinesPipelineIdRoute,
   ProjectsProjectIdPipelinesNewRoute: ProjectsProjectIdPipelinesNewRoute,
+  ProjectsProjectIdPipelinesPipelineIdEditRoute:
+    ProjectsProjectIdPipelinesPipelineIdEditRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

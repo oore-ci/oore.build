@@ -25,12 +25,9 @@ async fn test_concurrent_build_number_allocation() {
     // Pre-seed webhook records (trigger_build_from_webhook uses webhook_id as FK)
     let mut webhook_ids = Vec::new();
     for i in 0..20u32 {
-        let wid = common::seed_webhook_record(
-            &pool,
-            &integration_id,
-            &format!("delivery-conc-{i}"),
-        )
-        .await;
+        let wid =
+            common::seed_webhook_record(&pool, &integration_id, &format!("delivery-conc-{i}"))
+                .await;
         webhook_ids.push(wid);
     }
 
@@ -57,7 +54,9 @@ async fn test_concurrent_build_number_allocation() {
     // Collect results
     let mut build_numbers: Vec<i64> = Vec::new();
     while let Some(result) = set.join_next().await {
-        let builds = result.expect("task panicked").expect("build trigger failed");
+        let builds = result
+            .expect("task panicked")
+            .expect("build trigger failed");
         for b in builds {
             build_numbers.push(b.build_number);
         }
@@ -94,22 +93,14 @@ async fn test_concurrent_build_numbers_across_projects() {
     // Pre-seed webhook records for all 20 triggers
     let mut webhook_ids_a = Vec::new();
     for i in 0..10u32 {
-        let wid = common::seed_webhook_record(
-            &pool,
-            &integration_id,
-            &format!("delivery-a-{i}"),
-        )
-        .await;
+        let wid =
+            common::seed_webhook_record(&pool, &integration_id, &format!("delivery-a-{i}")).await;
         webhook_ids_a.push(wid);
     }
     let mut webhook_ids_b = Vec::new();
     for i in 0..10u32 {
-        let wid = common::seed_webhook_record(
-            &pool,
-            &integration_id,
-            &format!("delivery-b-{i}"),
-        )
-        .await;
+        let wid =
+            common::seed_webhook_record(&pool, &integration_id, &format!("delivery-b-{i}")).await;
         webhook_ids_b.push(wid);
     }
 
@@ -154,7 +145,9 @@ async fn test_concurrent_build_numbers_across_projects() {
     }
 
     while let Some(result) = set.join_next().await {
-        result.expect("task panicked").expect("build trigger failed");
+        result
+            .expect("task panicked")
+            .expect("build trigger failed");
     }
 
     // Verify project A has builds 1..=10

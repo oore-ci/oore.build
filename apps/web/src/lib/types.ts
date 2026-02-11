@@ -629,3 +629,99 @@ export interface PipelineAndroidSigningResponse {
   debug: AndroidSigningProfile
   release: AndroidSigningProfile
 }
+
+export type IosSigningMode = 'manual' | 'api' | 'hybrid'
+
+export interface IosCertificateInput {
+  p12_filename?: string
+  p12_base64?: string
+  p12_password?: string
+}
+
+export interface IosProvisioningProfileInput {
+  bundle_id: string
+  profile_filename?: string
+  profile_base64?: string
+}
+
+export interface IosApiCredentialInput {
+  key_id?: string
+  issuer_id?: string
+  private_key_base64?: string
+}
+
+export interface UpdatePipelineIosSigningRequest {
+  enabled: boolean
+  mode: IosSigningMode
+  team_id?: string
+  bundle_ids: Array<string>
+  certificate?: IosCertificateInput
+  provisioning_profiles?: Array<IosProvisioningProfileInput>
+  api_credentials?: IosApiCredentialInput
+}
+
+export interface IosProvisioningProfileSummary {
+  bundle_id: string
+  has_profile: boolean
+  profile_filename?: string
+  profile_uuid?: string
+  profile_name?: string
+  team_id?: string
+  expires_at?: number
+  checksum?: string
+}
+
+export interface PipelineIosSigningResponse {
+  pipeline_id: string
+  enabled: boolean
+  mode: IosSigningMode
+  team_id?: string
+  export_method: string
+  bundle_ids: Array<string>
+  has_p12: boolean
+  p12_filename?: string
+  p12_fingerprint?: string
+  p12_expires_at?: number
+  has_p12_password: boolean
+  has_api_key: boolean
+  api_key_id?: string
+  api_issuer_id?: string
+  provisioning_profiles: Array<IosProvisioningProfileSummary>
+  updated_at?: number
+}
+
+export interface RegisteredIosDevice {
+  id: string
+  device_id?: string
+  udid: string
+  name: string
+  platform: string
+  status: string
+  added_at: number
+  last_synced_at?: number
+}
+
+export interface ListPipelineIosDevicesResponse {
+  pipeline_id: string
+  devices: Array<RegisteredIosDevice>
+}
+
+export interface RegisterIosDeviceRequest {
+  udid: string
+  name: string
+  platform?: string
+}
+
+export interface RegisterIosDeviceResponse {
+  pipeline_id: string
+  device: RegisteredIosDevice
+  profile_sync_triggered: boolean
+}
+
+export interface SyncPipelineIosSigningResponse {
+  pipeline_id: string
+  ok: boolean
+  updated_profiles: number
+  synced_bundle_ids: Array<string>
+  warnings: Array<string>
+}

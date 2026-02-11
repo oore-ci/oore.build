@@ -34,7 +34,11 @@ impl SessionStore {
     ///
     /// Generates a random token, hashes it, stores the session keyed by hash,
     /// and returns the plaintext token for the caller to send to the client.
-    pub async fn create_session(&self, user_id: &str, ttl_secs: i64) -> Result<String, sqlx::Error> {
+    pub async fn create_session(
+        &self,
+        user_id: &str,
+        ttl_secs: i64,
+    ) -> Result<String, sqlx::Error> {
         let token = generate_session_token();
         let hashed = hash_token(&token);
         let now = now_unix();

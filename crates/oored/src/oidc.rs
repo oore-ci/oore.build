@@ -1,8 +1,8 @@
 use std::fmt;
 use std::time::Duration;
 
-use openidconnect::core::CoreProviderMetadata;
 use openidconnect::IssuerUrl;
+use openidconnect::core::CoreProviderMetadata;
 
 // ── Discovery result ────────────────────────────────────────────
 
@@ -62,13 +62,14 @@ pub async fn discover_provider(issuer_url: &str) -> Result<DiscoveredProvider, O
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| OidcDiscoveryError::DiscoveryFailed(format!("failed to build HTTP client: {}", e)))?;
+        .map_err(|e| {
+            OidcDiscoveryError::DiscoveryFailed(format!("failed to build HTTP client: {}", e))
+        })?;
 
     // Perform OIDC discovery
-    let provider_metadata =
-        CoreProviderMetadata::discover_async(issuer, &http_client)
-            .await
-            .map_err(|e| OidcDiscoveryError::DiscoveryFailed(e.to_string()))?;
+    let provider_metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
+        .await
+        .map_err(|e| OidcDiscoveryError::DiscoveryFailed(e.to_string()))?;
 
     // Extract the authorization endpoint (required)
     let authorization_endpoint = provider_metadata.authorization_endpoint().to_string();
@@ -84,9 +85,7 @@ pub async fn discover_provider(issuer_url: &str) -> Result<DiscoveredProvider, O
         .to_string();
 
     // Extract optional userinfo endpoint
-    let userinfo_endpoint = provider_metadata
-        .userinfo_endpoint()
-        .map(|u| u.to_string());
+    let userinfo_endpoint = provider_metadata.userinfo_endpoint().map(|u| u.to_string());
 
     // Extract JWKS URI (required)
     let jwks_uri = provider_metadata.jwks_uri().to_string();

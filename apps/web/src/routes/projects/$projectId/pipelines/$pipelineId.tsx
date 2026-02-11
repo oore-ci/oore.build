@@ -21,6 +21,7 @@ import {
   useDeletePipeline,
   usePipeline,
   usePipelineAndroidSigning,
+  usePipelineIosSigning,
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
 import { useProject } from '@/hooks/use-projects'
@@ -125,6 +126,7 @@ function PipelineDetailPage() {
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
   const signingQuery = usePipelineAndroidSigning(pipelineId)
+  const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const { data: projectData } = useProject(projectId)
   const { data: buildsData } = useBuilds({
     pipeline_id: pipelineId,
@@ -411,26 +413,106 @@ function PipelineDetailPage() {
             </KV>
           </Section>
 
-          <Section title="Android signing">
-            {signingQuery.data ? (
-              <>
-                <KV label="Release">
-                  {signingQuery.data.release.enabled
-                    ? `enabled (${signingQuery.data.release.keystore_filename ?? 'keystore configured'})`
-                    : 'disabled'}
-                </KV>
-                <KV label="Debug">
-                  {signingQuery.data.debug.enabled
-                    ? `enabled (${signingQuery.data.debug.keystore_filename ?? 'keystore configured'})`
-                    : 'disabled'}
-                </KV>
-              </>
-            ) : (
-              <p className="py-1 text-xs text-muted-foreground">
-                Not configured
-              </p>
-            )}
-          </Section>
+          {pipeline.execution_config.platforms.includes('android') && (
+            <Section title="Android signing">
+              {signingQuery.data ? (
+                <>
+                  <KV label="Release">
+                    {signingQuery.data.release.enabled
+                      ? `enabled (${signingQuery.data.release.keystore_filename ?? 'keystore configured'})`
+                      : 'disabled'}
+                  </KV>
+                  <KV label="Debug">
+                    {signingQuery.data.debug.enabled
+                      ? `enabled (${signingQuery.data.debug.keystore_filename ?? 'keystore configured'})`
+                      : 'disabled'}
+                  </KV>
+                </>
+              ) : (
+                <p className="py-1 text-xs text-muted-foreground">
+                  Not configured
+                </p>
+              )}
+            </Section>
+          )}
+
+          {pipeline.execution_config.platforms.includes('ios') && (
+            <Section title="iOS signing">
+              {iosSigningQuery.data ? (
+                <>
+                  <KV label="Status">
+                    {iosSigningQuery.data.enabled ? 'enabled' : 'disabled'}
+                  </KV>
+                  {iosSigningQuery.data.enabled && (
+                    <>
+                      <KV label="Mode">
+                        {iosSigningQuery.data.mode === 'manual'
+                          ? 'Manual (.p12 + provisioning profiles)'
+                          : iosSigningQuery.data.mode === 'api'
+                            ? 'API (App Store Connect)'
+                            : 'Hybrid (manual cert + API automation)'}
+                      </KV>
+                      {iosSigningQuery.data.team_id && (
+                        <KV label="Team ID">
+                          <span className="font-mono">
+                            {iosSigningQuery.data.team_id}
+                          </span>
+                        </KV>
+                      )}
+                      {iosSigningQuery.data.bundle_ids.length > 0 && (
+                        <KV label="Bundle IDs">
+                          <div className="flex flex-wrap gap-1">
+                            {iosSigningQuery.data.bundle_ids.map((id) => (
+                              <Badge
+                                key={id}
+                                variant="outline"
+                                className="font-mono text-[11px]"
+                              >
+                                {id}
+                              </Badge>
+                            ))}
+                          </div>
+                        </KV>
+                      )}
+                      {(iosSigningQuery.data.mode === 'manual' ||
+                        iosSigningQuery.data.mode === 'hybrid') && (
+                        <KV label="Certificate">
+                          {iosSigningQuery.data.has_p12
+                            ? iosSigningQuery.data.p12_filename ?? 'configured'
+                            : 'not uploaded'}
+                        </KV>
+                      )}
+                      {(iosSigningQuery.data.mode === 'api' ||
+                        iosSigningQuery.data.mode === 'hybrid') && (
+                        <>
+                          <KV label="API key">
+                            {iosSigningQuery.data.has_api_key
+                              ? `Key ${iosSigningQuery.data.api_key_id ?? 'configured'}`
+                              : 'not configured'}
+                          </KV>
+                        </>
+                      )}
+                      {iosSigningQuery.data.provisioning_profiles.length >
+                        0 && (
+                        <KV label="Profiles">
+                          {iosSigningQuery.data.provisioning_profiles.length}{' '}
+                          provisioning profile
+                          {iosSigningQuery.data.provisioning_profiles.length !==
+                          1
+                            ? 's'
+                            : ''}
+                        </KV>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <p className="py-1 text-xs text-muted-foreground">
+                  Not configured
+                </p>
+              )}
+            </Section>
+          )}
         </CardContent>
       </Card>
 

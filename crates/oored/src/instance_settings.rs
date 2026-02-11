@@ -1,26 +1,26 @@
-use std::str::FromStr;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use oore_contract::{
-    ApiError, ArtifactStorageProvider, ArtifactStorageSettingsResponse,
-    InstancePreferences, InstancePreferencesResponse, KeyStorageMode,
-    UpdateArtifactStorageSettingsRequest, UpdateInstancePreferencesRequest,
+    ApiError, ArtifactStorageProvider, ArtifactStorageSettingsResponse, InstancePreferences,
+    InstancePreferencesResponse, KeyStorageMode, UpdateArtifactStorageSettingsRequest,
+    UpdateInstancePreferencesRequest,
 };
 use sqlx::Row;
 use tracing::{error, info};
 
+use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::storage;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -49,7 +49,10 @@ pub async fn load_key_storage_mode(pool: &sqlx::SqlitePool) -> anyhow::Result<Ke
     Ok(crypto::default_key_storage_mode())
 }
 
-fn preferences_response(mode: KeyStorageMode, updated_at: Option<i64>) -> InstancePreferencesResponse {
+fn preferences_response(
+    mode: KeyStorageMode,
+    updated_at: Option<i64>,
+) -> InstancePreferencesResponse {
     InstancePreferencesResponse {
         preferences: InstancePreferences {
             key_storage_mode: mode,
@@ -311,17 +314,18 @@ pub async fn get_instance_preferences(
         store.pool().clone()
     };
 
-    let row = sqlx::query("SELECT key_storage_mode, updated_at FROM instance_preferences WHERE id = 1")
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to load instance preferences");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to load instance preferences",
-            )
-        })?;
+    let row =
+        sqlx::query("SELECT key_storage_mode, updated_at FROM instance_preferences WHERE id = 1")
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load instance preferences");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to load instance preferences",
+                )
+            })?;
 
     if let Some(row) = row {
         let mode_str: String = row.get("key_storage_mode");
@@ -359,13 +363,13 @@ pub async fn update_instance_preferences(
     let active_source =
         crypto::persist_current_key_for_mode(state.encryption_key.as_ref(), req.key_storage_mode)
             .map_err(|e| {
-                error!(error = %e, mode = %req.key_storage_mode, "failed to persist key storage mode");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "key_storage_error",
-                    "Failed to persist key storage mode",
-                )
-            })?;
+            error!(error = %e, mode = %req.key_storage_mode, "failed to persist key storage mode");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "key_storage_error",
+                "Failed to persist key storage mode",
+            )
+        })?;
 
     sqlx::query(
         "INSERT INTO instance_preferences (id, key_storage_mode, updated_by, created_at, updated_at)

@@ -56,11 +56,7 @@ async fn seed_user_with_role(pool: &sqlx::SqlitePool, email: &str, role: &str) -
 }
 
 /// Register a runner using the API and return (runner_id, runner_token).
-async fn register_runner(
-    app: &axum::Router,
-    session_token: &str,
-    name: &str,
-) -> (String, String) {
+async fn register_runner(app: &axum::Router, session_token: &str, name: &str) -> (String, String) {
     let body = serde_json::json!({
         "name": name,
         "capabilities": {
@@ -73,12 +69,19 @@ async fn register_runner(
         .uri("/v1/runners/register")
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "runner registration should succeed");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "runner registration should succeed"
+    );
 
     let json = body_json(resp.into_body()).await;
     let runner_id = json["runner"]["id"].as_str().unwrap().to_string();
@@ -98,7 +101,10 @@ async fn rename_runner(
         .uri(format!("/v1/runners/{runner_id}"))
         .method("PATCH")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -181,7 +187,10 @@ async fn test_runner_registration() {
     let req = Request::builder()
         .uri("/v1/runners")
         .method("GET")
-        .header(http::header::AUTHORIZATION, format!("Bearer {session_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -217,7 +226,10 @@ async fn test_runner_heartbeat() {
         .uri(format!("/v1/runners/{runner_id}/heartbeat"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -240,7 +252,10 @@ async fn test_runner_claim_empty_queue() {
     let req = Request::builder()
         .uri(format!("/v1/runners/{runner_id}/claim"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -248,7 +263,10 @@ async fn test_runner_claim_empty_queue() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let json = body_json(resp.into_body()).await;
-    assert!(json["job"].is_null(), "job should be null when queue is empty");
+    assert!(
+        json["job"].is_null(),
+        "job should be null when queue is empty"
+    );
 }
 
 #[tokio::test]
@@ -263,7 +281,8 @@ async fn test_runner_claim_and_execute() {
     // Seed a project and pipeline
     let webhook_secret = "test-secret";
     let integration_id = seed_github_integration(&pool, &user_id, webhook_secret).await;
-    let (project_id, pipeline_id) = seed_project_chain(&pool, &integration_id, &user_id, "test/repo").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "test/repo").await;
 
     // Create a build
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
@@ -275,7 +294,10 @@ async fn test_runner_claim_and_execute() {
     let req = Request::builder()
         .uri(format!("/v1/runners/{runner_id}/claim"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -296,7 +318,10 @@ async fn test_runner_claim_and_execute() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/status"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -324,7 +349,10 @@ async fn test_runner_claim_and_execute() {
         .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/status"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
@@ -347,7 +375,8 @@ async fn test_no_double_claim() {
     // Seed project/pipeline/build
     let webhook_secret = "test-secret";
     let integration_id = seed_github_integration(&pool, &user_id, webhook_secret).await;
-    let (project_id, pipeline_id) = seed_project_chain(&pool, &integration_id, &user_id, "test/no-double").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "test/no-double").await;
     let _build_id = create_build(&pool, &project_id, &pipeline_id).await;
 
     // Register two runners
@@ -358,7 +387,10 @@ async fn test_no_double_claim() {
     let req1 = Request::builder()
         .uri(format!("/v1/runners/{runner1_id}/claim"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner1_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner1_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -370,7 +402,10 @@ async fn test_no_double_claim() {
     let req2 = Request::builder()
         .uri(format!("/v1/runners/{runner2_id}/claim"))
         .method("POST")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner2_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner2_token}"),
+        )
         .body(Body::empty())
         .unwrap();
 
@@ -410,12 +445,19 @@ async fn test_cross_runner_access_blocked() {
         .uri(format!("/v1/runners/{runner1_id}/heartbeat"))
         .method("POST")
         .header(http::header::CONTENT_TYPE, "application/json")
-        .header(http::header::AUTHORIZATION, format!("Bearer {runner2_token}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner2_token}"),
+        )
         .body(Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "cross-runner access should be blocked");
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "cross-runner access should be blocked"
+    );
 }
 
 #[tokio::test]
@@ -431,14 +473,22 @@ async fn test_runner_rename_with_owner_and_admin_sessions() {
     let admin_session = create_session_token(&pool, &admin_id).await;
 
     let (runner_1_id, _) = register_runner(&app, &owner_session, "rename-owner").await;
-    let (status_1, body_1) = rename_runner(&app, &owner_session, &runner_1_id, "renamed-by-owner").await;
+    let (status_1, body_1) =
+        rename_runner(&app, &owner_session, &runner_1_id, "renamed-by-owner").await;
     assert_eq!(status_1, StatusCode::OK);
-    assert_eq!(body_1["runner"]["name"].as_str().unwrap(), "renamed-by-owner");
+    assert_eq!(
+        body_1["runner"]["name"].as_str().unwrap(),
+        "renamed-by-owner"
+    );
 
     let (runner_2_id, _) = register_runner(&app, &owner_session, "rename-admin").await;
-    let (status_2, body_2) = rename_runner(&app, &admin_session, &runner_2_id, "renamed-by-admin").await;
+    let (status_2, body_2) =
+        rename_runner(&app, &admin_session, &runner_2_id, "renamed-by-admin").await;
     assert_eq!(status_2, StatusCode::OK);
-    assert_eq!(body_2["runner"]["name"].as_str().unwrap(), "renamed-by-admin");
+    assert_eq!(
+        body_2["runner"]["name"].as_str().unwrap(),
+        "renamed-by-admin"
+    );
 }
 
 #[tokio::test]
@@ -537,8 +587,8 @@ async fn test_runner_rename_writes_audit_log() {
     assert_eq!(actor_id.as_deref(), Some(user_id.as_str()));
     assert_eq!(resource_id.as_deref(), Some(runner_id.as_str()));
 
-    let details_json: serde_json::Value =
-        serde_json::from_str(details.as_deref().unwrap_or("{}")).expect("details must be valid json");
+    let details_json: serde_json::Value = serde_json::from_str(details.as_deref().unwrap_or("{}"))
+        .expect("details must be valid json");
     assert_eq!(
         details_json["previous_name"].as_str().unwrap(),
         "audit-runner"

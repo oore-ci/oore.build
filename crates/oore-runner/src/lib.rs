@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -7,8 +8,9 @@ use oore_contract::{
     AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
     PlatformBuildArgs, PlatformBuildCommands, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, StepResult,
+    RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
 };
+use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncBufReadExt;
 
@@ -19,6 +21,7 @@ const OORE_ANDROID_KEYSTORE_PASSWORD_ENV: &str = "OORE_ANDROID_KEYSTORE_PASSWORD
 const OORE_ANDROID_KEY_ALIAS_ENV: &str = "OORE_ANDROID_KEY_ALIAS";
 const OORE_ANDROID_KEY_PASSWORD_ENV: &str = "OORE_ANDROID_KEY_PASSWORD";
 const OORE_ANDROID_KEY_PROPERTIES_PATH_ENV: &str = "OORE_ANDROID_KEY_PROPERTIES_PATH";
+const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -127,14 +130,18 @@ fn decode_base64_keystore(value: &str) -> anyhow::Result<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(value)
         .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(value))
-        .map_err(|e| anyhow::anyhow!("invalid base64 value in {OORE_ANDROID_KEYSTORE_B64_ENV}: {e}"))
+        .map_err(|e| {
+            anyhow::anyhow!("invalid base64 value in {OORE_ANDROID_KEYSTORE_B64_ENV}: {e}")
+        })
 }
 
 fn require_signing_field(value: Option<String>, env_key: &str) -> anyhow::Result<String> {
     value.ok_or_else(|| anyhow::anyhow!("missing required environment variable {env_key}"))
 }
 
-fn resolve_android_signing_inputs(env: &AndroidSigningEnv) -> anyhow::Result<Option<AndroidSigningInputs>> {
+fn resolve_android_signing_inputs(
+    env: &AndroidSigningEnv,
+) -> anyhow::Result<Option<AndroidSigningInputs>> {
     let any_present = env.keystore_path.is_some()
         || env.keystore_b64.is_some()
         || env.keystore_password.is_some()
@@ -170,7 +177,10 @@ fn resolve_android_signing_inputs(env: &AndroidSigningEnv) -> anyhow::Result<Opt
             OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
         )?,
         key_alias: require_signing_field(env.key_alias.clone(), OORE_ANDROID_KEY_ALIAS_ENV)?,
-        key_password: require_signing_field(env.key_password.clone(), OORE_ANDROID_KEY_PASSWORD_ENV)?,
+        key_password: require_signing_field(
+            env.key_password.clone(),
+            OORE_ANDROID_KEY_PASSWORD_ENV,
+        )?,
     }))
 }
 
@@ -365,6 +375,599 @@ fn select_runner_signing_profile<'a>(
         AndroidSigningBuildType::Debug => response.debug.as_ref(),
         AndroidSigningBuildType::Release => response.release.as_ref(),
     }
+}
+
+#[derive(Debug, Clone)]
+struct IosSigningMaterialization {
+    p12_path: PathBuf,
+    export_options_plist_path: PathBuf,
+    bundle_profile_mapping: Vec<(String, String)>,
+    effective_export_method: String,
+    signing_identity_sha1: Option<String>,
+}
+
+struct IosSigningCleanup {
+    keychain_path: PathBuf,
+    original_keychains: Vec<String>,
+    installed_profiles: Vec<PathBuf>,
+}
+
+impl Drop for IosSigningCleanup {
+    fn drop(&mut self) {
+        cleanup_ios_signing_state(
+            Some(&self.keychain_path),
+            &self.original_keychains,
+            &self.installed_profiles,
+        );
+    }
+}
+
+fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
+    let output = Command::new("security")
+        .args(args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("security command failed: {stderr}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> {
+    let output = Command::new("security")
+        .args(args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("security command failed: {stderr}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn cleanup_ios_signing_state(
+    keychain_path: Option<&Path>,
+    original_keychains: &[String],
+    installed_profiles: &[PathBuf],
+) {
+    for profile in installed_profiles {
+        let _ = fs::remove_file(profile);
+    }
+
+    if let Some(path) = keychain_path {
+        if !original_keychains.is_empty() {
+            let _ = run_security_command_with_strings(
+                &[
+                    "list-keychains".to_string(),
+                    "-d".to_string(),
+                    "user".to_string(),
+                    "-s".to_string(),
+                ]
+                .into_iter()
+                .chain(original_keychains.iter().cloned())
+                .collect::<Vec<_>>(),
+            );
+        }
+
+        let keychain_str = path.display().to_string();
+        let _ = run_security_command_with_strings(&[
+            "delete-keychain".to_string(),
+            keychain_str.clone(),
+        ]);
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn parse_keychain_list(raw: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Some((_, rest)) = trimmed.split_once('"')
+                && let Some((path, _)) = rest.split_once('"')
+            {
+                return Some(path.to_string());
+            }
+            Some(trimmed.to_string())
+        })
+        .collect()
+}
+
+fn parse_codesigning_identity_hashes(raw: &str) -> Vec<String> {
+    raw.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let (_, rest) = trimmed.split_once(')')?;
+            let candidate = rest.trim().split_whitespace().next()?;
+            if candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                Some(candidate.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn random_password_hex() -> String {
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn choose_ios_export_method(help_text: &str) -> &'static str {
+    if help_text.to_ascii_lowercase().contains("release-testing") {
+        "release-testing"
+    } else {
+        "ad-hoc"
+    }
+}
+
+fn resolve_ios_export_method() -> String {
+    match Command::new("xcodebuild").arg("-help").output() {
+        Ok(output) if output.status.success() => {
+            choose_ios_export_method(&String::from_utf8_lossy(&output.stdout)).to_string()
+        }
+        _ => "ad-hoc".to_string(),
+    }
+}
+
+fn decode_runner_b64(value: &str, field_name: &str) -> anyhow::Result<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(value))
+        .map_err(|e| anyhow::anyhow!("invalid base64 value for {field_name}: {e}"))
+}
+
+fn write_export_options_plist(
+    output_path: &Path,
+    team_id: &str,
+    method: &str,
+    mapping: &[(String, String)],
+    signing_identity_sha1: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut provisioning_dict = String::new();
+    for (bundle_id, profile) in mapping {
+        provisioning_dict.push_str("    <key>");
+        provisioning_dict.push_str(bundle_id);
+        provisioning_dict.push_str("</key>\n");
+        provisioning_dict.push_str("    <string>");
+        provisioning_dict.push_str(profile);
+        provisioning_dict.push_str("</string>\n");
+    }
+
+    let signing_cert_entry = signing_identity_sha1
+        .map(|sha1| format!("  <key>signingCertificate</key>\n  <string>{sha1}</string>\n"))
+        .unwrap_or_default();
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>{method}</string>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>teamID</key>
+  <string>{team_id}</string>
+  <key>destination</key>
+  <string>export</string>
+{signing_cert_entry}  <key>provisioningProfiles</key>
+  <dict>
+{provisioning_dict}  </dict>
+</dict>
+</plist>
+"#
+    );
+    fs::write(output_path, plist).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to write export options plist {}: {e}",
+            output_path.display()
+        )
+    })
+}
+
+fn install_ios_signing_bundle(
+    workspace: &Path,
+    bundle: &RunnerIosSigningBundle,
+) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
+    if bundle.team_id.trim().is_empty() {
+        anyhow::bail!("iOS signing bundle team_id is empty");
+    }
+    if bundle.p12_base64.trim().is_empty() {
+        anyhow::bail!("iOS signing bundle p12 payload is empty");
+    }
+    if bundle.p12_password.trim().is_empty() {
+        anyhow::bail!("iOS signing bundle p12 password is empty");
+    }
+    if bundle.provisioning_profiles.is_empty() {
+        anyhow::bail!("iOS signing bundle has no provisioning profiles");
+    }
+
+    let signing_dir = workspace.join(IOS_SIGNING_DIR);
+    fs::create_dir_all(&signing_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to create iOS signing working directory {}: {e}",
+            signing_dir.display()
+        )
+    })?;
+
+    let p12_path = signing_dir.join(if bundle.p12_filename.trim().is_empty() {
+        "distribution.p12"
+    } else {
+        bundle.p12_filename.trim()
+    });
+    let p12_bytes = decode_runner_b64(&bundle.p12_base64, "p12")?;
+    if p12_bytes.is_empty() {
+        anyhow::bail!("decoded iOS p12 is empty");
+    }
+    fs::write(&p12_path, p12_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to write p12 {}: {e}", p12_path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&p12_path, fs::Permissions::from_mode(0o600));
+    }
+
+    let profile_work_dir = signing_dir.join("profiles");
+    fs::create_dir_all(&profile_work_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to create profile work directory {}: {e}",
+            profile_work_dir.display()
+        )
+    })?;
+
+    let home = std::env::var("HOME")
+        .map_err(|_| anyhow::anyhow!("HOME environment variable is not set"))?;
+    let installed_profiles_dir = PathBuf::from(home)
+        .join("Library")
+        .join("MobileDevice")
+        .join("Provisioning Profiles");
+    fs::create_dir_all(&installed_profiles_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to create provisioning profiles directory {}: {e}",
+            installed_profiles_dir.display()
+        )
+    })?;
+
+    let mut installed_profiles = Vec::new();
+    let keychain_password = random_password_hex();
+    let keychain_path = signing_dir.join("oore-ci-build.keychain-db");
+    let keychain_path_str = keychain_path.display().to_string();
+    let mut keychain_created = false;
+    let mut original_keychains = Vec::new();
+
+    let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
+        let mut bundle_profile_mapping = Vec::new();
+        for profile in &bundle.provisioning_profiles {
+            if profile.bundle_id.trim().is_empty() {
+                anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
+            }
+            let profile_bytes = decode_runner_b64(
+                &profile.profile_base64,
+                &format!("provisioning profile '{}'", profile.bundle_id),
+            )?;
+            if profile_bytes.is_empty() {
+                anyhow::bail!(
+                    "decoded provisioning profile '{}' is empty",
+                    profile.bundle_id
+                );
+            }
+
+            let work_file_name = if profile.profile_filename.trim().is_empty() {
+                format!("{}.mobileprovision", profile.bundle_id)
+            } else {
+                profile.profile_filename.trim().to_string()
+            };
+            let work_path = profile_work_dir.join(work_file_name);
+            fs::write(&work_path, &profile_bytes).map_err(|e| {
+                anyhow::anyhow!("failed to write profile {}: {e}", work_path.display())
+            })?;
+
+            let profile_ref = profile
+                .profile_uuid
+                .clone()
+                .or_else(|| profile.profile_name.clone())
+                .unwrap_or_else(|| hex::encode(Sha256::digest(&profile_bytes)));
+
+            let installed_name = format!("{profile_ref}.mobileprovision");
+            let installed_path = installed_profiles_dir.join(installed_name);
+            fs::write(&installed_path, &profile_bytes).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to install provisioning profile {}: {e}",
+                    installed_path.display()
+                )
+            })?;
+            installed_profiles.push(installed_path);
+            bundle_profile_mapping.push((profile.bundle_id.clone(), profile_ref));
+        }
+
+        run_security_command_with_strings(&[
+            "create-keychain".to_string(),
+            "-p".to_string(),
+            keychain_password.clone(),
+            keychain_path_str.clone(),
+        ])?;
+        keychain_created = true;
+
+        run_security_command_with_strings(&[
+            "set-keychain-settings".to_string(),
+            "-lut".to_string(),
+            "21600".to_string(),
+            keychain_path_str.clone(),
+        ])?;
+        run_security_command_with_strings(&[
+            "unlock-keychain".to_string(),
+            "-p".to_string(),
+            keychain_password.clone(),
+            keychain_path_str.clone(),
+        ])?;
+
+        let original_keychain_output = run_security_command(&["list-keychains", "-d", "user"])?;
+        original_keychains = parse_keychain_list(&original_keychain_output);
+
+        let mut list_args = vec![
+            "list-keychains".to_string(),
+            "-d".to_string(),
+            "user".to_string(),
+            "-s".to_string(),
+            keychain_path_str.clone(),
+        ];
+        list_args.extend(original_keychains.clone());
+        run_security_command_with_strings(&list_args)?;
+
+        run_security_command_with_strings(&[
+            "import".to_string(),
+            p12_path.display().to_string(),
+            "-k".to_string(),
+            keychain_path_str.clone(),
+            "-P".to_string(),
+            bundle.p12_password.clone(),
+            "-T".to_string(),
+            "/usr/bin/codesign".to_string(),
+            "-T".to_string(),
+            "/usr/bin/security".to_string(),
+            "-T".to_string(),
+            "/usr/bin/xcodebuild".to_string(),
+        ])?;
+
+        run_security_command_with_strings(&[
+            "set-key-partition-list".to_string(),
+            "-S".to_string(),
+            "apple-tool:,apple:".to_string(),
+            "-k".to_string(),
+            keychain_password.clone(),
+            keychain_path_str.clone(),
+        ])?;
+
+        let identity_output = run_security_command_with_strings(&[
+            "find-identity".to_string(),
+            "-v".to_string(),
+            "-p".to_string(),
+            "codesigning".to_string(),
+            keychain_path_str.clone(),
+        ])?;
+        let identity_hashes = parse_codesigning_identity_hashes(&identity_output);
+        if identity_hashes.is_empty() {
+            anyhow::bail!("no valid code signing identity found after importing p12");
+        }
+
+        let signing_identity_sha1 = identity_hashes.first().cloned();
+        let effective_export_method = resolve_ios_export_method();
+        let export_options_plist_path = signing_dir.join("ExportOptions.plist");
+        write_export_options_plist(
+            &export_options_plist_path,
+            bundle.team_id.trim(),
+            &effective_export_method,
+            &bundle_profile_mapping,
+            signing_identity_sha1.as_deref(),
+        )?;
+
+        Ok(IosSigningMaterialization {
+            p12_path: p12_path.clone(),
+            export_options_plist_path,
+            bundle_profile_mapping,
+            effective_export_method,
+            signing_identity_sha1,
+        })
+    })();
+
+    match install_result {
+        Ok(materialization) => Ok((
+            materialization,
+            IosSigningCleanup {
+                keychain_path,
+                original_keychains,
+                installed_profiles,
+            },
+        )),
+        Err(err) => {
+            cleanup_ios_signing_state(
+                if keychain_created {
+                    Some(&keychain_path)
+                } else {
+                    None
+                },
+                &original_keychains,
+                &installed_profiles,
+            );
+            Err(err)
+        }
+    }
+}
+
+fn ios_signing_prepared_marker(
+    source: &str,
+    bundle: &RunnerIosSigningBundle,
+    materialization: &IosSigningMaterialization,
+) -> String {
+    format!(
+        "[oore-signing] {}",
+        serde_json::json!({
+            "event": "ios_signing_prepared",
+            "source": source,
+            "mode": match bundle.mode {
+                oore_contract::IosSigningMode::Manual => "manual",
+                oore_contract::IosSigningMode::Api => "api",
+                oore_contract::IosSigningMode::Hybrid => "hybrid",
+            },
+            "team_id": bundle.team_id,
+            "profiles_count": bundle.provisioning_profiles.len(),
+            "export_options_plist_path": materialization.export_options_plist_path,
+            "effective_export_method": materialization.effective_export_method,
+            "profile_mapping": materialization.bundle_profile_mapping,
+        })
+    )
+}
+
+fn is_ios_flutter_build_command(command: &str) -> bool {
+    let args: Vec<&str> = command.split_whitespace().collect();
+    let has_flutter_target = |target: &str| -> bool {
+        args.windows(3)
+            .any(|window| window == ["flutter", "build", target])
+            || args
+                .windows(4)
+                .any(|window| window == ["fvm", "flutter", "build", target])
+    };
+    has_flutter_target("ios") || has_flutter_target("ipa")
+}
+
+fn contains_flutter_build_target(args: &[String], target: &str) -> bool {
+    args.windows(3)
+        .any(|window| window == ["flutter", "build", target])
+        || args
+            .windows(4)
+            .any(|window| window == ["fvm", "flutter", "build", target])
+}
+
+fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
+    let mut rewritten = false;
+    for i in 0..args.len() {
+        if i + 2 < args.len()
+            && args[i] == "flutter"
+            && args[i + 1] == "build"
+            && args[i + 2] == "ios"
+        {
+            args[i + 2] = "ipa".to_string();
+            rewritten = true;
+        }
+        if i + 3 < args.len()
+            && args[i] == "fvm"
+            && args[i + 1] == "flutter"
+            && args[i + 2] == "build"
+            && args[i + 3] == "ios"
+        {
+            args[i + 3] = "ipa".to_string();
+            rewritten = true;
+        }
+    }
+    rewritten
+}
+
+fn adapt_ios_command_for_signing(
+    command: &str,
+    export_options_plist: &Path,
+) -> anyhow::Result<String> {
+    if !is_ios_flutter_build_command(command) {
+        return Ok(command.to_string());
+    }
+
+    let mut args: Vec<String> = command
+        .split_whitespace()
+        .map(|part| part.to_string())
+        .collect();
+    if args.len() < 3 {
+        return Ok(command.to_string());
+    }
+
+    if args.iter().any(|arg| arg == "--simulator") {
+        anyhow::bail!(
+            "iOS signing is enabled, but command uses --simulator which cannot produce installable ad-hoc IPA"
+        );
+    }
+
+    args.retain(|arg| arg != "--no-codesign");
+    args.retain(|arg| !arg.starts_with("--export-method="));
+
+    let rewrote_ios_target = rewrite_flutter_ios_target_to_ipa(&mut args);
+    if !rewrote_ios_target && !contains_flutter_build_target(&args, "ipa") {
+        anyhow::bail!(
+            "iOS signing is enabled, but command did not contain a Flutter iOS build target that can be rewritten to ipa export"
+        );
+    }
+
+    let has_export_plist = args
+        .iter()
+        .any(|arg| arg.starts_with("--export-options-plist="));
+    if !has_export_plist {
+        args.push(format!(
+            "--export-options-plist={}",
+            export_options_plist.display()
+        ));
+    }
+
+    Ok(args.join(" "))
+}
+
+fn normalize_stage_command_for_execution(
+    stage_name: &str,
+    command: &str,
+    dart_define_file: Option<&str>,
+    ios_export_options_plist: Option<&Path>,
+) -> anyhow::Result<(String, bool)> {
+    let mut normalized_command = normalize_legacy_env_syntax(command);
+
+    if stage_name == "build"
+        && let Some(define_file) = dart_define_file
+        && is_flutter_build_command(&normalized_command)
+    {
+        normalized_command = with_dart_define_file(&normalized_command, define_file);
+    }
+
+    let mut ios_signing_command_applied = false;
+    if stage_name == "build"
+        && let Some(export_plist) = ios_export_options_plist
+        && is_ios_flutter_build_command(&normalized_command)
+    {
+        normalized_command = adapt_ios_command_for_signing(&normalized_command, export_plist)?;
+        ios_signing_command_applied = true;
+    }
+
+    Ok((normalized_command, ios_signing_command_applied))
+}
+
+async fn fetch_job_ios_signing(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+) -> anyhow::Result<Option<RunnerIosSigningResponse>> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/ios-signing",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .send()
+        .await?;
+
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if body.trim().is_empty() {
+            anyhow::bail!("iOS signing lookup failed: {status}");
+        }
+        anyhow::bail!("iOS signing lookup failed: {status} {body}");
+    }
+
+    let payload: RunnerIosSigningResponse = resp.json().await?;
+    Ok(Some(payload))
 }
 
 pub async fn run_runner_forever(
@@ -1265,6 +1868,10 @@ async fn execute_build(
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
     let mut signing_preparation: Option<AndroidSigningPreparation> = None;
+    let mut ios_signing_source: Option<&str> = None;
+    let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
+    let mut ios_signing_materialization: Option<IosSigningMaterialization> = None;
+    let mut ios_signing_cleanup: Option<IosSigningCleanup> = None;
     let build_commands = execution_plan.stage_commands.build.as_slice();
     match determine_android_signing_variant(build_commands) {
         Ok(Some(variant)) => {
@@ -1275,12 +1882,13 @@ async fn execute_build(
                     {
                         match signing_inputs_from_runner_profile(profile) {
                             Ok(inputs) => {
-                                let materialization =
-                                    match materialize_android_signing_files(workspace.as_path(), &inputs)
-                                    {
-                                        Ok(materialization) => materialization,
-                                        Err(e) => return (steps, Err(e)),
-                                    };
+                                let materialization = match materialize_android_signing_files(
+                                    workspace.as_path(),
+                                    &inputs,
+                                ) {
+                                    Ok(materialization) => materialization,
+                                    Err(e) => return (steps, Err(e)),
+                                };
                                 signing_preparation = Some(AndroidSigningPreparation {
                                     inputs,
                                     materialization,
@@ -1318,6 +1926,44 @@ async fn execute_build(
         Err(e) => return (steps, Err(e)),
     }
 
+    if build_commands
+        .iter()
+        .any(|command| is_ios_flutter_build_command(command))
+    {
+        match fetch_job_ios_signing(client, daemon_url, config, &job.build_id).await {
+            Ok(Some(server_payload)) => {
+                if let Some(bundle) = server_payload.bundle {
+                    match install_ios_signing_bundle(workspace.as_path(), &bundle) {
+                        Ok((materialization, cleanup)) => {
+                            let signing_source = match bundle.mode {
+                                oore_contract::IosSigningMode::Manual => "manual",
+                                oore_contract::IosSigningMode::Api => "api",
+                                oore_contract::IosSigningMode::Hybrid => "hybrid",
+                            };
+                            ios_signing_bundle = Some(bundle);
+                            ios_signing_materialization = Some(materialization);
+                            ios_signing_cleanup = Some(cleanup);
+                            ios_signing_source = Some(signing_source);
+                            println!(
+                                "Prepared iOS signing keychain/profiles from pipeline profile"
+                            );
+                        }
+                        Err(e) => return (steps, Err(e)),
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return (
+                    steps,
+                    Err(anyhow::anyhow!(
+                        "Failed to load iOS signing bundle for this build. Aborting to avoid unsigned iOS artifacts: {e}"
+                    )),
+                );
+            }
+        }
+    }
+
     println!("Using pipeline config source: {}", execution_plan.source);
     let mut step_env: Vec<(String, String)> = vec![
         ("PROJECT_ID".to_string(), job.project_id.clone()),
@@ -1350,13 +1996,19 @@ async fn execute_build(
         ));
         step_env.push((
             OORE_ANDROID_KEY_PROPERTIES_PATH_ENV.to_string(),
-            prep.materialization.key_properties_path.display().to_string(),
+            prep.materialization
+                .key_properties_path
+                .display()
+                .to_string(),
         ));
         step_env.push((
             OORE_ANDROID_KEYSTORE_PASSWORD_ENV.to_string(),
             prep.inputs.keystore_password.clone(),
         ));
-        step_env.push((OORE_ANDROID_KEY_ALIAS_ENV.to_string(), prep.inputs.key_alias.clone()));
+        step_env.push((
+            OORE_ANDROID_KEY_ALIAS_ENV.to_string(),
+            prep.inputs.key_alias.clone(),
+        ));
         step_env.push((
             OORE_ANDROID_KEY_PASSWORD_ENV.to_string(),
             prep.inputs.key_password.clone(),
@@ -1374,6 +2026,28 @@ async fn execute_build(
             &mut log_seq,
             "stdout",
             &android_signing_prepared_marker(source, variant, prep),
+        )
+        .await;
+    }
+
+    if let (Some(source), Some(bundle), Some(materialization)) = (
+        ios_signing_source,
+        ios_signing_bundle.as_ref(),
+        ios_signing_materialization.as_ref(),
+    ) {
+        // Pin the exact signing identity via environment variable so xcodebuild doesn't
+        // accidentally pick a different distribution certificate from the user's login keychain.
+        if let Some(ref sha1) = materialization.signing_identity_sha1 {
+            step_env.push(("CODE_SIGN_IDENTITY".to_string(), sha1.clone()));
+        }
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &mut log_seq,
+            "stdout",
+            &ios_signing_prepared_marker(source, bundle, materialization),
         )
         .await;
     }
@@ -1403,6 +2077,7 @@ async fn execute_build(
         Some(".env".to_string())
     };
 
+    let mut ios_signing_command_applied = false;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -1421,13 +2096,18 @@ async fn execute_build(
 
             let step_name = format!("{stage_name}-{}", index + 1);
             let start = now_unix();
-            let mut normalized_command = normalize_legacy_env_syntax(command);
-            if stage_name == "build"
-                && let Some(define_file) = dart_define_file.as_deref()
-                && is_flutter_build_command(&normalized_command)
-            {
-                normalized_command = with_dart_define_file(&normalized_command, define_file);
-            }
+            let (normalized_command, command_applied) = match normalize_stage_command_for_execution(
+                stage_name,
+                command,
+                dart_define_file.as_deref(),
+                ios_signing_materialization
+                    .as_ref()
+                    .map(|materialization| materialization.export_options_plist_path.as_path()),
+            ) {
+                Ok(value) => value,
+                Err(e) => return (steps, Err(e)),
+            };
+            ios_signing_command_applied |= command_applied;
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
             let _ = append_runner_log_line(
@@ -1542,7 +2222,11 @@ async fn execute_build(
                         "stdout",
                         &step_end_marker(
                             &step_name,
-                            if exit_code == 0 { "succeeded" } else { "failed" },
+                            if exit_code == 0 {
+                                "succeeded"
+                            } else {
+                                "failed"
+                            },
                             Some(exit_code),
                         ),
                     )
@@ -1558,6 +2242,51 @@ async fn execute_build(
         }
     }
 
+    if ios_signing_materialization.is_some() && !ios_signing_command_applied {
+        return (
+            steps,
+            Err(anyhow::anyhow!(
+                "iOS signing bundle was provided, but no Flutter iOS build command was executed"
+            )),
+        );
+    }
+
+    let ios_artifact_metadata = ios_signing_bundle
+        .as_ref()
+        .zip(ios_signing_materialization.as_ref())
+        .map(|(bundle, materialization)| {
+            serde_json::json!({
+                "ios_signing": {
+                    "source": ios_signing_source.unwrap_or("pipeline_profile"),
+                    "mode": match bundle.mode {
+                        oore_contract::IosSigningMode::Manual => "manual",
+                        oore_contract::IosSigningMode::Api => "api",
+                        oore_contract::IosSigningMode::Hybrid => "hybrid",
+                    },
+                    "team_id": bundle.team_id,
+                    "bundle_ids": bundle
+                        .provisioning_profiles
+                        .iter()
+                        .map(|profile| profile.bundle_id.clone())
+                        .collect::<Vec<_>>(),
+                    "profile_uuid_map": bundle
+                        .provisioning_profiles
+                        .iter()
+                        .filter_map(|profile| {
+                            profile
+                                .profile_uuid
+                                .as_ref()
+                                .map(|uuid| (profile.bundle_id.clone(), uuid.clone()))
+                        })
+                        .collect::<Vec<_>>(),
+                    "certificate_fingerprint": hex::encode(Sha256::digest(
+                        fs::read(&materialization.p12_path).unwrap_or_default()
+                    )),
+                    "effective_export_method": materialization.effective_export_method,
+                }
+            })
+        });
+
     scan_and_upload_artifacts(
         workspace.as_path(),
         client,
@@ -1565,8 +2294,11 @@ async fn execute_build(
         config,
         &job.build_id,
         &execution_plan.artifact_patterns,
+        ios_artifact_metadata.as_ref(),
     )
     .await;
+
+    drop(ios_signing_cleanup);
 
     (steps, Ok(()))
 }
@@ -1590,6 +2322,9 @@ fn is_sensitive_env_key(key: &str) -> bool {
         || upper.contains("CREDENTIAL")
         || upper.contains("PRIVATE")
         || upper.contains("AUTH")
+        || upper.contains("P12")
+        || upper.contains("PROVISION")
+        || upper.contains("KEYCHAIN")
 }
 
 fn preview_env_value(key: &str, value: &str) -> String {
@@ -1717,8 +2452,11 @@ fn render_command_preview(command: &str, env: &[(String, String)]) -> String {
 }
 
 fn is_flutter_build_command(command: &str) -> bool {
-    let trimmed = command.trim_start();
-    trimmed.starts_with("flutter build ") || trimmed.starts_with("fvm flutter build ")
+    let args: Vec<&str> = command.split_whitespace().collect();
+    args.windows(2).any(|window| window == ["flutter", "build"])
+        || args
+            .windows(3)
+            .any(|window| window == ["fvm", "flutter", "build"])
 }
 
 fn with_dart_define_file(command: &str, define_file: &str) -> String {
@@ -1831,6 +2569,7 @@ async fn scan_and_upload_artifacts(
     config: &RunnerConfig,
     build_id: &str,
     artifact_patterns: &[String],
+    ios_metadata: Option<&serde_json::Value>,
 ) {
     let all_files = walk_dir_files(workspace);
 
@@ -1874,12 +2613,17 @@ async fn scan_and_upload_artifacts(
             }
         };
 
+        let metadata = match ios_metadata {
+            Some(value) if artifact_type == "ipa" => value.clone(),
+            _ => serde_json::json!({}),
+        };
+
         let body = serde_json::json!({
             "name": name,
             "artifact_type": artifact_type,
             "file_size": file_size,
             "checksum": checksum,
-            "metadata": {},
+            "metadata": metadata,
         });
 
         let resp = match client
@@ -2180,7 +2924,10 @@ mod tests {
         let workspace = temp_workspace();
         fs::create_dir_all(workspace.join("android/app")).expect("mkdir android/app");
         let env = signing_env_from_pairs(&[
-            (OORE_ANDROID_KEYSTORE_B64_ENV, "ZmFrZS1rZXlzdG9yZS1ieXRlcw=="),
+            (
+                OORE_ANDROID_KEYSTORE_B64_ENV,
+                "ZmFrZS1rZXlzdG9yZS1ieXRlcw==",
+            ),
             (OORE_ANDROID_KEYSTORE_PASSWORD_ENV, "store-pass"),
             (OORE_ANDROID_KEY_ALIAS_ENV, "upload"),
             (OORE_ANDROID_KEY_PASSWORD_ENV, "key-pass"),
@@ -2206,11 +2953,15 @@ mod tests {
 
     #[test]
     fn android_signing_command_detection_covers_flutter_android_targets() {
-        assert!(is_android_flutter_build_command("flutter build apk --release"));
+        assert!(is_android_flutter_build_command(
+            "flutter build apk --release"
+        ));
         assert!(is_android_flutter_build_command(
             "fvm flutter build appbundle --release"
         ));
-        assert!(!is_android_flutter_build_command("flutter build ios --release"));
+        assert!(!is_android_flutter_build_command(
+            "flutter build ios --release"
+        ));
     }
 
     #[test]
@@ -2222,9 +2973,8 @@ mod tests {
         .expect("variant");
         assert_eq!(release, Some(AndroidSigningBuildType::Release));
 
-        let debug =
-            determine_android_signing_variant(&["flutter build apk --debug".to_string()])
-                .expect("variant");
+        let debug = determine_android_signing_variant(&["flutter build apk --debug".to_string()])
+            .expect("variant");
         assert_eq!(debug, Some(AndroidSigningBuildType::Debug));
     }
 
@@ -2369,8 +3119,7 @@ mod tests {
     #[test]
     fn fvmrc_flutter_version_is_applied_to_flutter_commands() {
         let workspace = temp_workspace();
-        fs::write(workspace.join(".fvmrc"), "{ \"flutter\": \"3.24.0\" }\n")
-            .expect("write .fvmrc");
+        fs::write(workspace.join(".fvmrc"), "{ \"flutter\": \"3.24.0\" }\n").expect("write .fvmrc");
 
         let snapshot = serde_json::json!({
             "config_path_explicit": false,
@@ -2617,9 +3366,144 @@ mod tests {
     }
 
     #[test]
+    fn detects_wrapped_flutter_build_commands() {
+        assert!(is_flutter_build_command(
+            "cd app && flutter build ios --release --no-codesign"
+        ));
+        assert!(is_flutter_build_command(
+            "env FOO=bar fvm flutter build ipa --release"
+        ));
+    }
+
+    #[test]
     fn does_not_duplicate_existing_dart_define_file_arg() {
         let command = "flutter build ios --release --dart-define-from-file=.env";
         let updated = with_dart_define_file(command, ".env");
         assert_eq!(updated, command);
+    }
+
+    #[test]
+    fn chooses_release_testing_export_method_when_available() {
+        let help = "Available options: app-store-connect, release-testing, enterprise";
+        assert_eq!(choose_ios_export_method(help), "release-testing");
+    }
+
+    #[test]
+    fn falls_back_to_ad_hoc_alias_when_release_testing_absent() {
+        let help = "Available options: app-store, ad-hoc, enterprise";
+        assert_eq!(choose_ios_export_method(help), "ad-hoc");
+    }
+
+    #[test]
+    fn adapts_flutter_build_ios_to_signed_ipa_command() {
+        let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
+        let command = "flutter build ios --release --no-codesign";
+        let adapted =
+            adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
+        assert!(adapted.starts_with("flutter build ipa --release"));
+        assert!(!adapted.contains("--no-codesign"));
+        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+    }
+
+    #[test]
+    fn detects_ios_build_commands_when_wrapped() {
+        assert!(is_ios_flutter_build_command(
+            "cd app && flutter build ios --release --no-codesign"
+        ));
+        assert!(is_ios_flutter_build_command(
+            "env FOO=bar fvm flutter build ipa --release"
+        ));
+    }
+
+    #[test]
+    fn adapts_wrapped_flutter_ios_commands() {
+        let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
+        let command = "cd app && flutter build ios --release --no-codesign";
+        let adapted =
+            adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
+        assert!(adapted.contains("flutter build ipa --release"));
+        assert!(!adapted.contains("--no-codesign"));
+        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+    }
+
+    #[test]
+    fn normalizes_build_stage_wrapped_ios_command_with_signing_and_define_file() {
+        let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
+        let command = "cd app && flutter build ios --release --no-codesign";
+        let (normalized, signing_applied) = normalize_stage_command_for_execution(
+            "build",
+            command,
+            Some(".env"),
+            Some(export_plist.as_path()),
+        )
+        .expect("normalize");
+
+        assert!(signing_applied);
+        assert!(normalized.contains("flutter build ipa --release"));
+        assert!(!normalized.contains("--no-codesign"));
+        assert!(normalized.contains("--dart-define-from-file=.env"));
+        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+    }
+
+    #[test]
+    fn does_not_apply_ios_signing_rewrite_outside_build_stage() {
+        let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
+        let command = "cd app && flutter build ios --release --no-codesign";
+        let (normalized, signing_applied) = normalize_stage_command_for_execution(
+            "pre_build",
+            command,
+            Some(".env"),
+            Some(export_plist.as_path()),
+        )
+        .expect("normalize");
+
+        assert!(!signing_applied);
+        assert_eq!(normalized, command);
+    }
+
+    #[test]
+    fn normalizes_wrapped_ipa_command_and_marks_signing_applied() {
+        let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
+        let command = "env FOO=bar fvm flutter build ipa --release";
+        let (normalized, signing_applied) = normalize_stage_command_for_execution(
+            "build",
+            command,
+            None,
+            Some(export_plist.as_path()),
+        )
+        .expect("normalize");
+
+        assert!(signing_applied);
+        assert!(normalized.contains("fvm flutter build ipa --release"));
+        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+    }
+
+    #[test]
+    fn build_stage_ios_simulator_command_fails_when_signing_enabled() {
+        let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
+        let command = "flutter build ios --simulator";
+        let error = normalize_stage_command_for_execution(
+            "build",
+            command,
+            None,
+            Some(export_plist.as_path()),
+        )
+        .expect_err("simulator must fail");
+
+        assert!(error.to_string().contains("--simulator"));
+    }
+
+    #[test]
+    fn parses_valid_codesigning_identity_hashes() {
+        let output = r#"
+  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Distribution: Example (TEAM1234)"
+     1 valid identities found
+"#;
+        let hashes = parse_codesigning_identity_hashes(output);
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes[0], "0123456789ABCDEF0123456789ABCDEF01234567");
+
+        let none = parse_codesigning_identity_hashes("  0 valid identities found");
+        assert!(none.is_empty());
     }
 }

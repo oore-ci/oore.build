@@ -300,8 +300,8 @@ pub fn seal_gitlab_oauth_state(integration_id: &str, redirect_url: &str) -> Stri
         "created_at": now_unix(),
     });
     let json = serde_json::to_string(&state).unwrap();
-    let encrypted = oored::crypto::encrypt(&json, &TEST_ENCRYPTION_KEY)
-        .expect("failed to encrypt state token");
+    let encrypted =
+        oored::crypto::encrypt(&json, &TEST_ENCRYPTION_KEY).expect("failed to encrypt state token");
     urlencoding::encode(&encrypted).into_owned()
 }
 
@@ -350,11 +350,12 @@ pub async fn wait_for_builds(
 ) -> Vec<serde_json::Value> {
     let start = std::time::Instant::now();
     loop {
-        let rows = sqlx::query("SELECT * FROM builds WHERE project_id = ?1 ORDER BY build_number ASC")
-            .bind(project_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+        let rows =
+            sqlx::query("SELECT * FROM builds WHERE project_id = ?1 ORDER BY build_number ASC")
+                .bind(project_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
 
         if rows.len() >= expected {
             return rows

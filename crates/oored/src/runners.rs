@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use axum::extract::{FromRequestParts, Path, State};
-use axum::http::request::Parts;
-use axum::http::StatusCode;
 use axum::Json;
+use axum::extract::{FromRequestParts, Path, State};
+use axum::http::StatusCode;
+use axum::http::request::Parts;
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, ListRunnersResponse, RegisterRunnerRequest, RegisterRunnerResponse, Runner,
@@ -14,13 +14,13 @@ use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::builds::transition_build;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::token::{generate_token, hash_token};
 use crate::util::{api_err, extract_bearer, now_unix};
-use crate::AppState;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -88,8 +88,7 @@ impl FromRequestParts<Arc<AppState>> for RunnerAuth {
 
 fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
     let caps_str: String = row.get("capabilities");
-    let capabilities: serde_json::Value =
-        serde_json::from_str(&caps_str).unwrap_or_default();
+    let capabilities: serde_json::Value = serde_json::from_str(&caps_str).unwrap_or_default();
 
     Runner {
         id: row.get("id"),
@@ -219,7 +218,10 @@ pub async fn runner_heartbeat(
     })?;
 
     let now = now_unix();
-    let has_capabilities = req.capabilities.as_object().map_or(false, |o| !o.is_empty());
+    let has_capabilities = req
+        .capabilities
+        .as_object()
+        .map_or(false, |o| !o.is_empty());
 
     let store = state.store.lock().await;
     let pool = store.pool();
@@ -254,7 +256,11 @@ pub async fn runner_heartbeat(
     })?;
 
     if result.rows_affected() == 0 {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Runner not found",
+        ));
     }
 
     Ok(StatusCode::NO_CONTENT)
@@ -278,15 +284,18 @@ pub async fn claim_job(
     let pool = store.pool();
 
     // Find oldest queued build
-    let build_row = sqlx::query(
-        "SELECT * FROM builds WHERE status = 'queued' ORDER BY queued_at ASC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to query queued builds");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to query builds")
-    })?;
+    let build_row =
+        sqlx::query("SELECT * FROM builds WHERE status = 'queued' ORDER BY queued_at ASC LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to query queued builds");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to query builds",
+                )
+            })?;
 
     let build_row = match build_row {
         Some(row) => row,
@@ -350,7 +359,11 @@ pub async fn claim_job(
         .await
         .map_err(|e| {
             error!(error = %e, build_id = %build_id, "failed to set runner_id on build");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to assign runner to build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to assign runner to build",
+            )
         })?;
 
     let now = now_unix();
@@ -402,7 +415,11 @@ pub async fn update_job_status(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch build");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
@@ -446,20 +463,29 @@ pub async fn update_job_status(
         .unwrap_or("status update from runner");
 
     // Use transition_build for state transition
-    let mut build = transition_build(pool, &job_id, target_status, Some(&actor_str), Some(reason)).await?;
+    let mut build =
+        transition_build(pool, &job_id, target_status, Some(&actor_str), Some(reason)).await?;
 
     // Persist step results and exit code
     if !req.steps.is_empty() || req.exit_code.is_some() {
         let steps_json = serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string());
         sqlx::query("UPDATE builds SET step_results = ?1, exit_code = ?2 WHERE id = ?3")
-            .bind(if req.steps.is_empty() { None } else { Some(&steps_json) })
+            .bind(if req.steps.is_empty() {
+                None
+            } else {
+                Some(&steps_json)
+            })
             .bind(req.exit_code)
             .bind(&job_id)
             .execute(pool)
             .await
             .map_err(|e| {
                 error!(error = %e, build_id = %job_id, "failed to persist step results");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to persist step results")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to persist step results",
+                )
             })?;
 
         if !req.steps.is_empty() {
@@ -469,16 +495,19 @@ pub async fn update_job_status(
     }
 
     // Fetch events for the response
-    let event_rows = sqlx::query(
-        "SELECT * FROM build_events WHERE build_id = ?1 ORDER BY created_at ASC",
-    )
-    .bind(&job_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch build events");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build events")
-    })?;
+    let event_rows =
+        sqlx::query("SELECT * FROM build_events WHERE build_id = ?1 ORDER BY created_at ASC")
+            .bind(&job_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch build events");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch build events",
+                )
+            })?;
 
     let events = event_rows.iter().map(row_to_build_event).collect();
 
@@ -551,7 +580,11 @@ pub async fn list_runners(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to list runners");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list runners")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list runners",
+            )
         })?;
 
     let runners = rows.iter().map(row_to_runner).collect();
@@ -598,7 +631,11 @@ pub async fn update_runner(
         .await
         .map_err(|e| {
             error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch runner")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch runner",
+            )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
 
@@ -622,7 +659,11 @@ pub async fn update_runner(
             .await
             .map_err(|e| {
                 error!(error = %e, runner_id = %runner_id, "failed to rename runner");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update runner")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to update runner",
+                )
             })?;
 
         let details = serde_json::json!({
@@ -656,7 +697,11 @@ pub async fn update_runner(
         .await
         .map_err(|e| {
             error!(error = %e, runner_id = %runner_id, "failed to reload runner");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to load runner")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load runner",
+            )
         })?;
 
     Ok(Json(UpdateRunnerResponse {

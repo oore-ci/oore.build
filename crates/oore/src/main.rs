@@ -9,8 +9,8 @@ use clap::{Args, Parser, Subcommand};
 use oore_contract::{
     ApiError, BootstrapTokenRecord, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse,
     OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, SetupCompleteResponse,
-    SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest,
-    SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
+    SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
+    SetupState, SetupStateFile, SetupStatus,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -153,8 +153,8 @@ fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(p));
     }
 
-    let data_dir = dirs::data_dir()
-        .context("could not determine platform data directory (dirs::data_dir)")?;
+    let data_dir =
+        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
     Ok(data_dir.join("oore").join("oore.db"))
 }
 
@@ -253,8 +253,7 @@ async fn load_state(pool: &SqlitePool) -> anyhow::Result<Option<SetupStateFile>>
             let bootstrap_token = {
                 let hash: Option<String> = row.try_get("bootstrap_token_hash")?;
                 hash.map(|hash| {
-                    let expires_at: i64 =
-                        row.try_get("bootstrap_token_expires_at").unwrap_or(0);
+                    let expires_at: i64 = row.try_get("bootstrap_token_expires_at").unwrap_or(0);
                     let consumed_at: Option<i64> =
                         row.try_get("bootstrap_token_consumed_at").unwrap_or(None);
                     BootstrapTokenRecord {
@@ -278,9 +277,7 @@ async fn load_state(pool: &SqlitePool) -> anyhow::Result<Option<SetupStateFile>>
                 issuer_url.map(|issuer_url| oore_contract::OidcConfigRecord {
                     issuer_url,
                     client_id: row.try_get("oidc_client_id").unwrap_or_default(),
-                    has_client_secret: row
-                        .try_get::<i32, _>("oidc_has_client_secret")
-                        .unwrap_or(0)
+                    has_client_secret: row.try_get::<i32, _>("oidc_has_client_secret").unwrap_or(0)
                         != 0,
                     authorization_endpoint: row
                         .try_get("oidc_authorization_endpoint")
@@ -365,13 +362,33 @@ async fn save_state(pool: &SqlitePool, state: &SetupStateFile) -> anyhow::Result
     .bind(state.setup_session.as_ref().map(|s| s.expires_at))
     .bind(state.oidc_config.as_ref().map(|c| &c.issuer_url))
     .bind(state.oidc_config.as_ref().map(|c| &c.client_id))
-    .bind(state.oidc_config.as_ref().map(|c| c.has_client_secret as i32))
-    .bind(state.oidc_config.as_ref().map(|c| &c.authorization_endpoint))
+    .bind(
+        state
+            .oidc_config
+            .as_ref()
+            .map(|c| c.has_client_secret as i32),
+    )
+    .bind(
+        state
+            .oidc_config
+            .as_ref()
+            .map(|c| &c.authorization_endpoint),
+    )
     .bind(state.oidc_config.as_ref().map(|c| &c.token_endpoint))
-    .bind(state.oidc_config.as_ref().and_then(|c| c.userinfo_endpoint.as_ref()))
+    .bind(
+        state
+            .oidc_config
+            .as_ref()
+            .and_then(|c| c.userinfo_endpoint.as_ref()),
+    )
     .bind(state.oidc_config.as_ref().map(|c| &c.jwks_uri))
     .bind(state.oidc_config.as_ref().map(|c| c.configured_at))
-    .bind(state.oidc_secret.as_ref().map(|s| &s.encrypted_client_secret))
+    .bind(
+        state
+            .oidc_secret
+            .as_ref()
+            .map(|s| &s.encrypted_client_secret),
+    )
     .bind(state.oidc_secret.as_ref().map(|s| s.stored_at))
     .bind(state.owner.as_ref().map(|o| &o.email))
     .bind(state.owner.as_ref().and_then(|o| o.oidc_subject.as_ref()))
@@ -511,7 +528,11 @@ async fn handle_setup_open(args: SetupOpenArgs) -> anyhow::Result<()> {
         println!("Bootstrap token generated.");
         println!();
         println!("Token:   {}", plaintext_token);
-        println!("Expires: {} ({} from now)", format_epoch_local(expires_at), ttl_display);
+        println!(
+            "Expires: {} ({} from now)",
+            format_epoch_local(expires_at),
+            ttl_display
+        );
         println!("State:   {}", state_display);
         println!("DB:      {}", db_display);
         println!();
@@ -527,10 +548,7 @@ async fn handle_setup_open(args: SetupOpenArgs) -> anyhow::Result<()> {
 
 /// Open a URL in the default browser (macOS-only in V1).
 fn open_browser(url: &str) -> bool {
-    std::process::Command::new("open")
-        .arg(url)
-        .spawn()
-        .is_ok()
+    std::process::Command::new("open").arg(url).spawn().is_ok()
 }
 
 /// Accept a single HTTP request on the listener, extract OIDC callback params.
@@ -550,15 +568,11 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
 
     // Parse the GET request line: "GET /path?query HTTP/1.1"
     let first_line = request.lines().next().unwrap_or("");
-    let path = first_line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("/");
+    let path = first_line.split_whitespace().nth(1).unwrap_or("/");
 
     // Parse query params using url crate
     let fake_base = format!("http://localhost{}", path);
-    let parsed = url::Url::parse(&fake_base)
-        .context("failed to parse callback URL")?;
+    let parsed = url::Url::parse(&fake_base).context("failed to parse callback URL")?;
     let params: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
 
     // Check for OIDC error
@@ -653,9 +667,10 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
     let status_resp = client.get(&status_url).send().await;
 
     let status: SetupStatus = match status_resp {
-        Ok(resp) if resp.status().is_success() => {
-            resp.json().await.context("failed to parse setup-status response")?
-        }
+        Ok(resp) if resp.status().is_success() => resp
+            .json()
+            .await
+            .context("failed to parse setup-status response")?,
         Ok(resp) => {
             let msg = extract_error_message(resp).await;
             anyhow::bail!("Cannot reach oored at {daemon_url}: {msg}");
@@ -727,9 +742,15 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
             if status_code == reqwest::StatusCode::CONFLICT {
                 anyhow::bail!("Setup is already complete. Instance is in ready state.");
             } else if status_code == reqwest::StatusCode::UNAUTHORIZED {
-                anyhow::bail!("Bootstrap token is invalid. Please regenerate with: oore setup open");
+                anyhow::bail!(
+                    "Bootstrap token is invalid. Please regenerate with: oore setup open"
+                );
             } else {
-                anyhow::bail!("Bootstrap verification failed (HTTP {}): {}", status_code.as_u16(), msg);
+                anyhow::bail!(
+                    "Bootstrap verification failed (HTTP {}): {}",
+                    status_code.as_u16(),
+                    msg
+                );
             }
         }
         println!();
@@ -742,9 +763,9 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!();
 
         // Ensure we have a session token (if resuming, we might not)
-        let token = session_token.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Session expired or invalid. Please restart setup.")
-        })?;
+        let token = session_token
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Session expired or invalid. Please restart setup."))?;
 
         loop {
             let issuer_url: String = dialoguer::Input::new()
@@ -791,7 +812,10 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
                     .await
                     .context("failed to parse OIDC configure response")?;
                 current_state = SetupState::IdpConfigured;
-                println!("  \u{2713} OIDC provider configured. Issuer: {}", body.discovered_issuer);
+                println!(
+                    "  \u{2713} OIDC provider configured. Issuer: {}",
+                    body.discovered_issuer
+                );
                 println!();
                 break;
             } else {
@@ -831,9 +855,9 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!("[Step 3/4] Owner account setup");
         println!();
 
-        let token = session_token.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Session expired or invalid. Please restart setup.")
-        })?;
+        let token = session_token
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Session expired or invalid. Please restart setup."))?;
 
         // Bind to a random free port
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -954,11 +978,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
             } else if status_code == reqwest::StatusCode::UNAUTHORIZED {
                 anyhow::bail!("Session expired or invalid. Please restart setup.");
             } else {
-                anyhow::bail!(
-                    "OIDC start failed (HTTP {}): {}",
-                    status_code.as_u16(),
-                    msg
-                );
+                anyhow::bail!("OIDC start failed (HTTP {}): {}", status_code.as_u16(), msg);
             }
         }
     } else if current_state == SetupState::OwnerCreated {
@@ -973,9 +993,9 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!("[Step 4/4] Finalize setup");
         println!();
 
-        let token = session_token.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Session expired or invalid. Please restart setup.")
-        })?;
+        let token = session_token
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Session expired or invalid. Please restart setup."))?;
 
         let confirm = dialoguer::Confirm::new()
             .with_prompt("  Complete setup? This will lock all setup endpoints.")
@@ -1005,7 +1025,10 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
                 .json()
                 .await
                 .context("failed to parse setup complete response")?;
-            println!("  \u{2713} Setup complete! Instance ID: {}", body.instance_id);
+            println!(
+                "  \u{2713} Setup complete! Instance ID: {}",
+                body.instance_id
+            );
             println!();
             println!("Your oore.build instance is ready. Run 'oore status' to verify.");
         } else {
@@ -1016,7 +1039,11 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
             } else if status_code == reqwest::StatusCode::UNAUTHORIZED {
                 anyhow::bail!("Session expired or invalid. Please restart setup.");
             } else {
-                anyhow::bail!("Setup completion failed (HTTP {}): {}", status_code.as_u16(), msg);
+                anyhow::bail!(
+                    "Setup completion failed (HTTP {}): {}",
+                    status_code.as_u16(),
+                    msg
+                );
             }
         }
     }
@@ -1079,7 +1106,10 @@ async fn handle_runner_register(args: RunnerRegisterArgs) -> anyhow::Result<()> 
         .await?;
 
     if !resp.status().is_success() {
-        let err: ApiError = resp.json().await.context("failed to parse error response")?;
+        let err: ApiError = resp
+            .json()
+            .await
+            .context("failed to parse error response")?;
         anyhow::bail!("Registration failed: {} - {}", err.code, err.error);
     }
 
@@ -1171,11 +1201,31 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
 fn run_doctor_checks() -> anyhow::Result<()> {
     let checks: [(&str, &[&str], &str); 7] = [
         ("git", &["--version"], "brew install git"),
-        ("rustc", &["--version"], "curl https://sh.rustup.rs -sSf | sh"),
-        ("cargo", &["--version"], "curl https://sh.rustup.rs -sSf | sh"),
-        ("bun", &["--version"], "curl -fsSL https://bun.sh/install | bash"),
-        ("fvm", &["--version"], "brew tap leoafarias/fvm && brew install fvm"),
-        ("flutter", &["--version"], "fvm install <version> && fvm use <version>"),
+        (
+            "rustc",
+            &["--version"],
+            "curl https://sh.rustup.rs -sSf | sh",
+        ),
+        (
+            "cargo",
+            &["--version"],
+            "curl https://sh.rustup.rs -sSf | sh",
+        ),
+        (
+            "bun",
+            &["--version"],
+            "curl -fsSL https://bun.sh/install | bash",
+        ),
+        (
+            "fvm",
+            &["--version"],
+            "brew tap leoafarias/fvm && brew install fvm",
+        ),
+        (
+            "flutter",
+            &["--version"],
+            "fvm install <version> && fvm use <version>",
+        ),
         ("xcodebuild", &["-version"], "xcode-select --install"),
     ];
 
@@ -1208,13 +1258,13 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Setup(setup) => match setup.command {
             Some(SetupSubcommand::Open(args)) => {
-                let runtime = tokio::runtime::Runtime::new()
-                    .context("failed to create tokio runtime")?;
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_setup_open(args))?;
             }
             None => {
-                let runtime = tokio::runtime::Runtime::new()
-                    .context("failed to create tokio runtime")?;
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_setup_interactive(&setup.daemon_url))?;
             }
         },
@@ -1226,13 +1276,13 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Runner(runner) => match runner.command {
             RunnerSubcommand::Register(args) => {
-                let runtime = tokio::runtime::Runtime::new()
-                    .context("failed to create tokio runtime")?;
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_register(args))?;
             }
             RunnerSubcommand::Start(args) => {
-                let runtime = tokio::runtime::Runtime::new()
-                    .context("failed to create tokio runtime")?;
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_start(args))?;
             }
         },

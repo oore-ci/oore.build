@@ -234,17 +234,17 @@ Dependency: Phases 3-5 complete.
 
 - [x] **5.11 [P0] Android signing bootstrap compatibility fallback (`OORE_ANDROID_*` env contract)** - Runner prepares `android/key.properties` in ephemeral workspace when Flutter Android build commands are present and signing env vars are provided (`OORE_ANDROID_KEYSTORE_PATH` or `OORE_ANDROID_KEYSTORE_BASE64` plus password/alias vars); used when no pipeline-managed signing profile exists.
 - [x] **5.12 [P0] Android signing credential management API/UI** - Added encrypted at-rest, pipeline-scoped Android signing profiles (`debug`/`release`) with owner/admin UI workflow in pipeline create/edit dialogs and runner retrieval over authenticated job endpoints.
-- [ ] **5.13 [P0] iOS signing asset orchestration** - Import/manage certs + provisioning profiles, create ephemeral keychains, and match profiles by bundle identifier/export method.
-- [ ] **5.14 [P0] iOS ad-hoc export contract** - Enforce ad-hoc export defaults, required metadata checks, and signed IPA validation before distribution.
+- [x] **5.13 [P0] iOS signing asset orchestration** - Added pipeline-scoped iOS signing settings (`manual|api|hybrid`), encrypted cert/profile/API-key storage, App Store Connect sync/device registration endpoints, and runner ephemeral keychain/profile materialization.
+- [x] **5.14 [P0] iOS ad-hoc export contract** - Runner now enforces signed iOS IPA path (`flutter build ipa` with generated export options), resolves Xcode export method compatibility (`release-testing` preferred, `ad-hoc` fallback), and attaches signing provenance metadata to IPA artifacts.
 - [ ] **5.15 [P1] macOS signing + notarization pipeline** - Implement Developer ID signing + `notarytool` submission/polling/stapling with build-surface status.
-- [ ] **5.16 [P1] Signing diagnostics (`oore doctor` + runner preflight)** - Add actionable diagnostics for keystore/certificate/profile/notary prerequisites.
+- [ ] **5.16 [P1] Signing diagnostics (`oore doctor` + runner preflight)** - Add actionable diagnostics for keystore/certificate/profile/notary prerequisites. Progress: runner now emits iOS signing preparation markers and mode/provenance metadata, but dedicated `oore doctor` checks are still pending.
 
 Exit criteria:
 - Android release builds can be signed without committing key material to repository history.
 - iOS ad-hoc builds produce installable signed IPA artifacts with auditable signing provenance.
 - macOS release artifacts are signed and notarized (or fail with explicit diagnostics).
 
-Feature docs: `2026-02-10-android-signing-bootstrap-codemagic-env.md`, `2026-02-10-pipeline-scoped-android-signing-ui.md`.
+Feature docs: `2026-02-10-android-signing-bootstrap-codemagic-env.md`, `2026-02-10-pipeline-scoped-android-signing-ui.md`, `2026-02-11-ios-ad-hoc-signing-pipeline-api-device-registration.md`.
 
 ## Phase 6: Operator CLI Completeness (`P1`)
 

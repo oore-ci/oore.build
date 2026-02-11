@@ -153,6 +153,10 @@ export default defineConfig({
             link: "/features/android-signing",
           },
           {
+            text: "iOS Signing",
+            link: "/features/ios-signing",
+          },
+          {
             text: "Artifact Storage Management",
             link: "/features/artifact-storage-management",
           },

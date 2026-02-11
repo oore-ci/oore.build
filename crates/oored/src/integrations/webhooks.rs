@@ -1,9 +1,9 @@
 use std::sync::{Arc, OnceLock};
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use oore_contract::ApiError;
 use ring::hmac;
 use serde::Serialize;
@@ -11,9 +11,9 @@ use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::crypto;
 use crate::util::{api_err, now_unix};
-use crate::AppState;
 
 /// Maximum webhook body size (1 MB).
 const MAX_WEBHOOK_BODY_SIZE: usize = 1_048_576;
@@ -123,7 +123,11 @@ async fn get_webhook_secrets(
     .await
     .map_err(|e| {
         error!(error = %e, provider = provider.as_str(), "failed to fetch webhook integrations");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Internal error")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Internal error",
+        )
     })?;
 
     let mut decrypted = Vec::with_capacity(rows.len());
@@ -185,7 +189,11 @@ pub async fn github_webhook(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     // Body size check
     if body.len() > MAX_WEBHOOK_BODY_SIZE {
-        return Err(api_err(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", "Webhook payload exceeds size limit"));
+        return Err(api_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "Webhook payload exceeds size limit",
+        ));
     }
 
     // Extract required headers
@@ -194,7 +202,11 @@ pub async fn github_webhook(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| {
             warn!("GitHub webhook missing X-Hub-Signature-256");
-            api_err(StatusCode::UNAUTHORIZED, "missing_signature", "X-Hub-Signature-256 header required")
+            api_err(
+                StatusCode::UNAUTHORIZED,
+                "missing_signature",
+                "X-Hub-Signature-256 header required",
+            )
         })?;
 
     let delivery_id = headers
@@ -212,7 +224,11 @@ pub async fn github_webhook(
     // Parse payload to extract repository info for integration resolution
     let payload: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
         error!(error = %e, "failed to parse GitHub webhook payload");
-        api_err(StatusCode::BAD_REQUEST, "invalid_payload", "Invalid JSON payload")
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_payload",
+            "Invalid JSON payload",
+        )
     })?;
 
     let pool = {
@@ -220,13 +236,8 @@ pub async fn github_webhook(
         store.pool().clone()
     };
 
-    let secrets = get_webhook_secrets(
-        &pool,
-        &state.encryption_key,
-        WebhookProvider::Github,
-        false,
-    )
-    .await?;
+    let secrets =
+        get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Github, false).await?;
 
     let mut matched_integration_id = secrets
         .iter()
@@ -234,13 +245,9 @@ pub async fn github_webhook(
         .map(|candidate| candidate.integration_id.clone());
 
     if matched_integration_id.is_none() {
-        let refreshed = get_webhook_secrets(
-            &pool,
-            &state.encryption_key,
-            WebhookProvider::Github,
-            true,
-        )
-        .await?;
+        let refreshed =
+            get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Github, true)
+                .await?;
 
         if !Arc::ptr_eq(&secrets, &refreshed) {
             matched_integration_id = refreshed
@@ -252,7 +259,11 @@ pub async fn github_webhook(
 
     let integration_id = matched_integration_id.ok_or_else(|| {
         warn!("GitHub webhook signature verification failed for all integrations");
-        api_err(StatusCode::UNAUTHORIZED, "invalid_signature", "Webhook signature verification failed")
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_signature",
+            "Webhook signature verification failed",
+        )
     })?;
 
     // Idempotency check
@@ -409,7 +420,11 @@ pub async fn gitlab_webhook(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     // Body size check
     if body.len() > MAX_WEBHOOK_BODY_SIZE {
-        return Err(api_err(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", "Webhook payload exceeds size limit"));
+        return Err(api_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "Webhook payload exceeds size limit",
+        ));
     }
 
     // Extract GitLab token
@@ -418,7 +433,11 @@ pub async fn gitlab_webhook(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| {
             warn!("GitLab webhook missing X-Gitlab-Token");
-            api_err(StatusCode::UNAUTHORIZED, "missing_token", "X-Gitlab-Token header required")
+            api_err(
+                StatusCode::UNAUTHORIZED,
+                "missing_token",
+                "X-Gitlab-Token header required",
+            )
         })?;
 
     let event_uuid = headers
@@ -436,7 +455,11 @@ pub async fn gitlab_webhook(
     // Parse payload
     let payload: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
         error!(error = %e, "failed to parse GitLab webhook payload");
-        api_err(StatusCode::BAD_REQUEST, "invalid_payload", "Invalid JSON payload")
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_payload",
+            "Invalid JSON payload",
+        )
     })?;
 
     let pool = {
@@ -444,13 +467,8 @@ pub async fn gitlab_webhook(
         store.pool().clone()
     };
 
-    let secrets = get_webhook_secrets(
-        &pool,
-        &state.encryption_key,
-        WebhookProvider::Gitlab,
-        false,
-    )
-    .await?;
+    let secrets =
+        get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Gitlab, false).await?;
 
     let mut matched_integration_id = secrets
         .iter()
@@ -458,13 +476,9 @@ pub async fn gitlab_webhook(
         .map(|candidate| candidate.integration_id.clone());
 
     if matched_integration_id.is_none() {
-        let refreshed = get_webhook_secrets(
-            &pool,
-            &state.encryption_key,
-            WebhookProvider::Gitlab,
-            true,
-        )
-        .await?;
+        let refreshed =
+            get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Gitlab, true)
+                .await?;
 
         if !Arc::ptr_eq(&secrets, &refreshed) {
             matched_integration_id = refreshed
@@ -476,7 +490,11 @@ pub async fn gitlab_webhook(
 
     let integration_id = matched_integration_id.ok_or_else(|| {
         warn!("GitLab webhook token verification failed for all integrations");
-        api_err(StatusCode::UNAUTHORIZED, "invalid_token", "Webhook token verification failed")
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_token",
+            "Webhook token verification failed",
+        )
     })?;
 
     // Idempotency check
@@ -504,7 +522,10 @@ pub async fn gitlab_webhook(
         if let Ok(event_time) = chrono::DateTime::parse_from_rfc3339(timestamp) {
             let event_unix = event_time.timestamp();
             if now - event_unix > MAX_WEBHOOK_AGE_SECS {
-                warn!(event_age = now - event_unix, "rejecting stale GitLab webhook");
+                warn!(
+                    event_age = now - event_unix,
+                    "rejecting stale GitLab webhook"
+                );
                 return Err(api_err(
                     StatusCode::BAD_REQUEST,
                     "stale_event",
@@ -614,11 +635,7 @@ fn normalize_gitlab_event(
         .get("user")
         .and_then(|u| u.get("username"))
         .and_then(|v| v.as_str())
-        .or_else(|| {
-            payload
-                .get("user_username")
-                .and_then(|v| v.as_str())
-        })
+        .or_else(|| payload.get("user_username").and_then(|v| v.as_str()))
         .map(String::from);
 
     NormalizedWebhookEvent {

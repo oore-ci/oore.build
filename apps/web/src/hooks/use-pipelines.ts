@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   CreatePipelineRequest,
+  RegisterIosDeviceRequest,
   UpdatePipelineAndroidSigningRequest,
+  UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   ValidatePipelineRequest,
 } from '@/lib/types'
@@ -10,9 +12,14 @@ import {
   deletePipeline,
   getPipeline,
   getPipelineAndroidSigning,
+  getPipelineIosSigning,
+  listPipelineIosDevices,
   listPipelines,
+  registerPipelineIosDevice,
+  syncPipelineIosSigning,
   updatePipeline,
   updatePipelineAndroidSigning,
+  updatePipelineIosSigning,
   validatePipeline,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -204,6 +211,142 @@ export function useUpdatePipelineAndroidSigning() {
           instance?.id ?? '__none__',
           'pipeline',
           variables.pipelineId,
+        ],
+      })
+    },
+  })
+}
+
+export function usePipelineIosSigning(pipelineId: string) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'pipeline-ios-signing', pipelineId],
+    queryFn: () => getPipelineIosSigning(baseUrl!, token!, pipelineId),
+    enabled: !!baseUrl && !!token && !!pipelineId,
+  })
+}
+
+export function useUpdatePipelineIosSigning() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: ({
+      pipelineId,
+      data,
+    }: {
+      pipelineId: string
+      data: UpdatePipelineIosSigningRequest
+    }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return updatePipelineIosSigning(baseUrl, token, pipelineId, data)
+    },
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline-ios-signing',
+          variables.pipelineId,
+        ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline-ios-signing-devices',
+          variables.pipelineId,
+        ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'pipeline', variables.pipelineId],
+      })
+    },
+  })
+}
+
+export function usePipelineIosDevices(pipelineId: string) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'pipeline-ios-signing-devices',
+      pipelineId,
+    ],
+    queryFn: () => listPipelineIosDevices(baseUrl!, token!, pipelineId),
+    enabled: !!baseUrl && !!token && !!pipelineId,
+  })
+}
+
+export function useRegisterPipelineIosDevice() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: ({
+      pipelineId,
+      data,
+    }: {
+      pipelineId: string
+      data: RegisterIosDeviceRequest
+    }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return registerPipelineIosDevice(baseUrl, token, pipelineId, data)
+    },
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline-ios-signing-devices',
+          variables.pipelineId,
+        ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline-ios-signing',
+          variables.pipelineId,
+        ],
+      })
+    },
+  })
+}
+
+export function useSyncPipelineIosSigning() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (pipelineId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return syncPipelineIosSigning(baseUrl, token, pipelineId)
+    },
+    onSuccess: (_data, pipelineId) => {
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline-ios-signing',
+          pipelineId,
+        ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline-ios-signing-devices',
+          pipelineId,
         ],
       })
     },

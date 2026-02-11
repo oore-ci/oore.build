@@ -5,8 +5,8 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::body::Body;
 use axum::Router;
+use axum::body::Body;
 use http_body_util::BodyExt;
 use hyper::Request;
 use oore_contract::{BootstrapTokenRecord, SetupSessionRecord, SetupState};
@@ -221,7 +221,10 @@ async fn run_full_setup(path: &Path) -> String {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {}", session_token))
                 .body(Body::from(
-                    serde_json::to_string(&json!({"redirect_uri": "http://localhost:3000/setup/owner"})).unwrap(),
+                    serde_json::to_string(
+                        &json!({"redirect_uri": "http://localhost:3000/setup/owner"}),
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
@@ -245,7 +248,8 @@ async fn run_full_setup(path: &Path) -> String {
                     serde_json::to_string(&json!({
                         "code": "test-auth-code",
                         "state": oidc_state
-                    })).unwrap(),
+                    }))
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
@@ -383,7 +387,10 @@ async fn test_full_setup_flow() {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {}", session_token))
                 .body(Body::from(
-                    serde_json::to_string(&json!({"redirect_uri": "http://localhost:3000/setup/owner"})).unwrap(),
+                    serde_json::to_string(
+                        &json!({"redirect_uri": "http://localhost:3000/setup/owner"}),
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
@@ -394,7 +401,12 @@ async fn test_full_setup_flow() {
     let body = body_json(resp).await;
     let oidc_state = body["state"].as_str().unwrap().to_string();
     assert!(!oidc_state.is_empty());
-    assert!(body["authorization_url"].as_str().unwrap().contains("oauth2"));
+    assert!(
+        body["authorization_url"]
+            .as_str()
+            .unwrap()
+            .contains("oauth2")
+    );
 
     // Step 3b: Verify owner OIDC callback (test mode uses mock claims)
     let resp = app
@@ -409,7 +421,8 @@ async fn test_full_setup_flow() {
                     serde_json::to_string(&json!({
                         "code": "test-auth-code",
                         "state": oidc_state
-                    })).unwrap(),
+                    }))
+                    .unwrap(),
                 ))
                 .unwrap(),
         )
@@ -420,7 +433,12 @@ async fn test_full_setup_flow() {
     let body = body_json(resp).await;
     assert_eq!(body["state"], "owner_created");
     assert_eq!(body["owner_email"], "admin@example.com");
-    assert!(body["oidc_subject"].as_str().unwrap().starts_with("test-subject-"));
+    assert!(
+        body["oidc_subject"]
+            .as_str()
+            .unwrap()
+            .starts_with("test-subject-")
+    );
 
     // Step 4: Complete setup
     let resp = app
@@ -814,7 +832,10 @@ async fn test_all_setup_endpoints_blocked_after_ready() {
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer fake-token")
                 .body(Body::from(
-                    serde_json::to_string(&json!({"redirect_uri": "http://localhost:3000/setup/owner"})).unwrap(),
+                    serde_json::to_string(
+                        &json!({"redirect_uri": "http://localhost:3000/setup/owner"}),
+                    )
+                    .unwrap(),
                 ))
                 .unwrap(),
         )

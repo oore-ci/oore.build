@@ -1,7 +1,97 @@
 import { HttpResponse, delay, http } from 'msw'
 import { demoPipelines } from '../data/pipelines'
 import { demoBuilds } from '../data/builds'
-import { ago } from '../seed'
+import { ago, PIPELINE_IDS } from '../seed'
+
+const iosSigningByPipeline: Record<string, object> = {
+  [PIPELINE_IDS.shopIos]: {
+    enabled: true,
+    mode: 'api',
+    team_id: 'A1B2C3D4E5',
+    bundle_ids: ['com.example.fluttershop'],
+    has_p12: false,
+    has_p12_password: false,
+    has_api_key: true,
+    api_key_id: 'K9X7Y2Z1AB',
+    api_issuer_id: '57246542-96fe-1a63-e053-0824d011072a',
+    provisioning_profiles: [
+      {
+        bundle_id: 'com.example.fluttershop',
+        has_profile: true,
+        profile_filename: 'FlutterShop_AdHoc.mobileprovision',
+        profile_uuid: 'A1B2C3D4-E5F6-7890-ABCD-EF1234567890',
+        profile_name: 'FlutterShop Ad Hoc',
+        expires_at: ago(-365 * 86400),
+      },
+    ],
+    updated_at: ago(86400 * 3),
+  },
+  [PIPELINE_IDS.paymentsAll]: {
+    enabled: true,
+    mode: 'hybrid',
+    team_id: 'F6G7H8I9J0',
+    bundle_ids: [
+      'com.example.nativepayments',
+      'com.example.nativepayments.share',
+    ],
+    has_p12: true,
+    p12_filename: 'distribution.p12',
+    has_p12_password: true,
+    has_api_key: true,
+    api_key_id: 'M3N4P5Q6RS',
+    api_issuer_id: '69d2de96-0000-47e3-e053-0824d011072a',
+    provisioning_profiles: [
+      {
+        bundle_id: 'com.example.nativepayments',
+        has_profile: true,
+        profile_filename: 'NativePayments_AdHoc.mobileprovision',
+        profile_uuid: 'B2C3D4E5-F6A7-8901-BCDE-F12345678901',
+        profile_name: 'NativePayments Ad Hoc',
+        expires_at: ago(-365 * 86400),
+      },
+      {
+        bundle_id: 'com.example.nativepayments.share',
+        has_profile: true,
+        profile_filename: 'NativePayments_Share_AdHoc.mobileprovision',
+        profile_uuid: 'C3D4E5F6-A7B8-9012-CDEF-123456789012',
+        profile_name: 'NativePayments Share Ad Hoc',
+        expires_at: ago(-365 * 86400),
+      },
+    ],
+    updated_at: ago(86400 * 7),
+  },
+}
+
+const iosDevicesByPipeline: Record<string, Array<object>> = {
+  [PIPELINE_IDS.shopIos]: [
+    {
+      id: 'iosdev-001',
+      name: "Alex's iPhone 15 Pro",
+      udid: '00008110-000A1234ABCD5678',
+      platform: 'IOS',
+      status: 'registered',
+      added_at: ago(86400 * 14),
+    },
+    {
+      id: 'iosdev-002',
+      name: 'QA iPad Air',
+      udid: '00008103-000B5678EFGH9012',
+      platform: 'IOS',
+      status: 'registered',
+      added_at: ago(86400 * 7),
+    },
+  ],
+  [PIPELINE_IDS.paymentsAll]: [
+    {
+      id: 'iosdev-003',
+      name: "Alex's iPhone 15 Pro",
+      udid: '00008110-000A1234ABCD5678',
+      platform: 'IOS',
+      status: 'registered',
+      added_at: ago(86400 * 10),
+    },
+  ],
+}
 
 export const pipelineHandlers = [
   http.get('/v1/projects/:projectId/pipelines', async ({ params }) => {
@@ -122,6 +212,89 @@ export const pipelineHandlers = [
           updated_at: ago(0),
           ...(body.release ?? {}),
         },
+      })
+    },
+  ),
+
+  http.get('/v1/pipelines/:pipelineId/ios-signing', async ({ params }) => {
+    await delay(150)
+    const id = params.pipelineId as string
+    const data = iosSigningByPipeline[id]
+    if (data) {
+      return HttpResponse.json({ pipeline_id: id, ...data })
+    }
+    return HttpResponse.json({
+      pipeline_id: id,
+      enabled: false,
+      mode: 'manual',
+      team_id: null,
+      bundle_ids: [],
+      has_p12: false,
+      has_p12_password: false,
+      has_api_key: false,
+      api_key_id: null,
+      api_issuer_id: null,
+      provisioning_profiles: [],
+    })
+  }),
+
+  http.put(
+    '/v1/pipelines/:pipelineId/ios-signing',
+    async ({ params, request }) => {
+      await delay(300)
+      const id = params.pipelineId as string
+      const body = (await request.json()) as Record<string, unknown>
+      const existing = iosSigningByPipeline[id] ?? {}
+      const merged = { pipeline_id: id, ...existing, ...body, updated_at: ago(0) }
+      iosSigningByPipeline[id] = merged
+      return HttpResponse.json(merged)
+    },
+  ),
+
+  http.post(
+    '/v1/pipelines/:pipelineId/ios-signing/sync',
+    async ({ params }) => {
+      await delay(500)
+      return HttpResponse.json({
+        pipeline_id: params.pipelineId,
+        updated_profiles: 1,
+        warnings: [],
+      })
+    },
+  ),
+
+  http.get(
+    '/v1/pipelines/:pipelineId/ios-signing/devices',
+    async ({ params }) => {
+      await delay(150)
+      const devices = iosDevicesByPipeline[params.pipelineId as string] ?? []
+      return HttpResponse.json({ devices })
+    },
+  ),
+
+  http.post(
+    '/v1/pipelines/:pipelineId/ios-signing/devices/register',
+    async ({ params, request }) => {
+      await delay(400)
+      const body = (await request.json()) as {
+        name: string
+        udid: string
+        platform: string
+      }
+      const newDevice = {
+        id: `iosdev-new-${Date.now()}`,
+        name: body.name,
+        udid: body.udid,
+        platform: body.platform,
+        status: 'registered',
+        added_at: ago(0),
+      }
+      const id = params.pipelineId as string
+      if (!iosDevicesByPipeline[id]) iosDevicesByPipeline[id] = []
+      iosDevicesByPipeline[id].push(newDevice)
+      return HttpResponse.json({
+        device: newDevice,
+        profile_sync_triggered: true,
       })
     },
   ),

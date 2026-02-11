@@ -69,12 +69,10 @@ impl Scheduler {
     /// can be re-claimed. Builds already in 'queued' state need no action since
     /// runners claim directly from SQLite.
     pub async fn reload_pending(&self, pool: &sqlx::SqlitePool) -> Result<usize, String> {
-        let rows = sqlx::query(
-            "SELECT id FROM builds WHERE status = 'scheduled'",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("failed to query stale scheduled builds: {}", e))?;
+        let rows = sqlx::query("SELECT id FROM builds WHERE status = 'scheduled'")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("failed to query stale scheduled builds: {}", e))?;
 
         let count = rows.len();
         for row in &rows {
