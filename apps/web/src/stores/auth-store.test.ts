@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearAuthStorageForInstance, useAuthStore } from './auth-store'
+import {
+  clearAuthStorageForInstance,
+  getLastAuthMetaForInstance,
+  useAuthStore,
+} from './auth-store'
 
 // Mock localStorage
 const store: Record<string, string> = {}
@@ -129,5 +133,22 @@ describe('auth-store', () => {
     expect(mockLocalStorage.removeItem).toHaveBeenCalledWith(
       'oore_auth_user_inst-x',
     )
+  })
+
+  it('setAuth stores last auth metadata and clearAuth keeps it', () => {
+    useAuthStore.getState().setInstanceContext('inst-a')
+    useAuthStore.getState().setAuth('tok-a', 9999999999, testUser)
+
+    expect(store['oore_auth_last_method_inst-a']).toBe('oidc')
+    expect(Number(store['oore_auth_last_at_inst-a'])).toBeGreaterThan(0)
+    expect(getLastAuthMetaForInstance('inst-a')).toEqual({
+      method: 'oidc',
+      at: Number(store['oore_auth_last_at_inst-a']),
+    })
+
+    useAuthStore.getState().clearAuth()
+
+    expect(store['oore_auth_last_method_inst-a']).toBe('oidc')
+    expect(store['oore_auth_last_at_inst-a']).toBeDefined()
   })
 })

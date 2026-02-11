@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRouter } from '@tanstack/react-router'
 import type { InviteUserRequest, UpdateUserRoleRequest } from '@/lib/types'
 import {
   deleteUser,
@@ -137,6 +138,7 @@ export function useDeleteUser() {
 
 export function useLogout() {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const clearAuth = useAuthStore((s) => s.clearAuth)
@@ -150,6 +152,7 @@ export function useLogout() {
     onSettled: () => {
       clearAuth()
       queryClient.clear()
+      void router.navigate({ to: '/login', replace: true })
     },
   })
 }
