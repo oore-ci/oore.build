@@ -212,6 +212,37 @@ install_binaries() {
   fi
 }
 
+ensure_on_path() {
+  # Already on PATH — nothing to do
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) return 0 ;;
+  esac
+
+  # Detect shell config file
+  local shell_rc=""
+  case "$(basename "${SHELL:-/bin/zsh}")" in
+    zsh)  shell_rc="$HOME/.zshrc" ;;
+    bash) shell_rc="$HOME/.bashrc" ;;
+    *)    shell_rc="$HOME/.profile" ;;
+  esac
+
+  local path_line="export PATH=\"$BIN_DIR:\$PATH\""
+
+  # Check if already added in a previous install
+  if [[ -f "$shell_rc" ]] && grep -qF "$BIN_DIR" "$shell_rc" 2>/dev/null; then
+    # Already in rc file but not active in this shell session
+    export PATH="$BIN_DIR:$PATH"
+    return 0
+  fi
+
+  if is_noninteractive || prompt_yes_no "Add $BIN_DIR to your PATH (in $shell_rc)?" 'y'; then
+    printf '\n# oore.build\n%s\n' "$path_line" >> "$shell_rc"
+    export PATH="$BIN_DIR:$PATH"
+    log "Added $BIN_DIR to PATH in $shell_rc"
+    log "Run 'source $shell_rc' or open a new terminal to use 'oore' and 'oored' directly."
+  fi
+}
+
 start_daemon() {
   mkdir -p "$LOG_DIR"
 
@@ -335,35 +366,33 @@ open_links() {
 }
 
 print_next_steps() {
-  cat <<DONE
+  local daemon_running=false
+  if curl -fsS "$DAEMON_URL/healthz" >/dev/null 2>&1; then
+    daemon_running=true
+  fi
 
-Installation complete.
+  printf '\nInstallation complete.\n\n'
 
-Next steps:
-  1) Ensure daemon is running:
-     $BIN_DIR/oored run --listen 127.0.0.1:8787
+  if "$daemon_running"; then
+    printf 'Daemon is running at %s\n\n' "$DAEMON_URL"
+    printf 'Complete setup:\n'
+    printf '  oore setup                    # interactive CLI setup\n'
+    printf '  oore setup open --ttl 15m     # generate a new bootstrap token\n'
+    printf '\n'
+    printf 'Hosted UI (requires HTTPS-reachable backend):\n'
+    printf '  %s\n' "$OORE_HOSTED_UI"
+  else
+    printf 'Start the daemon:\n'
+    printf '  oored run --listen 127.0.0.1:8787\n\n'
+    printf 'Then complete setup:\n'
+    printf '  oore setup                    # interactive CLI setup\n'
+    printf '  oore setup open --ttl 15m     # generate a bootstrap token\n'
+    printf '\n'
+    printf 'Hosted UI (requires HTTPS-reachable backend):\n'
+    printf '  %s\n' "$OORE_HOSTED_UI"
+  fi
 
-  2) Generate a bootstrap setup token:
-     $BIN_DIR/oore setup open --ttl 15m
-
-  3) Complete setup via CLI or hosted UI:
-     CLI:        $BIN_DIR/oore setup
-     Hosted UI:  $OORE_HOSTED_UI (requires HTTPS-reachable backend)
-
-  4) Read setup docs:
-     https://docs.oore.build
-
-Environment variables:
-  OORE_VERSION=latest             # 'latest' or a tag like v0.2.0
-  OORE_INSTALL_ROOT=~/.oore       # Installation directory
-  OORE_RELEASE_BASE_URL=https://dl.oore.build/releases
-                                  # Release base URL (contains /<tag>/assets)
-  OORE_RELEASE_MANIFEST_URL=https://dl.oore.build/releases/latest.json
-                                  # Manifest URL used when OORE_VERSION=latest
-  OORE_NONINTERACTIVE=1           # Disable prompts
-  OORE_START_DAEMON=true|false    # Non-interactive daemon startup behavior
-
-DONE
+  printf '\nDocs: https://docs.oore.build\n'
 }
 
 cleanup() {
@@ -416,6 +445,8 @@ main() {
   step "Installing binaries..."
   install_binaries
   step_done "$BIN_DIR/{oored,oore}"
+
+  ensure_on_path
 
   if is_noninteractive; then
     # Step 5: Non-interactive daemon handling
