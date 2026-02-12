@@ -884,7 +884,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
             .local_addr()
             .context("failed to get listener address")?
             .port();
-        let redirect_uri = format!("http://localhost:{}", local_port);
+        let redirect_uri = format!("http://localhost:{}/auth/callback", local_port);
 
         println!("  You'll authenticate via your OIDC provider to prove your identity.");
         println!();
