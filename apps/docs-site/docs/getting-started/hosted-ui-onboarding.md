@@ -24,7 +24,7 @@ curl http://127.0.0.1:8787/v1/public/setup-status
 ## 3. Generate a setup token
 
 ```bash
-~/.oore/bin/oore setup open --ttl 15m
+~/.oore/bin/oore setup token --ttl 15m
 ```
 
 Keep this token ready for the setup wizard.

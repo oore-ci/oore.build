@@ -50,11 +50,15 @@ struct SetupArgs {
 
 #[derive(Debug, Subcommand)]
 enum SetupSubcommand {
-    Open(SetupOpenArgs),
+    /// Generate a bootstrap token for web UI setup
+    Token(SetupTokenArgs),
+    /// Alias for 'token' (deprecated, use 'token' instead)
+    #[command(hide = true)]
+    Open(SetupTokenArgs),
 }
 
 #[derive(Debug, Args)]
-struct SetupOpenArgs {
+struct SetupTokenArgs {
     #[arg(long, default_value = "15m")]
     ttl: String,
 
@@ -494,7 +498,7 @@ async fn generate_bootstrap_token(
     Ok(plaintext_token)
 }
 
-async fn handle_setup_open(args: SetupOpenArgs) -> anyhow::Result<()> {
+async fn handle_setup_token(args: SetupTokenArgs) -> anyhow::Result<()> {
     let ttl = parse_ttl(&args.ttl)?;
 
     // 1. Resolve database path
@@ -672,6 +676,51 @@ async fn extract_error_message(resp: reqwest::Response) -> String {
     }
 }
 
+/// Acquire a session token by generating a bootstrap token and verifying it with the daemon.
+/// Used both for initial setup (step 1) and when resuming from a later state with an expired session.
+async fn acquire_session(client: &reqwest::Client, daemon_url: &str) -> anyhow::Result<String> {
+    let db_path = resolve_db_path(None)?;
+    let pool = connect_db(&db_path).await?;
+    let mut local_state = load_or_create_state(&pool).await?;
+
+    let plaintext_token =
+        generate_bootstrap_token(&mut local_state, &pool, Duration::from_secs(15 * 60)).await?;
+
+    let verify_url = format!("{}/v1/setup/bootstrap-token/verify", daemon_url);
+    let verify_resp = client
+        .post(&verify_url)
+        .json(&BootstrapTokenVerifyRequest {
+            token: plaintext_token,
+        })
+        .send()
+        .await
+        .context("failed to reach daemon for token verification")?;
+
+    if verify_resp.status().is_success() {
+        let body: BootstrapTokenVerifyResponse = verify_resp
+            .json()
+            .await
+            .context("failed to parse bootstrap verify response")?;
+        Ok(body.session_token)
+    } else {
+        let sc = verify_resp.status();
+        let msg = extract_error_message(verify_resp).await;
+        if sc == reqwest::StatusCode::CONFLICT {
+            anyhow::bail!("Setup is already complete. Instance is in ready state.");
+        } else if sc == reqwest::StatusCode::UNAUTHORIZED {
+            anyhow::bail!(
+                "Bootstrap token is invalid. Please regenerate with: oore setup token"
+            );
+        } else {
+            anyhow::bail!(
+                "Bootstrap verification failed (HTTP {}): {}",
+                sc.as_u16(),
+                msg
+            );
+        }
+    }
+}
+
 async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
 
@@ -715,61 +764,25 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
     let mut current_state = status.state;
     let mut session_token: Option<String> = None;
 
+    // Acquire session token inline via helper function
+
     // ── Step 1: Bootstrap token verification ────────────────────
 
     if current_state == SetupState::BootstrapPending || current_state == SetupState::Uninitialized {
         println!("[Step 1/4] Bootstrap token verification");
         println!();
 
-        // Load the local state from the database
         let db_path = resolve_db_path(None)?;
         println!("  Database: {}", db_path.display());
-        let pool = connect_db(&db_path).await?;
-        let mut local_state = load_or_create_state(&pool).await?;
 
-        let plaintext_token = {
-            println!("  Generating bootstrap token (TTL: 15m)...");
-            generate_bootstrap_token(&mut local_state, &pool, Duration::from_secs(15 * 60)).await?
-        };
-
-        // Verify the token against the daemon
+        println!("  Generating bootstrap token (TTL: 15m)...");
         println!("  Verifying token with daemon...");
-        let verify_url = format!("{}/v1/setup/bootstrap-token/verify", daemon_url);
-        let verify_resp = client
-            .post(&verify_url)
-            .json(&BootstrapTokenVerifyRequest {
-                token: plaintext_token,
-            })
-            .send()
-            .await
-            .context("failed to reach daemon for token verification")?;
 
-        if verify_resp.status().is_success() {
-            let body: BootstrapTokenVerifyResponse = verify_resp
-                .json()
-                .await
-                .context("failed to parse bootstrap verify response")?;
-            session_token = Some(body.session_token);
-            current_state = SetupState::BootstrapPending; // daemon is now ready for OIDC
-            println!();
-            println!("  \u{2713} Bootstrap verified. Session token acquired.");
-        } else {
-            let status_code = verify_resp.status();
-            let msg = extract_error_message(verify_resp).await;
-            if status_code == reqwest::StatusCode::CONFLICT {
-                anyhow::bail!("Setup is already complete. Instance is in ready state.");
-            } else if status_code == reqwest::StatusCode::UNAUTHORIZED {
-                anyhow::bail!(
-                    "Bootstrap token is invalid. Please regenerate with: oore setup open"
-                );
-            } else {
-                anyhow::bail!(
-                    "Bootstrap verification failed (HTTP {}): {}",
-                    status_code.as_u16(),
-                    msg
-                );
-            }
-        }
+        session_token = Some(acquire_session(&client, &daemon_url).await?);
+        current_state = SetupState::BootstrapPending;
+
+        println!();
+        println!("  \u{2713} Bootstrap verified. Session token acquired.");
         println!();
     }
 
@@ -779,10 +792,13 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!("[Step 2/4] OIDC provider configuration");
         println!();
 
-        // Ensure we have a session token (if resuming, we might not)
-        let token = session_token
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Session expired or invalid. Please restart setup."))?;
+        // Acquire session token if we don't have one (resuming setup)
+        if session_token.is_none() {
+            println!("  Acquiring session token...");
+            session_token = Some(acquire_session(&client, &daemon_url).await?);
+            println!();
+        }
+        let token = session_token.as_ref().unwrap();
 
         loop {
             let issuer_url: String = dialoguer::Input::new()
@@ -872,9 +888,13 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!("[Step 3/4] Owner account setup");
         println!();
 
-        let token = session_token
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Session expired or invalid. Please restart setup."))?;
+        // Acquire session token if we don't have one (resuming setup)
+        if session_token.is_none() {
+            println!("  Acquiring session token...");
+            session_token = Some(acquire_session(&client, &daemon_url).await?);
+            println!();
+        }
+        let token = session_token.as_ref().unwrap();
 
         // Bind to a random free port
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -1010,9 +1030,13 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!("[Step 4/4] Finalize setup");
         println!();
 
-        let token = session_token
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Session expired or invalid. Please restart setup."))?;
+        // Acquire session token if we don't have one (resuming setup)
+        if session_token.is_none() {
+            println!("  Acquiring session token...");
+            session_token = Some(acquire_session(&client, &daemon_url).await?);
+            println!();
+        }
+        let token = session_token.as_ref().unwrap();
 
         let confirm = dialoguer::Confirm::new()
             .with_prompt("  Complete setup? This will lock all setup endpoints.")
@@ -1274,10 +1298,10 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Setup(setup) => match setup.command {
-            Some(SetupSubcommand::Open(args)) => {
+            Some(SetupSubcommand::Token(args) | SetupSubcommand::Open(args)) => {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_setup_open(args))?;
+                runtime.block_on(handle_setup_token(args))?;
             }
             None => {
                 let runtime =

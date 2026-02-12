@@ -46,7 +46,7 @@ The operator CLI handles setup, authentication, and administration.
 | Command | Description | Status |
 |---|---|---|
 | [`oore setup`](/reference/cli/oore-setup) | Interactive 4-step instance setup | Implemented |
-| [`oore setup open`](/reference/cli/oore-setup#setup-open) | Generate a bootstrap token | Implemented |
+| [`oore setup token`](/reference/cli/oore-setup#setup-token) | Generate a bootstrap token | Implemented |
 | `oore login` | Authenticate via OIDC | Planned |
 | `oore status` | Show instance status | Planned |
 | `oore runner register` | Register an external build runner | Implemented |

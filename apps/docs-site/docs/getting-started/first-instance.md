@@ -40,10 +40,10 @@ Override the listen address with `--listen` or the `OORED_LISTEN_ADDR` environme
 In a second terminal, generate a one-time bootstrap token:
 
 ```bash
-~/.oore/bin/oore setup open --ttl 15m
+~/.oore/bin/oore setup token --ttl 15m
 ```
 
-This runs `oore setup open --ttl 15m` and outputs:
+This runs `oore setup token --ttl 15m` and outputs:
 
 ```
 Bootstrap token generated.
@@ -61,7 +61,7 @@ To complete setup, either:
 Copy the token value. You'll need it in the next step.
 
 ::: warning
-The bootstrap token is single-use and expires after its TTL (default: 15 minutes). If it expires, run `~/.oore/bin/oore setup open --ttl 15m` again.
+The bootstrap token is single-use and expires after its TTL (default: 15 minutes). If it expires, run `~/.oore/bin/oore setup token --ttl 15m` again.
 :::
 
 ## 3. Complete setup

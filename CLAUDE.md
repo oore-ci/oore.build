@@ -31,7 +31,7 @@ All common commands have `make` targets. Use `make <target>` from the repo root.
 | `make fix-web` | Prettier --write + ESLint --fix |
 | `make cargo-check` | Compile check all Rust crates |
 | `make run-daemon` | Run oored on 127.0.0.1:8787 |
-| `make run-cli` | Run oore setup open --ttl 15m |
+| `make run-cli` | Run oore setup token --ttl 15m |
 | `make docs-check` | Validate feature docs against template |
 | `make ui-init` | Re-initialize shadcn from shared preset |
 | `make build` | build-web + build-docs + cargo-check |

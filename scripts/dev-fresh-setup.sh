@@ -318,12 +318,12 @@ run_setup_flow() {
       token_json="$(
         OORED_DATA_DIR="$OORED_DEV_DATA_DIR" \
         OORE_SETUP_STATE_FILE="$OORE_DEV_SETUP_STATE_FILE" \
-        "$OORE_BIN" setup open --ttl "$OORE_DEV_SETUP_TTL" --json
+        "$OORE_BIN" setup token --ttl "$OORE_DEV_SETUP_TTL" --json
       )"
       printf '%s\n' "$token_json"
       OORE_DEV_BOOTSTRAP_TOKEN="$(printf '%s\n' "$token_json" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
       if [[ -z "$OORE_DEV_BOOTSTRAP_TOKEN" ]]; then
-        die "Failed to parse bootstrap token from setup open output."
+        die "Failed to parse bootstrap token from setup token output."
       fi
       ;;
     none)

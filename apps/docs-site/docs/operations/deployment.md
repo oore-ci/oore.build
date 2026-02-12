@@ -72,7 +72,7 @@ server {
 ### 4. Run the setup wizard
 
 ```bash
-./target/release/oore setup open --ttl 15m
+./target/release/oore setup token --ttl 15m
 ./target/release/oore setup --daemon-url http://127.0.0.1:8787
 ```
 

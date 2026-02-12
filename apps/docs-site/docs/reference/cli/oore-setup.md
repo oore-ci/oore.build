@@ -4,7 +4,7 @@ status: implemented
 
 # oore setup
 
-The `setup` command configures a fresh oore.build instance. It can be run interactively (default) or used to generate bootstrap tokens with the `open` subcommand.
+The `setup` command configures a fresh oore.build instance. It can be run interactively (default) or used to generate bootstrap tokens with the `token` subcommand.
 
 ## Interactive setup
 
@@ -113,16 +113,16 @@ If the daemon is already past certain steps (e.g., OIDC was configured in a prev
 |---|---|
 | Cannot reach daemon | Prints a message suggesting to start `oored run` |
 | Setup already complete | Exits confirming `ready` state |
-| Session expired | Exits with a message to restart setup |
+| Session expired | Automatically re-acquires a session token and continues |
 | OIDC configuration error | Offers retry with fresh inputs |
 | OIDC authentication error | Displays the IdP error in the browser and exits |
 
 ---
 
-## Setup Open {#setup-open}
+## Setup Token {#setup-token}
 
 ```bash
-oore setup open [--ttl <duration>] [--json] [--state-file <path>]
+oore setup token [--ttl <duration>] [--json] [--state-file <path>]
 ```
 
 Generate a one-time bootstrap token for initializing an oore.build instance. This token is used as the first step in the setup process.
@@ -159,7 +159,7 @@ State:   bootstrap_pending
 DB:      /Users/you/Library/Application Support/oore/oore.db
 
 To complete setup, either:
-  1. Open http://localhost:3000/setup in your browser and paste this token
+  1. Open https://ci.oore.build/setup and add your backend instance
   2. Run: oore setup
 ```
 
@@ -186,21 +186,21 @@ To complete setup, either:
 7. Prints the plaintext token (never stored)
 
 ::: warning
-The plaintext bootstrap token is displayed only once. If lost, generate a new one with `oore setup open`.
+The plaintext bootstrap token is displayed only once. If lost, generate a new one with `oore setup token`.
 :::
 
 ### Examples
 
 ```bash
 # Generate with default 15-minute TTL
-oore setup open
+oore setup token
 
 # Generate with 1-hour TTL
-oore setup open --ttl 1h
+oore setup token --ttl 1h
 
 # Generate with JSON output for scripting
-oore setup open --json
+oore setup token --json
 
 # Use a custom database path
-oore setup open --state-file /tmp/oore-test.db
+oore setup token --state-file /tmp/oore-test.db
 ```

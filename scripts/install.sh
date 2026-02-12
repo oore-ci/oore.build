@@ -287,7 +287,7 @@ generate_setup_token() {
     return 0
   fi
 
-  "$BIN_DIR/oore" setup open --ttl 15m \
+  "$BIN_DIR/oore" setup token --ttl 15m \
     || die "Failed to generate setup token. Check daemon logs: $DAEMON_LOG"
 }
 
@@ -377,7 +377,7 @@ print_next_steps() {
     printf 'Daemon is running at %s\n\n' "$DAEMON_URL"
     printf 'Complete setup:\n'
     printf '  oore setup                    # interactive CLI setup\n'
-    printf '  oore setup open --ttl 15m     # generate a new bootstrap token\n'
+    printf '  oore setup token --ttl 15m     # generate a new bootstrap token\n'
     printf '\n'
     printf 'Hosted UI (requires HTTPS-reachable backend):\n'
     printf '  %s\n' "$OORE_HOSTED_UI"
@@ -386,7 +386,7 @@ print_next_steps() {
     printf '  oored run --listen 127.0.0.1:8787\n\n'
     printf 'Then complete setup:\n'
     printf '  oore setup                    # interactive CLI setup\n'
-    printf '  oore setup open --ttl 15m     # generate a bootstrap token\n'
+    printf '  oore setup token --ttl 15m     # generate a bootstrap token\n'
     printf '\n'
     printf 'Hosted UI (requires HTTPS-reachable backend):\n'
     printf '  %s\n' "$OORE_HOSTED_UI"

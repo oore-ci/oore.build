@@ -54,7 +54,7 @@ oore.build is a self-hosted, Flutter-first mobile CI platform focused on interna
 
 ### `oore` (operator client)
 
-- `oore setup open --ttl <duration>`
+- `oore setup token --ttl <duration>`
 - `oore setup` (interactive local fallback)
 - `oore login`
 - `oore status`
