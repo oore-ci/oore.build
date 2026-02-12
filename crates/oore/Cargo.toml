@@ -22,4 +22,9 @@ tokio = { workspace = true, features = ["net", "io-util", "process", "time", "sy
 url.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+flate2.workspace = true
+libc = "0.2"
+semver.workspace = true
 sqlx.workspace = true
+tar.workspace = true
+tempfile.workspace = true

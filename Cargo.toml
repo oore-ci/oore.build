@@ -3,7 +3,7 @@ members = ["crates/oore", "crates/oore-runner", "crates/oored", "crates/oore-con
 resolver = "2"
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/devaryakjha/oore.build"
@@ -35,6 +35,9 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 hyper = "1"
 http-body-util = "0.1"
+semver = "1"
+flate2 = "1"
+tar = "0.4"
 tempfile = "3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 urlencoding = "2"

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -37,6 +37,21 @@ enum Commands {
     Runner(RunnerArgs),
     Config(ConfigArgs),
     Doctor,
+    /// Print the installed oore version
+    Version,
+    /// Update oore and oored to the latest release
+    Update(UpdateArgs),
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Only check for updates, don't install
+    #[arg(long, default_value = "false")]
+    check: bool,
+
+    /// Reinstall even if already on the latest version
+    #[arg(long, default_value = "false")]
+    force: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1293,6 +1308,329 @@ fn run_doctor_checks() -> anyhow::Result<()> {
     }
 }
 
+// ── Self-update helpers ──────────────────────────────────────────
+
+const LATEST_JSON_URL: &str = "https://dl.oore.build/releases/latest.json";
+
+#[derive(Debug, serde::Deserialize)]
+struct ReleaseManifest {
+    tag: String,
+    version: String,
+    #[allow(dead_code)]
+    released_at: String,
+    assets: ReleaseAssets,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ReleaseAssets {
+    darwin_arm64: String,
+    darwin_x86_64: String,
+    checksums: String,
+}
+
+/// Map `std::env::consts::ARCH` to the archive naming convention.
+fn release_arch() -> anyhow::Result<&'static str> {
+    match std::env::consts::ARCH {
+        "aarch64" => Ok("arm64"),
+        "x86_64" => Ok("x86_64"),
+        other => anyhow::bail!("unsupported architecture: {other}"),
+    }
+}
+
+/// Resolve the oore install root (`OORE_INSTALL_ROOT` or `~/.oore`).
+fn resolve_install_root() -> anyhow::Result<PathBuf> {
+    if let Ok(val) = std::env::var("OORE_INSTALL_ROOT") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    Ok(home.join(".oore"))
+}
+
+/// Extract SHA-256 checksum for `filename` from checksums.txt content
+/// (format: `<hash>  <filename>` per line, like sha256sum output).
+fn parse_checksum(text: &str, filename: &str) -> anyhow::Result<String> {
+    for line in text.lines() {
+        // Handle both "hash  filename" and "hash filename"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 && parts[1] == filename {
+            return Ok(parts[0].to_lowercase());
+        }
+    }
+    anyhow::bail!("checksum not found for {filename} in checksums.txt")
+}
+
+/// Check if the daemon is reachable on 127.0.0.1:8787.
+async fn check_daemon_running(client: &reqwest::Client) -> bool {
+    client
+        .get("http://127.0.0.1:8787/healthz")
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Stop the daemon using PID file first, then lsof fallback (mirrors uninstall.sh).
+fn stop_daemon(install_root: &Path) -> anyhow::Result<()> {
+    let pid_file = install_root.join("oored.pid");
+
+    // Try PID file first
+    if pid_file.exists() {
+        if let Ok(contents) = fs::read_to_string(&pid_file) {
+            let pid_str = contents.trim();
+            if !pid_str.is_empty() {
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    // Check if process exists (kill -0)
+                    unsafe {
+                        if libc::kill(pid, 0) == 0 {
+                            libc::kill(pid, libc::SIGTERM);
+                            std::thread::sleep(Duration::from_secs(1));
+                        }
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_file(&pid_file);
+    }
+
+    // lsof fallback: kill anything still listening on port 8787
+    if let Ok(output) = std::process::Command::new("lsof")
+        .args(["-nP", "-iTCP:8787", "-sTCP:LISTEN", "-t"])
+        .output()
+    {
+        if output.status.success() {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            for pid_str in pids.split_whitespace() {
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    unsafe {
+                        libc::kill(pid, libc::SIGTERM);
+                    }
+                }
+            }
+            if !pids.trim().is_empty() {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Restart the daemon and verify it becomes healthy.
+async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow::Result<()> {
+    let bin_dir = install_root.join("bin");
+    let oored_bin = bin_dir.join("oored");
+    let log_path = install_root.join("oored.log");
+    let pid_file = install_root.join("oored.pid");
+
+    let log_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("failed to open log file: {}", log_path.display()))?;
+
+    let child = std::process::Command::new(&oored_bin)
+        .args(["run", "--listen", "127.0.0.1:8787"])
+        .stdout(log_file.try_clone()?)
+        .stderr(log_file)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to start oored: {}", oored_bin.display()))?;
+
+    fs::write(&pid_file, child.id().to_string())
+        .with_context(|| format!("failed to write PID file: {}", pid_file.display()))?;
+
+    // Poll healthz up to 15 seconds
+    for _ in 0..15 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if check_daemon_running(client).await {
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!(
+        "Daemon failed to become healthy after restart. Check logs: {}",
+        log_path.display()
+    )
+}
+
+/// Set a file as executable (chmod 755).
+fn set_executable(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = fs::Permissions::from_mode(0o755);
+    fs::set_permissions(path, perms)
+        .with_context(|| format!("failed to set permissions on {}", path.display()))
+}
+
+async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .context("failed to parse current version")?;
+
+    let client = reqwest::Client::new();
+
+    // 1. Fetch release manifest
+    let manifest: ReleaseManifest = client
+        .get(LATEST_JSON_URL)
+        .send()
+        .await
+        .context("failed to fetch release manifest")?
+        .error_for_status()
+        .context("release manifest request failed")?
+        .json()
+        .await
+        .context("failed to parse release manifest")?;
+
+    let latest = semver::Version::parse(&manifest.version)
+        .with_context(|| format!("invalid version in manifest: {}", manifest.version))?;
+
+    // 2. Compare versions
+    println!("Current version: {current}");
+    println!("Latest version:  {latest} ({})", manifest.tag);
+
+    if current >= latest && !args.force {
+        println!("Already up to date.");
+        return Ok(());
+    }
+
+    if current < latest {
+        println!("Update available: {current} -> {latest}");
+    } else {
+        println!("Reinstalling version {latest} (--force).");
+    }
+
+    // 3. Check-only mode
+    if args.check {
+        return Ok(());
+    }
+
+    // 4. Select archive URL by architecture
+    let arch = release_arch()?;
+    let archive_url = match arch {
+        "arm64" => &manifest.assets.darwin_arm64,
+        "x86_64" => &manifest.assets.darwin_x86_64,
+        _ => unreachable!(),
+    };
+
+    // Derive the filename from the URL
+    let archive_filename = archive_url
+        .rsplit('/')
+        .next()
+        .context("could not determine archive filename from URL")?;
+
+    println!("Downloading {archive_filename}...");
+
+    // 5. Download archive + checksums in parallel
+    let (archive_resp, checksums_resp) = tokio::try_join!(
+        async {
+            client
+                .get(archive_url)
+                .send()
+                .await
+                .context("failed to download archive")?
+                .error_for_status()
+                .context("archive download failed")
+        },
+        async {
+            client
+                .get(&manifest.assets.checksums)
+                .send()
+                .await
+                .context("failed to download checksums")?
+                .error_for_status()
+                .context("checksums download failed")
+        }
+    )?;
+
+    let archive_bytes = archive_resp
+        .bytes()
+        .await
+        .context("failed to read archive bytes")?;
+    let checksums_text = checksums_resp
+        .text()
+        .await
+        .context("failed to read checksums text")?;
+
+    // 6. Verify SHA-256 checksum
+    let expected_hash = parse_checksum(&checksums_text, archive_filename)?;
+    let actual_hash = hex::encode(Sha256::digest(&archive_bytes));
+
+    if actual_hash != expected_hash {
+        anyhow::bail!(
+            "Checksum mismatch!\n  Expected: {expected_hash}\n  Actual:   {actual_hash}"
+        );
+    }
+    println!("Checksum verified (SHA-256).");
+
+    // 7. Extract tar.gz into tempdir
+    let tmpdir = tempfile::tempdir().context("failed to create temporary directory")?;
+    let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
+    let mut archive = tar::Archive::new(decoder);
+    archive
+        .unpack(tmpdir.path())
+        .context("failed to extract archive")?;
+
+    // 8. Verify expected files exist
+    let extracted_bin = tmpdir.path().join("bin");
+    let extracted_oore = extracted_bin.join("oore");
+    let extracted_oored = extracted_bin.join("oored");
+    let extracted_version = tmpdir.path().join("VERSION");
+
+    if !extracted_oore.exists() {
+        anyhow::bail!("archive missing bin/oore");
+    }
+    if !extracted_oored.exists() {
+        anyhow::bail!("archive missing bin/oored");
+    }
+    if !extracted_version.exists() {
+        anyhow::bail!("archive missing VERSION");
+    }
+
+    // 9. Stop daemon if running
+    let install_root = resolve_install_root()?;
+    let daemon_was_running = check_daemon_running(&client).await;
+
+    if daemon_was_running {
+        println!("oored daemon is running. Stopping before update...");
+        stop_daemon(&install_root)?;
+    }
+
+    // 10. Copy binaries into install root
+    let bin_dir = install_root.join("bin");
+    fs::create_dir_all(&bin_dir).context("failed to create bin directory")?;
+
+    fs::copy(&extracted_oore, bin_dir.join("oore"))
+        .context("failed to copy oore binary")?;
+    fs::copy(&extracted_oored, bin_dir.join("oored"))
+        .context("failed to copy oored binary")?;
+    fs::copy(&extracted_version, install_root.join("VERSION"))
+        .context("failed to copy VERSION file")?;
+
+    set_executable(&bin_dir.join("oore"))?;
+    set_executable(&bin_dir.join("oored"))?;
+
+    println!("Updated to version {latest}.");
+
+    // 11. Restart daemon if it was running
+    if daemon_was_running {
+        println!("Restarting oored daemon...");
+        restart_daemon(&install_root, &client).await?;
+        println!("Daemon restarted successfully.");
+    }
+
+    // 12. Note about current process
+    if current != latest {
+        println!(
+            "\nNote: This process is still running version {current}. \
+             The new version ({latest}) will be used on next invocation."
+        );
+    }
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -1337,6 +1675,14 @@ fn main() -> anyhow::Result<()> {
         },
         Commands::Doctor => {
             run_doctor_checks()?;
+        }
+        Commands::Version => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+        }
+        Commands::Update(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(handle_update(args))?;
         }
     }
 
