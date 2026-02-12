@@ -50,6 +50,8 @@ Release/distribution contract additions:
 - Added local macOS release automation scripts for semver tags (`v*.*.*`) that package both architectures and upload to Cloudflare R2.
 - Added webhook-based release automation service with launchd templates for both LaunchDaemon (system) and LaunchAgent (user) operation.
 - LaunchDaemon mode runs under the build user and writes webhook logs to the user log directory for reliable startup (`~/Library/Logs/oore-release-webhook.log`).
+- Release automation now enforces tag/version parity (`vX.Y.Z` must match `workspace.package.version = X.Y.Z`) before build/upload.
+- Added `make release-cut VERSION=X.Y.Z` helper to bump workspace version, push the commit, and push matching tag `vX.Y.Z`.
 - Added site build/deploy plumbing (`dev-site`, `build-site`, `deploy-site`) and root scripts (`dev:site`, `build:site`).
 
 ## Acceptance Criteria

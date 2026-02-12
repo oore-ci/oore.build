@@ -85,8 +85,12 @@ function IndexPage() {
       <div className="flex flex-1 flex-col items-center justify-center p-6">
         <div className="w-full max-w-md space-y-8">
           <div className="space-y-3 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center border-2 border-primary/20 bg-primary/5">
-              <img src="/logo.svg" alt="oore.build logo" className="size-7" />
+            <div className="mx-auto flex size-14 items-center justify-center">
+              <img
+                src="/logo.svg"
+                alt="oore.build logo"
+                className="size-full"
+              />
             </div>
             <h1 className="text-3xl font-bold tracking-tight">oore.build</h1>
             <p className="text-sm text-muted-foreground">

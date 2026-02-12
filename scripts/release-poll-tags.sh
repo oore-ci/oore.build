@@ -19,7 +19,7 @@ die() {
 mkdir -p "$STATE_DIR"
 touch "$STATE_FILE"
 
-git -C "$ROOT_DIR" fetch "$GIT_REMOTE" --tags
+git -C "$ROOT_DIR" fetch "$GIT_REMOTE" --tags --force
 
 tags="$(git -C "$ROOT_DIR" tag -l "$TAG_PATTERN" --sort=v:refname)"
 if [[ -z "$tags" ]]; then

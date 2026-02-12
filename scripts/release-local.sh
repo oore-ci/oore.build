@@ -83,7 +83,8 @@ normalize_tag() {
 }
 
 prepare_worktree() {
-  git -C "$ROOT_DIR" fetch "$GIT_REMOTE" --tags
+  # Force-refresh tags so stale local tags do not block release automation.
+  git -C "$ROOT_DIR" fetch "$GIT_REMOTE" --tags --force
 
   if ! git -C "$ROOT_DIR" rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
     die "Tag not found: $RELEASE_TAG"
@@ -92,6 +93,29 @@ prepare_worktree() {
   TMP_DIR="$(mktemp -d)"
   WORKTREE_DIR="$TMP_DIR/src"
   git -C "$ROOT_DIR" worktree add --detach "$WORKTREE_DIR" "$RELEASE_TAG" >/dev/null
+}
+
+ensure_tag_matches_workspace_version() {
+  local cargo_toml="$WORKTREE_DIR/Cargo.toml"
+  local workspace_version=""
+
+  [[ -f "$cargo_toml" ]] || die "Missing workspace Cargo.toml in release source: $cargo_toml"
+
+  workspace_version="$(
+    awk -F'"' '
+      /^\[workspace\.package\]/ { in_section=1; next }
+      in_section && /^[[:space:]]*version[[:space:]]*=/ { print $2; exit }
+      in_section && /^\[/ { in_section=0 }
+    ' "$cargo_toml"
+  )"
+
+  [[ -n "$workspace_version" ]] || die "Unable to read workspace.package.version from $cargo_toml"
+
+  if [[ "$workspace_version" != "$RELEASE_VERSION" ]]; then
+    die "Tag/version mismatch: tag=$RELEASE_TAG expects version=$RELEASE_VERSION but workspace.package.version=$workspace_version. Update Cargo.toml version or retag."
+  fi
+
+  log "Version check passed: $RELEASE_TAG matches workspace.package.version=$workspace_version"
 }
 
 build_binaries() {
@@ -167,27 +191,32 @@ upload_to_r2() {
   log "Uploading artifacts to r2://$R2_BUCKET/$R2_PREFIX/$RELEASE_TAG/"
 
   wrangler r2 object put "$R2_BUCKET/$R2_PREFIX/$RELEASE_TAG/$arm_asset" \
+    --remote \
     --file "$out_dir/$arm_asset" \
     --content-type "application/gzip" \
     --cache-control "public, max-age=31536000, immutable"
 
   wrangler r2 object put "$R2_BUCKET/$R2_PREFIX/$RELEASE_TAG/$x64_asset" \
+    --remote \
     --file "$out_dir/$x64_asset" \
     --content-type "application/gzip" \
     --cache-control "public, max-age=31536000, immutable"
 
   wrangler r2 object put "$R2_BUCKET/$R2_PREFIX/$RELEASE_TAG/$checksum_asset" \
+    --remote \
     --file "$out_dir/$checksum_asset" \
     --content-type "text/plain; charset=utf-8" \
     --cache-control "public, max-age=31536000, immutable"
 
   wrangler r2 object put "$R2_BUCKET/$R2_PREFIX/$RELEASE_TAG/manifest.json" \
+    --remote \
     --file "$out_dir/manifest.json" \
     --content-type "application/json; charset=utf-8" \
     --cache-control "public, max-age=300, must-revalidate"
 
   if normalize_bool "$PUBLISH_LATEST"; then
     wrangler r2 object put "$R2_BUCKET/$R2_PREFIX/latest.json" \
+      --remote \
       --file "$RELEASE_DIST_ROOT/latest.json" \
       --content-type "application/json; charset=utf-8" \
       --cache-control "public, max-age=60, must-revalidate"
@@ -206,6 +235,7 @@ main() {
   ensure_dependencies
   normalize_tag "$TAG_INPUT"
   prepare_worktree
+  ensure_tag_matches_workspace_version
   build_binaries
   package_release
 

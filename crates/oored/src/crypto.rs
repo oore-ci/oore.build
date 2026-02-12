@@ -14,6 +14,8 @@ use security_framework::passwords::{
 #[cfg(target_os = "macos")]
 use tracing::warn;
 
+use crate::util::resolve_oored_data_dir;
+
 /// Length of the AES-256 key in bytes.
 const KEY_LEN: usize = 32;
 #[cfg(target_os = "macos")]
@@ -39,9 +41,9 @@ impl NonceSequence for SingleNonce {
 
 /// Resolve the encryption key file path from the platform data directory.
 ///
-/// The key is stored at `<data-root>/encryption.key`.
+/// The key is stored at `{data_root}/encryption.key`.
 pub fn resolve_key_path() -> anyhow::Result<PathBuf> {
-    Ok(crate::util::resolve_oored_data_dir()?.join("encryption.key"))
+    Ok(resolve_oored_data_dir()?.join("encryption.key"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

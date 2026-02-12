@@ -70,16 +70,10 @@ def run_release(tag: str) -> None:
         result = subprocess.run(
             [release_script, tag],
             cwd=root_dir,
-            capture_output=True,
-            text=True,
             check=False,
         )
         if result.returncode != 0:
             log(f"release failed for {tag} (exit={result.returncode})")
-            if result.stdout:
-                log(f"stdout: {result.stdout.strip()}")
-            if result.stderr:
-                log(f"stderr: {result.stderr.strip()}")
             return
         mark_processed(tag)
         log(f"release completed for {tag}")

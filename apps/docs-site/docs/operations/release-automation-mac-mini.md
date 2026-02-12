@@ -101,6 +101,22 @@ To publish a specific tag immediately:
 make release-local TAG=v0.2.0
 ```
 
+## Cut version + tag in one command
+
+To bump `workspace.package.version`, push the version commit, and push a matching tag:
+
+```bash
+make release-cut VERSION=0.2.0
+```
+
+This target:
+
+- requires a clean git working tree
+- requires running from `master`
+- updates root `Cargo.toml` workspace version
+- commits and pushes the version bump
+- creates tag `v0.2.0` and pushes it
+
 Artifacts are uploaded to:
 
 - `https://dl.oore.build/releases/v0.2.0/oore_0.2.0_darwin_arm64.tar.gz`

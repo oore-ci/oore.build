@@ -53,6 +53,7 @@ make run-daemon       # Start oored with isolated dev data
 make run-cli          # Generate setup token against dev DB
 make dev-fresh-setup  # Clean dev state, local build, start daemon, start tunnel, generate setup token
 make dev-web          # Local web UI (http://localhost:3000)
+make clean-dev-state  # Remove isolated dev daemon data (~/.oore/dev.noindex)
 ```
 
 `make dev-fresh-setup` starts a Cloudflare quick tunnel by default and prints the assigned public URL.  
@@ -61,6 +62,7 @@ It runs token-only setup by default for hosted UI E2E.
 Use `OORE_DEV_SETUP_MODE=cli make dev-fresh-setup` only when you explicitly want CLI-driven OIDC setup.
 Dev state uses a `.noindex` directory and writes `.metadata_never_index` to reduce Spotlight indexing load on macOS.
 `make clean-dev-state` also stops the matching dev daemon and Cloudflare tunnel for the configured dev URL/port before deleting state.
+`make run-daemon*` targets use an isolated dev data root (`~/.oore/dev.noindex`) so local source runs do not collide with production daemon data.
 
 ## Project Structure
 
@@ -100,6 +102,7 @@ make doctor           # Check system prerequisites
 Releases are published from a dedicated Mac mini:
 
 ```bash
+make release-cut VERSION=0.2.0             # Bump version, commit, push, tag, push tag
 make release-local TAG=v0.2.0          # Build + upload one release to R2
 sudo make install-release-webhook-daemon  # Install LaunchDaemon webhook listener
 make install-release-poller               # Optional polling fallback

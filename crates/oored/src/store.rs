@@ -51,10 +51,8 @@ impl SetupStore {
     /// Resolve the database path from (in priority order):
     /// 1. Explicit `override_path` argument
     /// 2. `OORE_SETUP_STATE_FILE` env var
-    /// 3. `<data-root>/oore.db` where data root resolves from:
-    ///    - `OORED_DATA_DIR`
-    ///    - `OORE_DATA_DIR`
-    ///    - platform default `dirs::data_dir()/oore`
+    /// 3. Default: `<data_root>/oore.db` where data root is:
+    ///    `OORED_DATA_DIR` -> `OORE_DATA_DIR` -> `dirs::data_dir()/oore`
     pub fn resolve_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
         if let Some(p) = override_path {
             return Ok(PathBuf::from(p));

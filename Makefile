@@ -4,7 +4,7 @@
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
 	       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 	       docs-check ui-init install-local validate \
-	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon
+	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon release-cut
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -112,6 +112,10 @@ test-rust:
 release-local:
 	@test -n "$(TAG)" || (echo "TAG is required (example: make release-local TAG=v0.2.0)"; exit 1)
 	bash scripts/release-local.sh "$(TAG)"
+
+release-cut:
+	@test -n "$(VERSION)" || (echo "VERSION is required (example: make release-cut VERSION=0.2.0)"; exit 1)
+	bash scripts/release-cut.sh "$(VERSION)"
 
 release-poll-tags:
 	bash scripts/release-poll-tags.sh
