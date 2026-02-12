@@ -260,7 +260,24 @@ generate_setup_token() {
     || die "Failed to generate setup token. Check daemon logs: $DAEMON_LOG"
 }
 
+is_localhost_backend() {
+  case "$DAEMON_URL" in
+    http://localhost:*|http://localhost|http://127.0.0.1:*|http://127.0.0.1)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 open_setup_ui() {
+  # The hosted UI (HTTPS) cannot make requests to a local HTTP backend
+  # due to browser mixed-content restrictions. Skip auto-open.
+  if is_localhost_backend; then
+    return 1
+  fi
+
   if ! have_cmd open; then
     log 'Cannot auto-open browser because the `open` command is unavailable.'
     return 1
@@ -329,8 +346,9 @@ Next steps:
   2) Generate a bootstrap setup token:
      $BIN_DIR/oore setup open --ttl 15m
 
-  3) Open hosted UI and add your backend instance URL:
-     https://ci.oore.build
+  3) Complete setup via CLI or hosted UI:
+     CLI:        $BIN_DIR/oore setup
+     Hosted UI:  $OORE_HOSTED_UI (requires HTTPS-reachable backend)
 
   4) Read setup docs:
      https://docs.oore.build
@@ -428,13 +446,24 @@ main() {
         printf '\n'
         generate_setup_token || true
 
-        printf '\nPress Ctrl+C to exit (setup can continue in the browser).\n'
+        if is_localhost_backend; then
+          printf '\n'
+          log "Your backend is on localhost. The hosted UI (https://ci.oore.build)"
+          log "cannot reach a local HTTP backend due to browser security restrictions."
+          log ""
+          log "To complete setup, choose one of:"
+          log "  1. CLI setup:    $BIN_DIR/oore setup"
+          log "  2. Tunnel:       Expose your backend via a tunnel (e.g. cloudflared)"
+          log "                   then open ${OORE_HOSTED_UI}/setup?backend=<tunnel-url>"
+        else
+          printf '\nPress Ctrl+C to exit (setup can continue in the browser).\n'
 
-        # Open hosted UI with pre-filled backend URL
-        open_setup_ui || true
+          # Open hosted UI with pre-filled backend URL
+          open_setup_ui || true
 
-        # Watch for setup completion
-        watch_setup || true
+          # Watch for setup completion
+          watch_setup || true
+        fi
       else
         printf '\n'
         log "Instance is already configured."

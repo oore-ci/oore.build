@@ -550,8 +550,12 @@ async fn handle_setup_open(args: SetupOpenArgs) -> anyhow::Result<()> {
         println!("DB:      {}", db_display);
         println!();
         println!("To complete setup, either:");
-        println!("  1. Open http://localhost:3000/setup in your browser and paste this token");
+        println!("  1. Open https://ci.oore.build/setup and paste this token");
         println!("  2. Run: oore setup");
+        println!();
+        println!("Note: The hosted UI requires your backend to be reachable over HTTPS.");
+        println!("      For local-only setups, use the CLI (option 2) or expose your");
+        println!("      backend via a tunnel (e.g. cloudflared).");
     }
 
     Ok(())
