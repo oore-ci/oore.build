@@ -144,6 +144,21 @@ fn now_epoch_secs() -> i64 {
         .as_secs() as i64
 }
 
+fn resolve_data_dir() -> anyhow::Result<PathBuf> {
+    for key in ["OORED_DATA_DIR", "OORE_DATA_DIR"] {
+        if let Ok(raw) = std::env::var(key) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed));
+            }
+        }
+    }
+
+    let data_dir =
+        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
+    Ok(data_dir.join("oore"))
+}
+
 fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
     if let Some(p) = override_path {
         return Ok(PathBuf::from(p));
@@ -153,9 +168,7 @@ fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(p));
     }
 
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore").join("oore.db"))
+    Ok(resolve_data_dir()?.join("oore.db"))
 }
 
 // ── SQLite state helpers ────────────────────────────────────────

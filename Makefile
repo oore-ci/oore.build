@@ -1,19 +1,22 @@
 .PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web deploy-ci build-site deploy-site build-docs build check \
 	       test-web lint-web fix-web \
-	       test-docs lint-docs fix-docs \
+	       test-docs lint-docs fix-docs test-rust \
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
-	       run-runner register-runner run-cli doctor \
+	       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 	       docs-check ui-init install-local validate \
-	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon release-cut \
-	       clean-dev-state
+	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon release-cut
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
 RUNNER_SESSION_TOKEN ?=
 RUNNER_NAME ?= $(shell hostname)
 OORED_LOG_LEVEL ?= info
-OORED_DEV_DATA_DIR ?= $(HOME)/.oore/dev
+OORED_DEV_DATA_DIR ?= $(HOME)/.oore/dev.noindex
 OORE_DEV_SETUP_STATE_FILE ?= $(OORED_DEV_DATA_DIR)/oore.db
+OORED_DEV_LISTEN_ADDR ?= 127.0.0.1:8787
+OORED_DEV_DAEMON_URL ?= http://$(OORED_DEV_LISTEN_ADDR)
+OORE_DEV_ENABLE_TUNNEL ?= 1
+OORE_DEV_SETUP_MODE ?= token
 
 # ── Frontend: Web App ─────────────────────────────────────────────
 dev-web:
@@ -73,13 +76,13 @@ cargo-check:
 	cargo check --workspace
 
 run-daemon:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) RUST_LOG=$(OORED_LOG_LEVEL) cargo run -p oored -- run --listen 127.0.0.1:8787
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=$(OORED_LOG_LEVEL) cargo run -p oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-daemon-debug:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) RUST_LOG=debug cargo run -p oored -- run --listen 127.0.0.1:8787
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=debug cargo run -p oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-daemon-release:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) RUST_LOG=info cargo run -p oored --release -- run --listen 127.0.0.1:8787
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-runner:
 	cargo run -p oore -- runner start --daemon-url $(RUNNER_DAEMON_URL) --config $(RUNNER_CONFIG)
@@ -89,10 +92,16 @@ register-runner:
 	cargo run -p oore -- runner register --daemon-url $(RUNNER_DAEMON_URL) --token $(RUNNER_SESSION_TOKEN) --name "$(RUNNER_NAME)"
 
 run-cli:
-	OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) cargo run -p oore -- setup open --ttl 15m
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) OORE_DAEMON_URL=$(OORED_DEV_DAEMON_URL) cargo run -p oore -- setup --daemon-url $(OORED_DEV_DAEMON_URL) open --ttl 15m
 
 doctor:
 	cargo run -p oore -- doctor
+
+clean-dev-state:
+	OORED_DEV_DATA_DIR=$(OORED_DEV_DATA_DIR) OORED_DEV_LISTEN_ADDR=$(OORED_DEV_LISTEN_ADDR) OORE_DEV_DAEMON_URL=$(OORED_DEV_DAEMON_URL) bash scripts/clean-dev-state.sh
+
+dev-fresh-setup:
+	OORED_DEV_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_DEV_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) OORED_DEV_LISTEN_ADDR=$(OORED_DEV_LISTEN_ADDR) OORE_DEV_DAEMON_URL=$(OORED_DEV_DAEMON_URL) OORE_DEV_ENABLE_TUNNEL=$(OORE_DEV_ENABLE_TUNNEL) OORE_DEV_SETUP_MODE=$(OORE_DEV_SETUP_MODE) bash scripts/dev-fresh-setup.sh
 
 install-local:
 	bash scripts/install.sh
@@ -122,10 +131,6 @@ install-release-webhook:
 
 install-release-webhook-daemon:
 	bash scripts/install-launchd-release-webhook-daemon.sh
-
-clean-dev-state:
-	rm -rf "$(OORED_DEV_DATA_DIR)"
-	@echo "Removed dev daemon data at $(OORED_DEV_DATA_DIR)"
 
 # ── Documentation & Validation ────────────────────────────────────
 docs-check:

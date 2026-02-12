@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::ApiError;
@@ -15,21 +16,22 @@ pub fn now_unix() -> i64 {
 
 /// Resolve the daemon data root directory.
 ///
-/// Priority:
+/// Resolution order:
 /// 1. `OORED_DATA_DIR`
 /// 2. `OORE_DATA_DIR`
-/// 3. Platform data dir default (`dirs::data_dir()/oore`)
+/// 3. Platform default: `dirs::data_dir()/oore`
 pub fn resolve_oored_data_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(p) = std::env::var("OORED_DATA_DIR") {
-        return Ok(PathBuf::from(p));
+    for key in ["OORED_DATA_DIR", "OORE_DATA_DIR"] {
+        if let Ok(raw) = std::env::var(key) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed));
+            }
+        }
     }
 
-    if let Ok(p) = std::env::var("OORE_DATA_DIR") {
-        return Ok(PathBuf::from(p));
-    }
-
-    let data_dir = dirs::data_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine platform data directory (dirs::data_dir)"))?;
+    let data_dir =
+        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
     Ok(data_dir.join("oore"))
 }
 

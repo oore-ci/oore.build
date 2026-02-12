@@ -272,6 +272,7 @@ Dependency: Phases 2-6 functional.
 - [ ] **7.5 [P2] Operational docs** - Deploy/runbook/recovery guidance.
 - [ ] **7.6 [P2] Final release validation** - `make validate` and handoff checklist.
 - [x] **7.7 [P1] Release installer + onboarding bootstrap** - Added tag-driven macOS release packaging (`arm64`, `x86_64`) with checksum assets published to Cloudflare R2 (`dl.oore.build`), release-based `scripts/install.sh` (`curl -fsSL https://oore.build/install | bash`), neutral landing site plan (`apps/site`), and hosted-UI-first onboarding docs.
+- [x] **7.8 [P1] Dev setup simulation loop** - Added isolated dev data defaults (`~/.oore/dev`) for local daemon/CLI targets, `make clean-dev-state`, and `make dev-fresh-setup` to run clean-state local build + setup simulation end-to-end on a single machine, including auto Cloudflare tunnel exposure with printed public URL and token-first UI E2E as default.
 
 Feature docs required: E2E Tests, Security Hardening, Deployment/Operations.
 

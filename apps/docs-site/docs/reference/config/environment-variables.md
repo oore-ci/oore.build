@@ -13,6 +13,7 @@ All environment variables recognized by oore.build components.
 | `OORED_LISTEN_ADDR` | `127.0.0.1:8787` | Address and port for the daemon to listen on |
 | `OORED_RUNNER_MODE` | (embedded) | Runner mode: omit for embedded, `external` for external-only |
 | `OORED_DATA_DIR` | Platform default | Override daemon data root directory (`oore.db`, `encryption.key`, local artifacts default path) |
+| `OORE_DATA_DIR` | Platform default | Shared fallback data root (used when `OORED_DATA_DIR` is unset) |
 | `OORE_SETUP_STATE_FILE` | Platform default | Override SQLite database path |
 | `OORE_CORS_ORIGINS` | `http://localhost:3000,https://ci.oore.build` | Comma-separated allowed CORS origins |
 | `OORE_CORS_ORIGIN` | — | Single allowed CORS origin (backward compatible) |
@@ -23,12 +24,15 @@ Data root resolution order: `OORED_DATA_DIR` -> `OORE_DATA_DIR` -> `~/Library/Ap
 Default database path: `<data-root>/oore.db`
 
 Default encryption key path: `<data-root>/encryption.key`
+Default local artifact path: `<data-root>/artifacts`
 
 ## CLI (oore)
 
 | Variable | Default | Description |
 |---|---|---|
 | `OORE_DAEMON_URL` | `http://127.0.0.1:8787` | Daemon URL for CLI commands |
+| `OORED_DATA_DIR` | Platform default | Shared DB root override for CLI setup commands |
+| `OORE_DATA_DIR` | Platform default | Shared DB root override for CLI setup commands |
 | `OORE_SETUP_STATE_FILE` | Platform default | Override SQLite database path |
 | `OORE_SESSION_TOKEN` | — | Session token for `oore runner register` |
 
