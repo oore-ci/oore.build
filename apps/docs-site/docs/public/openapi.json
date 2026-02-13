@@ -16,17 +16,11 @@
   "servers": [
     {
       "url": "http://localhost:8787",
-      "description": "Local development"
+      "description": "Local development (default)"
     },
     {
-      "url": "{baseUrl}",
-      "description": "Self-hosted instance",
-      "variables": {
-        "baseUrl": {
-          "default": "http://localhost:8787",
-          "description": "Your oored daemon URL"
-        }
-      }
+      "url": "https://ci.example.com",
+      "description": "Self-hosted instance (replace with your URL)"
     }
   ],
   "paths": {

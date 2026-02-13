@@ -1,11 +1,13 @@
 import { defineConfig } from "vitepress";
 import { useSidebar } from "vitepress-openapi";
-import spec from "../public/openapi.json";
+import spec from "../public/openapi.json" with { type: "json" };
 
 const openApiSidebar = useSidebar({
   spec,
   linkPrefix: "/openapi/operations/",
-}).generateSidebarGroups();
+})
+  .generateSidebarGroups()
+  .map((group) => ({ ...group, collapsed: true }));
 
 export default defineConfig({
   title: "Oore CI Docs",
