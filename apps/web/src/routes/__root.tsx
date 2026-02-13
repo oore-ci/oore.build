@@ -1,19 +1,15 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import {
   Link,
   Outlet,
   createRootRoute,
   useMatches,
-  useNavigate,
 } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { PlayIcon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import PageBreadcrumb from '@/components/page-breadcrumb'
-import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import {
   SidebarInset,
@@ -26,10 +22,6 @@ import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
-
-const TriggerBuildDialog = lazy(
-  () => import('@/components/trigger-build-dialog'),
-)
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
@@ -78,14 +70,17 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   const matches = useMatches()
-  const navigate = useNavigate()
   const isSetupRoute = matches.some((m) => m.fullPath.startsWith('/setup'))
   const isLoginRoute = matches.some(
     (m) => m.fullPath.startsWith('/login') || m.fullPath.startsWith('/auth'),
   )
-  const showSidebar = !isSetupRoute && !isLoginRoute
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
-  const [triggerOpen, setTriggerOpen] = useState(false)
+  const authToken = useAuthStore((s) => s.token)
+  const authUser = useAuthStore((s) => s.user)
+
+  // Show sidebar+header only when: not on setup/login AND instance+auth exist
+  const showAppChrome =
+    !isSetupRoute && !isLoginRoute && !!activeInstanceId && !!authToken && !!authUser
 
   useEffect(() => {
     useSetupStore.getState().setInstanceContext(activeInstanceId)
@@ -95,7 +90,7 @@ function RootLayout() {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
-        {showSidebar ? (
+        {showAppChrome ? (
           <SidebarProvider>
             <AppSidebar />
             <SidebarInset>
@@ -120,16 +115,6 @@ function RootLayout() {
                   className="mr-2 h-4! self-auto!"
                 />
                 <PageBreadcrumb />
-                <div className="ml-auto flex items-center gap-2 pr-1">
-                  <Button
-                    size="sm"
-                    variant="default"
-                    onClick={() => setTriggerOpen(true)}
-                  >
-                    <HugeiconsIcon icon={PlayIcon} size={14} />
-                    Run Build
-                  </Button>
-                </div>
               </header>
               <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />
@@ -142,21 +127,6 @@ function RootLayout() {
               <Outlet />
             </div>
           </div>
-        )}
-        {triggerOpen && (
-          <Suspense>
-            <TriggerBuildDialog
-              open={triggerOpen}
-              onOpenChange={setTriggerOpen}
-              description="Choose a project and pipeline to run a manual build."
-              onBuildCreated={(buildId) => {
-                void navigate({
-                  to: '/builds/$buildId',
-                  params: { buildId },
-                })
-              }}
-            />
-          </Suspense>
         )}
         <Toaster />
         {import.meta.env.VITE_DEMO_MODE === 'true' && (

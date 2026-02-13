@@ -226,7 +226,7 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
         actions={
           <Button onClick={handleGlobalTrigger}>
             <HugeiconsIcon icon={PlayIcon} size={16} />
-            Trigger Build
+            Run Build
           </Button>
         }
       />

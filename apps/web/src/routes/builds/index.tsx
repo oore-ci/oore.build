@@ -58,7 +58,7 @@ function BuildsListPage() {
           canTriggerBuild ? (
             <Button onClick={() => setTriggerBuildOpen(true)}>
               <HugeiconsIcon icon={PlayIcon} size={16} />
-              Trigger Build
+              Run Build
             </Button>
           ) : undefined
         }

@@ -91,7 +91,7 @@ export default function TriggerBuildDialog({
   fixedPipelineName,
   defaultPipelineId,
   defaultBranch,
-  title = 'Trigger Build',
+  title = 'Run Build',
   description = 'Queue a manual build run for a selected pipeline.',
   onBuildCreated,
 }: TriggerBuildDialogProps) {
@@ -417,10 +417,10 @@ export default function TriggerBuildDialog({
                 {createBuildMutation.isPending ? (
                   <>
                     <Spinner className="size-4" />
-                    Triggering...
+                    Running...
                   </>
                 ) : (
-                  'Trigger Build'
+                  'Run Build'
                 )}
               </Button>
             </DialogFooter>
