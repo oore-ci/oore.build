@@ -6,6 +6,11 @@ status: implemented
 
 Use this guide after installing backend binaries to complete setup from `https://ci.oore.build`.
 
+::: warning Hosted UI reachability rule
+`https://ci.oore.build` can only connect to backends that are reachable over **HTTPS** from the public internet (or your browser network path).
+It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
+:::
+
 ## 1. Start the daemon
 
 ```bash
@@ -29,14 +34,37 @@ curl http://127.0.0.1:8787/v1/public/setup-status
 
 Keep this token ready for the setup wizard.
 
-## 4. Open hosted UI and add your backend
+## 4. Choose your setup path
+
+### Option A: Backend already reachable over HTTPS (recommended for hosted UI)
 
 1. Open [ci.oore.build](https://ci.oore.build).
 2. Use **Add Instance**.
-3. Enter your backend URL:
-   - Local testing: `http://127.0.0.1:8787`
-   - Network-reachable host: `https://ci.your-company.internal`
+3. Enter your backend URL (for example `https://ci.your-company.internal`).
 4. Continue to `/setup` and paste the bootstrap token.
+
+### Option B: Backend is local-only (no public HTTPS endpoint)
+
+Choose one:
+
+1. **CLI-only setup**
+   - Run:
+     ```bash
+     ~/.oore/bin/oore setup
+     ```
+2. **Temporary tunnel**
+   - Expose your backend via Cloudflare Tunnel:
+     ```bash
+     cloudflared tunnel --url http://127.0.0.1:8787
+     ```
+   - Add the assigned `https://*.trycloudflare.com` URL in `ci.oore.build`.
+3. **Self-host/local frontend**
+   - Run the bundled local web UI and connect directly to your local backend:
+     ```bash
+     ~/.oore/bin/oore-web --backend-url http://127.0.0.1:8787
+     ```
+   - Then open `http://127.0.0.1:4173`.
+   - Add an instance and leave **Backend URL** empty (this uses local proxy mode).
 
 ## 5. Complete OIDC setup
 

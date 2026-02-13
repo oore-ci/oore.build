@@ -8,12 +8,21 @@ OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-$OORE_RELEASE_BASE_URL/l
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_HOSTED_UI="${OORE_HOSTED_UI:-https://ci.oore.build}"
+OORE_LOCAL_WEB_MODE="${OORE_LOCAL_WEB_MODE:-}"
+OORE_LOCAL_WEB_LISTEN="${OORE_LOCAL_WEB_LISTEN:-127.0.0.1:4173}"
 
 BIN_DIR="$OORE_INSTALL_ROOT/bin"
 LOG_DIR="$OORE_INSTALL_ROOT/logs"
 DAEMON_LOG="$LOG_DIR/oored.log"
 DAEMON_PID_FILE="$OORE_INSTALL_ROOT/oored.pid"
+WEB_LOG="$LOG_DIR/oore-web.log"
+WEB_PID_FILE="$OORE_INSTALL_ROOT/oore-web.pid"
+WEB_DIST_DIR="$OORE_INSTALL_ROOT/web-dist"
+WEB_BINARY="$BIN_DIR/oore-web"
+WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
+WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
 DAEMON_URL="http://127.0.0.1:8787"
+LOCAL_WEB_URL=""
 RELEASE_TAG=""
 RELEASE_VERSION=""
 RELEASE_ARCH=""
@@ -206,6 +215,16 @@ install_binaries() {
   cp "$extract_dir/bin/oore" "$BIN_DIR/oore"
   chmod +x "$BIN_DIR/oored" "$BIN_DIR/oore"
 
+  if [[ -f "$extract_dir/bin/oore-web" ]]; then
+    cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
+    chmod +x "$WEB_BINARY"
+  fi
+
+  if [[ -d "$extract_dir/web-dist" ]]; then
+    rm -rf "$WEB_DIST_DIR"
+    cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
+  fi
+
   cp "$extract_dir/VERSION" "$OORE_INSTALL_ROOT/VERSION"
   if [[ -f "$extract_dir/LICENSE" ]]; then
     cp "$extract_dir/LICENSE" "$OORE_INSTALL_ROOT/LICENSE"
@@ -268,6 +287,17 @@ start_daemon() {
   return 1
 }
 
+print_keychain_note() {
+  cat <<'EOF'
+
+[oore-install] macOS may show a Keychain prompt on first daemon start.
+[oore-install] This allows `oored` to store and read a local encryption key
+[oore-install] used to protect secrets at rest on this machine.
+[oore-install] Recommended action: click "Allow" (or "Always Allow" on trusted hosts).
+
+EOF
+}
+
 is_already_configured() {
   local status_json
   status_json="$(curl -fsS "$DAEMON_URL/v1/public/setup-status" 2>/dev/null)" || return 1
@@ -302,7 +332,197 @@ is_localhost_backend() {
   esac
 }
 
+validate_local_web_mode() {
+  case "${OORE_LOCAL_WEB_MODE:-}" in
+    ""|off|run|login)
+      return 0
+      ;;
+    *)
+      die 'OORE_LOCAL_WEB_MODE must be one of: off,run,login.'
+      ;;
+  esac
+}
+
+local_web_url_from_listen() {
+  local listen="${1:-$OORE_LOCAL_WEB_LISTEN}"
+  if [[ "$listen" == http://* || "$listen" == https://* ]]; then
+    printf '%s' "${listen%/}"
+    return 0
+  fi
+
+  if [[ "$listen" == *:* ]]; then
+    printf 'http://%s' "$listen"
+    return 0
+  fi
+
+  die "OORE_LOCAL_WEB_LISTEN must be host:port or URL (got: $listen)"
+}
+
+resolve_local_web_url() {
+  LOCAL_WEB_URL="$(local_web_url_from_listen "$OORE_LOCAL_WEB_LISTEN")"
+}
+
+has_local_web_bundle() {
+  [[ -x "$WEB_BINARY" && -f "$WEB_DIST_DIR/index.html" ]]
+}
+
+is_local_web_healthy() {
+  curl -fsS "${LOCAL_WEB_URL}/__oore_web_healthz" >/dev/null 2>&1
+}
+
+start_local_web() {
+  if ! has_local_web_bundle; then
+    log "Bundled local web UI not found in this release."
+    return 1
+  fi
+
+  mkdir -p "$LOG_DIR"
+
+  if is_local_web_healthy; then
+    log "Local web UI is already running at $LOCAL_WEB_URL."
+    return 0
+  fi
+
+  nohup "$WEB_BINARY" \
+    --listen "$OORE_LOCAL_WEB_LISTEN" \
+    --backend-url "$DAEMON_URL" \
+    --dist-dir "$WEB_DIST_DIR" >"$WEB_LOG" 2>&1 &
+  echo "$!" > "$WEB_PID_FILE"
+
+  local i
+  for i in $(seq 1 15); do
+    if is_local_web_healthy; then
+      log "Local web UI is healthy at $LOCAL_WEB_URL."
+      return 0
+    fi
+    sleep 1
+  done
+
+  log "Local web UI failed to become healthy. Check logs: $WEB_LOG"
+  return 1
+}
+
+install_local_web_launch_agent() {
+  if ! has_local_web_bundle; then
+    log "Cannot install launch agent: bundled local web UI is unavailable."
+    return 1
+  fi
+
+  mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
+  cat > "$WEB_LAUNCH_AGENT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$WEB_LAUNCH_AGENT_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>$WEB_BINARY</string>
+      <string>--listen</string>
+      <string>$OORE_LOCAL_WEB_LISTEN</string>
+      <string>--backend-url</string>
+      <string>$DAEMON_URL</string>
+      <string>--dist-dir</string>
+      <string>$WEB_DIST_DIR</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$WEB_LOG</string>
+    <key>StandardErrorPath</key>
+    <string>$WEB_LOG</string>
+  </dict>
+</plist>
+EOF
+
+  local uid
+  uid="$(id -u)"
+  launchctl bootout "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+
+  if ! launchctl bootstrap "gui/$uid" "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+    # Fallback for older macOS launchctl variants.
+    launchctl load -w "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1 \
+      || return 1
+  fi
+
+  launchctl kickstart -k "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 \
+    || true
+
+  log "Installed launch-at-login local web UI agent: $WEB_LAUNCH_AGENT_LABEL"
+  return 0
+}
+
+configure_local_web_noninteractive() {
+  case "${OORE_LOCAL_WEB_MODE:-}" in
+    ""|off)
+      return 0
+      ;;
+    run)
+      start_local_web || die "Failed to start local web UI in non-interactive mode."
+      ;;
+    login)
+      install_local_web_launch_agent \
+        || die "Failed to install local web launch agent in non-interactive mode."
+      start_local_web || true
+      ;;
+    *)
+      die 'OORE_LOCAL_WEB_MODE must be one of: off,run,login.'
+      ;;
+  esac
+}
+
+handle_local_backend_onboarding() {
+  printf '\n'
+  log "Your backend is on localhost. The hosted UI ($OORE_HOSTED_UI)"
+  log "cannot reach a local HTTP backend due to browser security restrictions."
+  log ""
+  log "Setup options:"
+  log "  1. CLI setup:    $BIN_DIR/oore setup"
+  log "  2. Tunnel:       cloudflared tunnel --url $DAEMON_URL"
+  log "                   then open ${OORE_HOSTED_UI}/setup?backend=<tunnel-url>"
+
+  if ! has_local_web_bundle; then
+    log "  3. Local web UI: not bundled in this release build."
+    return 0
+  fi
+
+  log "  3. Local web UI: $LOCAL_WEB_URL/setup"
+  log "                   Add instance and leave Backend URL empty (uses local proxy)."
+
+  if prompt_yes_no "Will you expose this backend over HTTPS for hosted UI?" 'n'; then
+    if prompt_yes_no "Open hosted setup URL in your browser now?" 'n'; then
+      if have_cmd open; then
+        open "${OORE_HOSTED_UI}/setup" >/dev/null 2>&1 || true
+      fi
+    fi
+    return 0
+  fi
+
+  if prompt_yes_no "Start bundled local web UI now at $LOCAL_WEB_URL?" 'y'; then
+    start_local_web || true
+    if have_cmd open && prompt_yes_no "Open local setup UI in browser now?" 'y'; then
+      open "${LOCAL_WEB_URL}/setup" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if prompt_yes_no "Auto-start local web UI at login with launchd?" 'n'; then
+    install_local_web_launch_agent || log "Failed to install launch agent."
+  fi
+}
+
 open_setup_ui() {
+  if is_localhost_backend && is_local_web_healthy; then
+    if ! have_cmd open; then
+      log 'Cannot auto-open browser because the `open` command is unavailable.'
+      return 1
+    fi
+    open "${LOCAL_WEB_URL}/setup" >/dev/null 2>&1 || true
+    return 0
+  fi
+
   # The hosted UI (HTTPS) cannot make requests to a local HTTP backend
   # due to browser mixed-content restrictions. Skip auto-open.
   if is_localhost_backend; then
@@ -367,8 +587,12 @@ open_links() {
 
 print_next_steps() {
   local daemon_running=false
+  local local_web_running=false
   if curl -fsS "$DAEMON_URL/healthz" >/dev/null 2>&1; then
     daemon_running=true
+  fi
+  if [[ -n "$LOCAL_WEB_URL" ]] && is_local_web_healthy; then
+    local_web_running=true
   fi
 
   printf '\nInstallation complete.\n\n'
@@ -381,6 +605,15 @@ print_next_steps() {
     printf '\n'
     printf 'Hosted UI (requires HTTPS-reachable backend):\n'
     printf '  %s\n' "$OORE_HOSTED_UI"
+    if has_local_web_bundle; then
+      printf '\nLocal web UI (works with localhost backend):\n'
+      printf '  %s/setup\n' "$LOCAL_WEB_URL"
+      if "$local_web_running"; then
+        printf '  status: running\n'
+      else
+        printf '  start:  oore-web --backend-url %s\n' "$DAEMON_URL"
+      fi
+    fi
   else
     printf 'Start the daemon:\n'
     printf '  oored run --listen 127.0.0.1:8787\n\n'
@@ -390,6 +623,10 @@ print_next_steps() {
     printf '\n'
     printf 'Hosted UI (requires HTTPS-reachable backend):\n'
     printf '  %s\n' "$OORE_HOSTED_UI"
+    if has_local_web_bundle; then
+      printf '\nLocal web UI (works with localhost backend):\n'
+      printf '  oore-web --backend-url %s\n' "$DAEMON_URL"
+    fi
   fi
 
   printf '\nDocs: https://docs.oore.build\n'
@@ -403,6 +640,8 @@ cleanup() {
 
 main() {
   trap cleanup EXIT
+
+  validate_local_web_mode
 
   if normalize_bool "$OORE_NONINTERACTIVE"; then
     :
@@ -429,6 +668,7 @@ main() {
   step_done "macOS $RELEASE_ARCH"
 
   TMP_DIR="$(mktemp -d)"
+  resolve_local_web_url
 
   # Step 2: Download
   resolve_release_tag
@@ -444,7 +684,11 @@ main() {
   # Step 4: Install binaries
   step "Installing binaries..."
   install_binaries
-  step_done "$BIN_DIR/{oored,oore}"
+  if has_local_web_bundle; then
+    step_done "$BIN_DIR/{oored,oore,oore-web}"
+  else
+    step_done "$BIN_DIR/{oored,oore}"
+  fi
 
   ensure_on_path
 
@@ -453,7 +697,11 @@ main() {
     if [[ -n "$OORE_START_DAEMON" ]]; then
       if normalize_bool "$OORE_START_DAEMON"; then
         step "Starting daemon..."
+        print_keychain_note
         start_daemon || die "Daemon startup failed. Check logs: $DAEMON_LOG"
+        if is_localhost_backend; then
+          configure_local_web_noninteractive
+        fi
         step_done "$DAEMON_URL (healthy)"
       else
         if [[ "$?" -eq 2 ]]; then
@@ -469,6 +717,7 @@ main() {
   else
     # Step 5: Interactive — auto-start daemon
     step "Starting daemon..."
+    print_keychain_note
     if start_daemon; then
       step_done "$DAEMON_URL (healthy)"
 
@@ -478,14 +727,7 @@ main() {
         generate_setup_token || true
 
         if is_localhost_backend; then
-          printf '\n'
-          log "Your backend is on localhost. The hosted UI (https://ci.oore.build)"
-          log "cannot reach a local HTTP backend due to browser security restrictions."
-          log ""
-          log "To complete setup, choose one of:"
-          log "  1. CLI setup:    $BIN_DIR/oore setup"
-          log "  2. Tunnel:       Expose your backend via a tunnel (e.g. cloudflared)"
-          log "                   then open ${OORE_HOSTED_UI}/setup?backend=<tunnel-url>"
+          handle_local_backend_onboarding
         else
           printf '\nPress Ctrl+C to exit (setup can continue in the browser).\n'
 

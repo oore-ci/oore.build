@@ -1648,10 +1648,19 @@ fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Login => {
-            println!("login flow placeholder");
+            eprintln!(
+                "Not implemented in this release: `oore login`.\n\
+                 Workaround: authenticate in the web UI, then use the API with your session token."
+            );
+            std::process::exit(2);
         }
         Commands::Status => {
-            println!("status command placeholder");
+            eprintln!(
+                "Not implemented in this release: `oore status`.\n\
+                 Workaround: run `curl http://127.0.0.1:8787/v1/public/setup-status` \
+                 (or replace the host/port)."
+            );
+            std::process::exit(2);
         }
         Commands::Runner(runner) => match runner.command {
             RunnerSubcommand::Register(args) => {
@@ -1667,10 +1676,21 @@ fn main() -> anyhow::Result<()> {
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
-                println!("config set placeholder: {}={}", args.key, args.value);
+                eprintln!(
+                    "Not implemented in this release: `oore config set {}`.\n\
+                     Workaround: configure daemon behavior via environment variables and docs.",
+                    args.key
+                );
+                let _ = args.value;
+                std::process::exit(2);
             }
             ConfigSubcommand::Get(args) => {
-                println!("config get placeholder: {}", args.key);
+                eprintln!(
+                    "Not implemented in this release: `oore config get {}`.\n\
+                     Workaround: inspect current settings through the web UI and daemon env vars.",
+                    args.key
+                );
+                std::process::exit(2);
             }
         },
         Commands::Doctor => {

@@ -471,12 +471,13 @@ async fn configure_oidc(
         ));
     }
 
-    if sf.setup_state != SetupState::BootstrapPending {
+    let is_reconfigure = sf.setup_state == SetupState::IdpConfigured;
+    if sf.setup_state != SetupState::BootstrapPending && !is_reconfigure {
         return Err(api_err(
             StatusCode::CONFLICT,
             "invalid_state",
             format!(
-                "OIDC can only be configured in bootstrap_pending state, current: {}",
+                "OIDC can only be configured in bootstrap_pending or idp_configured state, current: {}",
                 sf.setup_state
             ),
         ));
@@ -559,6 +560,13 @@ async fn configure_oidc(
             "Failed to save setup state",
         )
     })?;
+    drop(store);
+
+    if is_reconfigure {
+        let mut pending = state.pending_auth.lock().await;
+        pending.clear();
+        info!("cleared pending OIDC auth requests after OIDC reconfiguration");
+    }
 
     Ok(Json(OidcConfigureResponse {
         state: SetupState::IdpConfigured,

@@ -39,7 +39,13 @@ For source development, also install [Rust](https://rustup.rs/) and [Bun](https:
 curl -fsSL https://oore.build/install | bash
 ```
 
-Then open `https://ci.oore.build`, add your backend instance URL, and complete setup.
+Then complete setup using one of these paths:
+
+- Hosted UI: open `https://ci.oore.build` and add an **HTTPS-reachable** backend URL
+- Local-only backend:
+  - run `oore setup` from CLI, or
+  - run bundled local frontend `oore-web --backend-url http://127.0.0.1:8787`, or
+  - expose backend through a tunnel and continue in hosted UI
 
 Detailed setup docs: `https://docs.oore.build`
 

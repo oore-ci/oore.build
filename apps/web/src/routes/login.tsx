@@ -2,14 +2,20 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
+import type { ConnectivityIssue } from '@/lib/connectivity'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  getConnectivityIssue,
+  isHostedUiOrigin,
+  isMixedContentBlocked,
+} from '@/lib/connectivity'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { getLastAuthMetaForInstance, useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance, useInstanceStore  } from '@/stores/instance-store'
+import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { webPageTitle } from '@/lib/seo'
 
 export const Route = createFileRoute('/login')({
@@ -44,6 +50,9 @@ function LoginPage() {
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [connectivityIssue, setConnectivityIssue] =
+    useState<ConnectivityIssue | null>(null)
+  const hostedUi = isHostedUiOrigin(window.location.origin)
   const instanceList = useMemo(
     () =>
       Object.values(instances).sort((a, b) => {
@@ -67,12 +76,27 @@ function LoginPage() {
 
   useEffect(() => {
     setError(null)
+    setConnectivityIssue(null)
   }, [instance?.id])
 
   const handleLogin = async () => {
     if (!instance) return
     setLoading(true)
     setError(null)
+    setConnectivityIssue(null)
+
+    if (isMixedContentBlocked(window.location.origin, instance.url)) {
+      setConnectivityIssue(
+        getConnectivityIssue(
+          instance.url,
+          new Error('mixed_content_blocked'),
+          window.location.origin,
+        ),
+      )
+      setError('Browser blocked this request due to mixed-content policy.')
+      setLoading(false)
+      return
+    }
 
     try {
       const callbackUrl = `${window.location.origin}/auth/callback`
@@ -102,6 +126,9 @@ function LoginPage() {
 
       window.location.href = data.authorization_url
     } catch (e) {
+      setConnectivityIssue(
+        getConnectivityIssue(instance.url, e, window.location.origin),
+      )
       setError(e instanceof Error ? e.message : 'Login failed')
       setLoading(false)
     }
@@ -148,6 +175,36 @@ function LoginPage() {
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
+            ) : null}
+
+            {connectivityIssue && instance ? (
+              <div className="space-y-3 border p-3">
+                <p className="text-sm font-medium">{connectivityIssue.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {connectivityIssue.description}
+                </p>
+
+                <div className="space-y-1">
+                  <p className="text-xs font-medium">CLI fallback</p>
+                  <code className="block bg-muted px-2 py-1 text-xs">
+                    oore setup
+                  </code>
+                </div>
+
+                <div className="space-y-1">
+                  <p className="text-xs font-medium">Expose backend with tunnel</p>
+                  <code className="block bg-muted px-2 py-1 text-xs">
+                    cloudflared tunnel --url {instance.url}
+                  </code>
+                </div>
+
+                {hostedUi ? (
+                  <p className="text-xs text-muted-foreground">
+                    For local-only backends, run the bundled local web launcher:{' '}
+                    <code>oore-web --backend-url {instance.url}</code>.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
 
             <Button

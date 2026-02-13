@@ -8,11 +8,14 @@ import {
 import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Tick02Icon } from '@hugeicons/core-free-icons'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { useSetupStore } from '@/stores/setup-store'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
 import { getSetupStatus } from '@/lib/api'
+import { getConnectivityIssue, isHostedUiOrigin, isMixedContentBlocked } from '@/lib/connectivity'
 import { getActiveInstanceOrRedirect } from '@/lib/instance-context'
 import { useInstanceStore } from '@/stores/instance-store'
 import { webPageTitle } from '@/lib/seo'
@@ -52,6 +55,10 @@ export const Route = createFileRoute('/setup')({
     maybeAutoAddBackendInstance()
 
     const instance = getActiveInstanceOrRedirect()
+    if (isMixedContentBlocked(window.location.origin, instance.url)) {
+      throw new Error('mixed_content_blocked')
+    }
+
     try {
       const status = await getSetupStatus(instance.url)
       if (status.is_configured) {
@@ -63,6 +70,7 @@ export const Route = createFileRoute('/setup')({
     }
   },
   component: SetupLayout,
+  errorComponent: SetupError,
 })
 
 const STEPS = ['Token', 'OIDC', 'Owner', 'Complete'] as const
@@ -157,6 +165,93 @@ function SetupLayout() {
             <Outlet />
           </CardContent>
         </Card>
+      </div>
+    </div>
+  )
+}
+
+function SetupError({ error }: { error: Error }) {
+  const navigate = useNavigate()
+  const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
+  const instances = useInstanceStore((s) => s.instances)
+  const instance = activeInstanceId ? instances[activeInstanceId] : null
+  const backendUrl = instance?.url ?? ''
+  const frontendOrigin = window.location.origin
+  const issue =
+    backendUrl.length > 0
+      ? getConnectivityIssue(backendUrl, error, frontendOrigin)
+      : null
+  const hostedUi = isHostedUiOrigin(frontendOrigin)
+
+  if (!issue) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-xl space-y-4">
+          <Alert variant="destructive">
+            <AlertTitle>Something went wrong</AlertTitle>
+            <AlertDescription>{error.message}</AlertDescription>
+          </Alert>
+          <Button onClick={() => void navigate({ to: '/setup' })}>
+            Retry Setup
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-6">
+      <div className="w-full max-w-xl space-y-4">
+        <Alert variant="destructive">
+          <AlertTitle>{issue.title}</AlertTitle>
+          <AlertDescription>{issue.description}</AlertDescription>
+        </Alert>
+
+        <Card>
+          <CardContent className="space-y-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Use CLI setup</p>
+              <p className="text-sm text-muted-foreground">
+                Complete first-run setup directly on the backend host:
+              </p>
+              <code className="block bg-muted px-2 py-1 text-xs">oore setup</code>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Expose backend over HTTPS</p>
+              <p className="text-sm text-muted-foreground">
+                Use a tunnel and reconnect with the assigned HTTPS URL:
+              </p>
+              <code className="block bg-muted px-2 py-1 text-xs">
+                cloudflared tunnel --url {backendUrl}
+              </code>
+            </div>
+
+            {hostedUi ? (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Use local/self-hosted web UI</p>
+                <p className="text-sm text-muted-foreground">
+                  If backend stays local-only, run the bundled local web launcher:
+                </p>
+                <code className="block bg-muted px-2 py-1 text-xs">
+                  oore-web --backend-url {backendUrl}
+                </code>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <div className="flex gap-2">
+          <Button onClick={() => void navigate({ to: '/setup' })}>
+            Retry Setup
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => window.open('https://docs.oore.build', '_blank')}
+          >
+            Open Docs
+          </Button>
+        </div>
       </div>
     </div>
   )

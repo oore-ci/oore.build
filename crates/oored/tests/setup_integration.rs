@@ -222,7 +222,7 @@ async fn run_full_setup(path: &Path) -> String {
                 .header("Authorization", format!("Bearer {}", session_token))
                 .body(Body::from(
                     serde_json::to_string(
-                        &json!({"redirect_uri": "http://localhost:3000/setup/owner"}),
+                        &json!({"redirect_uri": "http://localhost:3000/auth/callback"}),
                     )
                     .unwrap(),
                 ))
@@ -388,7 +388,7 @@ async fn test_full_setup_flow() {
                 .header("Authorization", format!("Bearer {}", session_token))
                 .body(Body::from(
                     serde_json::to_string(
-                        &json!({"redirect_uri": "http://localhost:3000/setup/owner"}),
+                        &json!({"redirect_uri": "http://localhost:3000/auth/callback"}),
                     )
                     .unwrap(),
                 ))
@@ -701,14 +701,116 @@ async fn test_configure_oidc_expired_session() {
 // ── State machine enforcement ───────────────────────────────────
 
 #[tokio::test]
-async fn test_configure_oidc_wrong_state() {
+async fn test_configure_oidc_allowed_in_idp_configured_and_clears_pending_auth() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("oore.db");
     let app = create_test_app(&db_path).await;
     let session_token = seed_session_token(&db_path).await;
 
-    // Move state to idp_configured — OIDC configure requires bootstrap_pending
-    set_state(&db_path, SetupState::IdpConfigured).await;
+    // Configure once from bootstrap_pending -> idp_configured.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/oidc/configure")
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "issuer_url": "https://accounts.google.com",
+                        "client_id": "initial-client-id"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Create a pending auth entry with the original OIDC configuration.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/start-oidc")
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .body(Body::from(
+                    serde_json::to_string(
+                        &json!({"redirect_uri": "http://localhost:3000/auth/callback"}),
+                    )
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    let stale_state = body["state"]
+        .as_str()
+        .expect("missing OIDC state")
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/oidc/configure")
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "issuer_url": "https://accounts.google.com",
+                        "client_id": "updated-client-id"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["state"], "idp_configured");
+
+    // The stale pending state should be invalid after reconfiguration.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/verify-oidc")
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "code": "test-auth-code",
+                        "state": stale_state
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "invalid_state");
+}
+
+#[tokio::test]
+async fn test_configure_oidc_rejected_in_owner_created_state() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let session_token = seed_session_token(&db_path).await;
+
+    set_state(&db_path, SetupState::OwnerCreated).await;
 
     let resp = app
         .oneshot(
@@ -833,7 +935,7 @@ async fn test_all_setup_endpoints_blocked_after_ready() {
                 .header("Authorization", "Bearer fake-token")
                 .body(Body::from(
                     serde_json::to_string(
-                        &json!({"redirect_uri": "http://localhost:3000/setup/owner"}),
+                        &json!({"redirect_uri": "http://localhost:3000/auth/callback"}),
                     )
                     .unwrap(),
                 ))

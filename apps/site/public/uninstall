@@ -6,7 +6,10 @@ OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 
 BIN_DIR="$OORE_INSTALL_ROOT/bin"
 DAEMON_PID_FILE="$OORE_INSTALL_ROOT/oored.pid"
+WEB_PID_FILE="$OORE_INSTALL_ROOT/oore-web.pid"
 DATA_DIR="$HOME/Library/Application Support/oore"
+WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
+WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
 
 log() {
   printf '[oore-uninstall] %s\n' "$*"
@@ -87,6 +90,41 @@ stop_daemon() {
   fi
 }
 
+stop_local_web() {
+  if [[ -f "$WEB_PID_FILE" ]]; then
+    local pid=""
+    pid="$(cat "$WEB_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      log "Stopping local web UI (PID $pid)..."
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 1
+    fi
+    rm -f "$WEB_PID_FILE"
+  fi
+
+  if command -v pgrep >/dev/null 2>&1; then
+    local pids=""
+    pids="$(pgrep -f "$BIN_DIR/oore-web" 2>/dev/null || true)"
+    if [[ -n "$pids" ]]; then
+      log "Stopping local web UI processes..."
+      echo "$pids" | xargs kill 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+}
+
+remove_local_web_launch_agent() {
+  local uid=""
+  uid="$(id -u)"
+  launchctl bootout "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+  launchctl remove "$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+
+  if [[ -f "$WEB_LAUNCH_AGENT_PLIST" ]]; then
+    log "Removing launch agent: $WEB_LAUNCH_AGENT_PLIST"
+    rm -f "$WEB_LAUNCH_AGENT_PLIST"
+  fi
+}
+
 remove_from_path() {
   local rc_files=("$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile")
 
@@ -151,6 +189,8 @@ main() {
   fi
 
   stop_daemon
+  stop_local_web
+  remove_local_web_launch_agent
   remove_from_path
   remove_install_dir
   remove_data_dir

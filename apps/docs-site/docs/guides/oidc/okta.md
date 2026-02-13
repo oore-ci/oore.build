@@ -26,8 +26,8 @@ This guide walks you through creating an Okta OIDC application and connecting it
 |---|---|
 | **App integration name** | `oore.build` |
 | **Grant type** | Authorization Code |
-| **Sign-in redirect URIs** | `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
-| **Sign-out redirect URIs** | `http://localhost:3000` |
+| **Sign-in redirect URIs** | `http://127.0.0.1:4173/auth/callback`, `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
+| **Sign-out redirect URIs** | `http://127.0.0.1:4173`, `http://localhost:3000` |
 | **Controlled access** | Choose your access policy |
 
 Both setup and regular sign-in use the same `/auth/callback` path — you only need one URI per origin. For a custom domain, replace the hosted UI URI with yours.

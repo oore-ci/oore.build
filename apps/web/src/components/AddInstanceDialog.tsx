@@ -13,26 +13,70 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  isHostedUiOrigin,
+  isLocalLauncherOrigin,
+  isLoopbackUrl,
+} from '@/lib/connectivity'
 import { useInstanceStore } from '@/stores/instance-store'
 import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
 
-const addInstanceSchema = z.object({
-  label: z.string().min(1, 'Label is required'),
-  url: z
-    .string()
-    .transform((v) => v.replace(/\/+$/, ''))
-    .pipe(
-      z
-        .string()
-        .refine(
-          (v) => v === '' || /^https?:\/\/.+/.test(v),
-          'URL must be a valid HTTP/HTTPS URL, or empty for local dev',
-        ),
-    ),
-  icon: z.string(),
-})
+export function addInstanceSchema(frontendOrigin: string) {
+  const hostedUi = isHostedUiOrigin(frontendOrigin)
+  const localLauncher = isLocalLauncherOrigin(frontendOrigin)
 
-type AddInstanceForm = z.infer<typeof addInstanceSchema>
+  return z
+    .object({
+      label: z.string().min(1, 'Label is required'),
+      url: z
+        .string()
+        .transform((v) => v.replace(/\/+$/, ''))
+        .pipe(
+          z
+            .string()
+            .refine(
+              (v) => v === '' || /^https?:\/\/.+/.test(v),
+              'URL must be a valid HTTP/HTTPS URL, or empty for local dev',
+            ),
+        ),
+      icon: z.string(),
+    })
+    .superRefine((values, ctx) => {
+      if (hostedUi) {
+        if (!values.url) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['url'],
+            message:
+              'Hosted UI requires an explicit HTTPS backend URL (or tunnel URL).',
+          })
+          return
+        }
+
+        if (!values.url.startsWith('http://')) return
+
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['url'],
+          message:
+            'Hosted UI requires an HTTPS backend URL (use a tunnel or reverse proxy).',
+        })
+        return
+      }
+
+      if (!localLauncher || !values.url) return
+      if (!isLoopbackUrl(values.url)) return
+
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['url'],
+        message:
+          'When using oore-web locally, leave Backend URL empty to use the built-in proxy.',
+      })
+    })
+}
+
+type AddInstanceForm = z.infer<ReturnType<typeof addInstanceSchema>>
 
 interface AddInstanceDialogProps {
   open: boolean
@@ -43,6 +87,12 @@ export default function AddInstanceDialog({
   open,
   onOpenChange,
 }: AddInstanceDialogProps) {
+  const frontendOrigin =
+    typeof window === 'undefined'
+      ? 'http://localhost:3000'
+      : window.location.origin
+  const hostedUi = isHostedUiOrigin(frontendOrigin)
+  const localLauncher = isLocalLauncherOrigin(frontendOrigin)
   const addInstance = useInstanceStore((s) => s.addInstance)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
 
@@ -54,7 +104,7 @@ export default function AddInstanceDialog({
     watch,
     setValue,
   } = useForm<AddInstanceForm>({
-    resolver: zodResolver(addInstanceSchema),
+    resolver: zodResolver(addInstanceSchema(frontendOrigin)),
     defaultValues: { label: '', url: '', icon: DEFAULT_INSTANCE_ICON_KEY },
     mode: 'onBlur',
   })
@@ -81,8 +131,11 @@ export default function AddInstanceDialog({
         <DialogHeader>
           <DialogTitle>Add Instance</DialogTitle>
           <DialogDescription>
-            Connect to an oore.build backend. Leave URL empty to use the local
-            dev proxy.
+            {hostedUi
+              ? 'Connect to an HTTPS-reachable oore.build backend (tunnel or reverse proxy).'
+              : localLauncher
+                ? 'Leave Backend URL empty to use the local oore-web proxy to your daemon.'
+              : 'Connect to an oore.build backend. Leave URL empty to use the local dev proxy.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -104,9 +157,11 @@ export default function AddInstanceDialog({
           <div className="space-y-2">
             <Label htmlFor="instance-url">
               Backend URL{' '}
-              <span className="text-muted-foreground font-normal">
-                (optional)
-              </span>
+              {!hostedUi ? (
+                <span className="text-muted-foreground font-normal">
+                  (optional)
+                </span>
+              ) : null}
             </Label>
             <Input
               id="instance-url"
@@ -114,6 +169,18 @@ export default function AddInstanceDialog({
               placeholder="https://ci.example.com"
               {...register('url')}
             />
+            {hostedUi ? (
+              <p className="text-xs text-muted-foreground">
+                `https://ci.oore.build` requires an explicit HTTPS backend URL
+                and cannot connect to localhost `http://` backends directly.
+              </p>
+            ) : null}
+            {localLauncher ? (
+              <p className="text-xs text-muted-foreground">
+                For local oore-web, keep this empty for localhost daemons to use
+                the built-in proxy.
+              </p>
+            ) : null}
             {errors.url ? (
               <p className="text-sm text-destructive">{errors.url.message}</p>
             ) : null}

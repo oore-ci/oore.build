@@ -28,9 +28,9 @@ Go to the **Settings** tab and set:
 
 | Field | Value |
 |---|---|
-| **Allowed Callback URLs** | `http://localhost:3000/auth/callback, https://ci.oore.build/auth/callback` |
-| **Allowed Logout URLs** | `http://localhost:3000` |
-| **Allowed Web Origins** | `http://localhost:3000` |
+| **Allowed Callback URLs** | `http://127.0.0.1:4173/auth/callback, http://localhost:3000/auth/callback, https://ci.oore.build/auth/callback` |
+| **Allowed Logout URLs** | `http://127.0.0.1:4173, http://localhost:3000` |
+| **Allowed Web Origins** | `http://127.0.0.1:4173, http://localhost:3000` |
 
 Both setup and regular sign-in use the same `/auth/callback` path — you only need one URI per origin. For a custom domain, replace the hosted UI URI with yours.
 

@@ -21,7 +21,7 @@ This guide walks you through registering an application in Microsoft Entra ID (f
    - **Supported account types**: Choose based on who should access your instance
      - "Accounts in this organizational directory only" for single-tenant
      - "Accounts in any organizational directory" for multi-tenant
-   - **Redirect URI**: Select "Web" and enter `http://localhost:3000/auth/callback`
+   - **Redirect URI**: Select "Web" and enter `http://127.0.0.1:4173/auth/callback`
 4. Click **Register**
 
 For detailed instructions, see [Register an application — Microsoft Entra](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app).
@@ -30,6 +30,7 @@ For detailed instructions, see [Register an application — Microsoft Entra](htt
 
 1. Go to **Authentication** in the app registration
 2. Under **Web > Redirect URIs**, add:
+   - `http://localhost:3000/auth/callback` (dev mode)
    - `https://ci.oore.build/auth/callback` (or your custom domain)
 3. Click **Save**
 

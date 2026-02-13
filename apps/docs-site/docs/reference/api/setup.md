@@ -115,7 +115,7 @@ POST /v1/setup/oidc/configure
 
 **Authentication**: Setup session token (Bearer)
 
-**State requirement**: `bootstrap_pending` only
+**State requirement**: `bootstrap_pending` or `idp_configured`
 
 ### Request body
 
@@ -159,7 +159,7 @@ POST /v1/setup/oidc/configure
 | 401 | `invalid_session` | Setup session token is invalid |
 | 401 | `session_expired` | Setup session has expired |
 | 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Not in `bootstrap_pending` state |
+| 409 | `invalid_state` | Not in `bootstrap_pending` or `idp_configured` state |
 | 500 | `encryption_error` | Failed to encrypt client secret |
 
 ### Example
@@ -193,7 +193,7 @@ POST /v1/setup/owner/start-oidc
 
 ```json
 {
-  "redirect_uri": "http://localhost:3000/setup/owner/callback"
+  "redirect_uri": "http://127.0.0.1:4173/auth/callback"
 }
 ```
 
@@ -236,7 +236,7 @@ The daemon generates a PKCE challenge (S256), CSRF state token, and nonce intern
 curl -X POST http://127.0.0.1:8787/v1/setup/owner/start-oidc \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <session_token>" \
-  -d '{"redirect_uri": "http://localhost:3000/setup/owner/callback"}'
+  -d '{"redirect_uri": "http://127.0.0.1:4173/auth/callback"}'
 ```
 
 ---

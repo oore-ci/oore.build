@@ -114,7 +114,7 @@ describe('getSetupStatus', () => {
     const result = await getSetupStatus('')
 
     expect(mockFetch).toHaveBeenCalledWith('/v1/public/setup-status', {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {},
     })
     expect(result).toEqual(payload)
   })
@@ -132,7 +132,7 @@ describe('getSetupStatus', () => {
 
     expect(mockFetch).toHaveBeenCalledWith(
       'https://ci.example.com/v1/public/setup-status',
-      { headers: { 'Content-Type': 'application/json' } },
+      { headers: {} },
     )
   })
 })
@@ -232,7 +232,6 @@ describe('listRunners', () => {
       'https://ci.example.com/v1/runners',
       {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
       },
@@ -299,7 +298,6 @@ describe('artifact storage settings api', () => {
       'https://ci.example.com/v1/settings/artifact-storage',
       {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
       },
@@ -376,7 +374,6 @@ describe('instance preferences api', () => {
       'https://ci.example.com/v1/settings/preferences',
       {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
       },
@@ -569,7 +566,6 @@ describe('pipeline api', () => {
       'https://ci.example.com/v1/projects/proj-1/pipelines?limit=10',
       {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
       },
@@ -583,7 +579,6 @@ describe('pipeline api', () => {
       'https://ci.example.com/v1/pipelines/pipe-1',
       {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
       },

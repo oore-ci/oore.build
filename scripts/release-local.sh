@@ -10,6 +10,7 @@ RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://dl.oore.build/releases}"
 RELEASE_DIST_ROOT="${OORE_RELEASE_DIST_ROOT:-$ROOT_DIR/dist/releases}"
 PUBLISH_LATEST="${OORE_PUBLISH_LATEST:-1}"
 SKIP_UPLOAD="${OORE_SKIP_UPLOAD:-0}"
+BUN_VERSION="${OORE_BUN_VERSION:-}"
 
 TMP_DIR=""
 WORKTREE_DIR=""
@@ -54,7 +55,7 @@ cleanup() {
 
 ensure_dependencies() {
   local dep
-  for dep in git cargo tar shasum mktemp date; do
+  for dep in git cargo tar shasum mktemp date bun curl unzip; do
     have_cmd "$dep" || die "$dep is required."
   done
 
@@ -66,6 +67,59 @@ ensure_dependencies() {
     fi
     have_cmd wrangler || die 'wrangler is required for R2 upload. Install with `npm i -g wrangler`.'
   fi
+}
+
+resolve_bun_version() {
+  if [[ -n "$BUN_VERSION" ]]; then
+    if [[ "$BUN_VERSION" == v* ]]; then
+      printf '%s' "$BUN_VERSION"
+    else
+      printf 'v%s' "$BUN_VERSION"
+    fi
+    return 0
+  fi
+
+  printf 'v%s' "$(bun --version)"
+}
+
+download_bun_runtime() {
+  local bun_version="$1"
+  local release_arch="$2"
+  local bun_arch=""
+  local runtime_root="$TMP_DIR/bun-runtime"
+  local runtime_dir=""
+  local zip_name=""
+  local zip_path=""
+  local url=""
+
+  case "$release_arch" in
+    arm64) bun_arch="aarch64" ;;
+    x86_64) bun_arch="x64" ;;
+    *)
+      die "Unsupported release architecture for bun runtime: $release_arch"
+      ;;
+  esac
+
+  runtime_dir="$runtime_root/bun-darwin-$bun_arch"
+  if [[ -x "$runtime_dir/bun" ]]; then
+    printf '%s' "$runtime_dir/bun"
+    return 0
+  fi
+
+  mkdir -p "$runtime_root"
+  zip_name="bun-darwin-$bun_arch.zip"
+  zip_path="$runtime_root/$zip_name"
+  url="https://github.com/oven-sh/bun/releases/download/bun-$bun_version/$zip_name"
+
+  log "Downloading bun runtime $bun_version ($release_arch)..."
+  curl -fsSL --retry 3 --output "$zip_path" "$url" \
+    || die "Failed to download bun runtime: $url"
+
+  unzip -q "$zip_path" -d "$runtime_root" \
+    || die "Failed to extract bun runtime archive: $zip_path"
+
+  [[ -x "$runtime_dir/bun" ]] || die "bun runtime archive missing binary: $runtime_dir/bun"
+  printf '%s' "$runtime_dir/bun"
 }
 
 normalize_tag() {
@@ -127,6 +181,44 @@ build_binaries() {
   )
 }
 
+build_web_launcher() {
+  local bun_version=""
+  local bun_arm64=""
+  local bun_x64=""
+  local entrypoint="$WORKTREE_DIR/apps/web/tools/oore-web.js"
+  local dist_dir="$WORKTREE_DIR/apps/web/dist"
+
+  [[ -f "$entrypoint" ]] || die "Missing web launcher entrypoint: $entrypoint"
+
+  log "Building web UI assets..."
+  (
+    cd "$WORKTREE_DIR"
+    bun install --frozen-lockfile
+    bun run build:web
+  )
+
+  [[ -f "$dist_dir/index.html" ]] || die "Missing built web assets: $dist_dir/index.html"
+
+  bun_version="$(resolve_bun_version)"
+  bun_arm64="$(download_bun_runtime "$bun_version" "arm64")"
+  bun_x64="$(download_bun_runtime "$bun_version" "x86_64")"
+
+  log "Compiling oore-web launcher binaries..."
+  bun build --compile \
+    --target=bun \
+    --compile-executable-path "$bun_arm64" \
+    --outfile "$TMP_DIR/oore-web-arm64" \
+    "$entrypoint"
+
+  bun build --compile \
+    --target=bun \
+    --compile-executable-path "$bun_x64" \
+    --outfile "$TMP_DIR/oore-web-x86_64" \
+    "$entrypoint"
+
+  chmod +x "$TMP_DIR/oore-web-arm64" "$TMP_DIR/oore-web-x86_64"
+}
+
 package_release() {
   local out_dir="$RELEASE_DIST_ROOT/$RELEASE_TAG"
   local arm_asset="oore_${RELEASE_VERSION}_darwin_arm64.tar.gz"
@@ -141,11 +233,15 @@ package_release() {
 
   cp "$WORKTREE_DIR/target/release/oored" "$arm_stage/bin/oored"
   cp "$WORKTREE_DIR/target/release/oore" "$arm_stage/bin/oore"
+  cp "$TMP_DIR/oore-web-arm64" "$arm_stage/bin/oore-web"
+  cp -R "$WORKTREE_DIR/apps/web/dist" "$arm_stage/web-dist"
   cp "$WORKTREE_DIR/LICENSE" "$arm_stage/LICENSE"
   printf '%s\n' "$RELEASE_VERSION" > "$arm_stage/VERSION"
 
   cp "$WORKTREE_DIR/target/x86_64-apple-darwin/release/oored" "$x64_stage/bin/oored"
   cp "$WORKTREE_DIR/target/x86_64-apple-darwin/release/oore" "$x64_stage/bin/oore"
+  cp "$TMP_DIR/oore-web-x86_64" "$x64_stage/bin/oore-web"
+  cp -R "$WORKTREE_DIR/apps/web/dist" "$x64_stage/web-dist"
   cp "$WORKTREE_DIR/LICENSE" "$x64_stage/LICENSE"
   printf '%s\n' "$RELEASE_VERSION" > "$x64_stage/VERSION"
 
@@ -237,6 +333,7 @@ main() {
   prepare_worktree
   ensure_tag_matches_workspace_version
   build_binaries
+  build_web_launcher
   package_release
 
   if normalize_bool "$SKIP_UPLOAD"; then

@@ -40,6 +40,14 @@ ls -la ~/Library/Application\ Support/oore/
 
 Ensure the current user has read/write access to the database and encryption key files.
 
+### macOS keychain prompt appears on startup
+
+On first startup, macOS may ask for access to keychain item `build.oore.oored`.
+This is expected and used to store/read a local encryption key for secrets at rest.
+
+- Click **Allow** (or **Always Allow** on trusted hosts)
+- If you click **Deny**, restart `oored` and allow access on the next prompt
+
 ## Builds stuck in "queued"
 
 ### Embedded runner not starting
@@ -96,6 +104,50 @@ The redirect URI sent by oore.build doesn't match what's configured in the OIDC 
 2. Ensure `http` vs `https` matches
 3. Check for port number mismatches
 4. Check for trailing slashes
+
+## Hosted UI connectivity issues
+
+### Hosted UI shows "Failed to fetch" during setup/login
+
+If you are using `https://ci.oore.build`, your backend must be reachable over HTTPS.
+The hosted UI cannot access local-only HTTP addresses like `http://127.0.0.1:8787`.
+
+Use one of these paths:
+
+1. CLI-only setup:
+   ```bash
+   oore setup
+   ```
+2. Expose backend via tunnel:
+   ```bash
+   cloudflared tunnel --url http://127.0.0.1:8787
+   ```
+3. Run bundled local web UI for local-only backend development:
+   ```bash
+   oore-web --backend-url http://127.0.0.1:8787
+   ```
+   Then add an instance and leave **Backend URL** empty in the UI.
+
+### Local web UI does not open
+
+Check local web logs:
+
+```bash
+cat ~/.oore/logs/oore-web.log
+```
+
+Verify local web health:
+
+```bash
+curl http://127.0.0.1:4173/__oore_web_healthz
+```
+
+If launch-at-login was enabled and you need to reload it:
+
+```bash
+launchctl bootout gui/$(id -u)/build.oore.oore-web 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/build.oore.oore-web.plist
+```
 
 ## Signing failures
 

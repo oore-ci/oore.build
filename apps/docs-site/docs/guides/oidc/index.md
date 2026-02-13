@@ -41,6 +41,7 @@ When creating your OAuth application, add these redirect URIs:
 | Context | Redirect URI |
 |---|---|
 | Hosted UI (ci.oore.build) | `https://ci.oore.build/auth/callback` |
+| Local launcher (`oore-web`) | `http://127.0.0.1:4173/auth/callback` |
 | Local dev UI | `http://localhost:3000/auth/callback` |
 | Custom domain | `https://your-domain.com/auth/callback` |
 | CLI loopback | `http://localhost:*` (dynamic port shown by CLI) |

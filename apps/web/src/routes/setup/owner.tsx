@@ -101,6 +101,11 @@ function OwnerStep() {
     )
   }, [sessionToken])
 
+  const handleRestartFromToken = useCallback(() => {
+    useSetupStore.getState().reset()
+    void navigate({ to: '/setup' })
+  }, [navigate])
+
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -111,6 +116,16 @@ function OwnerStep() {
           ID token.
         </p>
       </div>
+
+      <Alert>
+        <AlertTitle>Troubleshooting tip</AlertTitle>
+        <AlertDescription>
+          If your provider shows errors like <code>invalid_client</code> or
+          callback mismatch, go back to OIDC settings and update client ID,
+          secret, and allowed redirect URI. If the provider does not redirect
+          back, return here manually and retry after fixing OIDC settings.
+        </AlertDescription>
+      </Alert>
 
       {errorMessage ? (
         <Alert variant="destructive">
@@ -128,6 +143,15 @@ function OwnerStep() {
           ? 'Redirecting...'
           : 'Authenticate with OIDC Provider'}
       </Button>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button variant="outline" onClick={() => void navigate({ to: '/setup/oidc' })}>
+          Back to OIDC Settings
+        </Button>
+        <Button variant="outline" onClick={handleRestartFromToken}>
+          Restart from Token Step
+        </Button>
+      </div>
     </div>
   )
 }

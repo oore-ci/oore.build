@@ -31,6 +31,7 @@ This guide walks you through creating a Google OAuth 2.0 application and connect
 6. Under **Authorized redirect URIs**, add:
 
    ```
+   http://127.0.0.1:4173/auth/callback
    http://localhost:3000/auth/callback
    https://ci.oore.build/auth/callback
    ```
@@ -76,7 +77,7 @@ oore.build will perform OIDC discovery against the issuer URL, verify the config
 
 After setup completes:
 
-1. Open the web UI at `http://localhost:3000`
+1. Open the web UI at `http://127.0.0.1:4173` (or `http://localhost:3000` in dev mode)
 2. Click **Sign in**
 3. You should be redirected to Google's sign-in page
 4. After authenticating, you should be redirected back to oore.build and logged in

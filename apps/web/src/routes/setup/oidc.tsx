@@ -174,7 +174,8 @@ function OidcConfigStep() {
   const errorMessage = configureMutation.error
     ? getApiErrorMessage(configureMutation.error, {
         oidc_discovery_failed: `OIDC discovery failed: ${configureMutation.error.message}`,
-        invalid_state: 'OIDC has already been configured for this instance.',
+        invalid_state:
+          'OIDC settings can only be changed before owner verification is completed.',
         session_expired:
           'Your setup session has expired. Please go back and re-enter the bootstrap token.',
         invalid_session:
@@ -194,9 +195,9 @@ function OidcConfigStep() {
 
   function handleProviderChange(value: ProviderId) {
     setSelectedProvider(value)
-    const p = PROVIDERS.find((pr) => pr.id === value)
-    if (p?.locked && p.issuerUrl) {
-      setValue('issuerUrl', p.issuerUrl, { shouldValidate: true })
+    const nextProvider = PROVIDERS.find((pr) => pr.id === value) ?? PROVIDERS[0]
+    if (nextProvider.locked && nextProvider.issuerUrl) {
+      setValue('issuerUrl', nextProvider.issuerUrl, { shouldValidate: true })
     } else {
       setValue('issuerUrl', '', { shouldValidate: false })
     }
@@ -235,8 +236,8 @@ function OidcConfigStep() {
           need a client ID (and optionally secret) from your identity provider.
         </p>
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          Double-check your values before submitting — this step cannot be
-          undone.
+          You can edit this until owner verification is completed. After owner
+          verification, setup can only move forward to finalize.
         </p>
       </div>
 
