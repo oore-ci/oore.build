@@ -77,27 +77,31 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return
 
-          // React core — changes rarely, cache separately
-          if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/'))
+          // React core + UI primitives + Router in one chunk to prevent
+          // circular chunk deps (Base UI ↔ React, Router ↔ React share
+          // module boundaries that cause TDZ errors when split)
+          if (
+            id.includes('/react-dom/') ||
+            id.includes('/react/') ||
+            id.includes('/scheduler/') ||
+            id.includes('/@base-ui/') ||
+            id.includes('/@floating-ui/') ||
+            id.includes('/tabbable/') ||
+            id.includes('/@tanstack/react-router/') ||
+            id.includes('/@tanstack/router-') ||
+            id.includes('/@tanstack/history') ||
+            id.includes('/@tanstack/react-store') ||
+            id.includes('/@tanstack/store') ||
+            id.includes('/tiny-invariant/') ||
+            id.includes('/tiny-warning/')
+          )
             return 'react-vendor'
 
-          // TanStack Router (includes router-core, history)
-          if (id.includes('/@tanstack/react-router/') || id.includes('/@tanstack/router-'))
-            return 'router-vendor'
-
-          // TanStack Query (includes query-core)
+          // TanStack Query (no circular dep with react-vendor)
           if (id.includes('/@tanstack/react-query/') || id.includes('/@tanstack/query-core/'))
             return 'query-vendor'
 
-          // Base UI primitives
-          if (id.includes('/@base-ui/'))
-            return 'base-ui'
-
-          // Floating UI (positioning engine for popups)
-          if (id.includes('/@floating-ui/'))
-            return 'floating-ui'
-
-          // Form libs: react-hook-form + zod + resolvers
+          // Form libs (lazy-loaded via dialog components)
           if (id.includes('/react-hook-form/') || id.includes('/zod/') || id.includes('/@hookform/'))
             return 'form-vendor'
 
@@ -105,7 +109,11 @@ export default defineConfig({
           if (id.includes('/sonner/'))
             return 'sonner'
 
-          // Styling utilities
+          // Icon library
+          if (id.includes('/@hugeicons/'))
+            return 'icons'
+
+          // Styling utilities (pure functions, no React)
           if (id.includes('/tailwind-merge/') || id.includes('/class-variance-authority/') || id.includes('/clsx/'))
             return 'ui-utils'
         },
