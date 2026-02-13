@@ -9,7 +9,7 @@ import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/setup/owner')({
   beforeLoad: () => {
@@ -60,10 +60,6 @@ function OwnerStep() {
   const errorMessage = getErrorMessage(startMutation.error)
 
   useEffect(() => {
-    document.title = webPageTitle('Setup Owner')
-  }, [])
-
-  useEffect(() => {
     setCurrentStep(2)
   }, [setCurrentStep])
 
@@ -108,6 +104,7 @@ function OwnerStep() {
 
   return (
     <div className="space-y-4">
+      <PageMeta title="Setup Owner" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Owner Account</h2>
         <p className="text-sm text-muted-foreground">

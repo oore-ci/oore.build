@@ -10,7 +10,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useAuthStore } from '@/stores/auth-store'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
   useArtifactStorageSettings,
@@ -135,10 +135,6 @@ function PreferencesPage() {
   const provider = storageForm.watch('provider')
 
   useEffect(() => {
-    document.title = webPageTitle('Preferences')
-  }, [])
-
-  useEffect(() => {
     const settings = settingsQuery.data?.settings
     if (!settings) return
 
@@ -231,6 +227,7 @@ function PreferencesPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Preferences" noindex />
       <PageHeader
         title="Preferences"
         description="Manage artifact storage and security defaults for this instance."

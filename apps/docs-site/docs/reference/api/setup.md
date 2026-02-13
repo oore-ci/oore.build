@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for first-run oore.build instance setup and configuration."
 ---
 
 # Setup API

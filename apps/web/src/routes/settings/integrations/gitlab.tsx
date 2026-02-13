@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -10,7 +9,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useGitLabStart } from '@/hooks/use-integrations'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -98,10 +97,6 @@ function GitLabSetupPage() {
   const authMode = form.watch('auth_mode')
   const hostUrl = form.watch('host_url')
 
-  useEffect(() => {
-    document.title = webPageTitle('Connect GitLab')
-  }, [])
-
   function handleSubmit(data: GitLabSetupForm) {
     startMutation.mutate(
       {
@@ -147,6 +142,7 @@ function GitLabSetupPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Connect GitLab" noindex />
       <PageHeader
         title="Connect GitLab"
         description="Connect gitlab.com or a self-managed GitLab host for repositories and webhook events."

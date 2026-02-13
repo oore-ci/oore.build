@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Complete REST API reference for the oore.build daemon including endpoints, auth, and error codes."
 ---
 
 # API Reference

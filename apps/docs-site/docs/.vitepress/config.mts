@@ -14,6 +14,9 @@ export default defineConfig({
   description:
     "Self-hosted, Flutter-first mobile CI and internal app distribution platform",
   cleanUrls: true,
+  sitemap: {
+    hostname: 'https://docs.oore.build',
+  },
 
   head: [
     [
@@ -64,7 +67,7 @@ export default defineConfig({
       "meta",
       {
         property: "og:image",
-        content: "/logo512.png",
+        content: "https://docs.oore.build/og-image.svg",
       },
     ],
     [
@@ -93,7 +96,21 @@ export default defineConfig({
       "meta",
       {
         name: "twitter:image",
-        content: "/logo512.png",
+        content: "https://docs.oore.build/og-image.svg",
+      },
+    ],
+    [
+      "link",
+      {
+        rel: "canonical",
+        href: "https://docs.oore.build",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:url",
+        content: "https://docs.oore.build",
       },
     ],
     [

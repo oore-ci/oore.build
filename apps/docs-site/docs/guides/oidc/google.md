@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Set up Google Workspace OIDC authentication for oore.build."
 ---
 
 # Google OIDC Setup

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Connect GitLab repositories to oore.build for webhook-triggered builds."
 ---
 
 # Connect GitLab

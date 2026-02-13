@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for build runner registration and job management in oore.build."
 ---
 
 # Runners API

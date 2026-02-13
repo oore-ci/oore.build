@@ -1,5 +1,5 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Allow: /
 
-Sitemap: https://docs.oore.build/sitemap.xml
+Sitemap: https://oore.build/sitemap.xml

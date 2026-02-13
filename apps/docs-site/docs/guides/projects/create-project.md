@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Create a new project in oore.build and link it to a source repository."
 ---
 
 # Create a Project

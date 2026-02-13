@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Setup state machine transitions from uninitialized to ready in oore.build."
 ---
 
 # Setup State Machine

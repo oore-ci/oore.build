@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Overview of code signing in oore.build for Android and iOS builds."
 ---
 
 # Code Signing in oore.build

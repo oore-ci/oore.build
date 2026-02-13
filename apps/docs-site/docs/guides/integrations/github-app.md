@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Install and configure a GitHub App integration for oore.build repository access and webhooks."
 ---
 
 # Connect a GitHub App

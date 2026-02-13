@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Environment variables for configuring the oore.build daemon and CLI."
 ---
 
 # Environment Variables

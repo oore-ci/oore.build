@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Complete list of machine-readable error codes returned by the oore.build API."
 ---
 
 # Error Codes

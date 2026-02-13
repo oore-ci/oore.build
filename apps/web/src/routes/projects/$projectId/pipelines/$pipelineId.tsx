@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -30,7 +30,7 @@ import {
   getStatusVariant,
 } from '@/lib/status-variants'
 import { relativeTime } from '@/lib/format-utils'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -141,14 +141,12 @@ function PipelineDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
-  useEffect(() => {
-    const label = data?.pipeline.name ?? 'Pipeline Details'
-    document.title = webPageTitle(label)
-  }, [data?.pipeline.name])
+  const label = data?.pipeline.name ?? 'Pipeline Details'
 
   if (isLoading) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-28 w-full" />
         <Skeleton className="h-56 w-full" />
@@ -159,6 +157,7 @@ function PipelineDetailPage() {
   if (error) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
@@ -201,6 +200,7 @@ function PipelineDetailPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title={label} noindex />
       <PageHeader
         title={pipeline.name}
         back={{ to: `/projects/${projectId}`, label: 'Project' }}

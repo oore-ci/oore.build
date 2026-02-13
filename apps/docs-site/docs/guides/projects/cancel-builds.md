@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Cancel running or queued builds in oore.build."
 ---
 
 # Cancel Running Builds

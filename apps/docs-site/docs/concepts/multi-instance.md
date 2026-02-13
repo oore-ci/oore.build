@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "How the oore.build web UI manages connections to multiple backend instances."
 ---
 
 # Multi-Instance Architecture

@@ -1,3 +1,6 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Disallow: /auth/
+Disallow: /settings/
+
+Sitemap: https://ci.oore.build/sitemap.xml

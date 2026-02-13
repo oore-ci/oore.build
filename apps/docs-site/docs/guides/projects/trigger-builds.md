@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Trigger builds manually, via webhook, or through the oore.build API."
 ---
 
 # Trigger Builds

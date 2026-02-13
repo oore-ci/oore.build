@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Run the oore.build setup wizard to configure OIDC and create your first admin account."
 ---
 
 # Set Up Your Instance

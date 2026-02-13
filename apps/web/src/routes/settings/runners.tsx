@@ -14,7 +14,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
 import { getRunnerStatusVariant } from '@/lib/status-variants'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -219,10 +219,6 @@ function RunnersSettingsPage() {
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  useEffect(() => {
-    document.title = webPageTitle('Runner Management')
-  }, [])
-
   const runners = data?.runners ?? []
   const onlineCount = useMemo(
     () =>
@@ -234,6 +230,7 @@ function RunnersSettingsPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Runner Management" noindex />
       <PageHeader
         title="Runners"
         description="Runner health and metadata management for this instance."

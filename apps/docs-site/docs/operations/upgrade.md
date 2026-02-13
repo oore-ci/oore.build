@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Upgrade oore.build to a new version with zero-downtime strategies."
 ---
 
 # Upgrade Procedures

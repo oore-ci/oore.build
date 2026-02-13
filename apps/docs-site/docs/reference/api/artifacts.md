@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for build artifact management and downloads in oore.build."
 ---
 
 # Artifacts API

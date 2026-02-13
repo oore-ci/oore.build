@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Switch between multiple oore.build instances in the web UI."
 ---
 
 # Switch Between Instances

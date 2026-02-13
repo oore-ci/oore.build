@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Monitor oore.build health with Prometheus metrics and alerting."
 ---
 
 # Monitoring

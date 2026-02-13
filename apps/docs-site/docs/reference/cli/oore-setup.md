@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "CLI reference for the oore setup command and bootstrap token management."
 ---
 
 # oore setup

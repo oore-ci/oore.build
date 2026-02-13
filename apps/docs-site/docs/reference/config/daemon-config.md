@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configuration options for the oored daemon process."
 ---
 
 # Daemon Configuration

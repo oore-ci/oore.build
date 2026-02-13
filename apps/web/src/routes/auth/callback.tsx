@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/auth/callback')({
   component: AuthCallbackPage,
@@ -34,10 +34,6 @@ function AuthCallbackPage() {
     '/login',
   )
   const exchangeStartedRef = useRef(false)
-
-  useEffect(() => {
-    document.title = webPageTitle('Signing In')
-  }, [])
 
   useEffect(() => {
     // Guard against React StrictMode double-execution.
@@ -223,6 +219,7 @@ function AuthCallbackPage() {
         : 'Authentication Failed'
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6">
+        <PageMeta title="Signing In" />
         <div className="w-full max-w-md space-y-4">
           <Alert variant="destructive">
             <AlertTitle>{title}</AlertTitle>
@@ -245,6 +242,7 @@ function AuthCallbackPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center">
+      <PageMeta title="Signing In" />
       <div className="flex items-center gap-3">
         <Spinner className="size-5" />
         <p className="text-muted-foreground text-sm">Completing sign-in...</p>

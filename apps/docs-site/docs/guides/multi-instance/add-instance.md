@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Add additional oore.build backend instances to the web UI."
 ---
 
 # Connect to Multiple Backends

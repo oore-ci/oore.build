@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Upload iOS signing certificates and provisioning profiles to oore.build."
 ---
 
 # Acquire iOS Certificates and Profiles

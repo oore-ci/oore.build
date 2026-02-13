@@ -1,6 +1,7 @@
 ---
 layout: home
 status: implemented
+description: "Documentation for oore.build, a self-hosted Flutter-first mobile CI and internal app distribution platform."
 hero:
   name: oore.build
   text: Flutter-first mobile CI

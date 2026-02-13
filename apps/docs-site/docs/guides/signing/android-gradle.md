@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure Gradle signing for Android builds in oore.build pipelines."
 ---
 
 # Configure Gradle Signing

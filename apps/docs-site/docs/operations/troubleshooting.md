@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Diagnose and fix common oore.build issues including builds, auth, and connectivity."
 ---
 
 # Troubleshooting

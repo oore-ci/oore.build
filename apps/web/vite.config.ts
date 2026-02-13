@@ -11,6 +11,35 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import type { Plugin } from 'vite'
 
 /**
+ * Post-build plugin that generates sitemap.xml from the public routes list.
+ * For an SPA behind auth, only explicitly-listed public routes are included.
+ * This runs at build time so the sitemap always stays in sync with deploys.
+ */
+function sitemapPlugin(): Plugin {
+  const HOSTNAME = 'https://ci.oore.build'
+  const PUBLIC_ROUTES: Array<{ path: string; changefreq: string; priority: string }> = [
+    { path: '/', changefreq: 'weekly', priority: '1.0' },
+    { path: '/login', changefreq: 'monthly', priority: '0.5' },
+  ]
+
+  return {
+    name: 'generate-sitemap',
+    apply: 'build',
+    enforce: 'post',
+    closeBundle() {
+      const outDir = 'dist'
+      const urls = PUBLIC_ROUTES.map(
+        (r) =>
+          `  <url>\n    <loc>${HOSTNAME}${r.path}</loc>\n    <changefreq>${r.changefreq}</changefreq>\n    <priority>${r.priority}</priority>\n  </url>`,
+      ).join('\n')
+
+      const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`
+      writeFileSync(`${outDir}/sitemap.xml`, sitemap)
+    },
+  }
+}
+
+/**
  * Post-build plugin that optimises the production HTML:
  * 1. Preloads the primary font (Google Sans Flex latin) to eliminate FOUT.
  * 2. Removes modulepreload for deferred chunks (form-vendor) that are
@@ -70,6 +99,7 @@ export default defineConfig({
     viteReact(),
     tailwindcss(),
     htmlOptimisePlugin(),
+    sitemapPlugin(),
   ],
   build: {
     rollupOptions: {

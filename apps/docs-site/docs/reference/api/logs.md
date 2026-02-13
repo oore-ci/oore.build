@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for build log retrieval and streaming in oore.build."
 ---
 
 # Build Logs API

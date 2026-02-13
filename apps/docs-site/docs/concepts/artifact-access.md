@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "How oore.build generates signed download links for build artifacts."
 ---
 
 # Artifact Access Model

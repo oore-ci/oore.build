@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Set up Okta OIDC authentication for oore.build."
 ---
 
 # Okta OIDC Setup

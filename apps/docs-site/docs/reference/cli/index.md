@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "CLI reference for the oore operator tool including all commands and flags."
 ---
 
 # CLI Reference

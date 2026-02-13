@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Upload and manage Android keystores for signing builds in oore.build."
 ---
 
 # Generate an Android Keystore

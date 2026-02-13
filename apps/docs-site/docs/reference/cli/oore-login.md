@@ -1,5 +1,6 @@
 ---
 status: placeholder
+description: "CLI reference for oore login to authenticate with an oore.build instance."
 ---
 
 # oore login

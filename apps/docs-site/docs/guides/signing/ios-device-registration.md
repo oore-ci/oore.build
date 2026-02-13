@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Register iOS test devices for ad hoc distribution with oore.build."
 ---
 
 # Register iOS Test Devices

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for pipeline configuration and validation in oore.build."
 ---
 
 # Pipelines API

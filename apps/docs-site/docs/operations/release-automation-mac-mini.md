@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Automate oore.build releases on Mac Mini with GitHub Actions and R2 storage."
 ---
 
 # Release Automation on macOS

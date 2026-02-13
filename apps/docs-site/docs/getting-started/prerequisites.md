@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "System requirements for running oore.build including macOS, Xcode, and Flutter dependencies."
 ---
 
 # Prerequisites

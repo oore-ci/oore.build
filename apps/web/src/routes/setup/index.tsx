@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useSetupStatus, useVerifyBootstrapToken } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 const bootstrapTokenSchema = z.object({
   token: z.string().min(1, 'Bootstrap token is required'),
@@ -71,10 +71,6 @@ function BootstrapTokenStep() {
     defaultValues: { token: '' },
   })
 
-  useEffect(() => {
-    document.title = webPageTitle('Setup Token')
-  }, [])
-
   // Set step to 0 unless backend state + session indicate we should skip ahead
   useEffect(() => {
     if (!status || !sessionToken) {
@@ -119,6 +115,7 @@ function BootstrapTokenStep() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <PageMeta title="Setup Token" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Bootstrap Token</h2>
         <p className="text-sm text-muted-foreground">

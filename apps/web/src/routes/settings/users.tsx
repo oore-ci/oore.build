@@ -46,7 +46,7 @@ import {
 import { ApiClientError } from '@/lib/api'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/users')({
   staticData: { breadcrumbLabel: 'Users' },
@@ -94,10 +94,6 @@ function UsersSettingsPage() {
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-
-  useEffect(() => {
-    document.title = webPageTitle('User Management')
-  }, [])
 
   // Redirect non-admin users
   useEffect(() => {
@@ -284,6 +280,7 @@ function UsersSettingsPage() {
   if (isLoading) {
     return (
       <PageLayout width="wide">
+        <PageMeta title="User Management" noindex />
         <div className="space-y-2">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-4 w-80" />
@@ -301,6 +298,7 @@ function UsersSettingsPage() {
   if (error) {
     return (
       <div className="flex-1 flex items-center justify-center p-6">
+        <PageMeta title="User Management" noindex />
         <div className="max-w-md w-full">
           <Alert variant="destructive">
             <AlertDescription>
@@ -315,6 +313,7 @@ function UsersSettingsPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="User Management" noindex />
       <PageHeader
         title="Users"
         description="Manage team members and their roles."

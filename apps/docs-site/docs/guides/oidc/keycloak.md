@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Set up Keycloak OIDC authentication for oore.build."
 ---
 
 # Keycloak OIDC Setup

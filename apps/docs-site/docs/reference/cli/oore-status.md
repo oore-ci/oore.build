@@ -1,5 +1,6 @@
 ---
 status: placeholder
+description: "CLI reference for oore status to check daemon and runner health."
 ---
 
 # oore status
