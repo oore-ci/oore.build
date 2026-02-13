@@ -20,6 +20,10 @@ RUST_TOOLCHAIN=""
 RUST_HOST_TARGET=""
 CLEAN_CARGO_HOME=""
 
+# release-local is often launched by launchd/non-login shells that do not load
+# user profile PATH entries. Prepend common Rust/Bun locations for reliability.
+export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
+
 log() {
   printf '[release-local] %s\n' "$*"
 }
@@ -370,20 +374,33 @@ package_release() {
   local checksum_asset="oore_${RELEASE_VERSION}_checksums.txt"
   local released_at
   local base_url="${RELEASE_BASE_URL%/}/$RELEASE_TAG"
+  local host_release_dir=""
+  local x64_release_dir=""
 
   local arm_stage="$TMP_DIR/stage-arm64"
   local x64_stage="$TMP_DIR/stage-x86_64"
   mkdir -p "$arm_stage/bin" "$x64_stage/bin" "$out_dir"
 
-  cp "$WORKTREE_DIR/target/release/oored" "$arm_stage/bin/oored"
-  cp "$WORKTREE_DIR/target/release/oore" "$arm_stage/bin/oore"
+  host_release_dir="$WORKTREE_DIR/target/$RUST_HOST_TARGET/release"
+  if [[ ! -x "$host_release_dir/oored" || ! -x "$host_release_dir/oore" ]]; then
+    host_release_dir="$WORKTREE_DIR/target/release"
+  fi
+  x64_release_dir="$WORKTREE_DIR/target/x86_64-apple-darwin/release"
+
+  [[ -x "$host_release_dir/oored" ]] || die "Missing host oored binary: $host_release_dir/oored"
+  [[ -x "$host_release_dir/oore" ]] || die "Missing host oore binary: $host_release_dir/oore"
+  [[ -x "$x64_release_dir/oored" ]] || die "Missing x86_64 oored binary: $x64_release_dir/oored"
+  [[ -x "$x64_release_dir/oore" ]] || die "Missing x86_64 oore binary: $x64_release_dir/oore"
+
+  cp "$host_release_dir/oored" "$arm_stage/bin/oored"
+  cp "$host_release_dir/oore" "$arm_stage/bin/oore"
   cp "$TMP_DIR/oore-web-arm64" "$arm_stage/bin/oore-web"
   cp -R "$WORKTREE_DIR/apps/web/dist" "$arm_stage/web-dist"
   cp "$WORKTREE_DIR/LICENSE" "$arm_stage/LICENSE"
   printf '%s\n' "$RELEASE_VERSION" > "$arm_stage/VERSION"
 
-  cp "$WORKTREE_DIR/target/x86_64-apple-darwin/release/oored" "$x64_stage/bin/oored"
-  cp "$WORKTREE_DIR/target/x86_64-apple-darwin/release/oore" "$x64_stage/bin/oore"
+  cp "$x64_release_dir/oored" "$x64_stage/bin/oored"
+  cp "$x64_release_dir/oore" "$x64_stage/bin/oore"
   cp "$TMP_DIR/oore-web-x86_64" "$x64_stage/bin/oore-web"
   cp -R "$WORKTREE_DIR/apps/web/dist" "$x64_stage/web-dist"
   cp "$WORKTREE_DIR/LICENSE" "$x64_stage/LICENSE"
