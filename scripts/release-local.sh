@@ -55,7 +55,7 @@ cleanup() {
 
 ensure_dependencies() {
   local dep
-  for dep in git cargo tar shasum mktemp date bun curl unzip; do
+  for dep in git cargo rustup tar shasum mktemp date bun curl unzip; do
     have_cmd "$dep" || die "$dep is required."
   done
 
@@ -67,6 +67,25 @@ ensure_dependencies() {
     fi
     have_cmd wrangler || die 'wrangler is required for R2 upload. Install with `npm i -g wrangler`.'
   fi
+}
+
+ensure_rust_target_installed() {
+  local target="$1"
+  local toolchain=""
+
+  toolchain="$(
+    cd "$WORKTREE_DIR"
+    rustup show active-toolchain | awk '{print $1}'
+  )"
+  [[ -n "$toolchain" ]] || die "Unable to determine active Rust toolchain."
+
+  if rustup target list --toolchain "$toolchain" --installed | grep -Fxq "$target"; then
+    return 0
+  fi
+
+  log "Installing missing Rust target '$target' for toolchain '$toolchain'..."
+  rustup target add "$target" --toolchain "$toolchain" \
+    || die "Failed to install Rust target '$target' for toolchain '$toolchain'."
 }
 
 resolve_bun_version() {
@@ -174,6 +193,8 @@ ensure_tag_matches_workspace_version() {
 }
 
 build_binaries() {
+  ensure_rust_target_installed "x86_64-apple-darwin"
+
   log "Building release binaries for $RELEASE_TAG..."
   (
     cd "$WORKTREE_DIR"

@@ -51,6 +51,7 @@ Release/distribution contract additions:
 - Added webhook-based release automation service with launchd templates for both LaunchDaemon (system) and LaunchAgent (user) operation.
 - LaunchDaemon mode runs under the build user and writes webhook logs to the user log directory for reliable startup (`~/Library/Logs/oore-release-webhook.log`).
 - launchd templates for webhook/poller now include `$HOME/.cargo/bin` and `$HOME/.bun/bin` so automated tag publishes can run Rust and Bun-based release steps.
+- `scripts/release-local.sh` now auto-installs missing Rust cross-target `x86_64-apple-darwin` for the active toolchain to avoid release failures after toolchain updates.
 - Release automation now enforces tag/version parity (`vX.Y.Z` must match `workspace.package.version = X.Y.Z`) before build/upload.
 - Added `make release-cut VERSION=X.Y.Z` helper to bump workspace version, push the commit, and push matching tag `vX.Y.Z`.
 - Added site build/deploy plumbing (`dev-site`, `build-site`, `deploy-site`) and root scripts (`dev:site`, `build:site`).

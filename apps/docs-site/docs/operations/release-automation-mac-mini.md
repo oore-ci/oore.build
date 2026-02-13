@@ -15,6 +15,10 @@ Use this flow with a dedicated macOS host (for example, a Mac mini) that builds 
 - R2 bucket and public domain already configured (example: `oore` and `dl.oore.build`)
 - Repo checked out on the macOS host
 
+::: tip
+`scripts/release-local.sh` now auto-installs missing Rust cross target `x86_64-apple-darwin` for the active toolchain when needed.
+:::
+
 ## Webhook mode (recommended, LaunchDaemon)
 
 This mode reacts to Git tag pushes immediately.
