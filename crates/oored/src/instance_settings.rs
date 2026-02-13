@@ -303,18 +303,17 @@ pub async fn get_instance_preferences(
         store.pool().clone()
     };
 
-    let row =
-        sqlx::query("SELECT updated_at FROM instance_preferences WHERE id = 1")
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to load instance preferences");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to load instance preferences",
-                )
-            })?;
+    let row = sqlx::query("SELECT updated_at FROM instance_preferences WHERE id = 1")
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load instance preferences");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load instance preferences",
+            )
+        })?;
 
     if let Some(row) = row {
         let updated_at: Option<i64> = row.get("updated_at");

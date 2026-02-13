@@ -723,9 +723,7 @@ async fn acquire_session(client: &reqwest::Client, daemon_url: &str) -> anyhow::
         if sc == reqwest::StatusCode::CONFLICT {
             anyhow::bail!("Setup is already complete. Instance is in ready state.");
         } else if sc == reqwest::StatusCode::UNAUTHORIZED {
-            anyhow::bail!(
-                "Bootstrap token is invalid. Please regenerate with: oore setup token"
-            );
+            anyhow::bail!("Bootstrap token is invalid. Please regenerate with: oore setup token");
         } else {
             anyhow::bail!(
                 "Bootstrap verification failed (HTTP {}): {}",
@@ -1558,9 +1556,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let actual_hash = hex::encode(Sha256::digest(&archive_bytes));
 
     if actual_hash != expected_hash {
-        anyhow::bail!(
-            "Checksum mismatch!\n  Expected: {expected_hash}\n  Actual:   {actual_hash}"
-        );
+        anyhow::bail!("Checksum mismatch!\n  Expected: {expected_hash}\n  Actual:   {actual_hash}");
     }
     println!("Checksum verified (SHA-256).");
 
@@ -1601,10 +1597,8 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let bin_dir = install_root.join("bin");
     fs::create_dir_all(&bin_dir).context("failed to create bin directory")?;
 
-    fs::copy(&extracted_oore, bin_dir.join("oore"))
-        .context("failed to copy oore binary")?;
-    fs::copy(&extracted_oored, bin_dir.join("oored"))
-        .context("failed to copy oored binary")?;
+    fs::copy(&extracted_oore, bin_dir.join("oore")).context("failed to copy oore binary")?;
+    fs::copy(&extracted_oored, bin_dir.join("oored")).context("failed to copy oored binary")?;
     fs::copy(&extracted_version, install_root.join("VERSION"))
         .context("failed to copy VERSION file")?;
 

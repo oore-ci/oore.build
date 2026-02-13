@@ -414,7 +414,10 @@ async fn test_owner_cannot_set_keychain_mode_in_this_release() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp.into_body()).await;
-    assert_eq!(json["code"].as_str().unwrap(), "unsupported_key_storage_mode");
+    assert_eq!(
+        json["code"].as_str().unwrap(),
+        "unsupported_key_storage_mode"
+    );
 }
 
 #[tokio::test]

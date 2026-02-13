@@ -275,7 +275,9 @@ use utoipa::OpenApi;
 struct ApiDoc;
 
 fn main() {
-    let spec = ApiDoc::openapi().to_pretty_json().expect("failed to serialize OpenAPI spec");
+    let spec = ApiDoc::openapi()
+        .to_pretty_json()
+        .expect("failed to serialize OpenAPI spec");
     println!("{spec}");
 }
 
