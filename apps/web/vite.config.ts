@@ -107,21 +107,45 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return
 
-          // --- Leaf vendors (no React dependency) — safe standalone chunks ---
+          // React core + UI primitives + Router in one chunk to prevent
+          // circular chunk deps (Base UI ↔ React, Router ↔ React share
+          // module boundaries that cause TDZ errors when split)
+          if (
+            id.includes('/react-dom/') ||
+            id.includes('/react/') ||
+            id.includes('/scheduler/') ||
+            id.includes('/@base-ui/') ||
+            id.includes('/@floating-ui/') ||
+            id.includes('/tabbable/') ||
+            id.includes('/@tanstack/react-router/') ||
+            id.includes('/@tanstack/router-') ||
+            id.includes('/@tanstack/history') ||
+            id.includes('/@tanstack/react-store') ||
+            id.includes('/@tanstack/store') ||
+            id.includes('/tiny-invariant/') ||
+            id.includes('/tiny-warning/')
+          )
+            return 'react-vendor'
 
-          // Form libs: react-hook-form + zod + resolvers (lazy-loaded)
+          // TanStack Query (no circular dep with react-vendor)
+          if (id.includes('/@tanstack/react-query/') || id.includes('/@tanstack/query-core/'))
+            return 'query-vendor'
+
+          // Form libs (lazy-loaded via dialog components)
           if (id.includes('/react-hook-form/') || id.includes('/zod/') || id.includes('/@hookform/'))
             return 'form-vendor'
+
+          // Toast notifications
+          if (id.includes('/sonner/'))
+            return 'sonner'
+
+          // Icon library
+          if (id.includes('/@hugeicons/'))
+            return 'icons'
 
           // Styling utilities (pure functions, no React)
           if (id.includes('/tailwind-merge/') || id.includes('/class-variance-authority/') || id.includes('/clsx/'))
             return 'ui-utils'
-
-          // --- Everything else goes into react-vendor to prevent circular chunks ---
-          // React, Base UI, Floating UI, TanStack Router/Query, sonner all form
-          // a tightly coupled dependency graph through React. Splitting them into
-          // separate chunks causes circular imports and TDZ runtime errors.
-          return 'react-vendor'
         },
       },
     },

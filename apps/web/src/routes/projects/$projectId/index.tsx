@@ -336,7 +336,7 @@ function ProjectDetailPage() {
                   disabled={pipelines.length === 0}
                 >
                   <HugeiconsIcon icon={PlayIcon} size={16} />
-                  Trigger Build
+                  Run Build
                 </Button>
               ) : null}
               {canDeleteProjects ? (
