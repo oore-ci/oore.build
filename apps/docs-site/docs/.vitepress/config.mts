@@ -67,7 +67,35 @@ export default defineConfig({
       "meta",
       {
         property: "og:image",
-        content: "https://docs.oore.build/og-image.svg",
+        content: "https://docs.oore.build/og-image.png",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:image:type",
+        content: "image/png",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:image:width",
+        content: "1200",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:image:height",
+        content: "630",
+      },
+    ],
+    [
+      "meta",
+      {
+        property: "og:logo",
+        content: "https://docs.oore.build/logo.svg",
       },
     ],
     [
@@ -96,7 +124,7 @@ export default defineConfig({
       "meta",
       {
         name: "twitter:image",
-        content: "https://docs.oore.build/og-image.svg",
+        content: "https://docs.oore.build/og-image.png",
       },
     ],
     [
