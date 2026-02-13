@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -23,8 +23,13 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
-import AddInstanceDialog from '@/components/AddInstanceDialog'
-import EditInstanceDialog from '@/components/EditInstanceDialog'
+
+const AddInstanceDialog = lazy(
+  () => import('@/components/AddInstanceDialog'),
+)
+const EditInstanceDialog = lazy(
+  () => import('@/components/EditInstanceDialog'),
+)
 
 export default function InstanceSwitcher() {
   const { isMobile } = useSidebar()
@@ -149,14 +154,22 @@ export default function InstanceSwitcher() {
         </SidebarMenuItem>
       </SidebarMenu>
 
-      <AddInstanceDialog open={showAddDialog} onOpenChange={setShowAddDialog} />
-      <EditInstanceDialog
-        instance={editingInstance}
-        open={editingInstance !== null}
-        onOpenChange={(open) => {
-          if (!open) setEditingInstance(null)
-        }}
-      />
+      {showAddDialog && (
+        <Suspense>
+          <AddInstanceDialog open={showAddDialog} onOpenChange={setShowAddDialog} />
+        </Suspense>
+      )}
+      {editingInstance !== null && (
+        <Suspense>
+          <EditInstanceDialog
+            instance={editingInstance}
+            open
+            onOpenChange={(open) => {
+              if (!open) setEditingInstance(null)
+            }}
+          />
+        </Suspense>
+      )}
     </>
   )
 }

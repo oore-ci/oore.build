@@ -36,7 +36,8 @@ async function boot() {
   }
 
   const rootElement = document.getElementById('app')
-  if (rootElement && !rootElement.innerHTML) {
+  if (rootElement && !rootElement.dataset.reactRoot) {
+    rootElement.dataset.reactRoot = 'true'
     const root = ReactDOM.createRoot(rootElement)
     root.render(
       <StrictMode>

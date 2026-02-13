@@ -29,9 +29,25 @@
     <link rel="apple-touch-icon" href="/logo192.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>Oore CI | Self-Hosted Mobile CI</title>
+    <!-- Inline critical styles for instant first paint before CSS loads -->
+    <style>
+      body{margin:0;background:#0a0a0a}
+      @media(prefers-color-scheme:light){body{background:#fff}}
+      .app-loading{display:flex;align-items:center;justify-content:center;height:100vh;opacity:1;transition:opacity .15s}
+      .app-loading svg{width:32px;height:32px;animation:pulse 1.6s ease-in-out infinite}
+      @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <!-- Shown instantly; removed when React mounts -->
+      <div class="app-loading" aria-hidden="true">
+        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100" height="100" rx="20" fill="#dc7702"/>
+          <text x="50" y="62" text-anchor="middle" font-size="48" font-weight="700" fill="#fff" font-family="system-ui">o</text>
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

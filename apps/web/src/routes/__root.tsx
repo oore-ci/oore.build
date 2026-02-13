@@ -13,7 +13,6 @@ import { PlayIcon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import PageBreadcrumb from '@/components/page-breadcrumb'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -27,6 +26,10 @@ import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
+
+const TriggerBuildDialog = lazy(
+  () => import('@/components/trigger-build-dialog'),
+)
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
@@ -140,17 +143,21 @@ function RootLayout() {
             </div>
           </div>
         )}
-        <TriggerBuildDialog
-          open={triggerOpen}
-          onOpenChange={setTriggerOpen}
-          description="Choose a project and pipeline to run a manual build."
-          onBuildCreated={(buildId) => {
-            void navigate({
-              to: '/builds/$buildId',
-              params: { buildId },
-            })
-          }}
-        />
+        {triggerOpen && (
+          <Suspense>
+            <TriggerBuildDialog
+              open={triggerOpen}
+              onOpenChange={setTriggerOpen}
+              description="Choose a project and pipeline to run a manual build."
+              onBuildCreated={(buildId) => {
+                void navigate({
+                  to: '/builds/$buildId',
+                  params: { buildId },
+                })
+              }}
+            />
+          </Suspense>
+        )}
         <Toaster />
         {import.meta.env.VITE_DEMO_MODE === 'true' && (
           <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
