@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
@@ -13,7 +12,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useGitHubAppStart } from '@/hooks/use-integrations'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { useActiveInstance } from '@/stores/instance-store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -39,10 +38,6 @@ function GitHubSetupPage() {
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
   const redirectUrl = `${window.location.origin}/settings/integrations`
 
-  useEffect(() => {
-    document.title = webPageTitle('Connect GitHub')
-  }, [])
-
   function handleConnect() {
     startMutation.mutate(
       { webhook_url: webhookUrl, redirect_url: redirectUrl },
@@ -59,6 +54,7 @@ function GitHubSetupPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Connect GitHub" noindex />
       <PageHeader
         title="Connect GitHub"
         description="Generate and install a GitHub App for repository access and webhook delivery."

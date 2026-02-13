@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Disable or remove user accounts from your oore.build instance."
 ---
 
 # Disable and Re-enable Users

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Security architecture of oore.build including OIDC, RBAC, and encryption."
 ---
 
 # Security Model

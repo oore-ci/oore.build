@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Use App Store Connect API for automatic iOS signing in oore.build."
 ---
 
 # iOS App Store Connect API Signing

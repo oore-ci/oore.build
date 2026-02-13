@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure artifact storage backends for oore.build including local, S3, and R2."
 ---
 
 # Configure Artifact Storage

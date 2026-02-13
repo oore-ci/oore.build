@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "CLI reference for oore doctor, the diagnostic tool for oore.build installations."
 ---
 
 # oore doctor

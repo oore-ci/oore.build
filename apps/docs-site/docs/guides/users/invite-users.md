@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Invite new users to your oore.build instance via email."
 ---
 
 # Invite Team Members

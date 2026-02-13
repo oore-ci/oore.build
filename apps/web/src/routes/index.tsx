@@ -32,7 +32,7 @@ import { useBuilds } from '@/hooks/use-builds'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getStatusVariant } from '@/lib/status-variants'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
 
@@ -60,10 +60,6 @@ function IndexPage() {
   const clearAuth = useAuthStore((s) => s.clearAuth)
 
   useEffect(() => {
-    document.title = webPageTitle()
-  }, [])
-
-  useEffect(() => {
     if (status?.setup_mode) {
       void navigate({ to: '/setup' })
     }
@@ -83,6 +79,7 @@ function IndexPage() {
   if (!instance) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-6">
+        <PageMeta />
         <div className="w-full max-w-md space-y-8">
           <div className="space-y-3 text-center">
             <div className="mx-auto flex size-14 items-center justify-center">
@@ -133,6 +130,7 @@ function IndexPage() {
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center">
+        <PageMeta />
         <div className="flex items-center gap-3">
           <Spinner className="size-5" />
           <p className="text-sm text-muted-foreground">
@@ -146,6 +144,7 @@ function IndexPage() {
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
+        <PageMeta />
         <div className="w-full max-w-md">
           <Alert variant="destructive">
             <AlertTitle>Connection failed</AlertTitle>
@@ -161,11 +160,17 @@ function IndexPage() {
   }
 
   if (status?.is_configured) {
-    return <ConfiguredDashboard userName={authUser?.email} />
+    return (
+      <>
+        <PageMeta />
+        <ConfiguredDashboard userName={authUser?.email} />
+      </>
+    )
   }
 
   return (
     <div className="flex flex-1 items-center justify-center">
+      <PageMeta />
       <div className="flex items-center gap-3">
         <Spinner className="size-5" />
         <p className="text-sm text-muted-foreground">Loading...</p>

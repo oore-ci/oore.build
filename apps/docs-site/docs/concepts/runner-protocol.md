@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "The HTTP-based protocol between oore.build runners and the daemon."
 ---
 
 # Runner Protocol

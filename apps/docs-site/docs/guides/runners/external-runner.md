@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Register and manage external build runners for oore.build."
 ---
 
 # Register an External Runner

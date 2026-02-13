@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon, PlayIcon } from '@hugeicons/core-free-icons'
 
@@ -25,7 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 export const Route = createFileRoute('/builds/')({
@@ -43,14 +43,11 @@ function BuildsListPage() {
   const canTriggerBuild = useHasPermission('builds', 'write')
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
-  useEffect(() => {
-    document.title = webPageTitle('Builds')
-  }, [])
-
   const builds = useMemo(() => data?.builds ?? [], [data?.builds])
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Builds" noindex />
       <PageHeader
         title="Builds"
         description="Queue, execution, and historical run inventory across projects."

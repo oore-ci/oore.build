@@ -14,7 +14,7 @@ import {
 } from '@/lib/instance-context'
 import { useDeleteIntegration, useIntegrations } from '@/hooks/use-integrations'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -63,10 +63,6 @@ function IntegrationsPage() {
   const deleteMutation = useDeleteIntegration()
 
   useEffect(() => {
-    document.title = webPageTitle('Integrations')
-  }, [])
-
-  useEffect(() => {
     if (search.github === 'success') {
       toast.success('GitHub App connected successfully')
       window.history.replaceState({}, '', '/settings/integrations')
@@ -88,6 +84,7 @@ function IntegrationsPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Integrations" noindex />
       <PageHeader
         title="Integrations"
         description="Provider connections for repository access and webhook triggers."

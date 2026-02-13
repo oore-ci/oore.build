@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
@@ -53,14 +53,11 @@ function ProjectsListPage() {
   const canWrite = useHasPermission('projects', 'write')
   const [createOpen, setCreateOpen] = useState(false)
 
-  useEffect(() => {
-    document.title = webPageTitle('Projects')
-  }, [])
-
   const projects = useMemo(() => data?.projects ?? [], [data?.projects])
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="Projects" noindex />
       <PageHeader
         title="Projects"
         description="Repository and pipeline entry points for your build system."

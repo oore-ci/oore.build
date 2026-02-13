@@ -18,7 +18,7 @@ import { getSetupStatus } from '@/lib/api'
 import { getConnectivityIssue, isHostedUiOrigin, isMixedContentBlocked } from '@/lib/connectivity'
 import { getActiveInstanceOrRedirect } from '@/lib/instance-context'
 import { useInstanceStore } from '@/stores/instance-store'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 function maybeAutoAddBackendInstance() {
   const params = new URLSearchParams(window.location.search)
@@ -121,10 +121,6 @@ function SetupLayout() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    document.title = webPageTitle('Setup')
-  }, [])
-
-  useEffect(() => {
     if (isExpired) {
       useSetupStore.getState().reset()
       void navigate({ to: '/setup' })
@@ -133,6 +129,7 @@ function SetupLayout() {
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
+      <PageMeta title="Setup" />
       <div className="w-full max-w-lg space-y-8">
         <div className="text-center space-y-4">
           <div className="mx-auto flex size-14 items-center justify-center">

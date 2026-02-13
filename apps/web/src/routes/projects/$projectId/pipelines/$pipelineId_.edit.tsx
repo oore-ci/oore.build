@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
@@ -38,7 +38,7 @@ import {
   toMultiline,
   trimToUndefined,
 } from '@/lib/pipeline-form-utils'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -83,16 +83,14 @@ function EditPipelinePage() {
   const [deviceUdid, setDeviceUdid] = useState('')
   const [validationErrors, setValidationErrors] = useState<Array<string>>([])
 
-  useEffect(() => {
-    const label = data?.pipeline.name
-      ? `Edit ${data.pipeline.name}`
-      : 'Edit Pipeline'
-    document.title = webPageTitle(label)
-  }, [data?.pipeline.name])
+  const label = data?.pipeline.name
+    ? `Edit ${data.pipeline.name}`
+    : 'Edit Pipeline'
 
   if (isLoading || signingQuery.isLoading || iosSigningQuery.isLoading) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-96 w-full" />
       </PageLayout>
@@ -102,6 +100,7 @@ function EditPipelinePage() {
   if (error || !data) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <AlertDescription>
             Failed to load pipeline: {error?.message ?? 'Not found'}
@@ -590,6 +589,7 @@ function EditPipelinePage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title={label} noindex />
       <PageHeader
         title={`Edit: ${pipeline.name}`}
         back={{

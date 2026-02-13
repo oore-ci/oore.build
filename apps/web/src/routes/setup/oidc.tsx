@@ -19,7 +19,7 @@ import {
 import { useConfigureOidc } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
@@ -186,10 +186,6 @@ function OidcConfigStep() {
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
   useEffect(() => {
-    document.title = webPageTitle('Setup OIDC')
-  }, [])
-
-  useEffect(() => {
     setCurrentStep(1)
   }, [setCurrentStep])
 
@@ -229,6 +225,7 @@ function OidcConfigStep() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <PageMeta title="Setup OIDC" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">OIDC Provider</h2>
         <p className="text-sm text-muted-foreground">

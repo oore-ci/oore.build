@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "How oore.build executes Flutter builds from queue to artifact storage."
 ---
 
 # Build Execution

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure code signing and build a signed APK or IPA with oore.build."
 ---
 
 # Your First Signed Build

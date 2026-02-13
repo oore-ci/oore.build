@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Deploy oore.build in production including launchd, reverse proxy, and TLS setup."
 ---
 
 # Production Deployment

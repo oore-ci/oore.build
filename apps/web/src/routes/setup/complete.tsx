@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { useCompleteSetup, useSetupSummary, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
@@ -53,10 +53,6 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
 
   useEffect(() => {
-    document.title = webPageTitle('Setup Complete')
-  }, [])
-
-  useEffect(() => {
     setCurrentStep(3)
   }, [setCurrentStep])
 
@@ -76,6 +72,7 @@ function CompleteStep() {
 
   return (
     <div className="space-y-4">
+      <PageMeta title="Setup Complete" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Complete Setup</h2>
         <p className="text-sm text-muted-foreground">

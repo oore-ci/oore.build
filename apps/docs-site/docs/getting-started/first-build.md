@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Trigger and monitor your first Flutter build on oore.build."
 ---
 
 # Create Your First Build

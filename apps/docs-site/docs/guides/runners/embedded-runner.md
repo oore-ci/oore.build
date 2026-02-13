@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure the embedded build runner that ships with the oore.build daemon."
 ---
 
 # Embedded Runner

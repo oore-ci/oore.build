@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Connect your self-hosted oore.build backend to the hosted UI at ci.oore.build."
 ---
 
 # Hosted UI Onboarding

@@ -1,5 +1,6 @@
 ---
 title: OpenAPI Specification
+description: Interactive OpenAPI 3.1 reference for the oore.build REST API — browse endpoints, download the spec, or generate client libraries.
 aside: false
 outline: false
 ---

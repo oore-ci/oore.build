@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure build pipelines using .oore.yaml in your repository."
 ---
 
 # Write a Pipeline Config (.oore.yaml)

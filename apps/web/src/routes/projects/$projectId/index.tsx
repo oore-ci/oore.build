@@ -26,7 +26,7 @@ import {
 } from '@/hooks/use-projects'
 import { getStatusVariant } from '@/lib/status-variants'
 import { relativeTime } from '@/lib/format-utils'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -237,14 +237,12 @@ function ProjectDetailPage() {
 
   const activeTab: TabValue = tab ?? 'pipelines'
 
-  useEffect(() => {
-    const label = data?.project.name ?? 'Project Details'
-    document.title = webPageTitle(label)
-  }, [data?.project.name])
+  const label = data?.project.name ?? 'Project Details'
 
   if (isLoading) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-10 w-72" />
         <Skeleton className="h-56 w-full" />
@@ -255,6 +253,7 @@ function ProjectDetailPage() {
   if (error) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
@@ -313,6 +312,7 @@ function ProjectDetailPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title={label} noindex />
       <PageHeader
         title={project.name}
         back={{ to: '/projects', label: 'Projects' }}

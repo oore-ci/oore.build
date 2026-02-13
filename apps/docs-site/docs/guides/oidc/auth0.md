@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Set up Auth0 OIDC authentication for oore.build."
 ---
 
 # Auth0 OIDC Setup

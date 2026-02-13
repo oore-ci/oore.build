@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure manual iOS code signing with certificates and provisioning profiles."
 ---
 
 # iOS Manual Signing

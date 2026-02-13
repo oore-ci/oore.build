@@ -1,3 +1,29 @@
+# Install/uninstall scripts — short cache for quick updates
 /install
   Cache-Control: public, max-age=60, s-maxage=60, must-revalidate
   Content-Type: text/plain; charset=utf-8
+/uninstall
+  Cache-Control: public, max-age=60, s-maxage=60, must-revalidate
+  Content-Type: text/plain; charset=utf-8
+
+# HTML — always revalidate
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Static assets without hashes — cache short, revalidate
+/logo.svg
+  Cache-Control: public, max-age=3600, must-revalidate
+/og-image.svg
+  Cache-Control: public, max-age=3600, must-revalidate
+/robots.txt
+  Cache-Control: public, max-age=3600, must-revalidate
+/sitemap.xml
+  Cache-Control: public, max-age=3600, must-revalidate
+
+# Security headers
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin

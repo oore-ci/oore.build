@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Invite team members to your oore.build instance with role-based access control."
 ---
 
 # Invite Your Team

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for instance settings and preferences in oore.build."
 ---
 
 # Settings API

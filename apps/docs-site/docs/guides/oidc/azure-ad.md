@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Set up Azure AD (Entra ID) OIDC authentication for oore.build."
 ---
 
 # Azure AD / Entra ID OIDC Setup

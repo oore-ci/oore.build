@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "How oore.build uses .oore.yaml for repository-level pipeline configuration."
 ---
 
 # File-First Configuration

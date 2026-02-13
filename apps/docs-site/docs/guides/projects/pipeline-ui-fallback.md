@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Create and edit build pipelines through the oore.build web UI."
 ---
 
 # Configure a Pipeline via the UI

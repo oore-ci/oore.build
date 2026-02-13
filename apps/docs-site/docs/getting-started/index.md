@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Learn what oore.build is and how its components work together to provide self-hosted Flutter CI."
 ---
 
 # What is oore.build?

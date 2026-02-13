@@ -16,7 +16,7 @@ import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { getLastAuthMetaForInstance, useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -63,10 +63,6 @@ function LoginPage() {
     [instances, activeInstanceId],
   )
   const lastAuthMeta = instance ? getLastAuthMetaForInstance(instance.id) : null
-
-  useEffect(() => {
-    document.title = webPageTitle('Login')
-  }, [])
 
   useEffect(() => {
     if (hasValidToken) {
@@ -136,6 +132,7 @@ function LoginPage() {
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
+      <PageMeta title="Login" />
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center space-y-4">
           <div className="mx-auto flex size-14 items-center justify-center">

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Back up and restore oore.build data including SQLite database and configuration."
 ---
 
 # Backup and Restore

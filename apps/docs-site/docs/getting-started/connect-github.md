@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Connect a GitHub App to oore.build for automatic webhook-triggered builds."
 ---
 
 # Connect GitHub

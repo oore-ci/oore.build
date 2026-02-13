@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure webhook events and payloads for oore.build integrations."
 ---
 
 # Webhook Troubleshooting

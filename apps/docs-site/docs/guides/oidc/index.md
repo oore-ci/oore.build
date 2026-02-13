@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Configure OpenID Connect authentication for oore.build with any OIDC-compatible identity provider."
 ---
 
 # Configure OIDC Authentication

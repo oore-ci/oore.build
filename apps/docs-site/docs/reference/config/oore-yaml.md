@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Complete reference for the .oore.yaml pipeline configuration file format."
 ---
 
 # .oore.yaml Reference

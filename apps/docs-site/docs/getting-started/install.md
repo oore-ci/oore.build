@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Install oore.build daemon and CLI binaries on macOS with a single command."
 ---
 
 # Install oore.build

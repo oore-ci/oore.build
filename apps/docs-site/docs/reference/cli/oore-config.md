@@ -1,5 +1,6 @@
 ---
 status: placeholder
+description: "CLI reference for oore config to manage daemon configuration."
 ---
 
 # oore config

@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Build lifecycle states and transitions in oore.build."
 ---
 
 # Build States

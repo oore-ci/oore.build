@@ -24,7 +24,7 @@ import {
   useSyncInstallations,
 } from '@/hooks/use-integrations'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -81,12 +81,12 @@ function IntegrationDetailPage() {
 
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
 
+  const label =
+    detail?.integration.display_name ??
+    detail?.integration.provider ??
+    'Integration Details'
+
   useEffect(() => {
-    const label =
-      detail?.integration.display_name ??
-      detail?.integration.provider ??
-      'Integration Details'
-    document.title = webPageTitle(label)
     if (detail?.integration) {
       setLabel(
         '/settings/integrations/$integrationId',
@@ -144,6 +144,7 @@ function IntegrationDetailPage() {
   if (isLoading) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-56 w-full" />
@@ -154,6 +155,7 @@ function IntegrationDetailPage() {
   if (error) {
     return (
       <PageLayout width="wide">
+        <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
@@ -172,6 +174,7 @@ function IntegrationDetailPage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title={label} noindex />
       <PageHeader
         title={integration.display_name ?? integration.provider}
         back={{ to: '/settings/integrations', label: 'Integrations' }}

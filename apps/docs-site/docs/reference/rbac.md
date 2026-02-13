@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Role-based access control model with owner, admin, developer, and viewer roles."
 ---
 
 # Roles and Permissions (RBAC)

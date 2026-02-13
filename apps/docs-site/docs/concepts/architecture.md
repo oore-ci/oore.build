@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "Understand oore.build system architecture including daemon, CLI, and web UI components."
 ---
 
 # System Architecture

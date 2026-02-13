@@ -37,7 +37,7 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
-import { webPageTitle } from '@/lib/seo'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -115,11 +115,11 @@ function BuildDetailPage() {
 
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
 
+  const label = data?.build.build_number
+    ? `Build #${data.build.build_number}`
+    : 'Build Details'
+
   useEffect(() => {
-    const label = data?.build.build_number
-      ? `Build #${data.build.build_number}`
-      : 'Build Details'
-    document.title = webPageTitle(label)
     if (data?.build.build_number) {
       setLabel('/builds/$buildId', `Build #${data.build.build_number}`)
     }
@@ -165,6 +165,7 @@ function BuildDetailPage() {
   if (isLoading) {
     return (
       <PageLayout width="full">
+        <PageMeta title={label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -175,6 +176,7 @@ function BuildDetailPage() {
   if (error) {
     return (
       <PageLayout width="full">
+        <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
@@ -195,6 +197,7 @@ function BuildDetailPage() {
 
   return (
     <PageLayout width="full">
+      <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
         back={{ to: '/builds', label: 'Builds' }}

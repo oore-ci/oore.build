@@ -1,5 +1,6 @@
 ---
 status: implemented
+description: "API endpoints for OIDC authentication and session management in oore.build."
 ---
 
 # Auth API
