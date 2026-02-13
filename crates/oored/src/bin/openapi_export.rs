@@ -22,10 +22,8 @@ use utoipa::OpenApi;
         contact(name = "oore.build", url = "https://oore.build"),
     ),
     servers(
-        (url = "http://localhost:8787", description = "Local development"),
-        (url = "{baseUrl}", description = "Self-hosted instance",
-            variables(("baseUrl" = (default = "http://localhost:8787", description = "Your oored daemon URL")))
-        ),
+        (url = "http://localhost:8787", description = "Local development (default)"),
+        (url = "https://ci.example.com", description = "Self-hosted instance (replace with your URL)"),
     ),
     paths(
         // ── Health ──
