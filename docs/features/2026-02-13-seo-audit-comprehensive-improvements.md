@@ -51,7 +51,7 @@ None.
 - [x] All three apps include canonical and og:url tags
 - [x] Web app + landing site have JSON-LD SoftwareApplication schema
 - [x] Docs site injects BreadcrumbList JSON-LD per page
-- [x] All 78+ docs pages have frontmatter descriptions
+- [x] All docs pages (including OpenAPI) have frontmatter descriptions
 - [x] 21 route files migrated from document.title to React 19 PageMeta component
 - [x] Authenticated routes include noindex meta tag
 - [x] seo.ts renamed to seo.tsx for JSX support
