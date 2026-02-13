@@ -8,7 +8,14 @@ import "./custom.css";
 export default {
   extends: DefaultTheme,
   enhanceApp({ app }) {
-    const openapi = useOpenapi({ spec });
+    const openapi = useOpenapi({
+      spec,
+      config: {
+        server: {
+          allowCustomServer: true,
+        },
+      },
+    });
     theme.enhanceApp({ app, openapi });
   },
 } satisfies Theme;
