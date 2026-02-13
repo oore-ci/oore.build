@@ -77,37 +77,21 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return
 
-          // React core — changes rarely, cache separately
-          if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/'))
-            return 'react-vendor'
+          // --- Leaf vendors (no React dependency) — safe standalone chunks ---
 
-          // TanStack Router (includes router-core, history)
-          if (id.includes('/@tanstack/react-router/') || id.includes('/@tanstack/router-'))
-            return 'router-vendor'
-
-          // TanStack Query (includes query-core)
-          if (id.includes('/@tanstack/react-query/') || id.includes('/@tanstack/query-core/'))
-            return 'query-vendor'
-
-          // Base UI primitives
-          if (id.includes('/@base-ui/'))
-            return 'base-ui'
-
-          // Floating UI (positioning engine for popups)
-          if (id.includes('/@floating-ui/'))
-            return 'floating-ui'
-
-          // Form libs: react-hook-form + zod + resolvers
+          // Form libs: react-hook-form + zod + resolvers (lazy-loaded)
           if (id.includes('/react-hook-form/') || id.includes('/zod/') || id.includes('/@hookform/'))
             return 'form-vendor'
 
-          // Toast notifications
-          if (id.includes('/sonner/'))
-            return 'sonner'
-
-          // Styling utilities
+          // Styling utilities (pure functions, no React)
           if (id.includes('/tailwind-merge/') || id.includes('/class-variance-authority/') || id.includes('/clsx/'))
             return 'ui-utils'
+
+          // --- Everything else goes into react-vendor to prevent circular chunks ---
+          // React, Base UI, Floating UI, TanStack Router/Query, sonner all form
+          // a tightly coupled dependency graph through React. Splitting them into
+          // separate chunks causes circular imports and TDZ runtime errors.
+          return 'react-vendor'
         },
       },
     },
