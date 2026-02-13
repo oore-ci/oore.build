@@ -1,5 +1,7 @@
 ---
 title: OpenAPI Specification
+aside: false
+outline: false
 ---
 
 # OpenAPI Specification
@@ -14,4 +16,4 @@ The oore.build API is described using the [OpenAPI 3.1](https://spec.openapis.or
 
 Browse individual endpoints using the sidebar, or view the full spec below:
 
-<OASpec />
+<OASpec hide-branding />

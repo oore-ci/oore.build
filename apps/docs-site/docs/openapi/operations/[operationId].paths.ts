@@ -1,14 +1,14 @@
 import { usePaths } from "vitepress-openapi";
-import spec from "../../public/openapi.json";
+import spec from "../../public/openapi.json" with { type: "json" };
 
 export default {
   paths() {
     return usePaths({ spec })
       .getPathsByVerbs()
-      .map((path) => ({
+      .map(({ operationId, summary }) => ({
         params: {
-          operationId: path.operationId,
-          pageTitle: path.summary || path.operationId,
+          operationId,
+          pageTitle: `${summary} - oore.build API`,
         },
       }));
   },
