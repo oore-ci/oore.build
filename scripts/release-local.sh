@@ -111,7 +111,8 @@ download_bun_runtime() {
   zip_path="$runtime_root/$zip_name"
   url="https://github.com/oven-sh/bun/releases/download/bun-$bun_version/$zip_name"
 
-  log "Downloading bun runtime $bun_version ($release_arch)..."
+  # This function is used via command substitution, so progress logs must go to stderr.
+  printf '[release-local] %s\n' "Downloading bun runtime $bun_version ($release_arch)..." >&2
   curl -fsSL --retry 3 --output "$zip_path" "$url" \
     || die "Failed to download bun runtime: $url"
 
