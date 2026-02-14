@@ -8,7 +8,7 @@ import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { getSetupStatus, localLogin } from '@/lib/api'
+import { ApiClientError, getSetupStatus, localLogin } from '@/lib/api'
 import {
   getConnectivityIssue,
   isHostedUiOrigin,
@@ -40,7 +40,26 @@ function formatLastAuthTime(epochSeconds: number): string {
 }
 
 function formatAuthMethodLabel(method: 'oidc' | 'local'): string {
-  return method === 'local' ? 'Local Mode' : 'OIDC'
+  return method === 'local' ? 'Local Only' : 'OIDC'
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  )
+}
+
+function resolveBackendHostname(url: string): string {
+  const trimmed = url.trim()
+  if (!trimmed) return window.location.hostname
+  try {
+    return new URL(trimmed).hostname
+  } catch {
+    return ''
+  }
 }
 
 function LoginPage() {
@@ -72,6 +91,12 @@ function LoginPage() {
     [instances, activeInstanceId],
   )
   const lastAuthMeta = instance ? getLastAuthMetaForInstance(instance.id) : null
+  const uiIsLoopback = isLoopbackHostname(window.location.hostname)
+  const backendIsLoopback = instance
+    ? isLoopbackHostname(resolveBackendHostname(instance.url))
+    : false
+  const localModeNetworkBlocked =
+    runtimeMode === 'local' && (!uiIsLoopback || !backendIsLoopback)
 
   useEffect(() => {
     if (hasValidToken) {
@@ -139,6 +164,16 @@ function LoginPage() {
       setRuntimeMode(status.runtime_mode)
 
       if (status.runtime_mode === 'local') {
+        const localUi = isLoopbackHostname(window.location.hostname)
+        const localBackend = isLoopbackHostname(resolveBackendHostname(instance.url))
+        if (!localUi || !localBackend) {
+          setError(
+            'Local Only sign-in is restricted to loopback access. Enable External Access on the host machine.',
+          )
+          setLoading(false)
+          return
+        }
+
         const response = await localLogin(instance.url, {
           email: localEmail.trim() || undefined,
         })
@@ -192,7 +227,29 @@ function LoginPage() {
       setConnectivityIssue(
         getConnectivityIssue(instance.url, e, window.location.origin),
       )
-      setError(e instanceof Error ? e.message : 'Login failed')
+      if (e instanceof ApiClientError) {
+        if (e.code === 'local_login_loopback_required') {
+          setError(
+            'Local Only sign-in is restricted to loopback access. Enable External Access on the host machine.',
+          )
+        } else if (e.code === 'mode_restricted') {
+          setError('Local sign-in is disabled while External Access is enabled.')
+        } else if (e.code === 'external_access_https_required') {
+          setError('External Access requires an HTTPS public URL.')
+        } else if (e.code === 'external_access_origin_not_allowed') {
+          setError('External Access origin is not allowlisted in CORS settings.')
+        } else if (e.code === 'external_access_public_url_missing') {
+          setError('Set OORE_PUBLIC_URL before enabling External Access.')
+        } else if (e.code === 'external_access_preflight_failed') {
+          setError(
+            'External Access preflight checks are failing. Resolve setup and Preferences readiness checks first.',
+          )
+        } else {
+          setError(e.message)
+        }
+      } else {
+        setError(e instanceof Error ? e.message : 'Login failed')
+      }
       setLoading(false)
     }
   }
@@ -228,7 +285,7 @@ function LoginPage() {
                 Sign-in method
               </p>
               <p className="mt-1 text-sm font-medium">
-                {runtimeMode === 'local' ? 'Local Mode' : 'OIDC'}
+                {runtimeMode === 'local' ? 'Local Only' : 'OIDC'}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {lastAuthMeta
@@ -237,7 +294,16 @@ function LoginPage() {
               </p>
             </div>
 
-            {runtimeMode === 'local' ? (
+            {runtimeMode === 'local' && localModeNetworkBlocked ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  Local Only sign-in is blocked for this network host. Enable
+                  External Access on the host machine, then sign in with OIDC.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {runtimeMode === 'local' && !localModeNetworkBlocked ? (
               <div className="space-y-2">
                 <Input
                   placeholder="Email (optional for single-user instances)"
@@ -294,7 +360,7 @@ function LoginPage() {
 
             <Button
               onClick={() => void handleLogin()}
-              disabled={loading || !instance}
+              disabled={loading || !instance || localModeNetworkBlocked}
               className="w-full"
             >
               {loading ? (
@@ -303,7 +369,11 @@ function LoginPage() {
                   {runtimeMode === 'local' ? 'Signing in...' : 'Redirecting...'}
                 </>
               ) : (
-                runtimeMode === 'local' ? 'Sign in locally' : 'Sign in with OIDC'
+                runtimeMode === 'local'
+                  ? localModeNetworkBlocked
+                    ? 'Enable External Access first'
+                    : 'Sign in locally'
+                  : 'Sign in with OIDC'
               )}
             </Button>
           </CardContent>

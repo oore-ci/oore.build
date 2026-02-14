@@ -26,7 +26,7 @@ pub mod users;
 pub mod util;
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, State};
@@ -104,7 +104,10 @@ fn resolve_cors_origins() -> Vec<HeaderValue> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
-        .unwrap_or_else(|| "http://localhost:3000,https://ci.oore.build".to_string());
+        .unwrap_or_else(|| {
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173"
+                .to_string()
+        });
 
     let mut parsed = Vec::new();
     for origin in raw_origins.split(',') {
@@ -159,8 +162,23 @@ fn should_skip_oidc_discovery(state: &AppState) -> bool {
 /// 3. Public callback hosts must use `https` scheme.
 /// 4. Path must be exactly `/auth/callback` (the single unified callback route).
 /// 5. Public callback origins must appear in `allowed_origins`.
-fn is_local_network_host(host: &str) -> bool {
+pub fn is_loopback_host(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    match host.parse::<IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => false,
+    }
+}
+
+pub fn is_loopback_client(peer_addr: SocketAddr) -> bool {
+    peer_addr.ip().is_loopback()
+}
+
+fn is_local_network_host(host: &str) -> bool {
+    if is_loopback_host(host) {
         return true;
     }
 
@@ -170,10 +188,8 @@ fn is_local_network_host(host: &str) -> bool {
     }
 
     match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
-        }
+        Ok(IpAddr::V4(ip)) => ip.is_private() || ip.is_link_local(),
+        Ok(IpAddr::V6(ip)) => ip.is_unique_local() || ip.is_unicast_link_local(),
         Err(_) => false,
     }
 }
@@ -1451,6 +1467,10 @@ async fn build_router_inner(
             get(instance_settings::get_instance_preferences)
                 .put(instance_settings::update_instance_preferences),
         )
+        .route(
+            "/v1/settings/external-access/preflight",
+            get(instance_settings::get_external_access_preflight),
+        )
         // Integration management endpoints
         .route("/v1/integrations", get(integrations::list_integrations))
         .route("/v1/integrations/{id}", get(integrations::get_integration))
@@ -1486,6 +1506,10 @@ async fn build_router_inner(
             "/v1/integrations/local-git",
             get(integrations::local_git::list_local_git_integrations)
                 .post(integrations::local_git::create_local_git_integration),
+        )
+        .route(
+            "/v1/integrations/local-git/directories",
+            get(integrations::local_git::browse_local_git_directories),
         )
         .route(
             "/v1/integrations/local-git/{id}",

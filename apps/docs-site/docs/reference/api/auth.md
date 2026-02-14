@@ -119,6 +119,46 @@ Users must be invited before they can sign in. If a user authenticates successfu
 
 ---
 
+## Local Login {#local-login}
+
+Create a local-mode session without OIDC.
+
+```
+POST /v1/auth/local/login
+```
+
+**Authentication**: None (public)
+
+### Request body
+
+```json
+{
+  "email": "owner@example.com"
+}
+```
+
+`email` is optional when exactly one active user exists.
+
+### Response `200 OK`
+
+Returns `LocalLoginResponse`.
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 400 | `email_required` | Multiple active users exist and email was omitted |
+| 403 | `mode_restricted` | Instance is not in local mode |
+| 403 | `local_login_loopback_required` | Local login attempted from non-loopback source |
+| 403 | `user_not_found` | No active user matched the provided email |
+
+::: warning
+`local` mode authentication is loopback-only. Any non-loopback access path must
+use External Access (`runtime_mode=remote`) and OIDC.
+:::
+
+---
+
 ## Logout {#logout}
 
 Invalidate the current user session.

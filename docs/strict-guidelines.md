@@ -17,11 +17,14 @@ These rules are mandatory unless explicitly superseded by an ADR and contract up
 - Bootstrap setup token (when used) must be one-time and TTL-bound.
 - Setup-token verification is mandatory for remote/manual setup flows.
 - Local mode may auto-finalize bootstrap on first successful local login.
+- Local-mode login endpoints must enforce loopback-only client source.
 - Public setup endpoint must expose non-sensitive state only.
 - Setup mutating endpoints must be disabled after `ready`.
 - Break-glass recovery is opt-in runtime activation only.
 - Remote exposure/enablement must be explicit operator action.
 - Local mode must prioritize loopback/local access over internet exposure.
+- External Access enablement must pass hard preflight checks (setup ready, valid OIDC, HTTPS public URL, allowlisted origin, redirect policy consistency).
+- Runtime mode mutation is owner-only and must revoke all sessions after change.
 
 ## Commands and Runtime
 

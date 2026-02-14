@@ -34,17 +34,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/')({
-  staticData: { breadcrumbLabel: 'Integrations' },
+  staticData: { breadcrumbLabel: 'Sources' },
   validateSearch: (
     search: Record<string, unknown>,
   ): { github?: string; integration_id?: string } => ({
@@ -76,7 +68,7 @@ function IntegrationsPage() {
   function handleDisconnect(id: string, name: string) {
     deleteMutation.mutate(id, {
       onSuccess: () => {
-        toast.success(`Disconnected ${name}`)
+        toast.success(`Disconnected source: ${name}`)
       },
       onError: (err) => {
         toast.error(`Failed to disconnect: ${err.message}`)
@@ -88,72 +80,73 @@ function IntegrationsPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Integrations" noindex />
+      <PageMeta title="Sources" noindex />
       <PageHeader
-        title="Integrations"
-        description="Provider connections for repository access and webhook triggers."
+        title="Sources"
+        description="Source connections used to discover repositories and trigger builds."
       />
 
-      <section className="grid gap-4 md:grid-cols-3">
+      {!remoteEnabled ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Local Git
+              External Access Required
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Register local filesystem git repositories for local-first build
-              workflows.
+              Source connections (GitHub/GitLab) are available only when
+              External Access is enabled. In Local Only mode, choose a local
+              directory during project creation.
             </p>
-            <Button
-              variant="outline"
-              render={<Link to="/settings/integrations/local-git" />}
-              nativeButton={false}
-            >
-              <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-              Connect Local Git
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                render={<Link to="/settings/preferences" />}
+                nativeButton={false}
+              >
+                Open Preferences
+              </Button>
+              <Button render={<Link to="/projects" />} nativeButton={false}>
+                Go To Projects
+              </Button>
+            </div>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              GitHub
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Create and install a GitHub App to enable repository discovery and
-              webhook events.
-            </p>
-            {remoteEnabled ? (
-              <Button render={<Link to="/settings/integrations/github" />} nativeButton={false}>
+      ) : (
+        <section className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                GitHub Source
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Create and install a GitHub App to enable repository discovery
+                and webhook events.
+              </p>
+              <Button
+                render={<Link to="/settings/integrations/github" />}
+                nativeButton={false}
+              >
                 <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
                 Connect GitHub
               </Button>
-            ) : (
-              <Button disabled>
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-                Remote Mode Required
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              GitLab
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Connect gitlab.com or self-managed GitLab through OAuth or
-              personal access token.
-            </p>
-            {remoteEnabled ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                GitLab Source
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Connect gitlab.com or self-managed GitLab through OAuth or
+                personal access token.
+              </p>
               <Button
                 variant="outline"
                 render={<Link to="/settings/integrations/gitlab" />}
@@ -162,22 +155,18 @@ function IntegrationsPage() {
                 <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
                 Connect GitLab
               </Button>
-            ) : (
-              <Button variant="outline" disabled>
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-                Remote Mode Required
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-      </section>
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       {!remoteEnabled ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Runtime mode is <code>local</code>. GitHub/GitLab integrations are
-            disabled until remote mode is enabled from Preferences.
+            Access mode is <code>local only</code>. GitHub/GitLab sources are
+            disabled until External Access is enabled from Preferences. Local
+            directories are selected in project creation.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -195,39 +184,39 @@ function IntegrationsPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Failed to load integrations: {error.message}
+            Failed to load sources: {error.message}
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {!isLoading && !error ? (
+      {!isLoading && !error && remoteEnabled ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Connected Integrations
+              Connected Sources
             </CardTitle>
           </CardHeader>
           <CardContent>
             {integrations.length === 0 ? (
               <p className="py-6 text-sm text-muted-foreground">
-                No integrations connected yet.
+                No sources connected yet.
               </p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Provider</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Host</TableHead>
-                    <TableHead>Auth mode</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {integrations.map((integration) => (
-                    <TableRow key={integration.id}>
-                      <TableCell>
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Click a source tile to open details.
+                </p>
+                {integrations.map((integration) => (
+                  <div
+                    key={integration.id}
+                    className="group flex items-start justify-between gap-3 rounded-md border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
+                  >
+                    <Link
+                      to="/settings/integrations/$integrationId"
+                      params={{ integrationId: integration.id }}
+                      className="min-w-0 flex-1 rounded-sm p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    >
+                      <div className="space-y-2">
                         <div>
                           <p className="font-medium">
                             {integration.display_name ?? integration.provider}
@@ -236,84 +225,70 @@ function IntegrationsPage() {
                             {integration.id.slice(0, 8)}
                           </p>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{integration.provider}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={getIntegrationStatusVariant(
-                            integration.status,
-                          )}
-                        >
-                          {integration.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {integration.host_url}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {integration.auth_mode}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            render={
-                              <Link
-                                to="/settings/integrations/$integrationId"
-                                params={{ integrationId: integration.id }}
-                              />
-                            }
-                            nativeButton={false}
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{integration.provider}</Badge>
+                          <Badge variant="outline">
+                            {integration.provider === 'local_git'
+                              ? 'Single repo'
+                              : 'Multi repo'}
+                          </Badge>
+                          <Badge
+                            variant={getIntegrationStatusVariant(
+                              integration.status,
+                            )}
                           >
-                            Open
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger
-                              render={
-                                <Button variant="ghost" size="sm">
-                                  <HugeiconsIcon
-                                    icon={Delete02Icon}
-                                    size={16}
-                                  />
-                                  Disconnect
-                                </Button>
-                              }
-                            />
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>
-                                  Disconnect integration?
-                                </AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  This removes credentials, installations,
-                                  repository links, and webhook behavior.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() =>
-                                    handleDisconnect(
-                                      integration.id,
-                                      integration.display_name ??
-                                      integration.provider,
-                                    )
-                                  }
-                                >
-                                  Disconnect
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                            {integration.status}
+                          </Badge>
+                          <Badge variant="outline">{integration.auth_mode}</Badge>
                         </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+
+                        <p className="truncate text-xs text-muted-foreground">
+                          {integration.host_url}
+                        </p>
+                      </div>
+                    </Link>
+
+                    <div className="p-4 pl-0">
+                      <AlertDialog>
+                        <AlertDialogTrigger
+                          render={
+                            <Button variant="ghost" size="sm">
+                              <HugeiconsIcon icon={Delete02Icon} size={16} />
+                              Disconnect
+                            </Button>
+                          }
+                        />
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Disconnect source?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This removes credentials, installations,
+                              repository links, and webhook behavior.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() =>
+                                handleDisconnect(
+                                  integration.id,
+                                  integration.display_name ??
+                                    integration.provider,
+                                )
+                              }
+                            >
+                              Disconnect
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>

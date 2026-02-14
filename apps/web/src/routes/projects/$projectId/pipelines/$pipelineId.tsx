@@ -17,6 +17,7 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
+import { useSetupStatus } from '@/hooks/use-setup'
 import {
   useDeletePipeline,
   usePipeline,
@@ -137,6 +138,7 @@ function PipelineDetailPage() {
   const canWrite = useHasPermission('pipelines', 'write')
   const canDelete = useHasPermission('pipelines', 'delete')
   const canTriggerBuild = useHasPermission('builds', 'write')
+  const setupStatusQuery = useSetupStatus()
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
@@ -173,6 +175,7 @@ function PipelineDetailPage() {
   const { pipeline } = data
   const builds = buildsData?.builds ?? []
   const projectHasSource = !!projectData?.project.repository_id
+  const manualOnlyTriggers = setupStatusQuery.data?.runtime_mode === 'local'
 
   function handleToggleEnabled() {
     updateMutation.mutate(
@@ -304,36 +307,42 @@ function PipelineDetailPage() {
           </Section>
 
           <Section title="Triggers">
-            <KV label="Events">
-              {pipeline.trigger_config.events.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {pipeline.trigger_config.events.map((e) => (
-                    <Badge key={e} variant="outline" className="text-[11px]">
-                      {e}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                'all events'
-              )}
-            </KV>
-            <KV label="Branch patterns">
-              {pipeline.trigger_config.branches.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {pipeline.trigger_config.branches.map((b) => (
-                    <Badge
-                      key={b}
-                      variant="outline"
-                      className="font-mono text-[11px]"
-                    >
-                      {b}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                'all branches'
-              )}
-            </KV>
+            {manualOnlyTriggers ? (
+              <KV label="Mode">manual only</KV>
+            ) : (
+              <>
+                <KV label="Events">
+                  {pipeline.trigger_config.events.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {pipeline.trigger_config.events.map((e) => (
+                        <Badge key={e} variant="outline" className="text-[11px]">
+                          {e}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    'all events'
+                  )}
+                </KV>
+                <KV label="Branch patterns">
+                  {pipeline.trigger_config.branches.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {pipeline.trigger_config.branches.map((b) => (
+                        <Badge
+                          key={b}
+                          variant="outline"
+                          className="font-mono text-[11px]"
+                        >
+                          {b}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    'all branches'
+                  )}
+                </KV>
+              </>
+            )}
             <KV label="Cancel previous">
               {pipeline.concurrency.cancel_previous ? 'yes' : 'no'}
             </KV>

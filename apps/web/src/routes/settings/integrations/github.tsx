@@ -58,11 +58,11 @@ function GitHubSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitHub" noindex />
+      <PageMeta title="Connect GitHub Source" noindex />
       <PageHeader
-        title="Connect GitHub"
-        description="Generate and install a GitHub App for repository access and webhook delivery."
-        back={{ to: '/settings/integrations', label: 'Integrations' }}
+        title="Connect GitHub Source"
+        description="Generate and install a GitHub App source for repository access and webhook delivery."
+        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -81,7 +81,7 @@ function GitHubSetupPage() {
             >
               <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
               {!remoteEnabled
-                ? 'Remote Mode Required'
+                ? 'External Access Required'
                 : startMutation.isPending
                   ? 'Starting...'
                   : 'Create GitHub App'}
@@ -125,8 +125,8 @@ function GitHubSetupPage() {
         <HugeiconsIcon icon={InformationCircleIcon} size={16} />
         <AlertDescription>
           {remoteEnabled
-            ? 'After GitHub installation, you will return to Integrations with the connection status updated.'
-            : 'GitHub integrations are disabled while runtime mode is local. Enable remote mode in Preferences to continue.'}
+            ? 'After GitHub installation, you will return to Sources with the connection status updated.'
+            : 'GitHub source connections are disabled in Local Only mode. Enable External Access in Preferences to continue.'}
         </AlertDescription>
       </Alert>
     </PageLayout>

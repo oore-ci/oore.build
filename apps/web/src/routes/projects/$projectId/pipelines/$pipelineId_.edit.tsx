@@ -25,6 +25,7 @@ import {
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
 } from '@/hooks/use-pipelines'
+import { useSetupStatus } from '@/hooks/use-setup'
 import {
   defaultArtifactPatterns,
   fileToBase64,
@@ -70,6 +71,8 @@ export const Route = createFileRoute(
 function EditPipelinePage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
+  const setupStatusQuery = useSetupStatus()
+  const manualOnlyTriggers = setupStatusQuery.data?.runtime_mode === 'local'
   const { data, isLoading, error } = usePipeline(pipelineId)
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
@@ -169,7 +172,9 @@ function EditPipelinePage() {
       ),
     ),
     artifact_patterns: toMultiline(pipeline.execution_config.artifact_patterns),
-    branches: pipeline.trigger_config.branches.join(', '),
+    branches: manualOnlyTriggers
+      ? ''
+      : pipeline.trigger_config.branches.join(', '),
     max_concurrent: pipeline.concurrency.max_concurrent
       ? String(pipeline.concurrency.max_concurrent)
       : undefined,
@@ -193,10 +198,12 @@ function EditPipelinePage() {
       return
     }
 
-    const trigger_config: TriggerConfig = {
-      events,
-      branches: parseCsv(values.branches),
-    }
+    const trigger_config: TriggerConfig = manualOnlyTriggers
+      ? { events: [], branches: [] }
+      : {
+          events,
+          branches: parseCsv(values.branches),
+        }
 
     const concurrency: ConcurrencyPolicy = {
       cancel_previous: cancelPrevious,
@@ -601,8 +608,9 @@ function EditPipelinePage() {
       <div className="mx-auto max-w-4xl">
         <PipelineForm
           initialValues={formInitialValues}
-          initialEvents={pipeline.trigger_config.events}
+          initialEvents={manualOnlyTriggers ? [] : pipeline.trigger_config.events}
           initialCancelPrevious={pipeline.concurrency.cancel_previous}
+          manualOnlyTriggers={manualOnlyTriggers}
           onSubmit={handleSubmit}
           onCancel={() =>
             void navigate({

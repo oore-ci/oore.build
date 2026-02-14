@@ -136,6 +136,46 @@ export const integrationHandlers = [
     })
   }),
 
+  http.get('/v1/integrations/local-git/directories', async ({ request }) => {
+    await delay(120)
+    const url = new URL(request.url)
+    const currentPath = url.searchParams.get('path') ?? '/Users/demo'
+    const suggestions = [
+      { label: 'Home', path: '/Users/demo' },
+      { label: 'Desktop', path: '/Users/demo/Desktop' },
+      { label: 'Documents', path: '/Users/demo/Documents' },
+      { label: 'Downloads', path: '/Users/demo/Downloads' },
+      { label: 'Code', path: '/Users/demo/Code' },
+    ]
+
+    return HttpResponse.json({
+      current_path: currentPath,
+      current_is_git_repository: currentPath.endsWith('demo-repo'),
+      parent_path:
+        currentPath === '/Users/demo'
+          ? '/Users'
+          : currentPath.split('/').slice(0, -1).join('/') || '/',
+      suggestions,
+      directories: [
+        {
+          name: 'demo-repo',
+          path: `${currentPath}/demo-repo`,
+          is_git_repository: true,
+        },
+        {
+          name: 'mobile-app',
+          path: `${currentPath}/mobile-app`,
+          is_git_repository: true,
+        },
+        {
+          name: 'playground',
+          path: `${currentPath}/playground`,
+          is_git_repository: false,
+        },
+      ],
+    })
+  }),
+
   http.delete('/v1/integrations/local-git/:id', async ({ params }) => {
     await delay(120)
     const index = localGitIntegrations.findIndex((item) => item.id === params.id)

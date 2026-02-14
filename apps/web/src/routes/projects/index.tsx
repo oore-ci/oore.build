@@ -1,15 +1,26 @@
-import { useMemo, useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Link,
+  createFileRoute,
+  useNavigate,
+  useSearch,
+} from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  InformationCircleIcon,
+  Link04Icon,
+} from '@hugeicons/core-free-icons'
 
 import CreateProjectDialog from './-create-project-dialog'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useIntegrations } from '@/hooks/use-integrations'
 import { useProjects } from '@/hooks/use-projects'
 import { useHasPermission } from '@/hooks/use-permissions'
+import { useSetupStatus } from '@/hooks/use-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -28,6 +39,11 @@ import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { openCreate?: string } => ({
+    openCreate: (search.openCreate as string) || undefined,
+  }),
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -48,12 +64,57 @@ function relativeTime(epochSecs: number): string {
 }
 
 function ProjectsListPage() {
+  const search = useSearch({ from: '/projects/' })
   const navigate = useNavigate()
   const { data, isLoading, error } = useProjects({ limit: 100 })
-  const canWrite = useHasPermission('projects', 'write')
+  const integrationsQuery = useIntegrations()
+  const setupStatusQuery = useSetupStatus()
+  const canWriteProjects = useHasPermission('projects', 'write')
+  const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [createOpen, setCreateOpen] = useState(false)
 
   const projects = useMemo(() => data?.projects ?? [], [data?.projects])
+  const integrations = useMemo(
+    () => integrationsQuery.data?.integrations ?? [],
+    [integrationsQuery.data?.integrations],
+  )
+  const activeIntegrationsCount = useMemo(
+    () =>
+      integrations.filter((integration) => integration.status === 'active')
+        .length,
+    [integrations],
+  )
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'remote'
+  const integrationConnectTo = '/settings/integrations'
+  const missingIntegration =
+    runtimeMode !== 'local' &&
+    !integrationsQuery.isLoading &&
+    !integrationsQuery.error &&
+    activeIntegrationsCount === 0
+  const projectsLoading = isLoading || integrationsQuery.isLoading
+  const projectsError = error ?? integrationsQuery.error
+
+  useEffect(() => {
+    if (search.openCreate !== '1') return
+    if (projectsLoading) return
+
+    if (!projectsError && !missingIntegration && canWriteProjects) {
+      setCreateOpen(true)
+    }
+
+    void navigate({
+      to: '/projects',
+      search: {},
+      replace: true,
+    })
+  }, [
+    canWriteProjects,
+    missingIntegration,
+    navigate,
+    projectsError,
+    projectsLoading,
+    search.openCreate,
+  ])
 
   return (
     <PageLayout width="wide">
@@ -62,7 +123,7 @@ function ProjectsListPage() {
         title="Projects"
         description="Repository and pipeline entry points for your build system."
         actions={
-          canWrite ? (
+          !missingIntegration && projects.length > 0 && canWriteProjects ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} size={16} />
               New Project
@@ -71,7 +132,7 @@ function ProjectsListPage() {
         }
       />
 
-      {isLoading ? (
+      {projectsLoading ? (
         <Card>
           <CardContent className="space-y-3">
             <Skeleton className="h-10 w-full" />
@@ -81,16 +142,75 @@ function ProjectsListPage() {
         </Card>
       ) : null}
 
-      {error ? (
+      {projectsError ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Failed to load projects: {error.message}
+            Failed to load projects: {projectsError.message}
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {!isLoading && !error ? (
+      {!projectsLoading && !projectsError && missingIntegration ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Connect Source First
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Projects are created from connected source repositories. Connect a
+              source first.
+            </p>
+            {canWriteIntegrations ? (
+              <Button
+                render={<Link to={integrationConnectTo} />}
+                nativeButton={false}
+              >
+                <HugeiconsIcon icon={Link04Icon} size={16} />
+                Connect Source
+              </Button>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Ask an owner/admin to connect a source.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!projectsLoading &&
+      !projectsError &&
+      !missingIntegration &&
+      projects.length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Create Your First Project
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {runtimeMode === 'local'
+                ? 'Choose a local Git repository to create your first project.'
+                : 'Your source is connected. Create a project to define pipelines and start builds.'}
+            </p>
+            {canWriteProjects ? (
+              <Button onClick={() => setCreateOpen(true)}>
+                <HugeiconsIcon icon={Add01Icon} size={16} />
+                Create Project
+              </Button>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Ask an owner/admin/developer to create the first project.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!projectsLoading && !projectsError && !missingIntegration && projects.length > 0 ? (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -103,64 +223,50 @@ function ProjectsListPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {projects.length === 0 ? (
-              <div className="space-y-4 py-12 text-center">
-                <p className="text-sm text-muted-foreground">
-                  No projects yet.
-                </p>
-                {canWrite ? (
-                  <Button onClick={() => setCreateOpen(true)}>
-                    <HugeiconsIcon icon={Add01Icon} size={16} />
-                    Create your first project
-                  </Button>
-                ) : null}
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Project</TableHead>
-                    <TableHead>Default branch</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Updated</TableHead>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Project</TableHead>
+                  <TableHead>Default branch</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Updated</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {projects.map((project) => (
+                  <TableRow
+                    key={project.id}
+                    className="group cursor-pointer"
+                    onClick={() =>
+                      void navigate({
+                        to: '/projects/$projectId',
+                        params: { projectId: project.id },
+                      })
+                    }
+                  >
+                    <TableCell>
+                      <div>
+                        <p className="font-medium group-hover:underline">
+                          {project.name}
+                        </p>
+                        <p className="font-mono text-[11px] text-muted-foreground">
+                          {project.id.slice(0, 8)}
+                        </p>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {project.default_branch ?? 'not set'}
+                    </TableCell>
+                    <TableCell className="max-w-[30ch] truncate text-sm text-muted-foreground">
+                      {project.description ?? 'No description'}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {relativeTime(project.updated_at)}
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {projects.map((project) => (
-                    <TableRow
-                      key={project.id}
-                      className="group cursor-pointer"
-                      onClick={() =>
-                        void navigate({
-                          to: '/projects/$projectId',
-                          params: { projectId: project.id },
-                        })
-                      }
-                    >
-                      <TableCell>
-                        <div>
-                          <p className="font-medium group-hover:underline">
-                            {project.name}
-                          </p>
-                          <p className="font-mono text-[11px] text-muted-foreground">
-                            {project.id.slice(0, 8)}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {project.default_branch ?? 'not set'}
-                      </TableCell>
-                      <TableCell className="max-w-[30ch] truncate text-sm text-muted-foreground">
-                        {project.description ?? 'No description'}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {relativeTime(project.updated_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       ) : null}

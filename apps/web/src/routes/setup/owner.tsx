@@ -110,7 +110,7 @@ function OwnerStep() {
         invalid_session:
           'Your session is no longer valid. Restart setup from the token step.',
         mode_restricted:
-          'Local owner creation is only available when runtime mode is local.',
+          'Local owner creation is only available in Local Only mode.',
       })
     : null
 

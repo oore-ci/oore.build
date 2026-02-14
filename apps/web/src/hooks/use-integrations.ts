@@ -6,6 +6,7 @@ import type {
   GitLabStartRequest,
 } from '@/lib/types'
 import {
+  browseLocalGitDirectories,
   createLocalGitIntegration,
   deleteLocalGitIntegration,
   deleteIntegration,
@@ -235,6 +236,22 @@ export function useCreateLocalGitIntegration() {
         queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
       })
     },
+  })
+}
+
+export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'local-git-directory-browser',
+      path ?? '__default__',
+    ],
+    queryFn: () => browseLocalGitDirectories(baseUrl!, token!, path),
+    enabled: enabled && !!baseUrl && !!token,
   })
 }
 

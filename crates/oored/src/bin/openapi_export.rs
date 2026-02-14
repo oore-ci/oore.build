@@ -54,6 +54,7 @@ use utoipa::OpenApi;
         paths::update_artifact_storage_settings,
         paths::get_instance_preferences,
         paths::update_instance_preferences,
+        paths::get_external_access_preflight,
         // ── Integrations ──
         paths::list_integrations,
         paths::get_integration,
@@ -65,6 +66,7 @@ use utoipa::OpenApi;
         paths::github_complete,
         paths::gitlab_start,
         paths::gitlab_authorize,
+        paths::browse_local_git_directories,
         paths::create_local_git_integration,
         paths::list_local_git_integrations,
         paths::delete_local_git_integration,
@@ -168,6 +170,9 @@ use utoipa::OpenApi;
         oore_contract::GitLabCompleteResponse,
         oore_contract::GitLabAuthorizeRequest,
         oore_contract::GitLabAuthorizeResponse,
+        oore_contract::LocalGitDirectoryEntry,
+        oore_contract::LocalGitPathSuggestion,
+        oore_contract::BrowseLocalGitDirectoriesResponse,
         oore_contract::CreateLocalGitIntegrationRequest,
         oore_contract::CreateLocalGitIntegrationResponse,
         oore_contract::ListIntegrationsResponse,
@@ -255,6 +260,8 @@ use utoipa::OpenApi;
         // Instance Settings
         oore_contract::KeyStorageMode,
         oore_contract::RuntimeMode,
+        oore_contract::ExternalAccessPreflightCheck,
+        oore_contract::ExternalAccessPreflightResponse,
         oore_contract::InstancePreferences,
         oore_contract::InstancePreferencesResponse,
         oore_contract::UpdateInstancePreferencesRequest,
@@ -482,7 +489,7 @@ mod paths {
         responses(
             (status = 200, description = "Session created", body = LocalLoginResponse),
             (status = 400, description = "Email required or invalid input", body = ApiError),
-            (status = 403, description = "Local mode required", body = ApiError),
+            (status = 403, description = "Blocked by mode policy or non-loopback source", body = ApiError),
         )
     )]
     pub(super) async fn local_login() {}
@@ -623,9 +630,22 @@ mod paths {
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Preferences updated", body = InstancePreferencesResponse),
+            (status = 400, description = "External Access preflight failed or unsupported values", body = ApiError),
+            (status = 403, description = "Owner-only mode change attempted by non-owner", body = ApiError),
         )
     )]
     pub(super) async fn update_instance_preferences() {}
+
+    /// Get External Access preflight readiness
+    ///
+    /// Returns check-by-check readiness required before enabling External Access (`runtime_mode=remote`).
+    #[utoipa::path(get, path = "/v1/settings/external-access/preflight", tag = "Instance Settings",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "External Access preflight result", body = ExternalAccessPreflightResponse),
+        )
+    )]
+    pub(super) async fn get_external_access_preflight() {}
 
     // ── Integrations ──
 
@@ -767,6 +787,20 @@ mod paths {
         )
     )]
     pub(super) async fn create_local_git_integration() {}
+
+    /// Browse local directories for local repository registration
+    #[utoipa::path(get, path = "/v1/integrations/local-git/directories", tag = "Integrations",
+        params(
+            ("path" = Option<String>, Query, description = "Absolute directory path to browse. Defaults to the daemon user's home directory"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Directory listing", body = BrowseLocalGitDirectoriesResponse),
+            (status = 400, description = "Invalid or inaccessible path", body = ApiError),
+            (status = 403, description = "Local mode required", body = ApiError),
+        )
+    )]
+    pub(super) async fn browse_local_git_directories() {}
 
     /// List local git integrations
     #[utoipa::path(get, path = "/v1/integrations/local-git", tag = "Integrations",

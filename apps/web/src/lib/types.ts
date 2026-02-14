@@ -272,6 +272,25 @@ export interface CreateLocalGitIntegrationResponse {
   repository: IntegrationRepository
 }
 
+export interface LocalGitDirectoryEntry {
+  name: string
+  path: string
+  is_git_repository: boolean
+}
+
+export interface LocalGitPathSuggestion {
+  label: string
+  path: string
+}
+
+export interface BrowseLocalGitDirectoriesResponse {
+  current_path: string
+  current_is_git_repository: boolean
+  parent_path?: string
+  directories: Array<LocalGitDirectoryEntry>
+  suggestions: Array<LocalGitPathSuggestion>
+}
+
 export interface ListIntegrationsResponse {
   integrations: Array<Integration>
   total: number
@@ -475,6 +494,19 @@ export interface UpdateArtifactStorageSettingsRequest {
 export type KeyStorageMode = 'keychain' | 'file'
 export type RuntimeMode = 'local' | 'remote'
 
+export interface ExternalAccessPreflightCheck {
+  id: string
+  label: string
+  ok: boolean
+  message: string
+  failure_code?: string
+}
+
+export interface ExternalAccessPreflightResponse {
+  ready: boolean
+  checks: Array<ExternalAccessPreflightCheck>
+}
+
 export interface InstancePreferences {
   key_storage_mode: KeyStorageMode
   runtime_mode: RuntimeMode
@@ -509,6 +541,7 @@ export interface CreateProjectRequest {
   name: string
   description?: string
   repository_id?: string
+  local_repository_path?: string
   default_branch?: string
 }
 

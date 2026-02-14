@@ -105,6 +105,14 @@ impl SessionStore {
         Ok(result.rows_affected())
     }
 
+    /// Revoke every active session in the instance.
+    pub async fn revoke_all_sessions(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM sessions")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Remove all expired sessions from the store.
     pub async fn cleanup_expired(&self) -> Result<u64, sqlx::Error> {
         let now = now_unix();

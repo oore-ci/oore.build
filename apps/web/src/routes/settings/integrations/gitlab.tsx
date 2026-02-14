@@ -147,11 +147,11 @@ function GitLabSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitLab" noindex />
+      <PageMeta title="Connect GitLab Source" noindex />
       <PageHeader
-        title="Connect GitLab"
-        description="Connect gitlab.com or a self-managed GitLab host for repositories and webhook events."
-        back={{ to: '/settings/integrations', label: 'Integrations' }}
+        title="Connect GitLab Source"
+        description="Connect gitlab.com or a self-managed GitLab source for repositories and webhook events."
+        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <Card>
@@ -162,8 +162,8 @@ function GitLabSetupPage() {
           {!remoteEnabled ? (
             <Alert>
               <AlertDescription>
-                GitLab integrations are disabled while runtime mode is local.
-                Enable remote mode in Preferences to continue.
+                GitLab source connections are disabled in Local Only mode.
+                Enable External Access in Preferences to continue.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -303,7 +303,7 @@ function GitLabSetupPage() {
                 disabled={startMutation.isPending || !remoteEnabled}
               >
                 {!remoteEnabled
-                  ? 'Remote Mode Required'
+                  ? 'External Access Required'
                   : startMutation.isPending
                     ? 'Connecting...'
                     : 'Connect GitLab'}

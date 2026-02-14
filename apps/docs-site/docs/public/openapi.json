@@ -127,7 +127,7 @@
             }
           },
           "403": {
-            "description": "Local mode required",
+            "description": "Blocked by mode policy or non-loopback source",
             "content": {
               "application/json": {
                 "schema": {
@@ -965,6 +965,63 @@
           },
           "409": {
             "description": "Repository already connected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/integrations/local-git/directories": {
+      "get": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Browse local directories for local repository registration",
+        "operationId": "browse_local_git_directories",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Absolute directory path to browse. Defaults to the daemon user's home directory",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Directory listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowseLocalGitDirectoriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or inaccessible path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Local mode required",
             "content": {
               "application/json": {
                 "schema": {
@@ -2677,6 +2734,33 @@
         ]
       }
     },
+    "/v1/settings/external-access/preflight": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get External Access preflight readiness",
+        "description": "Returns check-by-check readiness required before enabling External Access (`runtime_mode=remote`).",
+        "operationId": "get_external_access_preflight",
+        "responses": {
+          "200": {
+            "description": "External Access preflight result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAccessPreflightResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/settings/preferences": {
       "get": {
         "tags": [
@@ -2726,6 +2810,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InstancePreferencesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "External Access preflight failed or unsupported values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only mode change attempted by non-owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -3910,6 +4014,41 @@
           }
         }
       },
+      "BrowseLocalGitDirectoriesResponse": {
+        "type": "object",
+        "required": [
+          "current_path",
+          "current_is_git_repository",
+          "directories",
+          "suggestions"
+        ],
+        "properties": {
+          "current_is_git_repository": {
+            "type": "boolean"
+          },
+          "current_path": {
+            "type": "string"
+          },
+          "directories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocalGitDirectoryEntry"
+            }
+          },
+          "parent_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocalGitPathSuggestion"
+            }
+          }
+        }
+      },
       "Build": {
         "type": "object",
         "required": [
@@ -4435,6 +4574,12 @@
               "null"
             ]
           },
+          "local_repository_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -4454,6 +4599,53 @@
         "properties": {
           "project": {
             "$ref": "#/components/schemas/Project"
+          }
+        }
+      },
+      "ExternalAccessPreflightCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "ok",
+          "message"
+        ],
+        "properties": {
+          "failure_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExternalAccessPreflightResponse": {
+        "type": "object",
+        "required": [
+          "ready",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalAccessPreflightCheck"
+            }
+          },
+          "ready": {
+            "type": "boolean"
           }
         }
       },
@@ -5132,6 +5324,40 @@
             "items": {
               "$ref": "#/components/schemas/User"
             }
+          }
+        }
+      },
+      "LocalGitDirectoryEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "is_git_repository"
+        ],
+        "properties": {
+          "is_git_repository": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalGitPathSuggestion": {
+        "type": "object",
+        "required": [
+          "label",
+          "path"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
           }
         }
       },

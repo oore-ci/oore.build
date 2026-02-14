@@ -1,14 +1,22 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon, PlayIcon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  InformationCircleIcon,
+  Link04Icon,
+  PlayIcon,
+} from '@hugeicons/core-free-icons'
 
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
+import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
+import { useProjects } from '@/hooks/use-projects'
+import { useSetupStatus } from '@/hooks/use-setup'
 import { getStatusVariant } from '@/lib/status-variants'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -39,11 +47,45 @@ export const Route = createFileRoute('/builds/')({
 
 function BuildsListPage() {
   const navigate = useNavigate()
-  const { data, isLoading, error } = useBuilds({ limit: 100 })
+  const buildsQuery = useBuilds({ limit: 100 })
+  const projectsQuery = useProjects({ limit: 200 })
+  const integrationsQuery = useIntegrations()
+  const setupStatusQuery = useSetupStatus()
   const canTriggerBuild = useHasPermission('builds', 'write')
+  const canWriteProjects = useHasPermission('projects', 'write')
+  const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
-  const builds = useMemo(() => data?.builds ?? [], [data?.builds])
+  const builds = useMemo(
+    () => buildsQuery.data?.builds ?? [],
+    [buildsQuery.data?.builds],
+  )
+  const projects = useMemo(
+    () => projectsQuery.data?.projects ?? [],
+    [projectsQuery.data?.projects],
+  )
+  const integrations = useMemo(
+    () => integrationsQuery.data?.integrations ?? [],
+    [integrationsQuery.data?.integrations],
+  )
+  const activeIntegrationsCount = useMemo(
+    () =>
+      integrations.filter((integration) => integration.status === 'active')
+        .length,
+    [integrations],
+  )
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'remote'
+  const integrationConnectTo = '/settings/integrations'
+  const missingIntegration =
+    runtimeMode !== 'local' &&
+    !integrationsQuery.isLoading &&
+    !integrationsQuery.error &&
+    activeIntegrationsCount === 0
+  const missingProjects =
+    !projectsQuery.isLoading && !projectsQuery.error && projects.length === 0
+  const isLoading =
+    buildsQuery.isLoading || integrationsQuery.isLoading || projectsQuery.isLoading
+  const error = buildsQuery.error ?? integrationsQuery.error ?? projectsQuery.error
 
   return (
     <PageLayout width="wide">
@@ -52,6 +94,9 @@ function BuildsListPage() {
         title="Builds"
         description="Queue, execution, and historical run inventory across projects."
         actions={
+          !missingIntegration &&
+          !missingProjects &&
+          builds.length > 0 &&
           canTriggerBuild ? (
             <Button onClick={() => setTriggerBuildOpen(true)}>
               <HugeiconsIcon icon={PlayIcon} size={16} />
@@ -81,6 +126,59 @@ function BuildsListPage() {
       ) : null}
 
       {!isLoading && !error ? (
+        missingIntegration ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                Connect Source First
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Builds require a connected source and a project. Start by
+                connecting your source.
+              </p>
+              {canWriteIntegrations ? (
+                <Button
+                  render={<Link to={integrationConnectTo} />}
+                  nativeButton={false}
+                >
+                  <HugeiconsIcon icon={Link04Icon} size={16} />
+                  Connect Source
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Ask an owner/admin to connect a source.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        ) : missingProjects ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                Create Project First
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {runtimeMode === 'local'
+                  ? 'Builds run through pipelines under projects. Create your first project from a local Git repository.'
+                  : 'Builds run through pipelines under projects. Create your first project before triggering builds.'}
+              </p>
+              {canWriteProjects ? (
+                <Button render={<Link to="/projects" />} nativeButton={false}>
+                  <HugeiconsIcon icon={Add01Icon} size={16} />
+                  Go To Projects
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Ask an owner/admin/developer to create the first project.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -170,6 +268,7 @@ function BuildsListPage() {
             )}
           </CardContent>
         </Card>
+        )
       ) : null}
 
       <TriggerBuildDialog

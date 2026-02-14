@@ -75,9 +75,12 @@ Command stability rules:
 - V1 supports explicit runtime modes: `local` and `remote`.
 - Default mode is `local`.
 - `local` mode does not require OIDC for operator sign-in.
+- `local` mode local-login auth is loopback-only.
 - `remote` mode requires OIDC for interactive sign-in.
 - `local` mode may auto-finalize owner bootstrap on first successful local login.
 - Local username/password auth remains out of scope in V1.
+- Enabling `remote` mode requires successful External Access preflight checks.
+- Runtime mode changes are owner-only and revoke all active sessions.
 
 ### Bootstrap policy (locked)
 
@@ -85,6 +88,7 @@ Command stability rules:
 - Setup token is one-time and time-bound (TTL) for setup-token flows.
 - Setup endpoints are disabled automatically after instance reaches `ready`.
 - Enabling `remote` mode is an explicit operator action.
+- `remote` mode enablement must fail closed when preflight checks fail.
 
 ### Recovery policy (locked)
 
@@ -127,7 +131,7 @@ Core backend stack:
 - Queue/event bus: in-process (`tokio` channels) (see [ADR-0003](../adr/0003-in-process-queuing-over-nats-for-v1.md))
 - Artifact storage: S3-compatible using `aws-sdk-s3`
 - Auth:
-- local-mode token/session auth for loopback/local UI usage
+- local-mode token/session auth for loopback-only UI usage
 - OIDC via `openidconnect` for remote-mode auth
 - RBAC policy layer: `casbin-rs`
 - Observability: `tracing`, OpenTelemetry, Prometheus metrics
@@ -190,7 +194,7 @@ Server data must not be duplicated in Zustand.
 ## 13) API Boundary Contract
 
 - Frontend and backend are cleanly separated.
-- Local mode supports local frontend-to-backend access on loopback/private network paths.
+- Local mode local-login trust boundary is loopback-only.
 - Hosted UI communicates with customer backend over HTTPS APIs in remote mode.
 - Public endpoint(s) may expose setup progress only.
 - Mutating setup endpoints require setup token and are disabled after `ready`.
@@ -206,6 +210,8 @@ Server data must not be duplicated in Zustand.
 - No sensitive configuration on public status endpoints.
 - CORS and origin policy restricted to approved frontend origins.
 - Remote-mode exposure is explicit, never assumed during first-run onboarding.
+- External Access requires HTTPS public URL + explicit CORS/origin allowlisting.
+- Runtime mode transitions must invalidate existing sessions.
 
 ## 15) Extensibility Direction
 

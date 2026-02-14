@@ -1,14 +1,18 @@
+use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, CreateLocalGitIntegrationRequest, CreateLocalGitIntegrationResponse, Integration,
-    IntegrationRepository, ListIntegrationsResponse,
+    ApiError, BrowseLocalGitDirectoriesResponse, CreateLocalGitIntegrationRequest,
+    CreateLocalGitIntegrationResponse, Integration, IntegrationRepository,
+    ListIntegrationsResponse, LocalGitDirectoryEntry, LocalGitPathSuggestion,
 };
+use serde::Deserialize;
 use sqlx::Row;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -21,6 +25,7 @@ use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+const MAX_BROWSE_DIRECTORY_ENTRIES: usize = 300;
 
 fn normalize_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>)> {
     let trimmed = raw.trim();
@@ -93,6 +98,175 @@ fn resolve_default_branch(path: &PathBuf) -> Option<String> {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BrowseLocalGitDirectoriesQuery {
+    pub path: Option<String>,
+}
+
+fn canonicalize_directory(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "path must not be empty",
+        ));
+    }
+
+    let candidate = PathBuf::from(trimmed);
+    if !candidate.is_absolute() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "path must be an absolute path",
+        ));
+    }
+
+    let canonical = std::fs::canonicalize(&candidate).map_err(|_| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "path does not exist or is not accessible",
+        )
+    })?;
+    if !canonical.is_dir() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "path must point to a directory",
+        ));
+    }
+    Ok(canonical)
+}
+
+fn looks_like_git_repository(path: &Path) -> bool {
+    let dot_git = path.join(".git");
+    dot_git.is_dir() || dot_git.is_file()
+}
+
+fn build_browse_suggestions(current_path: &Path) -> Vec<LocalGitPathSuggestion> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut push_if_dir = |label: &str, candidate: PathBuf| {
+        let canonical = match std::fs::canonicalize(&candidate) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        if !canonical.is_dir() {
+            return;
+        }
+        let path = canonical.to_string_lossy().into_owned();
+        if seen.insert(path.clone()) {
+            out.push(LocalGitPathSuggestion {
+                label: label.to_string(),
+                path,
+            });
+        }
+    };
+
+    if let Some(home) = dirs::home_dir() {
+        push_if_dir("Home", home.clone());
+        push_if_dir("Desktop", home.join("Desktop"));
+        push_if_dir("Documents", home.join("Documents"));
+        push_if_dir("Downloads", home.join("Downloads"));
+        push_if_dir("Code", home.join("Code"));
+        push_if_dir("Projects", home.join("Projects"));
+    }
+
+    push_if_dir("Current", current_path.to_path_buf());
+    out
+}
+
+/// `GET /v1/integrations/local-git/directories`
+///
+/// Lists child directories for local filesystem browsing in local mode.
+pub async fn browse_local_git_directories(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(params): Query<BrowseLocalGitDirectoriesQuery>,
+) -> ApiResult<BrowseLocalGitDirectoriesResponse> {
+    if check_permission(&state.enforcer, &auth.0.role, "integrations", "write")
+        .await
+        .is_err()
+    {
+        check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
+    }
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_local_mode(&pool).await?;
+
+    let current_path = if let Some(path) = params.path.as_deref() {
+        canonicalize_directory(path)?
+    } else {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        std::fs::canonicalize(&home).unwrap_or(home)
+    };
+
+    let read_dir = std::fs::read_dir(&current_path).map_err(|_| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "path does not exist or is not accessible",
+        )
+    })?;
+
+    let mut directories = Vec::new();
+    for entry_result in read_dir {
+        let entry = match entry_result {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let candidate = entry.path();
+        let metadata = match std::fs::metadata(&candidate) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if !metadata.is_dir() {
+            continue;
+        }
+
+        let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        directories.push(LocalGitDirectoryEntry {
+            name: file_name,
+            path: canonical.to_string_lossy().into_owned(),
+            is_git_repository: looks_like_git_repository(&canonical),
+        });
+
+        if directories.len() >= MAX_BROWSE_DIRECTORY_ENTRIES {
+            break;
+        }
+    }
+
+    directories.sort_by(|a, b| {
+        b.is_git_repository
+            .cmp(&a.is_git_repository)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    let current_path_str = current_path.to_string_lossy().into_owned();
+    let parent_path = current_path
+        .parent()
+        .map(|path| path.to_string_lossy().into_owned())
+        .filter(|path| path != &current_path_str && !path.is_empty());
+
+    Ok(Json(BrowseLocalGitDirectoriesResponse {
+        current_path: current_path_str,
+        current_is_git_repository: looks_like_git_repository(&current_path),
+        parent_path,
+        directories,
+        suggestions: build_browse_suggestions(&current_path),
+    }))
 }
 
 /// `POST /v1/integrations/local-git`
@@ -313,7 +487,7 @@ pub async fn list_local_git_integrations(
 pub async fn delete_local_git_integration(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
 ) -> ApiResult<serde_json::Value> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "delete").await?;
     let pool = {

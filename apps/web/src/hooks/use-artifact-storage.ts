@@ -5,6 +5,7 @@ import type {
   UpdateInstancePreferencesRequest,
 } from '@/lib/types'
 import {
+  getExternalAccessPreflight,
   getArtifactStorageSettings,
   getInstancePreferences,
   updateArtifactStorageSettings,
@@ -88,6 +89,21 @@ export function useUpdateInstancePreferences() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'instance-preferences'],
       })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+      })
     },
+  })
+}
+
+export function useExternalAccessPreflight() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+    queryFn: () => getExternalAccessPreflight(baseUrl!, token!),
+    enabled: !!baseUrl && !!token,
   })
 }

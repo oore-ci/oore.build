@@ -1,8 +1,9 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, AuthenticatedUser, LocalLoginRequest, LocalLoginResponse, LogoutResponse,
@@ -728,8 +729,41 @@ pub async fn logout(
 /// - If `email` is omitted, auto-selects the single active user.
 pub async fn local_login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Json(req): Json<LocalLoginRequest>,
 ) -> Result<Json<LocalLoginResponse>, (StatusCode, Json<ApiError>)> {
+    if !crate::is_loopback_client(peer_addr) {
+        let source_ip = peer_addr.ip().to_string();
+        let details = serde_json::json!({
+            "source_ip": source_ip,
+        })
+        .to_string();
+
+        let pool = {
+            let store = state.store.lock().await;
+            store.pool().clone()
+        };
+        let _ = write_audit_log(
+            &pool,
+            None,
+            "local_login_blocked_non_loopback",
+            "auth",
+            None,
+            Some(&details),
+        )
+        .await;
+
+        warn!(
+            source_ip = %source_ip,
+            "blocked local login attempt from non-loopback client"
+        );
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "local_login_loopback_required",
+            "Local login is only available from loopback clients",
+        ));
+    }
+
     let requested_email = req
         .email
         .map(|value| value.trim().to_lowercase())

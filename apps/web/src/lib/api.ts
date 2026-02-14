@@ -4,6 +4,7 @@ import type {
   ArtifactStorageSettingsResponse,
   BootstrapTokenVerifyResponse,
   BuildDetailResponse,
+  BrowseLocalGitDirectoriesResponse,
   BuildLogsResponse,
   CancelBuildResponse,
   CreateBuildRequest,
@@ -14,6 +15,7 @@ import type {
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
+  ExternalAccessPreflightResponse,
   GitHubAppCompleteRequest,
   GitHubAppCompleteResponse,
   GitHubAppStartRequest,
@@ -491,6 +493,25 @@ export function createLocalGitIntegration(
   )
 }
 
+export function browseLocalGitDirectories(
+  baseUrl: string,
+  token: string,
+  path?: string,
+): Promise<BrowseLocalGitDirectoriesResponse> {
+  const params = new URLSearchParams()
+  if (path?.trim()) {
+    params.set('path', path.trim())
+  }
+  const query = params.toString()
+  const endpoint = query
+    ? `/v1/integrations/local-git/directories?${query}`
+    : '/v1/integrations/local-git/directories'
+
+  return request<BrowseLocalGitDirectoriesResponse>(baseUrl, endpoint, {
+    headers: authHeaders(token),
+  })
+}
+
 export function listLocalGitIntegrations(
   baseUrl: string,
   token: string,
@@ -577,6 +598,19 @@ export function getInstancePreferences(
   return request<InstancePreferencesResponse>(
     baseUrl,
     '/v1/settings/preferences',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function getExternalAccessPreflight(
+  baseUrl: string,
+  token: string,
+): Promise<ExternalAccessPreflightResponse> {
+  return request<ExternalAccessPreflightResponse>(
+    baseUrl,
+    '/v1/settings/external-access/preflight',
     {
       headers: authHeaders(token),
     },

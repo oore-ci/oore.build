@@ -5,8 +5,10 @@
 mod common;
 
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use hyper::Request;
 use serde_json::json;
+use std::net::SocketAddr;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -39,6 +41,7 @@ async fn test_local_login_auto_bootstraps_local_instance() {
                 .method("POST")
                 .uri("/v1/auth/local/login")
                 .header("content-type", "application/json")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41001))))
                 .body(Body::from(
                     serde_json::to_vec(&json!({})).expect("serialize request"),
                 ))
@@ -90,6 +93,7 @@ async fn test_local_login_rejected_when_runtime_mode_remote() {
                 .method("POST")
                 .uri("/v1/auth/local/login")
                 .header("content-type", "application/json")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41002))))
                 .body(Body::from(
                     serde_json::to_vec(&json!({})).expect("serialize request"),
                 ))
@@ -100,4 +104,45 @@ async fn test_local_login_rejected_when_runtime_mode_remote() {
     assert_eq!(login_resp.status(), 403);
     let body = common::body_json(login_resp.into_body()).await;
     assert_eq!(body["code"], "mode_restricted");
+}
+
+#[tokio::test]
+async fn test_local_login_rejected_when_client_is_not_loopback() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+
+    let login_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/auth/local/login")
+                .header("content-type", "application/json")
+                .extension(ConnectInfo(SocketAddr::from(([10, 10, 0, 5], 41003))))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({})).expect("serialize request"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("local login");
+    assert_eq!(login_resp.status(), 403);
+    let body = common::body_json(login_resp.into_body()).await;
+    assert_eq!(body["code"], "local_login_loopback_required");
+
+    let status_after = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/public/setup-status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("status after");
+    assert_eq!(status_after.status(), 200);
+    let status_after_body = common::body_json(status_after.into_body()).await;
+    assert_eq!(status_after_body["setup_mode"], true);
+    assert_eq!(status_after_body["state"], "bootstrap_pending");
 }

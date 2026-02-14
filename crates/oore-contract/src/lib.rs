@@ -622,6 +622,29 @@ pub struct CreateLocalGitIntegrationResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct LocalGitDirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub is_git_repository: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct LocalGitPathSuggestion {
+    pub label: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BrowseLocalGitDirectoriesResponse {
+    pub current_path: String,
+    pub current_is_git_repository: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_path: Option<String>,
+    pub directories: Vec<LocalGitDirectoryEntry>,
+    pub suggestions: Vec<LocalGitPathSuggestion>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListIntegrationsResponse {
     pub integrations: Vec<Integration>,
     pub total: i64,
@@ -1287,6 +1310,22 @@ impl FromStr for RuntimeMode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ExternalAccessPreflightCheck {
+    pub id: String,
+    pub label: String,
+    pub ok: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ExternalAccessPreflightResponse {
+    pub ready: bool,
+    pub checks: Vec<ExternalAccessPreflightCheck>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InstancePreferences {
     pub key_storage_mode: KeyStorageMode,
@@ -1334,6 +1373,8 @@ pub struct CreateProjectRequest {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_repository_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_branch: Option<String>,
 }
@@ -2029,6 +2070,31 @@ mod tests {
         assert_eq!(json, "\"local\"");
         let parsed: RuntimeMode = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, RuntimeMode::Local);
+    }
+
+    #[test]
+    fn external_access_preflight_response_round_trip_json() {
+        let response = ExternalAccessPreflightResponse {
+            ready: false,
+            checks: vec![ExternalAccessPreflightCheck {
+                id: "public_url_https".to_string(),
+                label: "Public URL uses HTTPS".to_string(),
+                ok: false,
+                message: "OORE_PUBLIC_URL must use https for External Access".to_string(),
+                failure_code: Some("external_access_https_required".to_string()),
+            }],
+        };
+
+        let json = serde_json::to_string(&response).expect("serialize");
+        let parsed: ExternalAccessPreflightResponse =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!(!parsed.ready);
+        assert_eq!(parsed.checks.len(), 1);
+        assert_eq!(parsed.checks[0].id, "public_url_https");
+        assert_eq!(
+            parsed.checks[0].failure_code.as_deref(),
+            Some("external_access_https_required")
+        );
     }
 
     #[test]

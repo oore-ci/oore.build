@@ -29,11 +29,14 @@ import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
 import { useBuilds } from '@/hooks/use-builds'
+import { useIntegrations } from '@/hooks/use-integrations'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { localLogin, getSetupStatus } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
+import type { RuntimeMode } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 
@@ -60,12 +63,23 @@ function normalizeUrl(value: string): string {
   return value.replace(/\/+$/, '')
 }
 
-function isLocalUiOrigin(hostname: string): boolean {
+function isLoopbackHostname(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
-    hostname.endsWith('.local')
+    hostname === '::1' ||
+    hostname === '[::1]'
   )
+}
+
+function resolveBackendHostname(rawUrl: string): string {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return window.location.hostname
+  try {
+    return new URL(trimmed).hostname
+  } catch {
+    return ''
+  }
 }
 
 async function getSetupStatusWithTimeout(baseUrl: string, timeoutMs: number) {
@@ -106,7 +120,7 @@ function IndexPage() {
 
   useEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
-    if (!isLocalUiOrigin(window.location.hostname)) return
+    if (!isLoopbackHostname(window.location.hostname)) return
 
     autoDetectAttemptedRef.current = true
     setIsDetectingLocalInstance(true)
@@ -145,6 +159,19 @@ function IndexPage() {
       !!authToken && authExpiresAt != null && authExpiresAt > now
 
     if (status.runtime_mode === 'local') {
+      const uiIsLoopback = isLoopbackHostname(window.location.hostname)
+      const backendIsLoopback = isLoopbackHostname(
+        resolveBackendHostname(instance.url),
+      )
+
+      if (!uiIsLoopback || !backendIsLoopback) {
+        if (!hasValidToken) {
+          clearAuth()
+          void navigate({ to: '/login' })
+        }
+        return
+      }
+
       if (hasValidToken) return
       if (autoLocalLoginInstanceRef.current === instance.id) return
 
@@ -309,7 +336,10 @@ function IndexPage() {
     return (
       <>
         <PageMeta />
-        <ConfiguredDashboard userName={authUser?.email} />
+        <ConfiguredDashboard
+          userName={authUser?.email}
+          runtimeMode={status.runtime_mode}
+        />
       </>
     )
   }
@@ -325,16 +355,33 @@ function IndexPage() {
   )
 }
 
-
-function ConfiguredDashboard({ userName }: { userName?: string }) {
+function ConfiguredDashboard({
+  userName,
+  runtimeMode,
+}: {
+  userName?: string
+  runtimeMode: RuntimeMode
+}) {
   const navigate = useNavigate()
   const [triggerOpen, setTriggerOpen] = useState(false)
   const [triggerProjectId, setTriggerProjectId] = useState<string | undefined>()
+  const canWriteIntegrations = useHasPermission('integrations', 'write')
+  const canWriteProjects = useHasPermission('projects', 'write')
+  const canWriteBuilds = useHasPermission('builds', 'write')
 
   const projectsQuery = useProjects({ limit: 50 })
   const projects = useMemo(
     () => projectsQuery.data?.projects ?? [],
     [projectsQuery.data?.projects],
+  )
+  const integrationsQuery = useIntegrations()
+  const integrations = useMemo(
+    () => integrationsQuery.data?.integrations ?? [],
+    [integrationsQuery.data?.integrations],
+  )
+  const activeIntegrationsCount = useMemo(
+    () => integrations.filter((integration) => integration.status === 'active').length,
+    [integrations],
   )
 
   const activeBuildsQuery = useBuilds({ limit: 10 })
@@ -348,6 +395,14 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
     () => recentBuildsQuery.data?.builds ?? [],
     [recentBuildsQuery.data?.builds],
   )
+  const hasProjects = projects.length > 0
+  const needsSourceConnection = runtimeMode !== 'local'
+  const integrationsResolved =
+    !integrationsQuery.isLoading && !integrationsQuery.error
+  const missingIntegration =
+    needsSourceConnection && integrationsResolved && activeIntegrationsCount === 0
+  const integrationConnectTo = '/settings/integrations'
+  const canShowRunBuild = canWriteBuilds && !missingIntegration && hasProjects
 
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
@@ -376,10 +431,12 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
         title={userName ? `Welcome, ${userName.split('@')[0]}` : 'Dashboard'}
         description="Project overview and build activity."
         actions={
-          <Button onClick={handleGlobalTrigger}>
-            <HugeiconsIcon icon={PlayIcon} size={16} />
-            Run Build
-          </Button>
+          canShowRunBuild ? (
+            <Button onClick={handleGlobalTrigger}>
+              <HugeiconsIcon icon={PlayIcon} size={16} />
+              Run Build
+            </Button>
+          ) : undefined
         }
       />
 
@@ -411,7 +468,12 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Projects
           </h2>
-          <Button variant="ghost" size="sm" render={<Link to="/projects" />} nativeButton={false}>
+          <Button
+            variant="ghost"
+            size="sm"
+            render={<Link to="/projects" />}
+            nativeButton={false}
+          >
             View all
             <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
           </Button>
@@ -425,17 +487,38 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
           </div>
         ) : projects.length === 0 ? (
           <Card>
-            <CardContent className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">No projects yet.</p>
-              <Button
-                size="sm"
-                className="mt-3"
-                render={<Link to="/projects" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Add01Icon} size={14} />
-                Create project
-              </Button>
+            <CardContent className="space-y-3 py-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                {missingIntegration
+                  ? 'Connect a source to create your first project.'
+                  : 'No projects yet.'}
+              </p>
+              {missingIntegration ? (
+                canWriteIntegrations ? (
+                  <Button
+                    render={<Link to={integrationConnectTo} />}
+                    nativeButton={false}
+                  >
+                    Connect Source
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Owner/Admin required to connect a source.
+                  </p>
+                )
+              ) : canWriteProjects ? (
+                <Button
+                  render={<Link to="/projects" search={{ openCreate: '1' }} />}
+                  nativeButton={false}
+                >
+                  <HugeiconsIcon icon={Add01Icon} size={14} />
+                  Create Project
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Owner/Admin/Developer required to create projects.
+                </p>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -458,7 +541,12 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Recent Builds
           </h2>
-          <Button variant="ghost" size="sm" render={<Link to="/builds" />} nativeButton={false}>
+          <Button
+            variant="ghost"
+            size="sm"
+            render={<Link to="/builds" />}
+            nativeButton={false}
+          >
             View all
             <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
           </Button>
@@ -475,9 +563,7 @@ function ConfiguredDashboard({ userName }: { userName?: string }) {
         ) : recentBuilds.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                No builds yet. Trigger one to get started.
-              </p>
+              <p className="text-sm text-muted-foreground">No builds yet.</p>
             </CardContent>
           </Card>
         ) : (

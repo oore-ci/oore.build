@@ -44,7 +44,7 @@ Dependency: Foundation complete.
 - [x] **R0.4 [P0] Local source integration (`local_git`)** - Add local repository integration API/UI and validation for path-based git repositories.
 - [x] **R0.5 [P0] Mode-gated provider integrations** - GitHub/GitLab setup and webhook paths are remote-mode-gated server-side, and local-mode UI now blocks provider connect actions.
 - [x] **R0.6 [P0] Build source correctness gate** - Build creation now blocks source-missing/unresolvable projects, enforces checkout target presence (branch/commit/default branch), and UI build-trigger flows block source-less projects.
-- [ ] **R0.7 [P0] Remote mode enable flow** - Add explicit operator-controlled remote enable action with preflight checks and guidance.
+- [x] **R0.7 [P0] Remote mode enable flow** - Added owner-only External Access toggle with hard backend preflight checks, deterministic failure codes, and readiness guidance in Preferences.
 
 Exit criteria:
 - First-run setup succeeds fully on localhost with no public internet exposure.
