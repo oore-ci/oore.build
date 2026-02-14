@@ -137,8 +137,6 @@ const externalAccessOidcSchema = z.object({
 
 type ExternalAccessOidcFormValues = z.infer<typeof externalAccessOidcSchema>
 
-const OIDC_DOCS_URL = 'https://docs.oore.build/guides/oidc'
-
 function guidanceForPreflight(checkId: string, failureCode?: string): string {
   if (failureCode === 'external_access_public_url_missing') {
     return 'Set a non-loopback HTTPS Public URL in External Access network settings.'
@@ -313,7 +311,7 @@ function PreferencesPage() {
       {
         onSuccess: () => {
           toast.success('External Access network settings saved.')
-          setReadinessOpen(true)
+          setNetworkEditorOpen(false)
           void preflightQuery.refetch()
         },
         onError: (error) => {
@@ -352,7 +350,6 @@ function PreferencesPage() {
           toast.success(`OIDC configured: ${response.discovered_issuer}`)
           setOidcDialogOpen(false)
           externalAccessOidcForm.setValue('client_secret', '')
-          setReadinessOpen(true)
           void preflightQuery.refetch()
         },
         onError: (error) => {
@@ -380,6 +377,19 @@ function PreferencesPage() {
     () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],
     [preflightQuery.data?.checks],
   )
+  const readinessById = useMemo(() => {
+    const entries = preflightQuery.data?.checks ?? []
+    return new Map(entries.map((check) => [check.id, check]))
+  }, [preflightQuery.data?.checks])
+  const setupReady = readinessById.get('setup_ready')?.ok ?? false
+  const oidcReady = readinessById.get('oidc_configured')?.ok ?? false
+  const networkReady =
+    (readinessById.get('public_url_https')?.ok ?? false) &&
+    (readinessById.get('public_origin_allowed')?.ok ?? false) &&
+    (readinessById.get('redirect_policy_consistent')?.ok ?? false)
+  const readinessReady = preflightQuery.data?.ready ?? false
+  const setupStepsComplete = Number(networkReady) + Number(oidcReady)
+  const setupStepCount = 2
 
   function handleExternalAccessToggle() {
     if (!preferences || updatePreferencesMutation.isPending || !isOwner) return
@@ -436,9 +446,14 @@ function PreferencesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            External Access
-          </CardTitle>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              External Access
+            </CardTitle>
+            <Badge variant={externalAccessEnabled ? 'default' : 'secondary'}>
+              {externalAccessEnabled ? 'External Access' : 'Local Only'}
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3 border p-3">
@@ -446,13 +461,32 @@ function PreferencesPage() {
               <p className="text-sm font-medium">Current access</p>
               <p className="text-xs text-muted-foreground">
                 {externalAccessEnabled
-                  ? 'External Access is active. Sign-in uses OIDC and your configured HTTPS public origin.'
+                  ? 'Sign-in from network paths is active and uses OIDC.'
                   : 'Local Only is active. Sign-in is limited to localhost on this machine.'}
               </p>
             </div>
-            <Badge variant={externalAccessEnabled ? 'default' : 'secondary'}>
-              {externalAccessEnabled ? 'External Access' : 'Local Only'}
-            </Badge>
+            {isOwner ? (
+              <Button
+                type="button"
+                onClick={handleExternalAccessToggle}
+                disabled={
+                  updatePreferencesMutation.isPending ||
+                  (!externalAccessEnabled &&
+                    (!readinessReady || preflightQuery.isLoading))
+                }
+              >
+                {updatePreferencesMutation.isPending ? (
+                  <>
+                    <Spinner className="size-4" />
+                    Saving...
+                  </>
+                ) : externalAccessEnabled ? (
+                  'Turn Off External Access'
+                ) : (
+                  'Turn On External Access'
+                )}
+              </Button>
+            ) : null}
           </div>
 
           {!isOwner ? (
@@ -469,150 +503,94 @@ function PreferencesPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      External Access network settings
+                      Setup Steps
                     </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Configure Public URL and allowed frontend origins used by
-                      External Access.
-                    </p>
+                    {preflightQuery.isLoading ? (
+                      <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                        <Spinner className="size-4" />
+                        Checking requirements...
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {setupStepsComplete}/{setupStepCount} setup steps ready.
+                      </p>
+                    )}
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setNetworkEditorOpen((current) => !current)}
-                    disabled={networkSettingsQuery.isLoading}
-                  >
-                    {networkEditorOpen ? 'Hide editor' : 'Edit network settings'}
-                  </Button>
+                  <Badge variant={readinessReady ? 'success' : 'secondary'}>
+                    {readinessReady
+                      ? 'Ready to enable'
+                      : `${setupStepsComplete}/${setupStepCount} ready`}
+                  </Badge>
                 </div>
 
-                {networkSettingsQuery.isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </div>
-                ) : null}
-
-                {networkSettingsQuery.error ? (
-                  <Alert variant="destructive">
-                    <AlertDescription>
-                      Failed to load network settings:{' '}
-                      {networkSettingsQuery.error.message}
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
-
-                {networkSettings && !networkEditorOpen ? (
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    <p>
-                      <span className="font-medium text-foreground">
-                        Public URL:
-                      </span>{' '}
-                      {networkSettings.public_url ?? 'Not set'}
-                    </p>
-                    <p>
-                      <span className="font-medium text-foreground">
-                        Allowed origins:
-                      </span>{' '}
-                      {networkSettings.allowed_origins.length}
-                    </p>
-                    <p>
-                      <span className="font-medium text-foreground">Source:</span>{' '}
-                      {networkSettings.source}
-                    </p>
-                  </div>
-                ) : null}
-
-                {networkEditorOpen ? (
-                  <Form {...externalAccessNetworkForm}>
-                    <form
-                      onSubmit={externalAccessNetworkForm.handleSubmit(
-                        onSubmitExternalAccessNetwork,
-                      )}
-                      className="space-y-4 border-t pt-3"
-                    >
-                      <FormField
-                        control={externalAccessNetworkForm.control}
-                        name="public_url"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Public URL (HTTPS)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="url"
-                                placeholder="https://ci.example.com"
-                                {...field}
-                                disabled={
-                                  updateNetworkSettingsMutation.isPending ||
-                                  !isOwner
-                                }
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Required before enabling External Access. Must be
-                              non-loopback and HTTPS.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={externalAccessNetworkForm.control}
-                        name="allowed_origins"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Allowed frontend origins</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                rows={5}
-                                placeholder="http://localhost:3000&#10;http://127.0.0.1:3000&#10;https://ci.example.com"
-                                {...field}
-                                disabled={
-                                  updateNetworkSettingsMutation.isPending ||
-                                  !isOwner
-                                }
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Enter one origin per line (or comma-separated).
-                              Include the Public URL origin.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => setNetworkEditorOpen(false)}
-                          disabled={updateNetworkSettingsMutation.isPending}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          type="submit"
-                          disabled={
-                            !isOwner || updateNetworkSettingsMutation.isPending
-                          }
-                        >
-                          {updateNetworkSettingsMutation.isPending ? (
-                            <>
-                              <Spinner className="size-4" />
-                              Saving...
-                            </>
-                          ) : (
-                            'Save network settings'
-                          )}
-                        </Button>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setNetworkEditorOpen(true)}
+                    disabled={!isOwner || networkSettingsQuery.isLoading}
+                    className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">1. Network</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {networkSettings?.public_url ?? 'Set Public URL and allowed origins.'}
+                        </p>
                       </div>
-                    </form>
-                  </Form>
-                ) : null}
+                      <Badge variant={networkReady ? 'success' : 'outline'}>
+                        {networkReady ? 'Ready' : 'Setup'}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {networkSettings?.allowed_origins.length ?? 0} allowed origins
+                    </p>
+                    <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                      Configure
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setOidcDialogOpen(true)}
+                    disabled={!isOwner}
+                    className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">2. Identity</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {oidcReady ? 'OIDC provider configured.' : 'Configure OIDC provider.'}
+                        </p>
+                      </div>
+                      <Badge variant={oidcReady ? 'success' : 'outline'}>
+                        {oidcReady ? 'Ready' : 'Setup'}
+                      </Badge>
+                    </div>
+                    <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                      Configure
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                    </p>
+                  </button>
+                </div>
               </div>
+
+              {!setupReady ? (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    Complete setup before enabling External Access.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {networkSettingsQuery.error ? (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    Failed to load network settings:{' '}
+                    {networkSettingsQuery.error.message}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
               <Collapsible
                 open={readinessOpen}
@@ -622,24 +600,24 @@ function PreferencesPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      External Access readiness
+                      Technical checks
                     </p>
                     {preflightQuery.isLoading ? (
                       <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
                         <Spinner className="size-4" />
-                        Checking requirements...
+                        Checking...
                       </p>
                     ) : preflightQuery.error ? (
                       <p className="mt-1 text-sm text-destructive">
-                        Readiness check failed. Review details.
+                        Check run failed.
                       </p>
                     ) : preflightQuery.data?.ready ? (
                       <p className="mt-1 text-sm text-muted-foreground">
-                        All required checks are passing.
+                        All checks are passing.
                       </p>
                     ) : (
                       <p className="mt-1 text-sm text-muted-foreground">
-                        {failedReadinessChecks.length} requirement
+                        {failedReadinessChecks.length} check
                         {failedReadinessChecks.length === 1 ? '' : 's'} need
                         attention.
                       </p>
@@ -650,7 +628,7 @@ function PreferencesPage() {
                       icon={readinessOpen ? ArrowDown01Icon : ArrowRight01Icon}
                       size={14}
                     />
-                    {readinessOpen ? 'Hide readiness' : 'Review readiness'}
+                    {readinessOpen ? 'Hide checks' : 'Show checks'}
                   </CollapsibleTrigger>
                 </div>
 
@@ -690,58 +668,13 @@ function PreferencesPage() {
                                         check.failure_code,
                                       )}
                                 </p>
-
-                                {!check.ok ? (
-                                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                                    {check.id === 'oidc_configured' ? (
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => setOidcDialogOpen(true)}
-                                        disabled={!isOwner}
-                                      >
-                                        Configure OIDC
-                                      </Button>
-                                    ) : null}
-
-                                    {(check.id === 'public_url_https' ||
-                                      check.id === 'public_origin_allowed' ||
-                                      check.id ===
-                                        'redirect_policy_consistent') ? (
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => {
-                                          setNetworkEditorOpen(true)
-                                          setReadinessOpen(true)
-                                        }}
-                                        disabled={networkSettingsQuery.isLoading}
-                                      >
-                                        Edit network settings
-                                      </Button>
-                                    ) : null}
-
-                                    {check.id === 'oidc_configured' ? (
-                                      <a
-                                        href={OIDC_DOCS_URL}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs text-primary underline underline-offset-2"
-                                      >
-                                        Open guide
-                                      </a>
-                                    ) : null}
-                                  </div>
-                                ) : null}
                               </div>
                             </div>
                             <Badge
-                              variant={check.ok ? 'success' : 'destructive'}
+                              variant={check.ok ? 'success' : 'warning'}
                               className="mt-0.5"
                             >
-                              {check.ok ? 'Ready' : 'Action needed'}
+                              {check.ok ? 'Ready' : 'Needs setup'}
                             </Badge>
                           </div>
                         </div>
@@ -751,37 +684,139 @@ function PreferencesPage() {
               </Collapsible>
             </>
           ) : (
-            <p className="text-xs text-muted-foreground">
-              External Access is active. You can disable it at any time to
-              return to Local Only.
-            </p>
-          )}
+            <div className="space-y-3 border p-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Manage External Access
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setNetworkEditorOpen(true)}
+                  disabled={!isOwner || networkSettingsQuery.isLoading}
+                  className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <p className="text-sm font-medium">Network settings</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {networkSettings?.public_url ?? 'Set Public URL and allowed origins.'}
+                  </p>
+                  <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                    Edit
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                  </p>
+                </button>
 
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              onClick={handleExternalAccessToggle}
-              disabled={
-                !isOwner ||
-                updatePreferencesMutation.isPending ||
-                (!externalAccessEnabled &&
-                  (!preflightQuery.data?.ready || preflightQuery.isLoading))
-              }
-            >
-              {updatePreferencesMutation.isPending ? (
-                <>
-                  <Spinner className="size-4" />
-                  Saving...
-                </>
-              ) : externalAccessEnabled ? (
-                'Turn Off External Access'
-              ) : (
-                'Turn On External Access'
-              )}
-            </Button>
-          </div>
+                <button
+                  type="button"
+                  onClick={() => setOidcDialogOpen(true)}
+                  disabled={!isOwner}
+                  className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <p className="text-sm font-medium">Identity settings</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Update issuer and client credentials.
+                  </p>
+                  <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                    Edit
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                  </p>
+                </button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      <Dialog open={networkEditorOpen} onOpenChange={setNetworkEditorOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>External Access Network Settings</DialogTitle>
+            <DialogDescription>
+              Configure the public endpoint and allowed frontend origins.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Form {...externalAccessNetworkForm}>
+            <form
+              onSubmit={externalAccessNetworkForm.handleSubmit(
+                onSubmitExternalAccessNetwork,
+              )}
+              className="space-y-4"
+            >
+              <FormField
+                control={externalAccessNetworkForm.control}
+                name="public_url"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Public URL (HTTPS)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="url"
+                        placeholder="https://ci.example.com"
+                        {...field}
+                        disabled={
+                          updateNetworkSettingsMutation.isPending || !isOwner
+                        }
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Must be non-loopback and HTTPS.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={externalAccessNetworkForm.control}
+                name="allowed_origins"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Allowed frontend origins</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={5}
+                        placeholder="http://localhost:3000&#10;http://127.0.0.1:3000&#10;https://ci.example.com"
+                        {...field}
+                        disabled={
+                          updateNetworkSettingsMutation.isPending || !isOwner
+                        }
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      One origin per line (or comma-separated).
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setNetworkEditorOpen(false)}
+                  disabled={updateNetworkSettingsMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!isOwner || updateNetworkSettingsMutation.isPending}
+                >
+                  {updateNetworkSettingsMutation.isPending ? (
+                    <>
+                      <Spinner className="size-4" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Network Settings'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={oidcDialogOpen} onOpenChange={setOidcDialogOpen}>
         <DialogContent>

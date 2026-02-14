@@ -6,28 +6,27 @@
 
 ## Problem
 
-External Access readiness checks surfaced failures, but key failures were not
-resolvable from the product UI. In local-first instances, `oidc_configured`
-could be a dead end after setup reached `ready`, blocking External Access
-enablement without a clear in-product fix path.
+The Preferences view for External Access had become overly verbose and
+diagnostic-heavy. Owners saw repeated messages/actions across multiple
+sections, weak sequencing, and unclear next steps for enablement.
 
 ## User Impact
 
-- Owners can now configure OIDC for External Access directly from
-  Preferences after setup is complete.
-- Readiness rows now include direct actions (configure OIDC, copy env
-  templates, open docs), reducing trial-and-error and setup confusion.
-- External Access activation remains fail-closed but is now operationally
-  actionable.
+- Owners now get a clear sequence: configure network, configure OIDC, enable.
+- The primary action (`Turn On External Access`) stays visible and gated by
+  readiness state.
+- Detailed preflight diagnostics remain available but are collapsed by
+  default, reducing cognitive load.
 
 ## UI Changes
 
 - `apps/web/src/routes/settings/preferences.tsx`
-  - External Access readiness rows now include check-specific actions.
-  - Added owner-only OIDC configuration dialog in Preferences.
-  - Added copy helpers for `OORE_PUBLIC_URL` and `OORE_CORS_ORIGINS`
-    templates.
-  - Added direct guide links for OIDC/env configuration.
+  - Replaced dense readiness-first layout with a guided task flow.
+  - Added step cards for Network and Identity configuration.
+  - Kept a single primary enable/disable action in the current-access header.
+  - Moved network settings into a dialog (parallel to OIDC dialog) to keep
+    the page concise.
+  - Kept preflight checks behind a collapsible `Technical checks` panel.
 
 ## API Changes
 
@@ -60,8 +59,10 @@ enablement without a clear in-product fix path.
 ## Acceptance Criteria
 
 - [x] Owner can configure OIDC for External Access from Preferences after setup is `ready`.
+- [x] Owner can configure External Access network settings in-product from Preferences.
 - [x] Non-owner receives `external_access_owner_required` when calling the new endpoint.
-- [x] Readiness UI provides direct actions for failed checks.
+- [x] External Access UI provides a guided step sequence with direct actions.
+- [x] Preflight diagnostics remain available without dominating the main flow.
 - [x] External Access enablement behavior remains fail-closed and owner-only.
 
 ## Owner
