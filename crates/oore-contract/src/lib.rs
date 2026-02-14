@@ -1326,6 +1326,36 @@ pub struct ExternalAccessPreflightResponse {
     pub checks: Vec<ExternalAccessPreflightCheck>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAccessNetworkSource {
+    Database,
+    Environment,
+    Default,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ExternalAccessNetworkSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
+    pub allowed_origins: Vec<String>,
+    pub source: ExternalAccessNetworkSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ExternalAccessNetworkSettingsResponse {
+    pub settings: ExternalAccessNetworkSettings,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateExternalAccessNetworkSettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
+    pub allowed_origins: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ConfigureExternalAccessOidcRequest {
     pub issuer_url: String,

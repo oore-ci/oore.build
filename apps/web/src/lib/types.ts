@@ -507,6 +507,24 @@ export interface ExternalAccessPreflightResponse {
   checks: Array<ExternalAccessPreflightCheck>
 }
 
+export type ExternalAccessNetworkSource = 'database' | 'environment' | 'default'
+
+export interface ExternalAccessNetworkSettings {
+  public_url?: string
+  allowed_origins: Array<string>
+  source: ExternalAccessNetworkSource
+  updated_at?: number
+}
+
+export interface ExternalAccessNetworkSettingsResponse {
+  settings: ExternalAccessNetworkSettings
+}
+
+export interface UpdateExternalAccessNetworkSettingsRequest {
+  public_url?: string
+  allowed_origins: Array<string>
+}
+
 export interface ConfigureExternalAccessOidcRequest {
   issuer_url: string
   client_id: string

@@ -65,6 +65,72 @@ GET /v1/settings/preferences
 
 ---
 
+## Get External Access Network Settings {#get-external-access-network-settings}
+
+```
+GET /v1/settings/external-access/network
+```
+
+Returns the effective External Access network configuration used by runtime auth
+and preflight checks.
+
+**Authentication**: User session (Bearer, read access to `instance_settings`)
+
+### Response `200 OK`
+
+```json
+{
+  "settings": {
+    "public_url": "https://ci.example.com",
+    "allowed_origins": [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "https://ci.example.com"
+    ],
+    "source": "database",
+    "updated_at": 1738886400
+  }
+}
+```
+
+---
+
+## Update External Access Network Settings {#update-external-access-network-settings}
+
+```
+PUT /v1/settings/external-access/network
+```
+
+Owner-only endpoint to update External Access network settings (`public_url`,
+`allowed_origins`).
+
+**Authentication**: User session (Bearer, write access to `instance_settings`, role `owner`)
+
+### Request body
+
+```json
+{
+  "public_url": "https://ci.example.com",
+  "allowed_origins": [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://ci.example.com"
+  ]
+}
+```
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 400 | `invalid_input` | Public URL/origin format is invalid |
+| 400 | `external_access_https_required` | Public URL is not HTTPS |
+| 400 | `external_access_origin_not_allowed` | Public URL origin missing from `allowed_origins` |
+| 403 | `external_access_owner_required` | Non-owner attempted update |
+| 403 | `external_access_loopback_required` | In `local` mode, update attempted from non-loopback client |
+
+---
+
 ## External Access Preflight {#external-access-preflight}
 
 ```
@@ -85,7 +151,7 @@ Returns check-by-check readiness required before enabling External Access (`runt
       "id": "public_url_https",
       "label": "Public URL is configured with HTTPS",
       "ok": false,
-      "message": "OORE_PUBLIC_URL must use https for External Access.",
+      "message": "Public URL must use https for External Access.",
       "failure_code": "external_access_https_required"
     }
   ]

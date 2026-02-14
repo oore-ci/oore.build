@@ -75,7 +75,7 @@ function getOidcErrorMessage(error: Error | null): string | null {
           return 'This frontend URL cannot be used for OIDC callback over HTTP. Use an HTTPS frontend URL or open setup from localhost/.local.'
         }
         if (error.message.includes('origin is not in the allowed origins list')) {
-          return 'This frontend origin is not allowed by the backend. Add it to OORE_CORS_ORIGINS, restart oored, and try again.'
+          return 'This frontend origin is not allowed by the backend. Update allowed frontend origins in Preferences and try again.'
         }
         return 'OIDC callback URL is invalid. Ensure the callback path is /auth/callback.'
       default:

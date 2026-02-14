@@ -34,39 +34,6 @@ fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
-fn configured_redirect_origins() -> Vec<url::Url> {
-    let raw_origins = std::env::var("OORE_AUTH_REDIRECT_ORIGINS")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            std::env::var("OORE_CORS_ORIGINS")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-        })
-        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
-        .unwrap_or_else(|| "http://localhost:3000".to_string());
-
-    let mut origins = Vec::new();
-    for raw in raw_origins.split(',') {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match url::Url::parse(trimmed) {
-            Ok(url) => origins.push(url),
-            Err(err) => warn!(origin = trimmed, error = %err, "ignoring invalid redirect origin"),
-        }
-    }
-    if origins.is_empty() {
-        vec![
-            url::Url::parse("http://localhost:3000")
-                .expect("default redirect origin must be valid"),
-        ]
-    } else {
-        origins
-    }
-}
-
 /// `POST /v1/integrations/gitlab/start` — create GitLab integration (OAuth or token mode).
 ///
 /// - **OAuth mode**: user provides client_id + client_secret from their GitLab application.
@@ -561,7 +528,10 @@ fn open_gitlab_state(token: &str, key: &[u8]) -> Result<GitLabOAuthState, String
 }
 
 /// Validate that a redirect URL belongs to configured trusted frontend origins.
-fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+fn validate_redirect_origin(
+    url: &str,
+    allowed_origins: &[String],
+) -> Result<(), (StatusCode, Json<ApiError>)> {
     let parsed = url::Url::parse(url).map_err(|_| {
         api_err(
             StatusCode::BAD_REQUEST,
@@ -577,10 +547,13 @@ fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>
         ));
     }
 
-    let matches_allowed = configured_redirect_origins().iter().any(|candidate| {
-        parsed.scheme() == candidate.scheme()
-            && parsed.host_str() == candidate.host_str()
-            && parsed.port_or_known_default() == candidate.port_or_known_default()
+    let matches_allowed = allowed_origins.iter().any(|candidate| {
+        let Ok(candidate_url) = url::Url::parse(candidate) else {
+            return false;
+        };
+        parsed.scheme() == candidate_url.scheme()
+            && parsed.host_str() == candidate_url.host_str()
+            && parsed.port_or_known_default() == candidate_url.port_or_known_default()
     });
     if !matches_allowed {
         return Err(api_err(
@@ -619,8 +592,9 @@ pub async fn gitlab_authorize(
         ));
     }
 
-    // Validate redirect against configured frontend origin
-    validate_redirect_origin(&req.redirect_url)?;
+    // Validate redirect against configured frontend origin.
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    validate_redirect_origin(&req.redirect_url, &allowed_origins)?;
 
     let pool = {
         let store = state.store.lock().await;
@@ -696,9 +670,16 @@ pub async fn gitlab_authorize(
     })?;
 
     // Build callback URL
-    let public_url =
-        std::env::var("OORE_PUBLIC_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
-    let callback_url = format!("{}/v1/integrations/gitlab/callback", public_url);
+    let public_url = state
+        .public_url
+        .read()
+        .await
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:8787".to_string());
+    let callback_url = format!(
+        "{}/v1/integrations/gitlab/callback",
+        public_url.trim_end_matches('/')
+    );
 
     // Seal the state token
     let oauth_state = GitLabOAuthState {
@@ -812,7 +793,8 @@ pub async fn gitlab_callback(
     };
 
     // Validate the redirect_url from the sealed state against the configured frontend origin
-    if validate_redirect_origin(&oauth_state.redirect_url).is_err() {
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    if validate_redirect_origin(&oauth_state.redirect_url, &allowed_origins).is_err() {
         warn!(redirect_url = %oauth_state.redirect_url, "callback redirect_url does not match configured origin");
         return Html(error_page(
             "Invalid redirect",
@@ -908,9 +890,16 @@ async fn exchange_gitlab_code(
     };
 
     // ── Phase 2: Outbound HTTP — token exchange (no lock held) ──
-    let public_url =
-        std::env::var("OORE_PUBLIC_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());
-    let callback_url = format!("{}/v1/integrations/gitlab/callback", public_url);
+    let public_url = app_state
+        .public_url
+        .read()
+        .await
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:8787".to_string());
+    let callback_url = format!(
+        "{}/v1/integrations/gitlab/callback",
+        public_url.trim_end_matches('/')
+    );
 
     let http_client =
         build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
@@ -1101,19 +1090,25 @@ mod tests {
 
     #[test]
     fn redirect_origin_accepts_default_localhost_origin() {
-        assert!(validate_redirect_origin("http://localhost:3000/settings/integrations").is_ok());
+        let allowed = vec!["http://localhost:3000".to_string()];
+        assert!(
+            validate_redirect_origin("http://localhost:3000/settings/integrations", &allowed)
+                .is_ok()
+        );
     }
 
     #[test]
     fn redirect_origin_rejects_untrusted_origin() {
-        let err = validate_redirect_origin("https://evil.example/callback")
+        let allowed = vec!["http://localhost:3000".to_string()];
+        let err = validate_redirect_origin("https://evil.example/callback", &allowed)
             .expect_err("untrusted origin should be rejected");
         assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn redirect_origin_rejects_embedded_credentials() {
-        let err = validate_redirect_origin("http://user:pass@localhost:3000/settings")
+        let allowed = vec!["http://localhost:3000".to_string()];
+        let err = validate_redirect_origin("http://user:pass@localhost:3000/settings", &allowed)
             .expect_err("credential-bearing URL should be rejected");
         assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
     }

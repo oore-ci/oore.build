@@ -1,16 +1,18 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::net::SocketAddr;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ArtifactStorageProvider, ArtifactStorageSettingsResponse,
     ConfigureExternalAccessOidcRequest, ConfigureExternalAccessOidcResponse,
-    ExternalAccessPreflightCheck, ExternalAccessPreflightResponse, InstancePreferences,
-    InstancePreferencesResponse, KeyStorageMode, OidcConfigRecord, OidcSecretRecord, RuntimeMode,
-    SetupState,
-    UpdateArtifactStorageSettingsRequest, UpdateInstancePreferencesRequest,
+    ExternalAccessNetworkSettings, ExternalAccessNetworkSettingsResponse,
+    ExternalAccessNetworkSource, ExternalAccessPreflightCheck, ExternalAccessPreflightResponse,
+    InstancePreferences, InstancePreferencesResponse, KeyStorageMode, OidcConfigRecord,
+    OidcSecretRecord, RuntimeMode, SetupState, UpdateArtifactStorageSettingsRequest,
+    UpdateExternalAccessNetworkSettingsRequest, UpdateInstancePreferencesRequest,
 };
 use sqlx::Row;
 use tracing::{error, info};
@@ -34,6 +36,206 @@ fn trim_opt(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+pub const DEFAULT_ALLOWED_ORIGINS: [&str; 4] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+];
+
+#[derive(Debug, Clone)]
+pub struct EffectiveExternalAccessNetworkSettings {
+    pub public_url: Option<String>,
+    pub allowed_origins: Vec<String>,
+    pub source: ExternalAccessNetworkSource,
+    pub updated_at: Option<i64>,
+}
+
+pub fn default_allowed_origins() -> Vec<String> {
+    DEFAULT_ALLOWED_ORIGINS
+        .iter()
+        .map(|value| value.to_string())
+        .collect()
+}
+
+fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    for value in values {
+        if !deduped.iter().any(|existing| existing == &value) {
+            deduped.push(value);
+        }
+    }
+    deduped
+}
+
+fn normalize_origin_value(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let parsed = url::Url::parse(trimmed).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+
+    let origin = parsed.origin().ascii_serialization();
+    if origin == "null" {
+        return None;
+    }
+
+    Some(origin)
+}
+
+fn parse_allowed_origins_raw(raw: &str) -> Vec<String> {
+    dedupe_preserve_order(
+        raw.split([',', '\n'])
+            .filter_map(normalize_origin_value)
+            .collect(),
+    )
+}
+
+fn with_local_defaults(mut origins: Vec<String>) -> Vec<String> {
+    for default_origin in DEFAULT_ALLOWED_ORIGINS {
+        if !origins.iter().any(|existing| existing == default_origin) {
+            origins.push(default_origin.to_string());
+        }
+    }
+    dedupe_preserve_order(origins)
+}
+
+fn parse_db_allowed_origins(raw_json: &str) -> Vec<String> {
+    let parsed: Vec<String> = serde_json::from_str(raw_json).unwrap_or_default();
+    dedupe_preserve_order(
+        parsed
+            .into_iter()
+            .filter_map(|value| normalize_origin_value(&value))
+            .collect(),
+    )
+}
+
+pub async fn load_effective_external_access_network_settings(
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<EffectiveExternalAccessNetworkSettings> {
+    let row = sqlx::query(
+        "SELECT public_url, allowed_origins_json, updated_at \
+         FROM external_access_network_settings WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(row) = row {
+        let public_url = row
+            .try_get::<Option<String>, _>("public_url")
+            .ok()
+            .flatten()
+            .and_then(|value| trim_opt(Some(value)));
+        let allowed_origins = row
+            .try_get::<String, _>("allowed_origins_json")
+            .ok()
+            .map(|value| parse_db_allowed_origins(&value))
+            .unwrap_or_default();
+
+        return Ok(EffectiveExternalAccessNetworkSettings {
+            public_url,
+            allowed_origins: with_local_defaults(allowed_origins),
+            source: ExternalAccessNetworkSource::Database,
+            updated_at: row.try_get::<Option<i64>, _>("updated_at").ok().flatten(),
+        });
+    }
+
+    let env_public_url = std::env::var("OORE_PUBLIC_URL")
+        .ok()
+        .and_then(|value| trim_opt(Some(value)));
+    let env_origins_raw = std::env::var("OORE_CORS_ORIGINS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok());
+
+    if let Some(raw) = env_origins_raw {
+        let parsed = parse_allowed_origins_raw(&raw);
+        return Ok(EffectiveExternalAccessNetworkSettings {
+            public_url: env_public_url,
+            allowed_origins: with_local_defaults(parsed),
+            source: ExternalAccessNetworkSource::Environment,
+            updated_at: None,
+        });
+    }
+
+    Ok(EffectiveExternalAccessNetworkSettings {
+        public_url: env_public_url,
+        allowed_origins: default_allowed_origins(),
+        source: ExternalAccessNetworkSource::Default,
+        updated_at: None,
+    })
+}
+
+pub fn validate_external_access_public_url(raw: &str) -> Result<url::Url, &'static str> {
+    let parsed = url::Url::parse(raw).map_err(|_| "invalid_url")?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("invalid_url");
+    }
+
+    let host = parsed.host_str().unwrap_or_default();
+    if host.is_empty() || crate::is_loopback_host(host) {
+        return Err("loopback_host");
+    }
+    if parsed.scheme() != "https" {
+        return Err("https_required");
+    }
+
+    Ok(parsed)
+}
+
+async fn runtime_network_settings(state: &Arc<AppState>) -> EffectiveExternalAccessNetworkSettings {
+    let public_url = state.public_url.read().await.clone();
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    EffectiveExternalAccessNetworkSettings {
+        public_url,
+        allowed_origins,
+        source: ExternalAccessNetworkSource::Database,
+        updated_at: None,
+    }
+}
+
+fn network_settings_response(
+    settings: EffectiveExternalAccessNetworkSettings,
+) -> ExternalAccessNetworkSettingsResponse {
+    ExternalAccessNetworkSettingsResponse {
+        settings: ExternalAccessNetworkSettings {
+            public_url: settings.public_url,
+            allowed_origins: settings.allowed_origins,
+            source: settings.source,
+            updated_at: settings.updated_at,
+        },
+    }
+}
+
+fn normalize_requested_allowed_origins(
+    values: Vec<String>,
+) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let Some(origin) = normalize_origin_value(&value) else {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                format!("invalid allowed origin: {}", value.trim()),
+            ));
+        };
+        if !normalized.iter().any(|existing| existing == &origin) {
+            normalized.push(origin);
+        }
+    }
+
+    Ok(with_local_defaults(normalized))
 }
 
 pub async fn load_key_storage_mode(pool: &sqlx::SqlitePool) -> anyhow::Result<KeyStorageMode> {
@@ -155,10 +357,8 @@ async fn evaluate_external_access_preflight(
     };
     checks.push(oidc_check);
 
-    let public_url_raw = std::env::var("OORE_PUBLIC_URL")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let network_settings = runtime_network_settings(state).await;
+    let public_url_raw = network_settings.public_url.clone();
 
     let mut parsed_public_url: Option<url::Url> = None;
     checks.push(match public_url_raw {
@@ -166,44 +366,39 @@ async fn evaluate_external_access_preflight(
             "public_url_https",
             "Public URL is configured with HTTPS",
             false,
-            "Set OORE_PUBLIC_URL to a non-loopback HTTPS URL before enabling External Access.",
+            "Set External Access public URL to a non-loopback HTTPS URL before enabling External Access.",
             Some("external_access_public_url_missing"),
         ),
-        Some(raw) => match url::Url::parse(&raw) {
+        Some(raw) => match validate_external_access_public_url(&raw) {
             Ok(parsed) => {
-                let host = parsed.host_str().unwrap_or_default();
-                if host.is_empty() || crate::is_loopback_host(host) {
-                    build_external_access_check(
-                        "public_url_https",
-                        "Public URL is configured with HTTPS",
-                        false,
-                        "OORE_PUBLIC_URL must resolve to a non-loopback host for External Access.",
-                        Some("external_access_public_url_missing"),
-                    )
-                } else if parsed.scheme() != "https" {
-                    build_external_access_check(
-                        "public_url_https",
-                        "Public URL is configured with HTTPS",
-                        false,
-                        "OORE_PUBLIC_URL must use https for External Access.",
-                        Some("external_access_https_required"),
-                    )
-                } else {
-                    parsed_public_url = Some(parsed);
-                    build_external_access_check(
-                        "public_url_https",
-                        "Public URL is configured with HTTPS",
-                        true,
-                        "Public URL is HTTPS and non-loopback.",
-                        None,
-                    )
-                }
+                parsed_public_url = Some(parsed);
+                build_external_access_check(
+                    "public_url_https",
+                    "Public URL is configured with HTTPS",
+                    true,
+                    "Public URL is HTTPS and non-loopback.",
+                    None,
+                )
             }
+            Err("loopback_host") => build_external_access_check(
+                "public_url_https",
+                "Public URL is configured with HTTPS",
+                false,
+                "Public URL must resolve to a non-loopback host for External Access.",
+                Some("external_access_public_url_missing"),
+            ),
+            Err("https_required") => build_external_access_check(
+                "public_url_https",
+                "Public URL is configured with HTTPS",
+                false,
+                "Public URL must use https for External Access.",
+                Some("external_access_https_required"),
+            ),
             Err(_) => build_external_access_check(
                 "public_url_https",
                 "Public URL is configured with HTTPS",
                 false,
-                "OORE_PUBLIC_URL must be a valid URL.",
+                "Public URL must be a valid URL.",
                 Some("external_access_public_url_missing"),
             ),
         },
@@ -211,7 +406,7 @@ async fn evaluate_external_access_preflight(
 
     checks.push(if let Some(public_url) = parsed_public_url.as_ref() {
         let origin = public_url.origin().ascii_serialization();
-        if state
+        if network_settings
             .allowed_origins
             .iter()
             .any(|allowed| allowed == &origin)
@@ -228,10 +423,7 @@ async fn evaluate_external_access_preflight(
                 "public_origin_allowed",
                 "Public URL origin is allowlisted in CORS",
                 false,
-                format!(
-                    "Add {} to OORE_CORS_ORIGINS before enabling External Access.",
-                    origin
-                ),
+                format!("Add {} to allowed origins before enabling External Access.", origin),
                 Some("external_access_origin_not_allowed"),
             )
         }
@@ -250,7 +442,7 @@ async fn evaluate_external_access_preflight(
             "{}/auth/callback",
             public_url.origin().ascii_serialization()
         );
-        match crate::validate_redirect_uri(&redirect_uri, &state.allowed_origins) {
+        match crate::validate_redirect_uri(&redirect_uri, &network_settings.allowed_origins) {
             Ok(()) => build_external_access_check(
                 "redirect_policy_consistent",
                 "Redirect policy is consistent with allowed origins",
@@ -497,7 +689,8 @@ pub async fn update_artifact_storage_settings(
     .await;
 
     // Hot-reload backend so changes apply without daemon restart.
-    let backend = storage::load_backend(&pool, &state.encryption_key).await;
+    let runtime_public_url = state.public_url.read().await.clone();
+    let backend = storage::load_backend(&pool, &state.encryption_key, runtime_public_url).await;
     {
         let mut guard = state.storage.write().await;
         *guard = backend;
@@ -563,6 +756,182 @@ pub async fn get_instance_preferences(
         KeyStorageMode::File,
         RuntimeMode::Local,
         None,
+    )))
+}
+
+pub async fn get_external_access_network_settings(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> ApiResult<ExternalAccessNetworkSettingsResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+
+    let settings = load_effective_external_access_network_settings(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load external access network settings");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load External Access network settings",
+            )
+        })?;
+
+    Ok(Json(network_settings_response(settings)))
+}
+
+pub async fn update_external_access_network_settings(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    auth: AuthUser,
+    Json(req): Json<UpdateExternalAccessNetworkSettingsRequest>,
+) -> ApiResult<ExternalAccessNetworkSettingsResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "instance_settings", "write").await?;
+
+    if auth.0.role != "owner" {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "external_access_owner_required",
+            "Only the owner can update External Access network settings",
+        ));
+    }
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+
+    let runtime_mode = load_runtime_mode(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to load runtime mode for external access network update");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to determine runtime mode",
+        )
+    })?;
+    if runtime_mode == RuntimeMode::Local && !crate::is_loopback_client(peer_addr) {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "external_access_loopback_required",
+            "External Access network settings can only be changed from loopback while in Local Only mode",
+        ));
+    }
+
+    let mut public_url = trim_opt(req.public_url);
+    let allowed_origins = normalize_requested_allowed_origins(req.allowed_origins)?;
+    if let Some(raw) = public_url.as_ref() {
+        let parsed = validate_external_access_public_url(raw).map_err(|reason| match reason {
+            "https_required" => api_err(
+                StatusCode::BAD_REQUEST,
+                "external_access_https_required",
+                "Public URL must use https for External Access",
+            ),
+            "loopback_host" => api_err(
+                StatusCode::BAD_REQUEST,
+                "external_access_public_url_missing",
+                "Public URL must resolve to a non-loopback host",
+            ),
+            _ => api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "Public URL is not valid",
+            ),
+        })?;
+
+        let public_origin = parsed.origin().ascii_serialization();
+        if !allowed_origins
+            .iter()
+            .any(|allowed| allowed == &public_origin)
+        {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "external_access_origin_not_allowed",
+                format!(
+                    "Public URL origin {} must be included in allowed origins",
+                    public_origin
+                ),
+            ));
+        }
+
+        public_url = Some(raw.trim_end_matches('/').to_string());
+    }
+
+    let now = now_unix();
+    let allowed_origins_json = serde_json::to_string(&allowed_origins).map_err(|e| {
+        error!(error = %e, "failed to serialize allowed origins");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to serialize allowed origins",
+        )
+    })?;
+
+    sqlx::query(
+        "INSERT INTO external_access_network_settings (id, public_url, allowed_origins_json, updated_by, created_at, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(id) DO UPDATE SET
+            public_url = excluded.public_url,
+            allowed_origins_json = excluded.allowed_origins_json,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at",
+    )
+    .bind(public_url.clone())
+    .bind(allowed_origins_json)
+    .bind(&auth.0.user_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to persist external access network settings");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update External Access network settings",
+        )
+    })?;
+
+    {
+        let mut runtime_public_url = state.public_url.write().await;
+        *runtime_public_url = public_url.clone();
+    }
+    {
+        let mut runtime_allowed_origins = state.allowed_origins.write().await;
+        *runtime_allowed_origins = allowed_origins.clone();
+    }
+    // Hot-reload storage backend because local artifact links depend on public_base_url.
+    let backend =
+        storage::load_backend(&pool, &state.encryption_key, public_url.clone()).await;
+    {
+        let mut guard = state.storage.write().await;
+        *guard = backend;
+    }
+
+    let details = serde_json::json!({
+        "public_url": public_url,
+        "allowed_origins": allowed_origins,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        &pool,
+        Some(&auth.0.user_id),
+        "external_access_network_settings_updated",
+        "instance_settings",
+        Some("external_access"),
+        Some(&details),
+    )
+    .await;
+
+    Ok(Json(network_settings_response(
+        EffectiveExternalAccessNetworkSettings {
+            public_url,
+            allowed_origins,
+            source: ExternalAccessNetworkSource::Database,
+            updated_at: Some(now),
+        },
     )))
 }
 

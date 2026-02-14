@@ -282,8 +282,9 @@ pub async fn oidc_start(
         .redirect_uri
         .unwrap_or_else(|| "http://127.0.0.1:8787/v1/auth/oidc/callback".to_string());
 
-    // Validate redirect_uri to prevent open redirects
-    crate::validate_redirect_uri(&redirect_uri, &state.allowed_origins)?;
+    // Validate redirect_uri to prevent open redirects.
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    crate::validate_redirect_uri(&redirect_uri, &allowed_origins)?;
 
     // Parse issuer URL
     let issuer = IssuerUrl::new(oidc_config.issuer_url).map_err(|e| {

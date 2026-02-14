@@ -237,9 +237,13 @@ function LoginPage() {
         } else if (e.code === 'external_access_https_required') {
           setError('External Access requires an HTTPS public URL.')
         } else if (e.code === 'external_access_origin_not_allowed') {
-          setError('External Access origin is not allowlisted in CORS settings.')
+          setError(
+            'External Access Public URL origin is not included in allowed frontend origins.',
+          )
         } else if (e.code === 'external_access_public_url_missing') {
-          setError('Set OORE_PUBLIC_URL before enabling External Access.')
+          setError(
+            'Set External Access Public URL in Preferences on the host machine before enabling External Access.',
+          )
         } else if (e.code === 'external_access_preflight_failed') {
           setError(
             'External Access preflight checks are failing. Resolve setup and Preferences readiness checks first.',

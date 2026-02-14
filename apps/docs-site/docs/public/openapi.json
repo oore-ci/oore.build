@@ -2734,6 +2734,98 @@
         ]
       }
     },
+    "/v1/settings/external-access/network": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get External Access network settings",
+        "description": "Returns effective public URL and allowed frontend origins used by External Access checks.",
+        "operationId": "get_external_access_network_settings",
+        "responses": {
+          "200": {
+            "description": "External Access network settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAccessNetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Update External Access network settings",
+        "description": "Owner-only update for public URL and allowed frontend origins.",
+        "operationId": "update_external_access_network_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateExternalAccessNetworkSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "External Access network settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAccessNetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only or loopback-only restriction violated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/settings/external-access/oidc": {
       "put": {
         "tags": [
@@ -4710,6 +4802,56 @@
           }
         }
       },
+      "ExternalAccessNetworkSettings": {
+        "type": "object",
+        "required": [
+          "allowed_origins",
+          "source"
+        ],
+        "properties": {
+          "allowed_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExternalAccessNetworkSource"
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "ExternalAccessNetworkSettingsResponse": {
+        "type": "object",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/ExternalAccessNetworkSettings"
+          }
+        }
+      },
+      "ExternalAccessNetworkSource": {
+        "type": "string",
+        "enum": [
+          "database",
+          "environment",
+          "default"
+        ]
+      },
       "ExternalAccessPreflightCheck": {
         "type": "object",
         "required": [
@@ -6508,6 +6650,26 @@
             ]
           },
           "secret_access_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdateExternalAccessNetworkSettingsRequest": {
+        "type": "object",
+        "required": [
+          "allowed_origins"
+        ],
+        "properties": {
+          "allowed_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public_url": {
             "type": [
               "string",
               "null"

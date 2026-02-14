@@ -17,6 +17,7 @@ import type {
   CreateProjectResponse,
   ConfigureExternalAccessOidcRequest,
   ConfigureExternalAccessOidcResponse,
+  ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
   GitHubAppCompleteRequest,
   GitHubAppCompleteResponse,
@@ -58,6 +59,7 @@ import type {
   SetupSummaryResponse,
   SyncInstallationsResponse,
   UpdateArtifactStorageSettingsRequest,
+  UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
@@ -615,6 +617,35 @@ export function getExternalAccessPreflight(
     '/v1/settings/external-access/preflight',
     {
       headers: authHeaders(token),
+    },
+  )
+}
+
+export function getExternalAccessNetworkSettings(
+  baseUrl: string,
+  token: string,
+): Promise<ExternalAccessNetworkSettingsResponse> {
+  return request<ExternalAccessNetworkSettingsResponse>(
+    baseUrl,
+    '/v1/settings/external-access/network',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function updateExternalAccessNetworkSettings(
+  baseUrl: string,
+  token: string,
+  data: UpdateExternalAccessNetworkSettingsRequest,
+): Promise<ExternalAccessNetworkSettingsResponse> {
+  return request<ExternalAccessNetworkSettingsResponse>(
+    baseUrl,
+    '/v1/settings/external-access/network',
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
     },
   )
 }

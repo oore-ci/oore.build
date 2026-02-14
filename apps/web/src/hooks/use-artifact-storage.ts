@@ -2,14 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type {
   ConfigureExternalAccessOidcRequest,
+  UpdateExternalAccessNetworkSettingsRequest,
   UpdateArtifactStorageSettingsRequest,
   UpdateInstancePreferencesRequest,
 } from '@/lib/types'
 import {
   configureExternalAccessOidc,
+  getExternalAccessNetworkSettings,
   getExternalAccessPreflight,
   getArtifactStorageSettings,
   getInstancePreferences,
+  updateExternalAccessNetworkSettings,
   updateArtifactStorageSettings,
   updateInstancePreferences,
 } from '@/lib/api'
@@ -128,5 +131,41 @@ export function useExternalAccessPreflight() {
     queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
     queryFn: () => getExternalAccessPreflight(baseUrl!, token!),
     enabled: !!baseUrl && !!token,
+  })
+}
+
+export function useExternalAccessNetworkSettings() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
+    queryFn: () => getExternalAccessNetworkSettings(baseUrl!, token!),
+    enabled: !!baseUrl && !!token,
+  })
+}
+
+export function useUpdateExternalAccessNetworkSettings() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (data: UpdateExternalAccessNetworkSettingsRequest) => {
+      if (!baseUrl || !token) {
+        return Promise.reject(new Error('Not authenticated'))
+      }
+      return updateExternalAccessNetworkSettings(baseUrl, token, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+      })
+    },
   })
 }

@@ -30,7 +30,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware as axum_mw;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -44,7 +44,7 @@ use oore_contract::{
 };
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use zeroize::Zeroizing;
 
 use openidconnect::core::CoreProviderMetadata;
@@ -84,8 +84,10 @@ pub struct AppState {
     pub storage: Arc<RwLock<storage::StorageBackend>>,
     /// In-memory store for short-lived SSE streaming tokens.
     pub stream_tokens: logs::StreamTokenStore,
-    /// Origins allowed for redirect URIs (derived from CORS config at startup).
-    pub allowed_origins: Vec<String>,
+    /// Origins allowed for redirect URIs and CORS.
+    pub allowed_origins: Arc<RwLock<Vec<String>>>,
+    /// Effective public base URL for externally reachable callbacks/download links.
+    pub public_url: Arc<RwLock<Option<String>>>,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -97,39 +99,6 @@ const SETUP_SESSION_TTL_SECS: i64 = 30 * 60;
 
 fn local_subject_for_email(email: &str) -> String {
     format!("local::{}", email.trim().to_lowercase())
-}
-
-fn resolve_cors_origins() -> Vec<HeaderValue> {
-    let raw_origins = std::env::var("OORE_CORS_ORIGINS")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
-        .unwrap_or_else(|| {
-            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173"
-                .to_string()
-        });
-
-    let mut parsed = Vec::new();
-    for origin in raw_origins.split(',') {
-        let trimmed = origin.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match trimmed.parse::<HeaderValue>() {
-            Ok(value) => parsed.push(value),
-            Err(err) => warn!(origin = trimmed, error = %err, "ignoring invalid CORS origin"),
-        }
-    }
-
-    if parsed.is_empty() {
-        vec![
-            "http://localhost:3000"
-                .parse()
-                .expect("localhost default origin must be valid"),
-        ]
-    } else {
-        parsed
-    }
 }
 
 /// Maximum number of concurrent pending OIDC auth requests.
@@ -630,7 +599,8 @@ async fn setup_oidc_start(
     Json(req): Json<SetupOidcStartRequest>,
 ) -> ApiResult<SetupOidcStartResponse> {
     // H5: Validate redirect_uri
-    validate_redirect_uri(&req.redirect_uri, &state.allowed_origins)?;
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    validate_redirect_uri(&req.redirect_uri, &allowed_origins)?;
 
     // Validate setup session and state
     {
@@ -1335,17 +1305,38 @@ async fn build_router_inner(
         }
     }
 
-    // Initialize artifact storage backend from DB settings (or env fallback).
-    let storage_backend = storage::load_backend(store.pool(), &encryption_key).await;
+    let external_access_network =
+        match instance_settings::load_effective_external_access_network_settings(store.pool()).await
+        {
+            Ok(settings) => settings,
+            Err(error) => {
+                warn!(error = %error, "failed to load external access network settings; falling back to defaults");
+                instance_settings::EffectiveExternalAccessNetworkSettings {
+                    public_url: None,
+                    allowed_origins: instance_settings::default_allowed_origins(),
+                    source: oore_contract::ExternalAccessNetworkSource::Default,
+                    updated_at: None,
+                }
+            }
+        };
 
-    // CORS origins from env var(s), defaults to local web + hosted UI.
-    // Resolved before AppState so we can derive allowed_origins for redirect URI validation.
-    let cors_origins = resolve_cors_origins();
-    let allowed_origins: Vec<String> = cors_origins
-        .iter()
-        .filter_map(|hv| hv.to_str().ok().map(|s| s.to_string()))
-        .collect();
-    info!(origins = ?cors_origins, "configured CORS origins");
+    let allowed_origins_state = Arc::new(RwLock::new(external_access_network.allowed_origins.clone()));
+    let public_url_state = Arc::new(RwLock::new(external_access_network.public_url.clone()));
+
+    // Initialize artifact storage backend from DB settings.
+    let storage_backend = storage::load_backend(
+        store.pool(),
+        &encryption_key,
+        external_access_network.public_url.clone(),
+    )
+    .await;
+
+    info!(
+        source = ?external_access_network.source,
+        public_url = ?external_access_network.public_url,
+        origins = ?external_access_network.allowed_origins,
+        "configured External Access network settings"
+    );
     info!(
         max_bytes = artifacts::MAX_LOCAL_UPLOAD_BYTES,
         "configured local artifact upload size limit"
@@ -1363,7 +1354,8 @@ async fn build_router_inner(
         scheduler: sched.clone(),
         storage: Arc::new(RwLock::new(storage_backend)),
         stream_tokens: logs::StreamTokenStore::new(),
-        allowed_origins,
+        allowed_origins: allowed_origins_state.clone(),
+        public_url: public_url_state,
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -1373,8 +1365,17 @@ async fn build_router_inner(
         background::start_background_tasks(pool, sched);
     }
 
+    let allowed_origins_for_cors = allowed_origins_state.clone();
     let cors = CorsLayer::new()
-        .allow_origin(cors_origins)
+        .allow_origin(AllowOrigin::predicate(move |origin, _request| {
+            let Ok(value) = origin.to_str() else {
+                return false;
+            };
+            match allowed_origins_for_cors.try_read() {
+                Ok(guard) => guard.iter().any(|allowed| allowed == value),
+                Err(_) => false,
+            }
+        }))
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -1466,6 +1467,11 @@ async fn build_router_inner(
             "/v1/settings/preferences",
             get(instance_settings::get_instance_preferences)
                 .put(instance_settings::update_instance_preferences),
+        )
+        .route(
+            "/v1/settings/external-access/network",
+            get(instance_settings::get_external_access_network_settings)
+                .put(instance_settings::update_external_access_network_settings),
         )
         .route(
             "/v1/settings/external-access/preflight",

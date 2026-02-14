@@ -54,6 +54,8 @@ use utoipa::OpenApi;
         paths::update_artifact_storage_settings,
         paths::get_instance_preferences,
         paths::update_instance_preferences,
+        paths::get_external_access_network_settings,
+        paths::update_external_access_network_settings,
         paths::get_external_access_preflight,
         paths::configure_external_access_oidc,
         // ── Integrations ──
@@ -261,6 +263,10 @@ use utoipa::OpenApi;
         // Instance Settings
         oore_contract::KeyStorageMode,
         oore_contract::RuntimeMode,
+        oore_contract::ExternalAccessNetworkSource,
+        oore_contract::ExternalAccessNetworkSettings,
+        oore_contract::ExternalAccessNetworkSettingsResponse,
+        oore_contract::UpdateExternalAccessNetworkSettingsRequest,
         oore_contract::ExternalAccessPreflightCheck,
         oore_contract::ExternalAccessPreflightResponse,
         oore_contract::ConfigureExternalAccessOidcRequest,
@@ -638,6 +644,32 @@ mod paths {
         )
     )]
     pub(super) async fn update_instance_preferences() {}
+
+    /// Get External Access network settings
+    ///
+    /// Returns effective public URL and allowed frontend origins used by External Access checks.
+    #[utoipa::path(get, path = "/v1/settings/external-access/network", tag = "Instance Settings",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "External Access network settings", body = ExternalAccessNetworkSettingsResponse),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_external_access_network_settings() {}
+
+    /// Update External Access network settings
+    ///
+    /// Owner-only update for public URL and allowed frontend origins.
+    #[utoipa::path(put, path = "/v1/settings/external-access/network", tag = "Instance Settings",
+        request_body = UpdateExternalAccessNetworkSettingsRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "External Access network settings updated", body = ExternalAccessNetworkSettingsResponse),
+            (status = 400, description = "Invalid configuration", body = ApiError),
+            (status = 403, description = "Owner-only or loopback-only restriction violated", body = ApiError),
+        )
+    )]
+    pub(super) async fn update_external_access_network_settings() {}
 
     /// Get External Access preflight readiness
     ///

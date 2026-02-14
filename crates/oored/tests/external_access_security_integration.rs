@@ -3,8 +3,10 @@
 mod common;
 
 use std::sync::{Mutex, OnceLock};
+use std::net::SocketAddr;
 
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{self, Request, StatusCode};
 use common::{body_json, connect_pool, create_test_app, now_unix};
 use tower::ServiceExt;
@@ -354,6 +356,147 @@ async fn test_owner_can_enable_external_access_and_mode_change_revokes_sessions(
         .await
         .expect("query sessions");
     assert_eq!(remaining_sessions, 0);
+}
+
+#[tokio::test]
+async fn test_external_access_network_settings_update_requires_owner() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    let admin_id = seed_user_with_role(&pool, "admin@example.com", "admin").await;
+    let admin_session = create_session_token(&pool, &admin_id).await;
+
+    let req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {admin_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41101))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "public_url": "https://ci.oore.test",
+                "allowed_origins": ["https://ci.oore.test"]
+            }))
+            .expect("serialize request"),
+        ))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.expect("network settings response");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["code"], "external_access_owner_required");
+}
+
+#[tokio::test]
+async fn test_external_access_network_settings_update_requires_loopback_in_local_mode() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+
+    let req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([10, 10, 0, 8], 41102))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "public_url": "https://ci.oore.test",
+                "allowed_origins": ["https://ci.oore.test"]
+            }))
+            .expect("serialize request"),
+        ))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.expect("network settings response");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["code"], "external_access_loopback_required");
+}
+
+#[tokio::test]
+async fn test_external_access_network_settings_update_and_readback() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+
+    let put_req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41103))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "public_url": "https://ci.oore.test",
+                "allowed_origins": ["https://ci.oore.test"]
+            }))
+            .expect("serialize request"),
+        ))
+        .unwrap();
+
+    let put_resp = app
+        .clone()
+        .oneshot(put_req)
+        .await
+        .expect("network settings put response");
+    assert_eq!(put_resp.status(), StatusCode::OK);
+    let put_body = body_json(put_resp.into_body()).await;
+    assert_eq!(
+        put_body["settings"]["public_url"].as_str(),
+        Some("https://ci.oore.test")
+    );
+    assert_eq!(put_body["settings"]["source"], "database");
+    let origins = put_body["settings"]["allowed_origins"]
+        .as_array()
+        .expect("allowed origins array");
+    assert!(origins
+        .iter()
+        .any(|origin| origin.as_str() == Some("https://ci.oore.test")));
+    assert!(origins
+        .iter()
+        .any(|origin| origin.as_str() == Some("http://localhost:3000")));
+
+    let get_req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let get_resp = app
+        .clone()
+        .oneshot(get_req)
+        .await
+        .expect("network settings get response");
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let get_body = body_json(get_resp.into_body()).await;
+    assert_eq!(
+        get_body["settings"]["public_url"].as_str(),
+        Some("https://ci.oore.test")
+    );
+    assert_eq!(get_body["settings"]["source"], "database");
 }
 
 #[tokio::test]

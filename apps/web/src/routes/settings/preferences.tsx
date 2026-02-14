@@ -8,8 +8,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
   ArrowRight01Icon,
-  Copy01Icon,
-  Tick02Icon,
   CheckmarkCircle02Icon,
   AlertCircleIcon,
 } from '@hugeicons/core-free-icons'
@@ -23,8 +21,10 @@ import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
   useExternalAccessPreflight,
+  useExternalAccessNetworkSettings,
   useArtifactStorageSettings,
   useConfigureExternalAccessOidc,
+  useUpdateExternalAccessNetworkSettings,
   useInstancePreferences,
   useUpdateArtifactStorageSettings,
   useUpdateInstancePreferences,
@@ -62,6 +62,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -136,19 +137,17 @@ const externalAccessOidcSchema = z.object({
 
 type ExternalAccessOidcFormValues = z.infer<typeof externalAccessOidcSchema>
 
-const ENV_VARS_DOCS_URL =
-  'https://docs.oore.build/reference/config/environment-variables'
 const OIDC_DOCS_URL = 'https://docs.oore.build/guides/oidc'
 
 function guidanceForPreflight(checkId: string, failureCode?: string): string {
   if (failureCode === 'external_access_public_url_missing') {
-    return 'Set OORE_PUBLIC_URL to a non-loopback URL (for example https://ci.example.com).'
+    return 'Set a non-loopback HTTPS Public URL in External Access network settings.'
   }
   if (failureCode === 'external_access_https_required') {
-    return 'Use HTTPS for OORE_PUBLIC_URL before enabling External Access.'
+    return 'Public URL must use HTTPS before enabling External Access.'
   }
   if (failureCode === 'external_access_origin_not_allowed') {
-    return 'Add the External Access origin to OORE_CORS_ORIGINS.'
+    return 'Add the Public URL origin to allowed origins in External Access network settings.'
   }
   if (checkId === 'setup_ready') {
     return 'Finish setup until the instance reaches ready state.'
@@ -162,17 +161,29 @@ function guidanceForPreflight(checkId: string, failureCode?: string): string {
   return 'Resolve this check before enabling External Access.'
 }
 
-function extractRequiredCorsOrigin(message: string): string | null {
-  const match = message.match(/Add\s+(https?:\/\/\S+)\s+to OORE_CORS_ORIGINS/i)
-  if (!match) return null
-  return match[1] ?? null
+const externalAccessNetworkSchema = z.object({
+  public_url: z.string().optional(),
+  allowed_origins: z
+    .string()
+    .min(1, 'Add at least one allowed frontend origin.'),
+})
+
+type ExternalAccessNetworkFormValues = z.infer<
+  typeof externalAccessNetworkSchema
+>
+
+function parseAllowedOriginsInput(value: string): Array<string> {
+  return value
+    .split(/[\n,]/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
 }
 
 function PreferencesPage() {
   const navigate = useNavigate()
   const [readinessOpen, setReadinessOpen] = useState(false)
+  const [networkEditorOpen, setNetworkEditorOpen] = useState(false)
   const [oidcDialogOpen, setOidcDialogOpen] = useState(false)
-  const [copiedAction, setCopiedAction] = useState<string | null>(null)
   const canWrite = useHasPermission('instance_settings', 'write')
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clearAuth)
@@ -180,7 +191,9 @@ function PreferencesPage() {
   const settingsQuery = useArtifactStorageSettings()
   const preferencesQuery = useInstancePreferences()
   const preflightQuery = useExternalAccessPreflight()
+  const networkSettingsQuery = useExternalAccessNetworkSettings()
   const configureExternalAccessOidcMutation = useConfigureExternalAccessOidc()
+  const updateNetworkSettingsMutation = useUpdateExternalAccessNetworkSettings()
   const updateStorageMutation = useUpdateArtifactStorageSettings()
   const updatePreferencesMutation = useUpdateInstancePreferences()
 
@@ -205,6 +218,13 @@ function PreferencesPage() {
       client_secret: '',
     },
   })
+  const externalAccessNetworkForm = useForm<ExternalAccessNetworkFormValues>({
+    resolver: zodResolver(externalAccessNetworkSchema),
+    defaultValues: {
+      public_url: '',
+      allowed_origins: '',
+    },
+  })
 
   const provider = storageForm.watch('provider')
 
@@ -222,6 +242,16 @@ function PreferencesPage() {
       secret_access_key: '',
     })
   }, [settingsQuery.data, storageForm])
+
+  useEffect(() => {
+    const network = networkSettingsQuery.data?.settings
+    if (!network) return
+
+    externalAccessNetworkForm.reset({
+      public_url: network.public_url ?? '',
+      allowed_origins: network.allowed_origins.join('\n'),
+    })
+  }, [networkSettingsQuery.data, externalAccessNetworkForm])
 
   function onSubmitStorage(values: StorageFormValues) {
     const payload = {
@@ -266,17 +296,44 @@ function PreferencesPage() {
     })
   }
 
-  function copyActionText(actionId: string, value: string, successLabel: string) {
-    void navigator.clipboard
-      .writeText(value)
-      .then(() => {
-        setCopiedAction(actionId)
-        toast.success(successLabel)
-        setTimeout(() => setCopiedAction((current) => (current === actionId ? null : current)), 1500)
-      })
-      .catch(() => {
-        toast.error('Failed to copy to clipboard')
-      })
+  function onSubmitExternalAccessNetwork(values: ExternalAccessNetworkFormValues) {
+    if (!isOwner) return
+
+    const allowedOrigins = parseAllowedOriginsInput(values.allowed_origins)
+    if (allowedOrigins.length === 0) {
+      toast.error('Add at least one allowed frontend origin.')
+      return
+    }
+
+    updateNetworkSettingsMutation.mutate(
+      {
+        public_url: values.public_url?.trim() || undefined,
+        allowed_origins: allowedOrigins,
+      },
+      {
+        onSuccess: () => {
+          toast.success('External Access network settings saved.')
+          setReadinessOpen(true)
+          void preflightQuery.refetch()
+        },
+        onError: (error) => {
+          toast.error(
+            getApiErrorMessage(error, {
+              external_access_owner_required:
+                'Only the owner can update External Access network settings.',
+              external_access_loopback_required:
+                'In Local Only mode, network settings can only be changed from localhost on the host machine.',
+              external_access_https_required:
+                'Public URL must use HTTPS.',
+              external_access_origin_not_allowed:
+                'Public URL origin must be included in allowed origins.',
+              invalid_input:
+                'Check Public URL and allowed origins. Each origin must be a valid http(s) origin.',
+            }),
+          )
+        },
+      },
+    )
   }
 
   function onSubmitExternalAccessOidc(values: ExternalAccessOidcFormValues) {
@@ -317,6 +374,7 @@ function PreferencesPage() {
 
   const settings = settingsQuery.data?.settings
   const preferences = preferencesQuery.data?.preferences
+  const networkSettings = networkSettingsQuery.data?.settings
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
   const failedReadinessChecks = useMemo(
     () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],
@@ -349,11 +407,11 @@ function PreferencesPage() {
             external_access_preflight_failed:
               'External Access readiness checks are failing.',
             external_access_public_url_missing:
-              'Set OORE_PUBLIC_URL to a non-loopback URL before enabling External Access.',
+              'Set a non-loopback HTTPS Public URL in External Access network settings.',
             external_access_https_required:
               'External Access requires an HTTPS public URL.',
             external_access_origin_not_allowed:
-              'External Access origin is not allowlisted in CORS configuration.',
+              'Public URL origin must be listed in allowed frontend origins.',
           })
           if (error instanceof ApiClientError && error.details) {
             toast.error(`${message} ${error.details}`)
@@ -406,64 +464,208 @@ function PreferencesPage() {
           ) : null}
 
           {!externalAccessEnabled ? (
-            <Collapsible
-              open={readinessOpen}
-              onOpenChange={setReadinessOpen}
-              className="space-y-3 border p-3"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                    External Access readiness
-                  </p>
-                  {preflightQuery.isLoading ? (
-                    <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                      <Spinner className="size-4" />
-                      Checking requirements...
+            <>
+              <div className="space-y-3 border p-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      External Access network settings
                     </p>
-                  ) : preflightQuery.error ? (
-                    <p className="mt-1 text-sm text-destructive">
-                      Readiness check failed. Review details.
-                    </p>
-                  ) : preflightQuery.data?.ready ? (
                     <p className="mt-1 text-sm text-muted-foreground">
-                      All required checks are passing.
+                      Configure Public URL and allowed frontend origins used by
+                      External Access.
                     </p>
-                  ) : (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {failedReadinessChecks.length} requirement
-                      {failedReadinessChecks.length === 1 ? '' : 's'} need
-                      attention.
-                    </p>
-                  )}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setNetworkEditorOpen((current) => !current)}
+                    disabled={networkSettingsQuery.isLoading}
+                  >
+                    {networkEditorOpen ? 'Hide editor' : 'Edit network settings'}
+                  </Button>
                 </div>
-                <CollapsibleTrigger className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-                  <HugeiconsIcon
-                    icon={readinessOpen ? ArrowDown01Icon : ArrowRight01Icon}
-                    size={14}
-                  />
-                  {readinessOpen ? 'Hide readiness' : 'Review readiness'}
-                </CollapsibleTrigger>
+
+                {networkSettingsQuery.isLoading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                ) : null}
+
+                {networkSettingsQuery.error ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      Failed to load network settings:{' '}
+                      {networkSettingsQuery.error.message}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {networkSettings && !networkEditorOpen ? (
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <p>
+                      <span className="font-medium text-foreground">
+                        Public URL:
+                      </span>{' '}
+                      {networkSettings.public_url ?? 'Not set'}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">
+                        Allowed origins:
+                      </span>{' '}
+                      {networkSettings.allowed_origins.length}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Source:</span>{' '}
+                      {networkSettings.source}
+                    </p>
+                  </div>
+                ) : null}
+
+                {networkEditorOpen ? (
+                  <Form {...externalAccessNetworkForm}>
+                    <form
+                      onSubmit={externalAccessNetworkForm.handleSubmit(
+                        onSubmitExternalAccessNetwork,
+                      )}
+                      className="space-y-4 border-t pt-3"
+                    >
+                      <FormField
+                        control={externalAccessNetworkForm.control}
+                        name="public_url"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Public URL (HTTPS)</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="url"
+                                placeholder="https://ci.example.com"
+                                {...field}
+                                disabled={
+                                  updateNetworkSettingsMutation.isPending ||
+                                  !isOwner
+                                }
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Required before enabling External Access. Must be
+                              non-loopback and HTTPS.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={externalAccessNetworkForm.control}
+                        name="allowed_origins"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Allowed frontend origins</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                rows={5}
+                                placeholder="http://localhost:3000&#10;http://127.0.0.1:3000&#10;https://ci.example.com"
+                                {...field}
+                                disabled={
+                                  updateNetworkSettingsMutation.isPending ||
+                                  !isOwner
+                                }
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Enter one origin per line (or comma-separated).
+                              Include the Public URL origin.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setNetworkEditorOpen(false)}
+                          disabled={updateNetworkSettingsMutation.isPending}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="submit"
+                          disabled={
+                            !isOwner || updateNetworkSettingsMutation.isPending
+                          }
+                        >
+                          {updateNetworkSettingsMutation.isPending ? (
+                            <>
+                              <Spinner className="size-4" />
+                              Saving...
+                            </>
+                          ) : (
+                            'Save network settings'
+                          )}
+                        </Button>
+                      </div>
+                    </form>
+                  </Form>
+                ) : null}
               </div>
 
-              {preflightQuery.error ? (
-                <Alert variant="destructive">
-                  <AlertDescription>
-                    Failed to run readiness checks: {preflightQuery.error.message}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+              <Collapsible
+                open={readinessOpen}
+                onOpenChange={setReadinessOpen}
+                className="space-y-3 border p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      External Access readiness
+                    </p>
+                    {preflightQuery.isLoading ? (
+                      <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                        <Spinner className="size-4" />
+                        Checking requirements...
+                      </p>
+                    ) : preflightQuery.error ? (
+                      <p className="mt-1 text-sm text-destructive">
+                        Readiness check failed. Review details.
+                      </p>
+                    ) : preflightQuery.data?.ready ? (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        All required checks are passing.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {failedReadinessChecks.length} requirement
+                        {failedReadinessChecks.length === 1 ? '' : 's'} need
+                        attention.
+                      </p>
+                    )}
+                  </div>
+                  <CollapsibleTrigger className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+                    <HugeiconsIcon
+                      icon={readinessOpen ? ArrowDown01Icon : ArrowRight01Icon}
+                      size={14}
+                    />
+                    {readinessOpen ? 'Hide readiness' : 'Review readiness'}
+                  </CollapsibleTrigger>
+                </div>
 
-              <CollapsibleContent className="space-y-2">
-                {preflightQuery.data
-                  ? preflightQuery.data.checks.map((check) => {
-                      const requiredCorsOrigin =
-                        check.id === 'public_origin_allowed'
-                          ? extractRequiredCorsOrigin(check.message)
-                          : null
-                      const corsTemplate = `OORE_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,${requiredCorsOrigin ?? 'https://ci.example.com'}`
+                {preflightQuery.error ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      Failed to run readiness checks:{' '}
+                      {preflightQuery.error.message}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
 
-                      return (
+                <CollapsibleContent className="space-y-2">
+                  {preflightQuery.data
+                    ? preflightQuery.data.checks.map((check) => (
                         <div key={check.id} className="border border-border/60 p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-start gap-2">
@@ -503,99 +705,27 @@ function PreferencesPage() {
                                       </Button>
                                     ) : null}
 
-                                    {check.id === 'public_url_https' ? (
+                                    {(check.id === 'public_url_https' ||
+                                      check.id === 'public_origin_allowed' ||
+                                      check.id ===
+                                        'redirect_policy_consistent') ? (
                                       <Button
                                         type="button"
                                         size="sm"
                                         variant="outline"
-                                        onClick={() =>
-                                          copyActionText(
-                                            'public-url-template',
-                                            'OORE_PUBLIC_URL=https://ci.example.com',
-                                            'OORE_PUBLIC_URL template copied',
-                                          )
-                                        }
+                                        onClick={() => {
+                                          setNetworkEditorOpen(true)
+                                          setReadinessOpen(true)
+                                        }}
+                                        disabled={networkSettingsQuery.isLoading}
                                       >
-                                        <HugeiconsIcon
-                                          icon={
-                                            copiedAction === 'public-url-template'
-                                              ? Tick02Icon
-                                              : Copy01Icon
-                                          }
-                                          size={14}
-                                        />
-                                        {copiedAction === 'public-url-template'
-                                          ? 'Copied'
-                                          : 'Copy URL template'}
+                                        Edit network settings
                                       </Button>
                                     ) : null}
 
-                                    {check.id === 'public_origin_allowed' ? (
-                                      <>
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() =>
-                                            copyActionText(
-                                              'cors-template',
-                                              corsTemplate,
-                                              'OORE_CORS_ORIGINS template copied',
-                                            )
-                                          }
-                                        >
-                                          <HugeiconsIcon
-                                            icon={
-                                              copiedAction === 'cors-template'
-                                                ? Tick02Icon
-                                                : Copy01Icon
-                                            }
-                                            size={14}
-                                          />
-                                          {copiedAction === 'cors-template'
-                                            ? 'Copied'
-                                            : 'Copy CORS template'}
-                                        </Button>
-                                        {requiredCorsOrigin ? (
-                                          <Button
-                                            type="button"
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() =>
-                                              copyActionText(
-                                                'required-origin',
-                                                requiredCorsOrigin,
-                                                'Required origin copied',
-                                              )
-                                            }
-                                          >
-                                            <HugeiconsIcon
-                                              icon={
-                                                copiedAction === 'required-origin'
-                                                  ? Tick02Icon
-                                                  : Copy01Icon
-                                              }
-                                              size={14}
-                                            />
-                                            {copiedAction === 'required-origin'
-                                              ? 'Copied'
-                                              : 'Copy required origin'}
-                                          </Button>
-                                        ) : null}
-                                      </>
-                                    ) : null}
-
-                                    {(check.id === 'oidc_configured' ||
-                                      check.id === 'public_url_https' ||
-                                      check.id === 'public_origin_allowed' ||
-                                      check.id ===
-                                        'redirect_policy_consistent') ? (
+                                    {check.id === 'oidc_configured' ? (
                                       <a
-                                        href={
-                                          check.id === 'oidc_configured'
-                                            ? OIDC_DOCS_URL
-                                            : ENV_VARS_DOCS_URL
-                                        }
+                                        href={OIDC_DOCS_URL}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-xs text-primary underline underline-offset-2"
@@ -615,11 +745,11 @@ function PreferencesPage() {
                             </Badge>
                           </div>
                         </div>
-                      )
-                    })
-                  : null}
-              </CollapsibleContent>
-            </Collapsible>
+                      ))
+                    : null}
+                </CollapsibleContent>
+              </Collapsible>
+            </>
           ) : (
             <p className="text-xs text-muted-foreground">
               External Access is active. You can disable it at any time to
