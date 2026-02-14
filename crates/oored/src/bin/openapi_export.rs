@@ -298,6 +298,7 @@ fn main() {
 // They map 1:1 to the real Axum handlers but exist solely so utoipa
 // can generate accurate path items without touching the handler code.
 
+#[allow(dead_code)]
 mod paths {
     use oore_contract::*;
 
