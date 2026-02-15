@@ -48,7 +48,7 @@ if [[ -n "$BASE_SHA" ]]; then
     while IFS= read -r file; do
       [[ -z "$file" ]] && continue
 
-      if [[ "$file" =~ ^(apps/|crates/|backend/|frontend/|src/|oore/|oored/|runner/|scripts/) ]]; then
+      if [[ "$file" =~ ^(apps/|crates/|backend/|frontend/|src/|oore/|oored/|runner/|tools/|\\.woodpecker/) ]]; then
         code_changed="true"
       fi
 

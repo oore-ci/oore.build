@@ -14,6 +14,5 @@ keep project tracking + documentation in one place.
 
 ## Repo Requirements
 
-- If you change product behavior (apps/, crates/, scripts/, etc.), update `docs/changes.md` in the same PR.
+- If you change product behavior (apps/, crates/, tools/, etc.), update `docs/changes.md` in the same PR.
 - Public documentation stays in-repo under `apps/docs-site/docs/`.
-

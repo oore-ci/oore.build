@@ -1,0 +1,134 @@
+clone:
+  disable: true
+
+when:
+  event:
+    - tag
+
+steps:
+  - name: checkout
+    image: bash
+    secrets:
+      - GITHUB_TOKEN
+    commands:
+      - set -euo pipefail
+      - rm -rf .git
+      - git init
+      - |
+        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
+        clone_url="${clone_url#https://}"
+        clone_url="${clone_url#http://}"
+        git remote add origin "https://x-access-token:${GITHUB_TOKEN}@${clone_url}"
+      - git fetch --depth=200 origin "+refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
+      - git checkout -f "${CI_COMMIT_TAG}"
+
+  - name: build-release-assets
+    image: bash
+    commands:
+      - set -euo pipefail
+      - test -n "${CI_COMMIT_TAG:-}"
+      - ver="${CI_COMMIT_TAG#v}"
+      - mkdir -p "dist/releases/${CI_COMMIT_TAG}"
+      - bun install --frozen-lockfile
+      - bun run build:web
+      - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - cargo build --release -p oored -p oore --target aarch64-apple-darwin
+      - cargo build --release -p oored -p oore --target x86_64-apple-darwin
+      - bun build --compile --target=bun-darwin-arm64 --outfile "dist/oore-web-arm64" "apps/web/tools/oore-web.js"
+      - bun build --compile --target=bun-darwin-x64 --outfile "dist/oore-web-x86_64" "apps/web/tools/oore-web.js"
+      - chmod +x dist/oore-web-arm64 dist/oore-web-x86_64
+      - |
+        stage_arm="dist/stage-arm64"
+        stage_x64="dist/stage-x86_64"
+        rm -rf "$stage_arm" "$stage_x64"
+        mkdir -p "$stage_arm/bin" "$stage_x64/bin"
+
+        cp "target/aarch64-apple-darwin/release/oored" "$stage_arm/bin/oored"
+        cp "target/aarch64-apple-darwin/release/oore"  "$stage_arm/bin/oore"
+        cp "dist/oore-web-arm64" "$stage_arm/bin/oore-web"
+        cp -R "apps/web/dist" "$stage_arm/web-dist"
+        cp "LICENSE" "$stage_arm/LICENSE"
+        printf '%s\n' "$ver" > "$stage_arm/VERSION"
+
+        cp "target/x86_64-apple-darwin/release/oored" "$stage_x64/bin/oored"
+        cp "target/x86_64-apple-darwin/release/oore"  "$stage_x64/bin/oore"
+        cp "dist/oore-web-x86_64" "$stage_x64/bin/oore-web"
+        cp -R "apps/web/dist" "$stage_x64/web-dist"
+        cp "LICENSE" "$stage_x64/LICENSE"
+        printf '%s\n' "$ver" > "$stage_x64/VERSION"
+
+        out="dist/releases/${CI_COMMIT_TAG}"
+        arm_asset="oore_${ver}_darwin_arm64.tar.gz"
+        x64_asset="oore_${ver}_darwin_x86_64.tar.gz"
+        tar -C "$stage_arm" -czf "$out/$arm_asset" .
+        tar -C "$stage_x64" -czf "$out/$x64_asset" .
+        (cd "$out" && shasum -a 256 "$arm_asset" "$x64_asset" > "oore_${ver}_checksums.txt")
+
+  - name: deploy-pages
+    image: bash
+    secrets:
+      - CLOUDFLARE_API_TOKEN
+    commands:
+      - set -euo pipefail
+      - bun install --frozen-lockfile
+      - make build-site build-docs build-web
+      - make deploy-site deploy-docs deploy-web
+
+  - name: generate-release-notes
+    image: bash
+    commands:
+      - set -euo pipefail
+      - tag="${CI_COMMIT_TAG}"
+      - prev="$(git tag -l 'v*' --sort=-v:refname | grep -v \"^${tag}$\" | head -n1 || true)"
+      - out="dist/releases/${tag}/RELEASE_NOTES.md"
+      - |
+        {
+          echo \"# ${tag}\"
+          echo
+          if [ -n \"$prev\" ]; then
+            echo \"Changes since ${prev}:\"
+            echo
+            git log --no-merges --pretty=format:'- %s (%h)' \"${prev}..${tag}\" | grep -v '^\\- chore(release): bump version to ' || true
+          else
+            echo \"Changes:\"
+            echo
+            git log --no-merges --pretty=format:'- %s (%h)' \"${tag}\" | grep -v '^\\- chore(release): bump version to ' || true
+          fi
+          echo
+        } > \"$out\"
+
+  - name: github-release
+    image: bash
+    secrets:
+      - GITHUB_TOKEN
+    commands:
+      - set -euo pipefail
+      - export GH_TOKEN="$GITHUB_TOKEN"
+      - tag="${CI_COMMIT_TAG}"
+      - ver="${tag#v}"
+      - dir="dist/releases/${tag}"
+      - notes="${dir}/RELEASE_NOTES.md"
+      - |
+        # Install gh (user-local, no brew)
+        tmp="$(mktemp -d)"
+        curl -fsSL -o \"$tmp/gh.tgz\" \"https://github.com/cli/cli/releases/latest/download/gh_$(uname -s | tr '[:upper:]' '[:lower:]')_arm64.tar.gz\"
+        tar -xzf \"$tmp/gh.tgz\" -C \"$tmp\"
+        ghbin=\"$(find \"$tmp\" -type f -path '*/bin/gh' | head -n1)\"
+        \"$ghbin\" --version
+
+        repo="$(
+          git config --get remote.origin.url \
+            | sed -n 's#.*github\\.com[:/]\\([^/]*\\/[^.]*\\)\\(\\.git\\)\\{0,1\\}$#\\1#p'
+        )"
+        if [ -z "$repo" ]; then
+          repo="${CI_REPO}"
+        fi
+
+        # Create or update release
+        if \"$ghbin\" release view \"$tag\" --repo \"$repo\" >/dev/null 2>&1; then
+          \"$ghbin\" release edit \"$tag\" --repo \"$repo\" --title \"$tag\" --notes-file \"$notes\"
+        else
+          \"$ghbin\" release create \"$tag\" --repo \"$repo\" --title \"$tag\" --notes-file \"$notes\"
+        fi
+
+        \"$ghbin\" release upload \"$tag\" \"$dir\"/*.tar.gz \"$dir\"/*.txt \"$notes\" --repo \"$repo\" --clobber

@@ -198,3 +198,4 @@ done
 
 echo "shadcn initialization complete for both apps using preset:"
 echo "$PRESET_URL"
+

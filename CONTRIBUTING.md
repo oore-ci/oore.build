@@ -34,7 +34,7 @@ Internal technical docs are Linear-first (see `docs/README.md`). Every user-faci
 
 - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
 
-Any code change under `apps/`, `crates/`, `scripts/`, etc. must add an entry to `docs/changes.md`. CI runs `make docs-check` to enforce the change-ledger rule.
+Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry to `docs/changes.md`. CI runs `make docs-check` to enforce the change-ledger rule.
 
 ## What We're Looking For
 

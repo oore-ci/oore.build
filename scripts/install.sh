@@ -3,8 +3,9 @@ set -euo pipefail
 
 OORE_VERSION="${OORE_VERSION:-latest}"
 OORE_INSTALL_ROOT="${OORE_INSTALL_ROOT:-$HOME/.oore}"
-OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://dl.oore.build/releases}"
-OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-$OORE_RELEASE_BASE_URL/latest.json}"
+OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-devaryakjha/oore.build}"
+OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://github.com/$OORE_GITHUB_REPO/releases/download}"
+OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases/latest}"
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_HOSTED_UI="${OORE_HOSTED_UI:-https://ci.oore.build}"
@@ -46,8 +47,9 @@ Environment overrides:
   OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
   OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
   OORE_HOSTED_UI             Hosted UI URL (default: https://ci.oore.build)
-  OORE_RELEASE_BASE_URL      Release base URL
-  OORE_RELEASE_MANIFEST_URL  Release manifest URL
+  OORE_GITHUB_REPO           GitHub repo (default: devaryakjha/oore.build)
+  OORE_RELEASE_BASE_URL      Release asset base URL (default: GitHub Releases download base)
+  OORE_RELEASE_MANIFEST_URL  Release metadata URL for latest tag resolution (default: GitHub Releases API)
 EOF
 }
 
@@ -178,7 +180,8 @@ resolve_release_tag() {
     curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL" \
       || die "Unable to fetch release manifest: $OORE_RELEASE_MANIFEST_URL"
 
-    tag="$(sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
+    # GitHub API returns "tag_name": "vX.Y.Z"
+    tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
     [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
   else
     if [[ "$OORE_VERSION" == v* ]]; then

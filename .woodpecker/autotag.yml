@@ -1,0 +1,101 @@
+clone:
+  disable: true
+
+when:
+  event:
+    - push
+  branch:
+    - main
+
+steps:
+  - name: checkout
+    image: bash
+    secrets:
+      - GITHUB_TOKEN
+    commands:
+      - set -euo pipefail
+      - rm -rf .git
+      - git init
+      - |
+        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
+        clone_url="${clone_url#https://}"
+        clone_url="${clone_url#http://}"
+        git remote add origin "https://x-access-token:${GITHUB_TOKEN}@${clone_url}"
+      - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+      - git checkout -B main "origin/main"
+
+  - name: bump-tag
+    image: bash
+    secrets:
+      - GITHUB_TOKEN
+    commands:
+      - set -euo pipefail
+      - msg="$(git log -1 --pretty=%B)"
+      - |
+        if echo "$msg" | grep -q "\\[CI SKIP\\]"; then
+          echo "Skipping (already CI-generated commit)."
+          exit 0
+        fi
+      - |
+        if echo "$msg" | grep -q "^chore(release): bump version to "; then
+          echo "Skipping (already a release bump commit)."
+          exit 0
+        fi
+      - |
+        cur="$(
+          awk -F'\"' '
+            /^\\[workspace\\.package\\]/ { in_section=1; next }
+            in_section && /^[[:space:]]*version[[:space:]]*=/ { print $2; exit }
+            in_section && /^\\[/ { in_section=0 }
+          ' Cargo.toml
+        )"
+        if [ -z "$cur" ]; then
+          echo "Failed to read workspace.package.version from Cargo.toml" >&2
+          exit 1
+        fi
+        IFS=. read -r major minor patch <<EOF
+$cur
+EOF
+        if [ -z "${major:-}" ] || [ -z "${minor:-}" ] || [ -z "${patch:-}" ]; then
+          echo "Invalid semver in Cargo.toml: $cur" >&2
+          exit 1
+        fi
+        next="${major}.${minor}.$((patch+1))"
+        tag="v${next}"
+        echo "Bumping $cur -> $next ($tag)"
+        python3 - "$next" <<'PY'
+import sys
+from pathlib import Path
+
+new_version = sys.argv[1]
+p = Path("Cargo.toml")
+lines = p.read_text().splitlines(True)
+
+out = []
+in_ws = False
+updated = False
+for line in lines:
+    if line.strip() == "[workspace.package]":
+        in_ws = True
+        out.append(line)
+        continue
+    if in_ws and line.startswith("[") and not line.strip().startswith("[workspace.package]"):
+        in_ws = False
+    if in_ws and line.lstrip().startswith("version") and "=" in line and not updated:
+        # Replace version = "x.y.z"
+        prefix = line.split("=", 1)[0]
+        out.append(f'{prefix}= "{new_version}"\n')
+        updated = True
+        continue
+    out.append(line)
+
+if not updated:
+    raise SystemExit("Failed to update workspace.package.version in Cargo.toml")
+
+p.write_text("".join(out))
+PY
+        git add Cargo.toml
+        git -c user.name="oore.build CI" -c user.email="ci@oore.build" commit -m "chore(release): bump version to ${next} [CI SKIP]"
+        git tag -a "$tag" -m "Release $tag"
+        git push origin main
+        git push origin "$tag"

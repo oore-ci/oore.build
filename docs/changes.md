@@ -7,7 +7,7 @@ Purpose:
 - Point reviewers to the corresponding Linear doc(s) / ADR(s).
 
 Rules:
-- Any code change under `apps/`, `crates/`, `scripts/`, etc. must add an entry here.
+- Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
 ## 2026-02-15
@@ -19,6 +19,8 @@ Rules:
   - OOR-7: https://linear.app/oorebuild/issue/OOR-7/use-effective-client-ip-for-loopback-only-external-access-settings
 - Clarified the auth contract: OIDC is required for non-loopback access (Remote mode), while Local Only mode supports loopback-only local login for onboarding (no passwords).
   - OOR-8: https://linear.app/oorebuild/issue/OOR-8/resolve-oidc-only-setup-gating-rule-conflict-with-local-loginauto
+- Started migrating deployment + release automation from repo-local scripts to Woodpecker pipelines and GitHub Releases (tag-driven), and moved repo tooling from `scripts/` to `tools/`.
+  - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
 - Fixed GitHub App install callback redirects to prefer the frontend origin (not the daemon `public_url`) when multiple External Access origins are configured.
   - OOR-34: https://linear.app/oorebuild/issue/OOR-34/github-installed-redirect-picks-wrong-origin-from-allowed-origins
 - Ensured GitHub install-state cookie clearing derives `Secure` from the daemon origin (not the UI redirect), so cookies are reliably cleared when daemon/UI schemes differ.

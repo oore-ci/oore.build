@@ -103,18 +103,14 @@ make dev-fresh-setup  # Fresh local build + tunnel + token-first UI setup simula
 make doctor           # Check system prerequisites
 ```
 
-## Release Automation (macOS + R2)
+## Releases (macOS, Automated)
 
-Releases are published from a dedicated Mac mini:
+Releases are published from a dedicated macOS host (for example, a Mac mini) using Woodpecker CI.
 
-```bash
-make release-cut VERSION=0.2.0             # Bump version, commit, push, tag, push tag
-make release-local TAG=v0.2.0          # Build + upload one release to R2
-sudo make install-release-webhook-daemon  # Install LaunchDaemon webhook listener
-make install-release-poller               # Optional polling fallback
-```
+High-level flow:
 
-Artifacts are published under `https://dl.oore.build/releases/`.
+- Merge to `main` -> CI bumps `workspace.package.version`, commits, tags (for example `v0.2.1`)
+- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages sites, and publishes a GitHub Release with attached artifacts
 
 ## Contributing
 

@@ -159,7 +159,6 @@ build_local_binaries() {
 start_dev_daemon() {
   mkdir -p "$OORE_DEV_LOG_DIR"
 
-  # Build CORS origins: defaults + tunnel origin if available
   local cors_origins="http://localhost:3000,https://ci.oore.build"
   if [[ -n "$OORE_DEV_PUBLIC_TUNNEL_URL" ]]; then
     cors_origins="${cors_origins},${OORE_DEV_PUBLIC_TUNNEL_URL}"
@@ -205,17 +204,12 @@ start_cloudflare_tunnel() {
 
   while true; do
     if [[ -f "$OORE_DEV_TUNNEL_LOG" ]]; then
-      url="$(grep -Eo 'https://[-a-zA-Z0-9]+\.trycloudflare\.com' "$OORE_DEV_TUNNEL_LOG" | head -n1 || true)"
+      url="$(grep -Eo 'https://[-a-zA-Z0-9]+\\.trycloudflare\\.com' "$OORE_DEV_TUNNEL_LOG" | head -n1 || true)"
       if [[ -n "$url" ]]; then
         OORE_DEV_PUBLIC_TUNNEL_URL="$url"
         log "Cloudflare tunnel URL: $OORE_DEV_PUBLIC_TUNNEL_URL"
         return 0
       fi
-    fi
-
-    if [[ ! -f "$OORE_DEV_TUNNEL_PID_FILE" ]]; then
-      tail -n 80 "$OORE_DEV_TUNNEL_LOG" >&2 || true
-      die "Cloudflare tunnel exited before URL assignment."
     fi
 
     local pid=""
@@ -232,12 +226,6 @@ start_cloudflare_tunnel() {
     fi
     sleep 1
   done
-}
-
-is_already_configured() {
-  local status_json
-  status_json="$(curl -fsS "$OORE_DEV_DAEMON_URL/v1/public/setup-status" 2>/dev/null)" || return 1
-  echo "$status_json" | grep -q '"is_configured"[[:space:]]*:[[:space:]]*true'
 }
 
 open_setup_ui() {
@@ -376,7 +364,6 @@ main() {
   run_setup_flow
   print_summary
 
-  # Auto-open hosted UI and watch for completion if we generated a token
   if [[ -n "$OORE_DEV_BOOTSTRAP_TOKEN" ]]; then
     open_setup_ui || true
     watch_setup || true
@@ -384,3 +371,4 @@ main() {
 }
 
 main "$@"
+

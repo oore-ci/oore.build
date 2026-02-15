@@ -54,7 +54,7 @@ make validate
 - **`crates/oore`** — operator CLI/TUI for setup and admin (Clap)
 - **`crates/oore-contract`** — shared backend data contracts (pure Serde structs)
 - **`docs/`** — repo pointer index + `docs/changes.md` change ledger (internal docs live in Linear)
-- **`scripts/`** — build and validation scripts
+- **`tools/`** — build and validation scripts
 
 ### Frontend Stack
 
@@ -107,7 +107,7 @@ When adding new build scripts, test commands, or tooling workflows, add a corres
 - shadcn uses Base UI primitives (not Radix)
 - Every user-facing feature requires a Linear feature doc (template):
   - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
-- Any code change under `apps/`, `crates/`, `scripts/`, etc. MUST update `docs/changes.md`
+- Any code change under `apps/`, `crates/`, `tools/`, etc. MUST update `docs/changes.md`
 - Changing a finalized decision requires: ADR + contract update + feature doc update (all in Linear)
 - **Any endpoint change (create/update/remove) in `crates/oored` must include an update to the OpenAPI spec** — update `crates/oored/src/bin/openapi_export.rs`, run `make gen-openapi`, and commit the regenerated `apps/docs-site/docs/public/openapi.json`
 

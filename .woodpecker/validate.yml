@@ -1,0 +1,32 @@
+clone:
+  disable: true
+
+when:
+  event:
+    - pull_request
+    - push
+
+steps:
+  - name: checkout
+    image: bash
+    secrets:
+      - GITHUB_TOKEN
+    commands:
+      - set -euo pipefail
+      - rm -rf .git
+      - git init
+      - |
+        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
+        clone_url="${clone_url#https://}"
+        clone_url="${clone_url#http://}"
+        git remote add origin "https://x-access-token:${GITHUB_TOKEN}@${clone_url}"
+      - git fetch --depth=200 origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+      - git checkout -f "${CI_COMMIT_SHA}"
+      - git submodule update --init --recursive || true
+
+  - name: validate
+    image: bash
+    commands:
+      - set -euo pipefail
+      - bun install --frozen-lockfile
+      - make validate
