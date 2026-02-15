@@ -62,36 +62,36 @@ steps:
         tag="v${next}"
         echo "Bumping $cur -> $next ($tag)"
         python3 - "$next" <<'PY'
-import sys
-from pathlib import Path
+        import sys
+        from pathlib import Path
 
-new_version = sys.argv[1]
-p = Path("Cargo.toml")
-lines = p.read_text().splitlines(True)
+        new_version = sys.argv[1]
+        p = Path("Cargo.toml")
+        lines = p.read_text().splitlines(True)
 
-out = []
-in_ws = False
-updated = False
-for line in lines:
-    if line.strip() == "[workspace.package]":
-        in_ws = True
-        out.append(line)
-        continue
-    if in_ws and line.startswith("[") and not line.strip().startswith("[workspace.package]"):
+        out = []
         in_ws = False
-    if in_ws and line.lstrip().startswith("version") and "=" in line and not updated:
-        # Replace version = "x.y.z"
-        prefix = line.split("=", 1)[0]
-        out.append(f'{prefix}= "{new_version}"\n')
-        updated = True
-        continue
-    out.append(line)
+        updated = False
+        for line in lines:
+            if line.strip() == "[workspace.package]":
+                in_ws = True
+                out.append(line)
+                continue
+            if in_ws and line.startswith("[") and not line.strip().startswith("[workspace.package]"):
+                in_ws = False
+            if in_ws and line.lstrip().startswith("version") and "=" in line and not updated:
+                # Replace version = "x.y.z"
+                prefix = line.split("=", 1)[0]
+                out.append(f'{prefix}= "{new_version}"\n')
+                updated = True
+                continue
+            out.append(line)
 
-if not updated:
-    raise SystemExit("Failed to update workspace.package.version in Cargo.toml")
+        if not updated:
+            raise SystemExit("Failed to update workspace.package.version in Cargo.toml")
 
-p.write_text("".join(out))
-PY
+        p.write_text("".join(out))
+        PY
         git add Cargo.toml
         git -c user.name="oore.build CI" -c user.email="ci@oore.build" commit -m "chore(release): bump version to ${next} [CI SKIP]"
         git tag -a "$tag" -m "Release $tag"
