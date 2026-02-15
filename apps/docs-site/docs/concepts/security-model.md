@@ -7,9 +7,11 @@ description: "Security architecture of oore.build including OIDC, RBAC, and encr
 
 This page explains the security design decisions in oore.build and how they protect your instance.
 
-## Authentication: OIDC-only
+## Authentication: OIDC (Remote) + Loopback Local Login (Local Only)
 
-oore.build delegates all authentication to your identity provider via OpenID Connect. There are no local passwords, no password storage, and no password reset flows.
+oore.build uses OpenID Connect (OIDC) for any non-loopback access (External Access / `runtime_mode=remote`). There are no local passwords, no password storage, and no password reset flows.
+
+The daemon also supports loopback-only local login (`POST /v1/auth/local/login`) for local-first onboarding and local operator access. When setup is incomplete, local login is only available in Local Only mode; in Remote mode it is only available after setup is complete. In Local Only mode, the first successful local login may auto-complete setup and create the initial owner record.
 
 **Why**: Eliminates an entire class of vulnerabilities (credential storage, brute force attacks, password reuse). Users authenticate with the same credentials they use for all other services. Disabling a user in your IdP immediately revokes their access.
 
@@ -40,13 +42,12 @@ See [RBAC Reference](/reference/rbac) for the full permission matrix.
 
 Sensitive data (OIDC client secrets, signing credentials) is encrypted with **AES-256-GCM** before storage:
 
-- The encryption key is stored in the **macOS Keychain** (preferred)
-- Fallback: file-based key at `~/Library/Application Support/oore/encryption.key`
+- The encryption key is stored in a file on disk at `<data-root>/encryption.key`
 - Each encrypted value includes a unique nonce (IV)
 
 ## Bootstrap token security
 
-The first-run bootstrap token has multiple protections:
+The first-run bootstrap token (required for Remote-mode setup flows) has multiple protections:
 
 | Protection | Detail |
 |---|---|
@@ -63,7 +64,7 @@ The first-run bootstrap token has multiple protections:
 | Bootstrap token | SHA-256 hash in SQLite | Plaintext never stored |
 | Setup session token | SHA-256 hash in SQLite | 30-minute sliding TTL |
 | User session token | SHA-256 hash in SQLite | 24-hour TTL |
-| OIDC client secret | AES-256-GCM encrypted in SQLite | Keychain-stored encryption key |
+| OIDC client secret | AES-256-GCM encrypted in SQLite | File-stored encryption key |
 | Signing certificates | AES-256-GCM encrypted in SQLite | Same encryption key |
 | Keystore passwords | AES-256-GCM encrypted in SQLite | Same encryption key |
 
@@ -71,8 +72,8 @@ The first-run bootstrap token has multiple protections:
 
 The API restricts cross-origin requests:
 
-- **Default origins**: `http://localhost:3000`, `https://ci.oore.build`
-- **Override**: `OORE_CORS_ORIGINS` environment variable
+- **Default origins**: `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:4173`, `http://127.0.0.1:4173`
+- **Configuration**: Stored in SQLite (Preferences UI); env fallback via `OORE_CORS_ORIGINS` / `OORE_CORS_ORIGIN`
 - **Methods**: GET, POST, PUT, PATCH, DELETE, OPTIONS
 - **Headers**: Content-Type, Authorization
 

@@ -209,3 +209,62 @@ async fn test_local_login_rejected_when_peer_is_loopback_but_forwarded_ip_is_not
     let body = common::body_json(login_resp.into_body()).await;
     assert_eq!(body["code"], "local_login_loopback_required");
 }
+
+#[tokio::test]
+async fn test_local_login_rejected_when_peer_is_loopback_but_x_forwarded_for_chain_is_not() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+
+    let login_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/auth/local/login")
+                .header("content-type", "application/json")
+                // Simulate a same-host proxy appending the true client IP after a client-supplied prefix.
+                .header("x-forwarded-for", "127.0.0.1, 203.0.113.11")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41006))))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({})).expect("serialize request"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("local login");
+    assert_eq!(login_resp.status(), 403);
+    let body = common::body_json(login_resp.into_body()).await;
+    assert_eq!(body["code"], "local_login_loopback_required");
+}
+
+#[tokio::test]
+async fn test_local_login_rejected_when_peer_is_loopback_but_forwarded_header_chain_is_not() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+
+    let login_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/auth/local/login")
+                .header("content-type", "application/json")
+                // Simulate a same-host proxy appending the true client IP after a client-supplied prefix.
+                .header(
+                    "forwarded",
+                    "for=127.0.0.1;proto=https, for=203.0.113.12;proto=https",
+                )
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41007))))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({})).expect("serialize request"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("local login");
+    assert_eq!(login_resp.status(), 403);
+    let body = common::body_json(login_resp.into_body()).await;
+    assert_eq!(body["code"], "local_login_loopback_required");
+}

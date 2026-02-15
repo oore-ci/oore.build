@@ -100,12 +100,14 @@ Mobile CI requires macOS hardware for iOS and macOS builds (Xcode is macOS-only)
 
 ## Why OIDC-only?
 
-oore.build delegates all authentication to your existing identity provider:
+oore.build uses your existing identity provider (OIDC) for any non-loopback access (External Access / `runtime_mode=remote`):
 
 - **No password storage** — eliminates an entire class of security concerns
 - **Single sign-on** — users authenticate with the same credentials they use everywhere else
 - **Centralized access control** — disable a user in your IdP and they lose access to oore.build
 - **Enterprise ready** — works with Google Workspace, Okta, Azure AD, Auth0, Keycloak, and any OIDC-compliant provider
+
+The daemon also supports loopback-only local login (no OIDC) for local-first onboarding and local operator access (auto-bootstrap requires Local Only mode).
 
 ## Technology choices
 

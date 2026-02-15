@@ -39,4 +39,3 @@ async fn test_oidc_start_returns_conflict_when_oidc_missing() {
     let body = common::body_json(resp.into_body()).await;
     assert_eq!(body["code"], "oidc_not_configured");
 }
-

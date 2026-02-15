@@ -14,4 +14,8 @@ Rules:
 
 - Migrated internal docs/ADRs/feature docs from repo `docs/` into Linear project “oore.build Docs”.
   - Linear index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
+- Hardened loopback-only endpoint enforcement by fixing forwarded-header IP parsing and applying it to External Access network updates.
+  - OOR-6: https://linear.app/oorebuild/issue/OOR-6/harden-effective-client-ip-against-spoofed-loopback-via-forwarded
+  - OOR-7: https://linear.app/oorebuild/issue/OOR-7/use-effective-client-ip-for-loopback-only-external-access-settings
+- Clarified the auth contract: OIDC is required for non-loopback access (Remote mode), while Local Only mode supports loopback-only local login for onboarding (no passwords).
+  - OOR-8: https://linear.app/oorebuild/issue/OOR-8/resolve-oidc-only-setup-gating-rule-conflict-with-local-loginauto

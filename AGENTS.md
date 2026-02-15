@@ -14,7 +14,7 @@ Treat those as the source of truth.
 ## Non-Negotiable Rules
 
 - Keep frontend and backend cleanly separated.
-- V1 auth is OIDC-only.
+- V1 auth is OIDC for any non-loopback access (Remote mode). Loopback-only local login is supported; when setup is incomplete it is only available in Local Only mode (no passwords).
 - V1 backend runtime target is macOS.
 - Hosted offering at `ci.oore.build` is UI-only.
 - Keep command surfaces stable:
@@ -70,7 +70,7 @@ Treat those as the source of truth.
 - `crates/oore`
 - `crates/oore-contract`
 - Keep `/v1/public/setup-status` non-sensitive.
-- Setup mutating endpoints must be token-gated and disabled after `ready`.
+- Setup mutating endpoints must be token-gated and disabled after `ready` (exception: Local Only mode may auto-complete setup on first loopback local login).
 
 ## Makefile Maintenance
 

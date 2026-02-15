@@ -137,7 +137,7 @@ async fn mark_setup_ready_with_oidc(pool: &sqlx::SqlitePool) {
     .bind(now)
     .execute(pool)
     .await
-        .expect("failed to update setup state");
+    .expect("failed to update setup state");
 }
 
 async fn mark_setup_ready_without_oidc(pool: &sqlx::SqlitePool) {
@@ -405,7 +405,11 @@ async fn test_external_access_network_settings_update_requires_owner() {
         ))
         .unwrap();
 
-    let resp = app.clone().oneshot(req).await.expect("network settings response");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("network settings response");
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["code"], "external_access_owner_required");
@@ -439,7 +443,52 @@ async fn test_external_access_network_settings_update_requires_loopback_in_local
         ))
         .unwrap();
 
-    let resp = app.clone().oneshot(req).await.expect("network settings response");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("network settings response");
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["code"], "external_access_loopback_required");
+}
+
+#[tokio::test]
+async fn test_external_access_network_settings_update_rejected_when_forwarded_client_not_loopback()
+{
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+
+    let req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        // Peer connects over loopback, but forwarded headers indicate a non-loopback client.
+        .header("x-forwarded-for", "127.0.0.1, 203.0.113.13")
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41104))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "public_url": "https://ci.oore.test",
+                "allowed_origins": ["https://ci.oore.test"]
+            }))
+            .expect("serialize request"),
+        ))
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("network settings response");
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["code"], "external_access_loopback_required");
@@ -488,12 +537,16 @@ async fn test_external_access_network_settings_update_and_readback() {
     let origins = put_body["settings"]["allowed_origins"]
         .as_array()
         .expect("allowed origins array");
-    assert!(origins
-        .iter()
-        .any(|origin| origin.as_str() == Some("https://ci.oore.test")));
-    assert!(origins
-        .iter()
-        .any(|origin| origin.as_str() == Some("http://localhost:3000")));
+    assert!(
+        origins
+            .iter()
+            .any(|origin| origin.as_str() == Some("https://ci.oore.test"))
+    );
+    assert!(
+        origins
+            .iter()
+            .any(|origin| origin.as_str() == Some("http://localhost:3000"))
+    );
 
     let get_req = Request::builder()
         .uri("/v1/settings/external-access/network")
@@ -546,7 +599,11 @@ async fn test_owner_can_configure_external_access_oidc_after_setup_ready() {
         ))
         .unwrap();
 
-    let resp = app.clone().oneshot(req).await.expect("oidc configure response");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("oidc configure response");
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["discovered_issuer"], "https://accounts.google.com");
@@ -588,7 +645,11 @@ async fn test_non_owner_cannot_configure_external_access_oidc() {
         ))
         .unwrap();
 
-    let resp = app.clone().oneshot(req).await.expect("oidc configure response");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("oidc configure response");
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["code"], "external_access_owner_required");
@@ -632,7 +693,11 @@ async fn test_create_project_local_repo_allowed_in_remote_mode() {
         ))
         .unwrap();
 
-    let resp = app.clone().oneshot(req).await.expect("create project response");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("create project response");
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["project"]["name"], "Local Repo Project");

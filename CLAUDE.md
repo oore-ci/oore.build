@@ -83,7 +83,7 @@ Run `bun run ui:init` to re-initialize shadcn from the shared preset.
 - **Async runtime:** Tokio
 - **Web framework:** Axum 0.8
 - **CLI:** Clap 4.5
-- **Auth:** OIDC-only (no local username/password in V1)
+- **Auth:** OIDC for any non-loopback access; loopback-only local login exists (auto-bootstrap requires Local Only mode; no passwords)
 - **Command surfaces are stable contracts:**
   - `oored` — daemon/runtime lifecycle
   - `oore` — operator/setup/admin flows
@@ -92,7 +92,7 @@ Run `bun run ui:init` to re-initialize shadcn from the shared preset.
 
 `uninitialized` → `bootstrap_pending` → `idp_configured` → `owner_created` → `ready`
 
-Setup mutating endpoints are token-gated and auto-disabled after `ready`. The `/v1/public/setup-status` endpoint is always public and non-sensitive.
+Setup mutating endpoints are token-gated and auto-disabled after `ready` (exception: Local Only mode may auto-complete setup on first loopback local login). The `/v1/public/setup-status` endpoint is always public and non-sensitive.
 
 ## Makefile Maintenance
 
@@ -101,7 +101,7 @@ When adding new build scripts, test commands, or tooling workflows, add a corres
 ## Non-Negotiable V1 Rules
 
 - Frontend and backend are strictly separated
-- OIDC-only auth (no local passwords)
+- OIDC for any non-loopback access; loopback-only local login exists (auto-bootstrap requires Local Only mode; no local passwords)
 - macOS-only backend runtime
 - TanStack Router file-based routing (no Next.js)
 - shadcn uses Base UI primitives (not Radix)

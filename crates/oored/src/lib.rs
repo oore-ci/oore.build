@@ -155,55 +155,87 @@ fn parse_ip_from_header(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
         .and_then(|value| value.parse::<IpAddr>().ok())
 }
 
-fn parse_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .find_map(|value| value.parse::<IpAddr>().ok())
-        })
-}
+fn parse_ip_token(raw: &str) -> Option<IpAddr> {
+    let mut value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
 
-fn parse_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
-    let raw = headers.get("forwarded")?.to_str().ok()?;
-    // RFC 7239: Forwarded: for=<client-ip>;proto=https;by=<proxy-ip>
-    let first = raw.split(',').next()?.trim();
-    for part in first.split(';') {
-        let part = part.trim();
-        let Some(rest) = part.strip_prefix("for=") else {
-            continue;
-        };
-        let mut value = rest.trim().trim_matches('"');
+    // Header values may be quoted.
+    value = value.trim_matches('"').trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("unknown") {
+        return None;
+    }
 
-        // Common shapes:
-        // - for=192.0.2.60
-        // - for=192.0.2.60:1234
-        // - for=\"[2001:db8::1]:1234\"
-        if let Some(end) = value.find(']') {
-            if value.starts_with('[') {
-                value = &value[1..end];
-            }
+    // IPv6 with port (Forwarded spec, best-effort): for="[2001:db8::1]:1234"
+    // or XFF variants like: [2001:db8::1]:1234
+    if let Some(rest) = value.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return rest[..end].parse::<IpAddr>().ok();
         }
+    }
 
-        if let Ok(ip) = value.parse::<IpAddr>() {
-            return Some(ip);
-        }
+    // Raw IP.
+    if let Ok(ip) = value.parse::<IpAddr>() {
+        return Some(ip);
+    }
 
-        // IPv4 with port (best-effort)
-        if value.contains('.') {
-            if let Some((ip_part, _port)) = value.rsplit_once(':') {
-                if let Ok(ip) = ip_part.parse::<IpAddr>() {
-                    return Some(ip);
-                }
+    // IPv4 with port (best-effort)
+    if value.contains('.') {
+        if let Some((ip_part, _port)) = value.rsplit_once(':') {
+            if let Ok(ip) = ip_part.parse::<IpAddr>() {
+                return Some(ip);
             }
         }
     }
 
     None
+}
+
+fn parse_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    let raw = headers.get("x-forwarded-for")?.to_str().ok()?;
+    // X-Forwarded-For: client, proxy1, proxy2. When a same-host proxy appends
+    // to a client-provided header, the first element can be attacker-controlled.
+    // For loopback-only enforcement, return a non-loopback IP if any is present.
+    let mut first: Option<IpAddr> = None;
+    for token in raw.split(',') {
+        let Some(ip) = parse_ip_token(token) else {
+            continue;
+        };
+        if first.is_none() {
+            first = Some(ip);
+        }
+        if !ip.is_loopback() {
+            return Some(ip);
+        }
+    }
+    first
+}
+
+fn parse_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    let raw = headers.get("forwarded")?.to_str().ok()?;
+    // RFC 7239: Forwarded: for=<client-ip>;proto=https;by=<proxy-ip>
+    // Multiple values are comma-separated. The left-most entry can be
+    // attacker-controlled if an upstream proxy appends to an existing header.
+    let mut first: Option<IpAddr> = None;
+    for entry in raw.split(',') {
+        for part in entry.split(';') {
+            let part = part.trim();
+            let Some(rest) = part.strip_prefix("for=") else {
+                continue;
+            };
+            let Some(ip) = parse_ip_token(rest) else {
+                continue;
+            };
+            if first.is_none() {
+                first = Some(ip);
+            }
+            if !ip.is_loopback() {
+                return Some(ip);
+            }
+        }
+    }
+    first
 }
 
 /// Determine the effective client IP address for a request.
@@ -222,27 +254,36 @@ pub fn effective_client_ip(peer_addr: SocketAddr, headers: &HeaderMap) -> IpAddr
         return peer_ip;
     }
 
-    // Cloudflare: the true client IP.
+    // Collect candidates from trusted-by-loopback forwarded headers.
+    let mut candidates = Vec::new();
+
+    // Cloudflare: the true client IP (when set by a same-host tunnel/proxy).
     if let Some(ip) = parse_ip_from_header(headers, "cf-connecting-ip") {
-        return ip;
+        candidates.push(ip);
     }
 
     // RFC 7239
     if let Some(ip) = parse_forwarded_for(headers) {
-        return ip;
+        candidates.push(ip);
     }
 
     // De-facto standard
     if let Some(ip) = parse_x_forwarded_for(headers) {
-        return ip;
+        candidates.push(ip);
     }
 
     // Common nginx header
     if let Some(ip) = parse_ip_from_header(headers, "x-real-ip") {
+        candidates.push(ip);
+    }
+
+    // Prefer any non-loopback claim to prevent spoofed loopback prefixes from
+    // bypassing loopback-only endpoints when a proxy appends the real client IP.
+    if let Some(ip) = candidates.iter().copied().find(|ip| !ip.is_loopback()) {
         return ip;
     }
 
-    peer_ip
+    candidates.first().copied().unwrap_or(peer_ip)
 }
 
 fn is_local_network_host(host: &str) -> bool {
@@ -1419,7 +1460,8 @@ async fn build_router_inner(
             }
         };
 
-    let allowed_origins_state = Arc::new(RwLock::new(external_access_network.allowed_origins.clone()));
+    let allowed_origins_state =
+        Arc::new(RwLock::new(external_access_network.allowed_origins.clone()));
     let public_url_state = Arc::new(RwLock::new(external_access_network.public_url.clone()));
 
     // Initialize artifact storage backend from DB settings.

@@ -1,10 +1,10 @@
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use std::net::SocketAddr;
 
 use axum::Json;
 use axum::extract::{ConnectInfo, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, ArtifactStorageProvider, ArtifactStorageSettingsResponse,
     ConfigureExternalAccessOidcRequest, ConfigureExternalAccessOidcResponse,
@@ -423,7 +423,10 @@ async fn evaluate_external_access_preflight(
                 "public_origin_allowed",
                 "Public URL origin is allowlisted in CORS",
                 false,
-                format!("Add {} to allowed origins before enabling External Access.", origin),
+                format!(
+                    "Add {} to allowed origins before enabling External Access.",
+                    origin
+                ),
                 Some("external_access_origin_not_allowed"),
             )
         }
@@ -787,6 +790,7 @@ pub async fn get_external_access_network_settings(
 pub async fn update_external_access_network_settings(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     auth: AuthUser,
     Json(req): Json<UpdateExternalAccessNetworkSettingsRequest>,
 ) -> ApiResult<ExternalAccessNetworkSettingsResponse> {
@@ -813,7 +817,8 @@ pub async fn update_external_access_network_settings(
             "Failed to determine runtime mode",
         )
     })?;
-    if runtime_mode == RuntimeMode::Local && !crate::is_loopback_client(peer_addr) {
+    let effective_ip = crate::effective_client_ip(peer_addr, &headers);
+    if runtime_mode == RuntimeMode::Local && !effective_ip.is_loopback() {
         return Err(api_err(
             StatusCode::FORBIDDEN,
             "external_access_loopback_required",
@@ -903,8 +908,7 @@ pub async fn update_external_access_network_settings(
         *runtime_allowed_origins = allowed_origins.clone();
     }
     // Hot-reload storage backend because local artifact links depend on public_base_url.
-    let backend =
-        storage::load_backend(&pool, &state.encryption_key, public_url.clone()).await;
+    let backend = storage::load_backend(&pool, &state.encryption_key, public_url.clone()).await;
     {
         let mut guard = state.storage.write().await;
         *guard = backend;

@@ -23,7 +23,7 @@ oore.build lets you run your own mobile CI server. V1 targets Android, iOS, and 
 - A **daemon** (`oored`) that orchestrates builds and serves the API
 - An **operator CLI** (`oore`) for setup, admin, and runner management
 - A **web UI** for managing builds, apps, and team access
-- **OIDC-only authentication** — no local passwords
+- **OIDC authentication for non-loopback access** — no local passwords (loopback-only local login supported for local-first onboarding)
 
 ## Prerequisites
 

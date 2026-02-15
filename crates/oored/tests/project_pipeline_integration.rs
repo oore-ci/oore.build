@@ -515,23 +515,23 @@ async fn test_create_and_list_pipelines() {
     let project_id = json["project"]["id"].as_str().unwrap();
 
     // Create a pipeline
-	    let (status, json) = json_request(
-	        &app,
-	        "POST",
-	        &format!("/v1/projects/{project_id}/pipelines"),
-	        &token,
-	        Some(serde_json::json!({
-	            "name": "Build & Test",
-	            "config_path": ".oore.yml",
-	            "trigger_config": {
-	                // Local repositories are manual-trigger-only in V1.
-	                "events": [],
-	                "branches": []
-	            },
-	            "concurrency": {
-	                "cancel_previous": true,
-	                "max_concurrent": 3
-	            }
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/pipelines"),
+        &token,
+        Some(serde_json::json!({
+                "name": "Build & Test",
+                "config_path": ".oore.yml",
+                "trigger_config": {
+                    // Local repositories are manual-trigger-only in V1.
+                    "events": [],
+                    "branches": []
+                },
+                "concurrency": {
+                    "cancel_previous": true,
+                    "max_concurrent": 3
+                }
         })),
     )
     .await;
