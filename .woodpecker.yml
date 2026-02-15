@@ -7,6 +7,11 @@ when:
 steps:
   - name: validate
     image: bash
+    environment:
+      HOME: /Users/arya
+      CARGO_HOME: /Users/arya/.cargo
+      RUSTUP_HOME: /Users/arya/.rustup
+      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
     commands:
       - set -euo pipefail
       - bun install --frozen-lockfile
@@ -145,6 +150,11 @@ steps:
 
   - name: build-release-assets
     image: bash
+    environment:
+      HOME: /Users/arya
+      CARGO_HOME: /Users/arya/.cargo
+      RUSTUP_HOME: /Users/arya/.rustup
+      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
     commands:
       - set -euo pipefail
       - test -n "${CI_COMMIT_TAG:-}"
