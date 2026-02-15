@@ -1,5 +1,4 @@
-clone:
-  disable: true
+skip_clone: true
 
 when:
   event:
