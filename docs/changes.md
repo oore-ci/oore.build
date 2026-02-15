@@ -31,3 +31,5 @@ Rules:
   - OOR-38: https://linear.app/oorebuild/issue/OOR-38/avoid-holding-store-mutex-across-local-repo-inspection-await-in-create
 - Fixed Woodpecker configuration duplication (root `.woodpecker.yml` vs `.woodpecker/*.yml`) to prevent double pipeline runs, and aligned autotag to work on `master` as well as `main`.
   - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
+- Reduced duplicate validate runs by splitting validation into `pull_request` only (feature branches) and `push` only (default branches).
+  - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven

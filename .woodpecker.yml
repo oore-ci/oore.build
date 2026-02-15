@@ -1,8 +1,28 @@
-name: validate
+name: validate-pr
 when:
   event:
     - pull_request
+
+steps:
+  - name: validate
+    image: bash
+    environment:
+      HOME: /Users/arya
+      CARGO_HOME: /Users/arya/.cargo
+      RUSTUP_HOME: /Users/arya/.rustup
+      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    commands:
+      - set -euo pipefail
+      - bun install --frozen-lockfile
+      - make validate
+---
+name: validate-push
+when:
+  event:
     - push
+  branch:
+    - master
+    - main
 
 steps:
   - name: validate
