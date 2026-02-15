@@ -53,9 +53,7 @@ steps:
           echo "Failed to read workspace.package.version from Cargo.toml" >&2
           exit 1
         fi
-        IFS=. read -r major minor patch <<EOF
-$cur
-EOF
+        IFS=. read -r major minor patch <<<"$cur"
         if [ -z "${major:-}" ] || [ -z "${minor:-}" ] || [ -z "${patch:-}" ]; then
           echo "Invalid semver in Cargo.toml: $cur" >&2
           exit 1
