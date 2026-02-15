@@ -16,9 +16,11 @@ steps:
       - git init
       - |
         clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
-        clone_url="${clone_url#https://}"
-        clone_url="${clone_url#http://}"
-        git remote add origin "https://x-access-token:${GITHUB_TOKEN}@${clone_url}"
+        git remote add origin "$clone_url"
+        if [ -n "${GITHUB_TOKEN:-}" ]; then
+          # Avoid embedding tokens in the remote URL.
+          git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        fi
       - git fetch --depth=200 origin "+refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
       - git checkout -f "${CI_COMMIT_TAG}"
 
