@@ -84,13 +84,12 @@ function ProjectsListPage() {
         .length,
     [integrations],
   )
-  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'remote'
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const integrationConnectTo = '/settings/integrations'
-  const missingIntegration =
-    runtimeMode !== 'local' &&
-    !integrationsQuery.isLoading &&
-    !integrationsQuery.error &&
-    activeIntegrationsCount === 0
+  const integrationsResolved =
+    !integrationsQuery.isLoading && !integrationsQuery.error
+  const noConnectedSources =
+    runtimeMode === 'remote' && integrationsResolved && activeIntegrationsCount === 0
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
@@ -98,7 +97,7 @@ function ProjectsListPage() {
     if (search.openCreate !== '1') return
     if (projectsLoading) return
 
-    if (!projectsError && !missingIntegration && canWriteProjects) {
+    if (!projectsError && canWriteProjects) {
       setCreateOpen(true)
     }
 
@@ -109,7 +108,6 @@ function ProjectsListPage() {
     })
   }, [
     canWriteProjects,
-    missingIntegration,
     navigate,
     projectsError,
     projectsLoading,
@@ -123,7 +121,7 @@ function ProjectsListPage() {
         title="Projects"
         description="Repository and pipeline entry points for your build system."
         actions={
-          !missingIntegration && projects.length > 0 && canWriteProjects ? (
+          projects.length > 0 && canWriteProjects ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} size={16} />
               New Project
@@ -151,39 +149,7 @@ function ProjectsListPage() {
         </Alert>
       ) : null}
 
-      {!projectsLoading && !projectsError && missingIntegration ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Connect Source First
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Projects are created from connected source repositories. Connect a
-              source first.
-            </p>
-            {canWriteIntegrations ? (
-              <Button
-                render={<Link to={integrationConnectTo} />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} size={16} />
-                Connect Source
-              </Button>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Ask an owner/admin to connect a source.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {!projectsLoading &&
-      !projectsError &&
-      !missingIntegration &&
-      projects.length === 0 ? (
+      {!projectsLoading && !projectsError && projects.length === 0 ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
@@ -194,23 +160,44 @@ function ProjectsListPage() {
             <p className="text-sm text-muted-foreground">
               {runtimeMode === 'local'
                 ? 'Choose a local Git repository to create your first project.'
-                : 'Your source is connected. Create a project to define pipelines and start builds.'}
+                : noConnectedSources
+                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
+                  : 'Create a project from a connected source repository to define pipelines and start builds.'}
             </p>
-            {canWriteProjects ? (
-              <Button onClick={() => setCreateOpen(true)}>
-                <HugeiconsIcon icon={Add01Icon} size={16} />
-                Create Project
-              </Button>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Ask an owner/admin/developer to create the first project.
-              </p>
-            )}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              {canWriteProjects ? (
+                <Button onClick={() => setCreateOpen(true)}>
+                  <HugeiconsIcon icon={Add01Icon} size={16} />
+                  Create Project
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Ask an owner/admin/developer to create the first project.
+                </p>
+              )}
+
+              {runtimeMode === 'remote' && noConnectedSources ? (
+                canWriteIntegrations ? (
+                  <Button
+                    variant="outline"
+                    render={<Link to={integrationConnectTo} />}
+                    nativeButton={false}
+                  >
+                    <HugeiconsIcon icon={Link04Icon} size={16} />
+                    Connect Source
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Ask an owner/admin to connect a source.
+                  </p>
+                )
+              ) : null}
+            </div>
           </CardContent>
         </Card>
       ) : null}
 
-      {!projectsLoading && !projectsError && !missingIntegration && projects.length > 0 ? (
+      {!projectsLoading && !projectsError && projects.length > 0 ? (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">

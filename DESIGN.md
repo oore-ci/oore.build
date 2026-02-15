@@ -576,7 +576,7 @@ Before submitting frontend changes, verify:
 
 To change this design system:
 
-1. Propose the change in an ADR under `docs/adrs/`
+1. Propose the change in a Linear ADR (see `docs/README.md` and the Docs Index)
 2. Update this document
 3. Update `AGENTS.md` and `CLAUDE.md` if rules changed
 4. Refactor existing code to match the new pattern

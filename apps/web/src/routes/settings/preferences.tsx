@@ -10,6 +10,7 @@ import {
   ArrowRight01Icon,
   CheckmarkCircle02Icon,
   AlertCircleIcon,
+  Folder02Icon,
 } from '@hugeicons/core-free-icons'
 
 import {
@@ -17,6 +18,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useAuthStore } from '@/stores/auth-store'
+import { useActiveInstance } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
@@ -35,6 +37,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
+import { OidcIssuerUrlAutocomplete } from '@/components/oidc-issuer-url-autocomplete'
 import {
   Collapsible,
   CollapsibleContent,
@@ -89,7 +93,10 @@ export const Route = createFileRoute('/settings/preferences')({
 
 const storageSchema = z
   .object({
-    provider: z.enum(['disabled', 'local', 's3', 'r2']),
+    backend_kind: z.enum(['disabled', 'local', 'object']),
+    object_service: z
+      .enum(['aws_s3', 'cloudflare_r2', 'minio', 'custom'])
+      .optional(),
     local_base_dir: z.string().optional(),
     s3_bucket: z.string().optional(),
     s3_region: z.string().optional(),
@@ -101,29 +108,42 @@ const storageSchema = z
     const localDir = (value.local_base_dir ?? '').trim()
     const bucket = (value.s3_bucket ?? '').trim()
     const endpoint = (value.s3_endpoint ?? '').trim()
+    const service = value.object_service
 
-    if (value.provider === 'local' && !localDir) {
+    if (value.backend_kind === 'local' && !localDir) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['local_base_dir'],
-        message: 'Local base directory is required for local storage.',
+        message: 'Local base directory is required.',
       })
     }
 
-    if ((value.provider === 's3' || value.provider === 'r2') && !bucket) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['s3_bucket'],
-        message: 'Bucket is required for S3/R2 storage.',
-      })
-    }
+    if (value.backend_kind === 'object') {
+      if (!service) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['object_service'],
+          message: 'Choose an object storage service.',
+        })
+      }
 
-    if (value.provider === 'r2' && !endpoint) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['s3_endpoint'],
-        message: 'Endpoint is required for R2 storage.',
-      })
+      if (!bucket) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['s3_bucket'],
+          message: 'Bucket is required for object storage.',
+        })
+      }
+
+      const endpointRequired =
+        service === 'cloudflare_r2' || service === 'minio' || service === 'custom'
+      if (endpointRequired && !endpoint) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['s3_endpoint'],
+          message: 'Endpoint is required for this service preset.',
+        })
+      }
     }
   })
 
@@ -177,15 +197,39 @@ function parseAllowedOriginsInput(value: string): Array<string> {
     .filter((entry) => entry.length > 0)
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  )
+}
+
+function resolveHostname(rawUrl: string | null | undefined): string {
+  const trimmed = rawUrl?.trim() ?? ''
+  if (!trimmed) return ''
+  try {
+    return new URL(trimmed).hostname
+  } catch {
+    return ''
+  }
+}
+
 function PreferencesPage() {
   const navigate = useNavigate()
   const [readinessOpen, setReadinessOpen] = useState(false)
   const [networkEditorOpen, setNetworkEditorOpen] = useState(false)
   const [oidcDialogOpen, setOidcDialogOpen] = useState(false)
+  const [artifactDirPickerOpen, setArtifactDirPickerOpen] = useState(false)
   const canWrite = useHasPermission('instance_settings', 'write')
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const isOwner = user?.role === 'owner'
+  const instance = useActiveInstance()
+  const uiIsLoopback = isLoopbackHostname(window.location.hostname)
+  const backendIsLoopback = isLoopbackHostname(resolveHostname(instance?.url))
+  const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
   const settingsQuery = useArtifactStorageSettings()
   const preferencesQuery = useInstancePreferences()
   const preflightQuery = useExternalAccessPreflight()
@@ -198,7 +242,8 @@ function PreferencesPage() {
   const storageForm = useForm<StorageFormValues>({
     resolver: zodResolver(storageSchema),
     defaultValues: {
-      provider: 'disabled',
+      backend_kind: 'disabled',
+      object_service: 'aws_s3',
       local_base_dir: '',
       s3_bucket: '',
       s3_region: 'us-east-1',
@@ -224,22 +269,60 @@ function PreferencesPage() {
     },
   })
 
-  const provider = storageForm.watch('provider')
+  const backendKind = storageForm.watch('backend_kind')
+  const objectService = storageForm.watch('object_service')
 
   useEffect(() => {
     const settings = settingsQuery.data?.settings
     if (!settings) return
 
+    const backend_kind =
+      settings.provider === 'disabled'
+        ? 'disabled'
+        : settings.provider === 'local'
+          ? 'local'
+          : 'object'
+
+    const object_service =
+      settings.provider === 'r2'
+        ? 'cloudflare_r2'
+        : settings.provider === 's3'
+          ? settings.s3_endpoint
+            ? 'custom'
+            : 'aws_s3'
+          : 'aws_s3'
+
+    const region =
+      settings.provider === 'r2'
+        ? settings.s3_region ?? 'auto'
+        : settings.s3_region ?? 'us-east-1'
+
     storageForm.reset({
-      provider: settings.provider,
+      backend_kind,
+      object_service,
       local_base_dir: settings.local_base_dir ?? '',
       s3_bucket: settings.s3_bucket ?? '',
-      s3_region: settings.s3_region ?? 'us-east-1',
+      s3_region: region,
       s3_endpoint: settings.s3_endpoint ?? '',
       access_key_id: '',
       secret_access_key: '',
     })
   }, [settingsQuery.data, storageForm])
+
+  useEffect(() => {
+    if (backendKind !== 'object') return
+    if (objectService === 'cloudflare_r2') {
+      if (storageForm.getValues('s3_region') !== 'auto') {
+        storageForm.setValue('s3_region', 'auto', { shouldDirty: true })
+      }
+      return
+    }
+    if (objectService === 'aws_s3') {
+      if (storageForm.getValues('s3_region') === 'auto') {
+        storageForm.setValue('s3_region', 'us-east-1', { shouldDirty: true })
+      }
+    }
+  }, [backendKind, objectService, storageForm])
 
   useEffect(() => {
     const network = networkSettingsQuery.data?.settings
@@ -252,43 +335,74 @@ function PreferencesPage() {
   }, [networkSettingsQuery.data, externalAccessNetworkForm])
 
   function onSubmitStorage(values: StorageFormValues) {
+    const provider =
+      values.backend_kind === 'disabled'
+        ? 'disabled'
+        : values.backend_kind === 'local'
+          ? 'local'
+          : values.object_service === 'cloudflare_r2'
+            ? 'r2'
+            : 's3'
+
+    const region =
+      values.backend_kind === 'object'
+        ? values.object_service === 'cloudflare_r2'
+          ? 'auto'
+          : values.s3_region?.trim() || 'us-east-1'
+        : undefined
+
     const payload = {
-      provider: values.provider,
+      provider,
       local_base_dir:
-        values.provider === 'local' ? values.local_base_dir?.trim() : undefined,
+        values.backend_kind === 'local'
+          ? values.local_base_dir?.trim()
+          : undefined,
       s3_bucket:
-        values.provider === 's3' || values.provider === 'r2'
+        values.backend_kind === 'object'
           ? values.s3_bucket?.trim()
           : undefined,
       s3_region:
-        values.provider === 's3' || values.provider === 'r2'
-          ? values.s3_region?.trim() || 'us-east-1'
-          : undefined,
+        values.backend_kind === 'object' ? region : undefined,
       s3_endpoint:
-        values.provider === 's3' || values.provider === 'r2'
+        values.backend_kind === 'object'
           ? values.s3_endpoint?.trim() || undefined
           : undefined,
       access_key_id:
-        values.provider === 's3' || values.provider === 'r2'
+        values.backend_kind === 'object'
           ? values.access_key_id?.trim() || undefined
           : undefined,
       secret_access_key:
-        values.provider === 's3' || values.provider === 'r2'
+        values.backend_kind === 'object'
           ? values.secret_access_key?.trim() || undefined
           : undefined,
     } as const
 
     updateStorageMutation.mutate(payload, {
       onSuccess: (res) => {
-        toast.success(`Artifact storage updated to ${res.settings.provider}`)
+        const label =
+          res.settings.provider === 'local'
+            ? 'Local filesystem'
+            : res.settings.provider === 's3'
+              ? 'Object storage'
+              : res.settings.provider === 'r2'
+                ? 'Object storage (R2)'
+                : 'Disabled'
+        toast.success(`Artifact storage updated: ${label}`)
         storageForm.setValue('access_key_id', '')
         storageForm.setValue('secret_access_key', '')
       },
       onError: (error) => {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : 'Failed to update artifact storage settings',
+          getApiErrorMessage(error, {
+            invalid_local_base_dir:
+              'Local base directory must be an absolute path.',
+            invalid_s3_bucket: 'Bucket is required for object storage.',
+            invalid_s3_endpoint: 'Endpoint is required for this service preset.',
+            missing_s3_credentials:
+              'Access key ID and secret access key are required for object storage.',
+            encryption_error: 'Failed to store credentials securely.',
+            store_error: 'Failed to update artifact storage settings.',
+          }),
         )
       },
     })
@@ -370,6 +484,30 @@ function PreferencesPage() {
   }
 
   const settings = settingsQuery.data?.settings
+  const artifactBackendLabel = useMemo(() => {
+    switch (settings?.provider) {
+      case 'local':
+        return 'Local filesystem'
+      case 's3':
+        return 'Object storage'
+      case 'r2':
+        return 'Object storage (R2)'
+      case 'disabled':
+      default:
+        return 'Disabled'
+    }
+  }, [settings?.provider])
+  const artifactSourceLabel = useMemo(() => {
+    switch (settings?.source) {
+      case 'database':
+        return 'Database'
+      case 'environment':
+        return 'Environment'
+      case 'default':
+      default:
+        return 'Default'
+    }
+  }, [settings?.source])
   const preferences = preferencesQuery.data?.preferences
   const networkSettings = networkSettingsQuery.data?.settings
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
@@ -842,13 +980,19 @@ function PreferencesPage() {
                   <FormItem>
                     <FormLabel>Issuer URL</FormLabel>
                     <FormControl>
-                      <Input
-                        type="url"
-                        placeholder="https://accounts.google.com"
-                        {...field}
+                      <OidcIssuerUrlAutocomplete
+                        name={field.name}
+                        value={field.value}
+                        onValueChange={(next) => field.onChange(next)}
+                        onBlur={field.onBlur}
+                        ref={field.ref}
                         disabled={configureExternalAccessOidcMutation.isPending}
                       />
                     </FormControl>
+                    <FormDescription>
+                      Pick a common provider or enter a custom issuer URL.
+                      Template entries must be edited before saving.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -928,13 +1072,13 @@ function PreferencesPage() {
         <Card>
           <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Artifact provider
+              Artifact backend
             </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
-              {settings?.provider ?? 'disabled'}
+              {artifactBackendLabel}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Current artifact backend
+              Where build artifacts are stored
             </p>
           </CardContent>
         </Card>
@@ -944,10 +1088,10 @@ function PreferencesPage() {
               Config source
             </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
-              {settings?.source ?? 'default'}
+              {artifactSourceLabel}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Database, environment, or default
+              Effective settings source
             </p>
           </CardContent>
         </Card>
@@ -995,10 +1139,10 @@ function PreferencesPage() {
               >
                 <FormField
                   control={storageForm.control}
-                  name="provider"
+                  name="backend_kind"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Provider</FormLabel>
+                      <FormLabel>Backend</FormLabel>
                       <Select
                         value={field.value}
                         onValueChange={field.onChange}
@@ -1006,13 +1150,12 @@ function PreferencesPage() {
                         items={{
                           disabled: 'Disabled',
                           local: 'Local filesystem',
-                          s3: 'S3-compatible (AWS/MinIO)',
-                          r2: 'Cloudflare R2',
+                          object: 'Object storage (S3-compatible)',
                         }}
                       >
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select provider" />
+                            <SelectValue placeholder="Select backend" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -1020,43 +1163,77 @@ function PreferencesPage() {
                           <SelectItem value="local">
                             Local filesystem
                           </SelectItem>
-                          <SelectItem value="s3">
-                            S3-compatible (AWS/MinIO)
+                          <SelectItem value="object">
+                            Object storage (S3-compatible)
                           </SelectItem>
-                          <SelectItem value="r2">Cloudflare R2</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormDescription>
-                        {provider === 'disabled'
-                          ? 'Artifacts remain in metadata only. Binary downloads are unavailable.'
-                          : provider === 'local'
-                            ? 'Runner uploads artifact binaries to this daemon and stores files on local disk.'
-                            : 'Runner uploads binaries using pre-signed S3-compatible URLs.'}
+                        {backendKind === 'disabled'
+                          ? 'Artifacts are recorded as metadata only. Files are not stored, so downloads are unavailable.'
+                          : backendKind === 'local'
+                            ? 'Artifacts are uploaded to the daemon and stored on local disk (best for single-host setups).'
+                            : 'Artifacts are stored in an S3-compatible bucket and served via time-limited download links.'}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
 
-                {provider === 'local' ? (
+                {backendKind === 'local' ? (
                   <FormField
                     control={storageForm.control}
                     name="local_base_dir"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Local base directory</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="/Users/arya/Library/Application Support/oore/artifacts"
-                            {...field}
-                            disabled={
-                              !canWrite || updateStorageMutation.isPending
-                            }
-                          />
-                        </FormControl>
+                        <div className="flex flex-col gap-2 md:flex-row">
+                          <FormControl>
+                            <Input
+                              placeholder="/absolute/path/to/artifacts"
+                              className="font-mono text-xs"
+                              {...field}
+                              disabled={
+                                !canWrite || updateStorageMutation.isPending
+                              }
+                            />
+                          </FormControl>
+                          {canBrowseLocalFs ? (
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                aria-label="Browse"
+                                title="Browse"
+                                onClick={() => {
+                                  if (!canBrowseLocalFs) {
+                                    toast.error(
+                                      'Browse is only available from localhost.',
+                                    )
+                                    return
+                                  }
+                                  setArtifactDirPickerOpen(true)
+                                }}
+                                disabled={
+                                  !canWrite || updateStorageMutation.isPending
+                                }
+                              >
+                                <HugeiconsIcon icon={Folder02Icon} size={16} />
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
                         <FormDescription>
                           Absolute path on the daemon host where artifact files
                           are stored.
+                          {!canBrowseLocalFs ? (
+                            <>
+                              {' '}
+                              For security, folder browsing is only available
+                              from localhost.
+                            </>
+                          ) : null}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1064,8 +1241,52 @@ function PreferencesPage() {
                   />
                 ) : null}
 
-                {provider === 's3' || provider === 'r2' ? (
+                {backendKind === 'object' ? (
                   <>
+                    <FormField
+                      control={storageForm.control}
+                      name="object_service"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Service</FormLabel>
+                          <Select
+                            value={field.value ?? 'aws_s3'}
+                            onValueChange={field.onChange}
+                            disabled={
+                              !canWrite || updateStorageMutation.isPending
+                            }
+                            items={{
+                              aws_s3: 'AWS S3',
+                              cloudflare_r2: 'Cloudflare R2',
+                              minio: 'MinIO',
+                              custom: 'Custom S3-compatible',
+                            }}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a service" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="aws_s3">AWS S3</SelectItem>
+                              <SelectItem value="cloudflare_r2">
+                                Cloudflare R2
+                              </SelectItem>
+                              <SelectItem value="minio">MinIO</SelectItem>
+                              <SelectItem value="custom">
+                                Custom S3-compatible
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            Presets apply sane defaults (R2 uses region `auto`
+                            and requires an endpoint).
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
                     <FormField
                       control={storageForm.control}
                       name="s3_bucket"
@@ -1081,6 +1302,10 @@ function PreferencesPage() {
                               }
                             />
                           </FormControl>
+                          <FormDescription>
+                            Keep this bucket private. oore.build serves files via
+                            time-limited signed URLs.
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -1094,13 +1319,24 @@ function PreferencesPage() {
                           <FormLabel>Region</FormLabel>
                           <FormControl>
                             <Input
-                              placeholder="us-east-1"
+                              placeholder={
+                                objectService === 'cloudflare_r2'
+                                  ? 'auto'
+                                  : 'us-east-1'
+                              }
                               {...field}
                               disabled={
-                                !canWrite || updateStorageMutation.isPending
+                                objectService === 'cloudflare_r2' ||
+                                !canWrite ||
+                                updateStorageMutation.isPending
                               }
                             />
                           </FormControl>
+                          <FormDescription>
+                            {objectService === 'cloudflare_r2'
+                              ? 'Cloudflare R2 uses region `auto` for signing.'
+                              : 'AWS region used for request signing.'}
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -1112,17 +1348,32 @@ function PreferencesPage() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>
-                            Endpoint (optional for S3, required for R2)
+                            {objectService === 'aws_s3'
+                              ? 'Endpoint (optional)'
+                              : 'Endpoint (required)'}
                           </FormLabel>
                           <FormControl>
                             <Input
-                              placeholder="https://<account-id>.r2.cloudflarestorage.com"
+                              placeholder={
+                                objectService === 'cloudflare_r2'
+                                  ? 'https://<account-id>.r2.cloudflarestorage.com'
+                                  : objectService === 'minio'
+                                    ? 'http://127.0.0.1:9000'
+                                    : objectService === 'custom'
+                                      ? 'https://s3.example.com'
+                                      : 'Leave empty for AWS S3'
+                              }
                               {...field}
                               disabled={
                                 !canWrite || updateStorageMutation.isPending
                               }
                             />
                           </FormControl>
+                          <FormDescription>
+                            {objectService === 'aws_s3'
+                              ? 'Leave empty to use AWS defaults for the selected region.'
+                              : 'Base URL for the S3-compatible API endpoint.'}
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -1148,7 +1399,7 @@ function PreferencesPage() {
                             />
                           </FormControl>
                           <FormDescription>
-                            Leave empty to keep current stored value.
+                            Leave empty to keep the current stored value.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
@@ -1206,6 +1457,24 @@ function PreferencesPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <LocalFolderPickerDialog
+        open={artifactDirPickerOpen}
+        onOpenChange={setArtifactDirPickerOpen}
+        enabled={canBrowseLocalFs}
+        initialPath={storageForm.getValues('local_base_dir')}
+        title="Browse Artifact Folder"
+        description="Select a folder on the daemon host where artifact files will be stored."
+        selectCurrentLabel="Use Current Folder"
+        selectDirectoryLabel="Select Folder"
+        onSelectPath={(path) => {
+          storageForm.setValue('local_base_dir', path, {
+            shouldDirty: true,
+            shouldTouch: true,
+            shouldValidate: true,
+          })
+        }}
+      />
     </PageLayout>
   )
 }

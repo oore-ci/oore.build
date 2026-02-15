@@ -1,12 +1,13 @@
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{ConnectInfo, Path as AxumPath, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, BrowseLocalGitDirectoriesResponse, CreateLocalGitIntegrationRequest,
     CreateLocalGitIntegrationResponse, Integration, IntegrationRepository,
@@ -14,10 +15,10 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::Row;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::{require_local_mode, row_to_integration};
+use super::row_to_integration;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
@@ -182,9 +183,11 @@ fn build_browse_suggestions(current_path: &Path) -> Vec<LocalGitPathSuggestion> 
 
 /// `GET /v1/integrations/local-git/directories`
 ///
-/// Lists child directories for local filesystem browsing in local mode.
+/// Lists child directories for local filesystem browsing.
 pub async fn browse_local_git_directories(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     auth: AuthUser,
     Query(params): Query<BrowseLocalGitDirectoriesQuery>,
 ) -> ApiResult<BrowseLocalGitDirectoriesResponse> {
@@ -195,11 +198,19 @@ pub async fn browse_local_git_directories(
         check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
-    require_local_mode(&pool).await?;
+    let effective_ip = crate::effective_client_ip(peer_addr, &headers);
+    if !effective_ip.is_loopback() {
+        warn!(
+            peer_ip = %peer_addr.ip(),
+            source_ip = %effective_ip,
+            "blocked local git directory browsing from non-loopback client"
+        );
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "loopback_required",
+            "Local filesystem browsing is only available from loopback clients",
+        ));
+    }
 
     let current_path = if let Some(path) = params.path.as_deref() {
         canonicalize_directory(path)?
@@ -283,7 +294,6 @@ pub async fn create_local_git_integration(
         let store = state.store.lock().await;
         store.pool().clone()
     };
-    require_local_mode(&pool).await?;
 
     let canonical_path = normalize_repo_path(&req.repository_path)?;
     assert_git_repo(&canonical_path)?;
@@ -457,7 +467,6 @@ pub async fn list_local_git_integrations(
         let store = state.store.lock().await;
         store.pool().clone()
     };
-    require_local_mode(&pool).await?;
 
     let rows = sqlx::query(
         "SELECT * FROM integrations WHERE provider = 'local_git' ORDER BY created_at DESC",
@@ -494,7 +503,6 @@ pub async fn delete_local_git_integration(
         let store = state.store.lock().await;
         store.pool().clone()
     };
-    require_local_mode(&pool).await?;
 
     let row = sqlx::query(
         "SELECT display_name FROM integrations WHERE id = ?1 AND provider = 'local_git'",

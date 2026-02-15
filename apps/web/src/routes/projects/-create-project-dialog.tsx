@@ -4,19 +4,14 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  ArrowUp01Icon,
-  Folder02Icon,
-  GitBranchIcon,
-  Refresh01Icon,
-} from '@hugeicons/core-free-icons'
+import { Folder02Icon } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
 import { useQuery } from '@tanstack/react-query'
 import type { IntegrationRepository } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
 import {
   Form,
   FormControl,
@@ -41,11 +36,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useCreateProject } from '@/hooks/use-projects'
-import { useBrowseLocalGitDirectories } from '@/hooks/use-integrations'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { listIntegrationRepos, listIntegrations } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -63,6 +56,25 @@ type CreateProjectForm = z.infer<typeof createProjectSchema>
 interface CreateProjectDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  )
+}
+
+function resolveHostname(rawUrl: string | null | undefined): string {
+  const trimmed = rawUrl?.trim() ?? ''
+  if (!trimmed) return ''
+  try {
+    return new URL(trimmed).hostname
+  } catch {
+    return ''
+  }
 }
 
 function useAvailableRepos(enabled: boolean) {
@@ -101,27 +113,27 @@ export default function CreateProjectDialog({
   const navigate = useNavigate()
   const createMutation = useCreateProject()
   const setupStatusQuery = useSetupStatus()
-  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'remote'
-  const isLocalMode = runtimeMode === 'local'
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
+  const isRemoteMode = runtimeMode === 'remote'
+  const instance = useActiveInstance()
+
+  const uiIsLoopback = isLoopbackHostname(window.location.hostname)
+  const backendIsLoopback = isLoopbackHostname(resolveHostname(instance?.url))
+  const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
+
+  const [sourceKind, setSourceKind] = useState<'local' | 'repo'>('local')
+  const [sourceKindTouched, setSourceKindTouched] = useState(false)
 
   const { data: repos, isLoading: reposLoading } = useAvailableRepos(
-    open && !isLocalMode,
+    open && isRemoteMode && sourceKind === 'repo',
   )
   const [selectedRepoId, setSelectedRepoId] = useState<string>('')
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [browserPath, setBrowserPath] = useState<string | undefined>(undefined)
   const repoItems = useMemo(
     () => Object.fromEntries((repos ?? []).map((r) => [r.id, r.full_name])),
     [repos],
   )
   const hasRepos = (repos?.length ?? 0) > 0
-
-  const {
-    data: browserData,
-    isLoading: browserLoading,
-    isFetching: browserFetching,
-    refetch: refetchBrowser,
-  } = useBrowseLocalGitDirectories(browserPath, open && isLocalMode)
 
   const form = useForm<CreateProjectForm>({
     resolver: zodResolver(createProjectSchema),
@@ -136,11 +148,29 @@ export default function CreateProjectDialog({
 
   useEffect(() => {
     if (!open) return
-    if (isLocalMode) return
+    setSourceKind(isRemoteMode ? 'repo' : 'local')
+    setSourceKindTouched(false)
+  }, [open, isRemoteMode])
+
+  useEffect(() => {
+    if (!open) return
+    if (!isRemoteMode) return
+    if (sourceKind !== 'repo') return
+    if (sourceKindTouched) return
+    if (reposLoading) return
+    if (hasRepos) return
+
+    // Keep project creation unblocked if remote mode has no synced repos.
+    setSourceKind('local')
+  }, [open, isRemoteMode, sourceKind, sourceKindTouched, reposLoading, hasRepos])
+
+  useEffect(() => {
+    if (!open) return
+    if (sourceKind !== 'repo') return
     if (!hasRepos) return
     if (selectedRepoId) return
     setSelectedRepoId(repos![0].id)
-  }, [open, isLocalMode, hasRepos, repos, selectedRepoId])
+  }, [open, sourceKind, hasRepos, repos, selectedRepoId])
 
   function applyLocalPath(path: string, closePicker = false) {
     form.setValue('local_repository_path', path, {
@@ -154,8 +184,10 @@ export default function CreateProjectDialog({
   }
 
   function handleOpenPicker() {
-    const candidate = form.getValues('local_repository_path')?.trim()
-    setBrowserPath(candidate ? candidate : undefined)
+    if (!canBrowseLocalFs) {
+      toast.error('Browse is only available from localhost.')
+      return
+    }
     setPickerOpen(true)
   }
 
@@ -166,7 +198,7 @@ export default function CreateProjectDialog({
       return
     }
 
-    if (isLocalMode) {
+    if (sourceKind === 'local') {
       const localRepositoryPath = data.local_repository_path?.trim()
       if (!localRepositoryPath) {
         toast.error('Path is required.')
@@ -184,7 +216,6 @@ export default function CreateProjectDialog({
           onSuccess: (res) => {
             toast.success('Project created')
             form.reset()
-            setBrowserPath(undefined)
             onOpenChange(false)
             void navigate({
               to: '/projects/$projectId',
@@ -233,8 +264,9 @@ export default function CreateProjectDialog({
     if (!nextOpen) {
       form.reset()
       setSelectedRepoId('')
+      setSourceKind('local')
+      setSourceKindTouched(false)
       setPickerOpen(false)
-      setBrowserPath(undefined)
     }
     onOpenChange(nextOpen)
   }
@@ -246,8 +278,8 @@ export default function CreateProjectDialog({
           <DialogHeader>
             <DialogTitle>Create Project</DialogTitle>
             <DialogDescription>
-              {isLocalMode
-                ? 'Create a project from a path.'
+              {sourceKind === 'local'
+                ? 'Create a project from a local repository path.'
                 : 'Create a project linked to a connected source repository.'}
             </DialogDescription>
           </DialogHeader>
@@ -290,43 +322,67 @@ export default function CreateProjectDialog({
                 )}
               />
 
-              {isLocalMode ? (
-                <FormField
-                  control={form.control}
-                  name="local_repository_path"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Path</FormLabel>
-                      <div className="flex flex-col gap-2 md:flex-row">
-                        <FormControl>
-                          <Input
-                            {...field}
-                            placeholder="/absolute/path/to/repository"
-                            className="font-mono text-xs"
-                          />
-                        </FormControl>
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            aria-label="Browse"
-                            title="Browse"
-                            onClick={handleOpenPicker}
-                          >
-                            <HugeiconsIcon icon={Folder02Icon} size={16} />
-                          </Button>
+              <Tabs
+                value={sourceKind}
+                onValueChange={(v) => {
+                  setSourceKindTouched(true)
+                  setSourceKind(v as 'local' | 'repo')
+                }}
+              >
+                <TabsList className="w-full">
+                  <TabsTrigger value="local">Local path</TabsTrigger>
+                  <TabsTrigger value="repo" disabled={!isRemoteMode}>
+                    Connected repo
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="local" className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="local_repository_path"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Path</FormLabel>
+                        <div className="flex flex-col gap-2 md:flex-row">
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="/absolute/path/to/repository"
+                              className="font-mono text-xs"
+                            />
+                          </FormControl>
+                          {canBrowseLocalFs ? (
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                aria-label="Browse"
+                                title="Browse"
+                                onClick={handleOpenPicker}
+                              >
+                                <HugeiconsIcon icon={Folder02Icon} size={16} />
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
-                      </div>
-                      <FormDescription>
-                        Absolute path to the Git repository.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : (
-                <div className="space-y-2">
+                        <FormDescription>
+                          Absolute path to the Git repository.
+                          {!canBrowseLocalFs ? (
+                            <>
+                              {' '}
+                              For security, folder browsing is only available
+                              from localhost.
+                            </>
+                          ) : null}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </TabsContent>
+
+                <TabsContent value="repo" className="space-y-2">
                   <FormLabel>Source repository</FormLabel>
                   {reposLoading ? (
                     <div className="flex items-center gap-2 py-2">
@@ -358,8 +414,8 @@ export default function CreateProjectDialog({
                       repositories first.
                     </p>
                   )}
-                </div>
-              )}
+                </TabsContent>
+              </Tabs>
 
               <FormField
                 control={form.control}
@@ -392,7 +448,7 @@ export default function CreateProjectDialog({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
-                    (!isLocalMode && (reposLoading || !hasRepos))
+                    (sourceKind === 'repo' && (reposLoading || !hasRepos))
                   }
                 >
                   {createMutation.isPending ? (
@@ -410,132 +466,18 @@ export default function CreateProjectDialog({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Browse Local Folders</DialogTitle>
-            <DialogDescription>
-              Select a Git repository folder and use it for this project.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="rounded-md border bg-muted/20 p-3">
-              <p className="text-xs text-muted-foreground">Current folder</p>
-              <p className="mt-1 break-all font-mono text-xs">
-                {browserData?.current_path ?? 'Loading...'}
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (browserData?.parent_path) {
-                    setBrowserPath(browserData.parent_path)
-                  }
-                }}
-                disabled={!browserData?.parent_path || browserFetching}
-              >
-                <HugeiconsIcon icon={ArrowUp01Icon} size={14} />
-                Up
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void refetchBrowser()}
-                disabled={browserFetching}
-              >
-                <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                Refresh
-              </Button>
-
-              {browserData?.current_is_git_repository ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => applyLocalPath(browserData.current_path, true)}
-                >
-                  <HugeiconsIcon icon={GitBranchIcon} size={14} />
-                  Use Current Folder
-                </Button>
-              ) : null}
-            </div>
-
-            {browserLoading ? (
-              <div className="flex items-center gap-2 py-3">
-                <Spinner className="size-4" />
-                <span className="text-sm text-muted-foreground">
-                  Loading folders...
-                </span>
-              </div>
-            ) : (
-              <ScrollArea className="h-80 rounded-md border">
-                {browserData?.directories.length ? (
-                  <div className="divide-y">
-                    {browserData.directories.map((directory) => (
-                      <div
-                        key={directory.path}
-                        className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between"
-                      >
-                        <button
-                          type="button"
-                          className="group min-w-0 flex-1 rounded-md border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/30 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
-                          onClick={() => setBrowserPath(directory.path)}
-                        >
-                          <div className="flex items-center gap-2">
-                            <HugeiconsIcon icon={Folder02Icon} size={14} />
-                            <p className="truncate text-sm font-medium">
-                              {directory.name}
-                            </p>
-                            {directory.is_git_repository ? (
-                              <Badge variant="success">Git repo</Badge>
-                            ) : null}
-                          </div>
-                          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                            {directory.path}
-                          </p>
-                        </button>
-
-                        {directory.is_git_repository ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => applyLocalPath(directory.path, true)}
-                          >
-                            <HugeiconsIcon icon={Add01Icon} size={14} />
-                            Use Repo
-                          </Button>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-6">
-                    <p className="text-sm text-muted-foreground">
-                      No subfolders found in this location.
-                    </p>
-                  </div>
-                )}
-              </ScrollArea>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPickerOpen(false)}
-            >
-              Done
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <LocalFolderPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        enabled={open && sourceKind === 'local' && canBrowseLocalFs}
+        initialPath={form.getValues('local_repository_path')}
+        title="Browse Local Folders"
+        description="Select a Git repository folder and use it for this project."
+        requireGitRepository
+        selectCurrentLabel="Use Current Folder"
+        selectDirectoryLabel="Use Repo"
+        onSelectPath={(path) => applyLocalPath(path, true)}
+      />
     </>
   )
 }

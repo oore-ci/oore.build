@@ -4,7 +4,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
   InformationCircleIcon,
-  Link04Icon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 
@@ -13,7 +12,6 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
-import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
@@ -49,7 +47,6 @@ function BuildsListPage() {
   const navigate = useNavigate()
   const buildsQuery = useBuilds({ limit: 100 })
   const projectsQuery = useProjects({ limit: 200 })
-  const integrationsQuery = useIntegrations()
   const setupStatusQuery = useSetupStatus()
   const canTriggerBuild = useHasPermission('builds', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
@@ -64,28 +61,12 @@ function BuildsListPage() {
     () => projectsQuery.data?.projects ?? [],
     [projectsQuery.data?.projects],
   )
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
-  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'remote'
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const integrationConnectTo = '/settings/integrations'
-  const missingIntegration =
-    runtimeMode !== 'local' &&
-    !integrationsQuery.isLoading &&
-    !integrationsQuery.error &&
-    activeIntegrationsCount === 0
   const missingProjects =
     !projectsQuery.isLoading && !projectsQuery.error && projects.length === 0
-  const isLoading =
-    buildsQuery.isLoading || integrationsQuery.isLoading || projectsQuery.isLoading
-  const error = buildsQuery.error ?? integrationsQuery.error ?? projectsQuery.error
+  const isLoading = buildsQuery.isLoading || projectsQuery.isLoading
+  const error = buildsQuery.error ?? projectsQuery.error
 
   return (
     <PageLayout width="wide">
@@ -94,10 +75,7 @@ function BuildsListPage() {
         title="Builds"
         description="Queue, execution, and historical run inventory across projects."
         actions={
-          !missingIntegration &&
-          !missingProjects &&
-          builds.length > 0 &&
-          canTriggerBuild ? (
+          !missingProjects && canTriggerBuild ? (
             <Button onClick={() => setTriggerBuildOpen(true)}>
               <HugeiconsIcon icon={PlayIcon} size={16} />
               Run Build
@@ -126,34 +104,7 @@ function BuildsListPage() {
       ) : null}
 
       {!isLoading && !error ? (
-        missingIntegration ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Connect Source First
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Builds require a connected source and a project. Start by
-                connecting your source.
-              </p>
-              {canWriteIntegrations ? (
-                <Button
-                  render={<Link to={integrationConnectTo} />}
-                  nativeButton={false}
-                >
-                  <HugeiconsIcon icon={Link04Icon} size={16} />
-                  Connect Source
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Ask an owner/admin to connect a source.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        ) : missingProjects ? (
+        missingProjects ? (
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
@@ -176,6 +127,22 @@ function BuildsListPage() {
                   Ask an owner/admin/developer to create the first project.
                 </p>
               )}
+
+              {runtimeMode === 'remote' ? (
+                canWriteIntegrations ? (
+                  <Button
+                    variant="outline"
+                    render={<Link to={integrationConnectTo} />}
+                    nativeButton={false}
+                  >
+                    Connect Source
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Ask an owner/admin to connect a source.
+                  </p>
+                )
+              ) : null}
             </CardContent>
           </Card>
         ) : (

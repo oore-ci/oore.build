@@ -85,6 +85,38 @@ export function useIntegrationRepos(integrationId: string) {
   })
 }
 
+export function useRepositoryProvider(repositoryId?: string, enabled = true) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'repository-provider',
+      repositoryId ?? '__none__',
+    ],
+    queryFn: async () => {
+      if (!baseUrl || !token || !repositoryId) return null
+      const integrations = await listIntegrations(baseUrl, token)
+
+      for (const integration of integrations.integrations) {
+        try {
+          const repos = await listIntegrationRepos(baseUrl, token, integration.id)
+          if (repos.repositories.some((repo) => repo.id === repositoryId)) {
+            return integration.provider
+          }
+        } catch {
+          // skip integrations that fail to list repositories
+        }
+      }
+
+      return null
+    },
+    enabled: enabled && !!baseUrl && !!token && !!repositoryId,
+  })
+}
+
 export function useGitHubAppStart() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()

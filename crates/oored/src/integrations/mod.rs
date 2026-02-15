@@ -103,31 +103,6 @@ pub(crate) async fn require_remote_mode(
     Ok(())
 }
 
-pub(crate) async fn require_local_mode(
-    pool: &sqlx::SqlitePool,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let mode = crate::instance_settings::load_runtime_mode(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to load runtime mode");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to determine runtime mode",
-            )
-        })?;
-
-    if mode != RuntimeMode::Local {
-        return Err(api_err(
-            StatusCode::FORBIDDEN,
-            "mode_restricted",
-            "Local mode is required for this operation",
-        ));
-    }
-
-    Ok(())
-}
-
 // ── Row conversion helpers ──────────────────────────────────────
 
 pub fn row_to_integration(row: &sqlx::sqlite::SqliteRow) -> Integration {

@@ -520,8 +520,7 @@ export default function PipelineForm({
                   <Alert>
                     <HugeiconsIcon icon={AlertCircleIcon} size={16} />
                     <AlertDescription>
-                      This repository uses manual-only pipeline triggers in local
-                      mode.
+                      This repository uses manual-only pipeline triggers.
                     </AlertDescription>
                   </Alert>
                 ) : (

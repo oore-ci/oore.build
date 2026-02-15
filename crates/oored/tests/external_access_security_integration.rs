@@ -2,8 +2,10 @@
 
 mod common;
 
-use std::sync::{Mutex, OnceLock};
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -58,6 +60,23 @@ impl Drop for EnvVarGuard {
             }
         }
     }
+}
+
+fn init_test_git_repo(root: &std::path::Path) -> PathBuf {
+    let repo_path = root.join("repo");
+    std::fs::create_dir_all(&repo_path).expect("create repo dir");
+
+    let output = Command::new("git")
+        .args(["-C", repo_path.to_str().unwrap(), "init"])
+        .output()
+        .expect("git init");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    repo_path
 }
 
 async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String {
@@ -573,4 +592,48 @@ async fn test_non_owner_cannot_configure_external_access_oidc() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["code"], "external_access_owner_required");
+}
+
+#[tokio::test]
+async fn test_create_project_local_repo_allowed_in_remote_mode() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+
+    let now = now_unix();
+    sqlx::query(
+        "UPDATE instance_preferences SET runtime_mode = 'remote', updated_at = ?1 WHERE id = 1",
+    )
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("failed to set runtime mode");
+
+    let repo_path = init_test_git_repo(tmp.path());
+    let body = serde_json::json!({
+        "name": "Local Repo Project",
+        "local_repository_path": repo_path.to_string_lossy(),
+    });
+
+    let req = Request::builder()
+        .uri("/v1/projects")
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::from(
+            serde_json::to_string(&body).expect("serialize body"),
+        ))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.expect("create project response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["project"]["name"], "Local Repo Project");
 }

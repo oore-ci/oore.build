@@ -20,7 +20,8 @@ import {
   useUpdatePipelineIosSigning,
   useValidatePipeline,
 } from '@/hooks/use-pipelines'
-import { useSetupStatus } from '@/hooks/use-setup'
+import { useRepositoryProvider } from '@/hooks/use-integrations'
+import { useProject } from '@/hooks/use-projects'
 import {
   defaultArtifactPatterns,
   fileToBase64,
@@ -87,8 +88,11 @@ const emptyDefaults: PipelineFormValues = {
 function NewPipelinePage() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
-  const setupStatusQuery = useSetupStatus()
-  const manualOnlyTriggers = setupStatusQuery.data?.runtime_mode === 'local'
+  const { data: projectData } = useProject(projectId)
+  const repoProviderQuery = useRepositoryProvider(
+    projectData?.project.repository_id,
+  )
+  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
   const createMutation = useCreatePipeline()
   const validateMutation = useValidatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()

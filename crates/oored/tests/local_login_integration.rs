@@ -181,3 +181,31 @@ async fn test_local_login_rejected_when_client_is_not_loopback() {
     assert_eq!(status_after_body["setup_mode"], true);
     assert_eq!(status_after_body["state"], "bootstrap_pending");
 }
+
+#[tokio::test]
+async fn test_local_login_rejected_when_peer_is_loopback_but_forwarded_ip_is_not() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+
+    let login_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/auth/local/login")
+                .header("content-type", "application/json")
+                // Simulate a same-host proxy (peer is loopback) forwarding a non-loopback client IP.
+                .header("cf-connecting-ip", "203.0.113.10")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41005))))
+                .body(Body::from(
+                    serde_json::to_vec(&json!({})).expect("serialize request"),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("local login");
+    assert_eq!(login_resp.status(), 403);
+    let body = common::body_json(login_resp.into_body()).await;
+    assert_eq!(body["code"], "local_login_loopback_required");
+}

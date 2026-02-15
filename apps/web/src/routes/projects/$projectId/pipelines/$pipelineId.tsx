@@ -16,8 +16,8 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
+import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { useSetupStatus } from '@/hooks/use-setup'
 import {
   useDeletePipeline,
   usePipeline,
@@ -138,7 +138,9 @@ function PipelineDetailPage() {
   const canWrite = useHasPermission('pipelines', 'write')
   const canDelete = useHasPermission('pipelines', 'delete')
   const canTriggerBuild = useHasPermission('builds', 'write')
-  const setupStatusQuery = useSetupStatus()
+  const repoProviderQuery = useRepositoryProvider(
+    projectData?.project.repository_id,
+  )
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
@@ -175,7 +177,7 @@ function PipelineDetailPage() {
   const { pipeline } = data
   const builds = buildsData?.builds ?? []
   const projectHasSource = !!projectData?.project.repository_id
-  const manualOnlyTriggers = setupStatusQuery.data?.runtime_mode === 'local'
+  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
 
   function handleToggleEnabled() {
     updateMutation.mutate(

@@ -396,13 +396,12 @@ function ConfiguredDashboard({
     [recentBuildsQuery.data?.builds],
   )
   const hasProjects = projects.length > 0
-  const needsSourceConnection = runtimeMode !== 'local'
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
-  const missingIntegration =
-    needsSourceConnection && integrationsResolved && activeIntegrationsCount === 0
+  const noConnectedSources =
+    runtimeMode === 'remote' && integrationsResolved && activeIntegrationsCount === 0
   const integrationConnectTo = '/settings/integrations'
-  const canShowRunBuild = canWriteBuilds && !missingIntegration && hasProjects
+  const canShowRunBuild = canWriteBuilds && hasProjects
 
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
@@ -489,36 +488,41 @@ function ConfiguredDashboard({
           <Card>
             <CardContent className="space-y-3 py-8 text-center">
               <p className="text-sm text-muted-foreground">
-                {missingIntegration
-                  ? 'Connect a source to create your first project.'
+                {noConnectedSources
+                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
                   : 'No projects yet.'}
               </p>
-              {missingIntegration ? (
-                canWriteIntegrations ? (
+              <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
+                {canWriteProjects ? (
                   <Button
-                    render={<Link to={integrationConnectTo} />}
+                    render={<Link to="/projects" search={{ openCreate: '1' }} />}
                     nativeButton={false}
                   >
-                    Connect Source
+                    <HugeiconsIcon icon={Add01Icon} size={14} />
+                    Create Project
                   </Button>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    Owner/Admin required to connect a source.
+                    Owner/Admin/Developer required to create projects.
                   </p>
-                )
-              ) : canWriteProjects ? (
-                <Button
-                  render={<Link to="/projects" search={{ openCreate: '1' }} />}
-                  nativeButton={false}
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={14} />
-                  Create Project
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Owner/Admin/Developer required to create projects.
-                </p>
-              )}
+                )}
+
+                {noConnectedSources ? (
+                  canWriteIntegrations ? (
+                    <Button
+                      variant="outline"
+                      render={<Link to={integrationConnectTo} />}
+                      nativeButton={false}
+                    >
+                      Connect Source
+                    </Button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Owner/Admin required to connect a source.
+                    </p>
+                  )
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         ) : (

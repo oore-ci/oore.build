@@ -1,13 +1,10 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { PageMeta } from '@/lib/seo'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
@@ -25,7 +22,6 @@ export const Route = createFileRoute('/settings/integrations/local-git')({
 function LocalGitPage() {
   const { data: preferences } = useInstancePreferences()
   const runtimeMode = preferences?.preferences.runtime_mode ?? 'local'
-  const isLocalMode = runtimeMode === 'local'
 
   return (
     <PageLayout width="wide">
@@ -36,32 +32,35 @@ function LocalGitPage() {
         back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
-      {isLocalMode ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Use Project Creation
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              To keep Local Only mode simple, pick your local directory when
-              creating a project. There is no separate local source setup step.
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Use Project Creation
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Local repository selection happens directly during project creation.
+            Enter an absolute path (or browse folders when available).
+          </p>
+          {runtimeMode === 'remote' ? (
+            <p className="text-xs text-muted-foreground">
+              In External Access mode, remote clients must enter paths manually.
+              Folder browsing is limited to localhost for security.
             </p>
-            <Button render={<Link to="/projects" />} nativeButton={false}>
-              Go To Projects
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Access mode is <code>external access</code>. Local repository setup
-            is available only in <code>local only</code> mode.
-          </AlertDescription>
-        </Alert>
-      )}
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              In Local Only mode, folder browsing is available from localhost.
+            </p>
+          )}
+          <Button
+            render={<Link to="/projects" search={{ openCreate: '1' }} />}
+            nativeButton={false}
+          >
+            Create Project
+          </Button>
+        </CardContent>
+      </Card>
     </PageLayout>
   )
 }

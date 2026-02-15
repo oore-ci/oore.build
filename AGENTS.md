@@ -6,9 +6,8 @@ This file guides future coding sessions for `oore.build`.
 
 Before making any code or architecture change, read:
 
-- `docs/platform-contract.md`
-- `docs/strict-guidelines.md`
-- `docs/documentation-policy.md`
+- `docs/README.md` (explains Linear-first docs + pointers)
+- Docs Index (Linear): https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 Treat those as the source of truth.
 
@@ -53,12 +52,14 @@ Treat those as the source of truth.
 
 ## Documentation and Governance Rules
 
-- Every user-facing feature MUST add/update a doc in `docs/features/`.
-- Feature docs MUST follow `docs/templates/feature-doc-template.md`.
+- Internal technical docs and ADRs are **Linear-first** (see `docs/README.md`).
+- Every user-facing feature MUST add/update a Linear feature doc using:
+  - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
+- Any code change under `apps/`, `crates/`, `scripts/`, etc. MUST add an entry to `docs/changes.md`.
 - If code changes platform decisions or strict rules:
-- update `docs/platform-contract.md`
-- add/update a feature doc
-- add an ADR if changing a `MUST`-level rule
+- update the Platform Contract (Linear)
+- add/update a Linear feature doc
+- add/update a Linear ADR if changing a `MUST`-level rule
 - Run docs gate locally before finalizing:
 - `bun run docs:check`
 
@@ -83,7 +84,8 @@ Treat those as the source of truth.
 
 ## V1 Roadmap
 
-- Implementation roadmap is tracked in `docs/v1-roadmap.md`.
+- Implementation roadmap is tracked in Linear:
+  - https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
 - Check off completed items and update gap summary after each phase.
 - When adding new work items, add them to the appropriate phase or create a new phase.
-- Roadmap does NOT override `docs/platform-contract.md` — it sequences existing commitments.
+- Roadmap does NOT override the Platform Contract — it sequences existing commitments.

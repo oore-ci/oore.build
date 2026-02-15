@@ -234,7 +234,8 @@ async fn load_oidc_config_inner(
 
     let oidc = sf.oidc_config.as_ref().ok_or_else(|| {
         api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
+            // Missing config is a user/actionable setup issue, not a server fault.
+            StatusCode::CONFLICT,
             "oidc_not_configured",
             "OIDC configuration is missing",
         )
@@ -730,12 +731,20 @@ pub async fn logout(
 pub async fn local_login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<LocalLoginRequest>,
 ) -> Result<Json<LocalLoginResponse>, (StatusCode, Json<ApiError>)> {
-    if !crate::is_loopback_client(peer_addr) {
-        let source_ip = peer_addr.ip().to_string();
+    let effective_ip = crate::effective_client_ip(peer_addr, &headers);
+    if !effective_ip.is_loopback() {
+        let peer_ip = peer_addr.ip().to_string();
+        let source_ip = effective_ip.to_string();
         let details = serde_json::json!({
+            "peer_ip": peer_ip,
             "source_ip": source_ip,
+            "cf_connecting_ip": headers.get("cf-connecting-ip").and_then(|v| v.to_str().ok()),
+            "x_forwarded_for": headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
+            "forwarded": headers.get("forwarded").and_then(|v| v.to_str().ok()),
+            "x_real_ip": headers.get("x-real-ip").and_then(|v| v.to_str().ok()),
         })
         .to_string();
 
@@ -754,6 +763,7 @@ pub async fn local_login(
         .await;
 
         warn!(
+            peer_ip = %peer_addr.ip(),
             source_ip = %source_ip,
             "blocked local login attempt from non-loopback client"
         );

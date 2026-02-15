@@ -146,6 +146,105 @@ pub fn is_loopback_client(peer_addr: SocketAddr) -> bool {
     peer_addr.ip().is_loopback()
 }
 
+fn parse_ip_from_header(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<IpAddr>().ok())
+}
+
+fn parse_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .find_map(|value| value.parse::<IpAddr>().ok())
+        })
+}
+
+fn parse_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    let raw = headers.get("forwarded")?.to_str().ok()?;
+    // RFC 7239: Forwarded: for=<client-ip>;proto=https;by=<proxy-ip>
+    let first = raw.split(',').next()?.trim();
+    for part in first.split(';') {
+        let part = part.trim();
+        let Some(rest) = part.strip_prefix("for=") else {
+            continue;
+        };
+        let mut value = rest.trim().trim_matches('"');
+
+        // Common shapes:
+        // - for=192.0.2.60
+        // - for=192.0.2.60:1234
+        // - for=\"[2001:db8::1]:1234\"
+        if let Some(end) = value.find(']') {
+            if value.starts_with('[') {
+                value = &value[1..end];
+            }
+        }
+
+        if let Ok(ip) = value.parse::<IpAddr>() {
+            return Some(ip);
+        }
+
+        // IPv4 with port (best-effort)
+        if value.contains('.') {
+            if let Some((ip_part, _port)) = value.rsplit_once(':') {
+                if let Ok(ip) = ip_part.parse::<IpAddr>() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Determine the effective client IP address for a request.
+///
+/// For loopback peers, this optionally consults common forwarded headers that
+/// same-host proxies (ex: cloudflared) set. This prevents loopback-only
+/// endpoints from being reachable over a public reverse proxy that connects to
+/// the daemon via 127.0.0.1.
+///
+/// Security: we only trust forwarded headers when the immediate peer is
+/// loopback, because forwarded headers are otherwise trivially spoofable by
+/// remote clients.
+pub fn effective_client_ip(peer_addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
+    let peer_ip = peer_addr.ip();
+    if !peer_ip.is_loopback() {
+        return peer_ip;
+    }
+
+    // Cloudflare: the true client IP.
+    if let Some(ip) = parse_ip_from_header(headers, "cf-connecting-ip") {
+        return ip;
+    }
+
+    // RFC 7239
+    if let Some(ip) = parse_forwarded_for(headers) {
+        return ip;
+    }
+
+    // De-facto standard
+    if let Some(ip) = parse_x_forwarded_for(headers) {
+        return ip;
+    }
+
+    // Common nginx header
+    if let Some(ip) = parse_ip_from_header(headers, "x-real-ip") {
+        return ip;
+    }
+
+    peer_ip
+}
+
 fn is_local_network_host(host: &str) -> bool {
     if is_loopback_host(host) {
         return true;

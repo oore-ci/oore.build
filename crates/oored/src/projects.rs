@@ -16,7 +16,6 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
-use crate::integrations::require_local_mode;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -288,7 +287,6 @@ pub async fn create_project(
             (Some(repo_id), None)
         }
         (None, Some(local_repo_path)) => {
-            require_local_mode(pool).await?;
             let (repo_id, branch) =
                 ensure_local_repository_for_project(pool, &auth.0.user_id, local_repo_path).await?;
             (Some(repo_id), branch)
