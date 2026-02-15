@@ -33,3 +33,5 @@ Rules:
   - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
 - Reduced duplicate validate runs by splitting validation into `pull_request` only (feature branches) and `push` only (default branches).
   - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
+- Added release channel support (alpha/beta/prod) via tag conventions and prerelease-aware GitHub Releases + environment-aware Pages deploy configuration.
+  - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven

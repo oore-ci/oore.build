@@ -232,6 +232,24 @@ steps:
         from_secret: CLOUDFLARE_API_TOKEN
     commands:
       - set -euo pipefail
+      - |
+        tag="${CI_COMMIT_TAG}"
+        channel="prod"
+        suffix=""
+        if echo "$tag" | grep -q -- '-alpha\\.'; then
+          channel="alpha"
+          suffix="-alpha"
+        elif echo "$tag" | grep -q -- '-beta\\.'; then
+          channel="beta"
+          suffix="-beta"
+        fi
+
+        export PAGES_PROJECT_SITE="oore${suffix}"
+        export PAGES_PROJECT_DOCS="oore-docs${suffix}"
+        export PAGES_PROJECT_WEB="oore-ci${suffix}"
+        export PAGES_PROJECT_DEMO="oore-demo${suffix}"
+
+        echo "Deploy channel=${channel} site=${PAGES_PROJECT_SITE} docs=${PAGES_PROJECT_DOCS} web=${PAGES_PROJECT_WEB}"
       - bun install --frozen-lockfile
       - make build-site build-docs build-web
       - make deploy-site deploy-docs deploy-web
@@ -241,7 +259,23 @@ steps:
     commands:
       - set -euo pipefail
       - tag="${CI_COMMIT_TAG}"
-      - prev="$(git tag -l 'v*' --sort=-v:refname | grep -v \"^${tag}$\" | head -n1 || true)"
+      - |
+        channel="prod"
+        if echo "$tag" | grep -q -- '-alpha\\.'; then
+          channel="alpha"
+        elif echo "$tag" | grep -q -- '-beta\\.'; then
+          channel="beta"
+        fi
+
+        if [ "$channel" = "alpha" ]; then
+          prev="$(git tag -l 'v*-alpha.*' --sort=-v:refname | grep -v \"^${tag}$\" | head -n1 || true)"
+        elif [ "$channel" = "beta" ]; then
+          prev="$(git tag -l 'v*-beta.*' --sort=-v:refname | grep -v \"^${tag}$\" | head -n1 || true)"
+        else
+          prev="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -v \"^${tag}$\" | head -n1 || true)"
+        fi
+
+        printf 'channel=%s\nprev=%s\n' "$channel" "${prev:-}"
       - out="dist/releases/${tag}/RELEASE_NOTES.md"
       - |
         {
@@ -272,6 +306,11 @@ steps:
       - dir="dist/releases/${tag}"
       - notes="${dir}/RELEASE_NOTES.md"
       - |
+        prerelease_flag=""
+        if echo "$tag" | grep -q -- '-alpha\\.|-beta\\.'; then
+          prerelease_flag="--prerelease"
+        fi
+
         # Install gh (user-local, no brew)
         tmp="$(mktemp -d)"
         curl -fsSL -o \"$tmp/gh.tgz\" \"https://github.com/cli/cli/releases/latest/download/gh_$(uname -s | tr '[:upper:]' '[:lower:]')_arm64.tar.gz\"
@@ -289,9 +328,9 @@ steps:
 
         # Create or update release
         if \"$ghbin\" release view \"$tag\" --repo \"$repo\" >/dev/null 2>&1; then
-          \"$ghbin\" release edit \"$tag\" --repo \"$repo\" --title \"$tag\" --notes-file \"$notes\"
+          \"$ghbin\" release edit \"$tag\" --repo \"$repo\" --title \"$tag\" --notes-file \"$notes\" $prerelease_flag
         else
-          \"$ghbin\" release create \"$tag\" --repo \"$repo\" --title \"$tag\" --notes-file \"$notes\"
+          \"$ghbin\" release create \"$tag\" --repo \"$repo\" --title \"$tag\" --notes-file \"$notes\" $prerelease_flag
         fi
 
         \"$ghbin\" release upload \"$tag\" \"$dir\"/*.tar.gz \"$dir\"/*.txt \"$notes\" --repo \"$repo\" --clobber
