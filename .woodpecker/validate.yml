@@ -8,8 +8,9 @@ when:
 steps:
   - name: checkout
     image: bash
-    secrets:
-      - GITHUB_TOKEN
+    environment:
+      GITHUB_TOKEN:
+        from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
       - rm -rf .git

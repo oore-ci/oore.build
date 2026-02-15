@@ -7,8 +7,9 @@ when:
 steps:
   - name: checkout
     image: bash
-    secrets:
-      - GITHUB_TOKEN
+    environment:
+      GITHUB_TOKEN:
+        from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
       - rm -rf .git
@@ -65,8 +66,9 @@ steps:
 
   - name: deploy-pages
     image: bash
-    secrets:
-      - CLOUDFLARE_API_TOKEN
+    environment:
+      CLOUDFLARE_API_TOKEN:
+        from_secret: CLOUDFLARE_API_TOKEN
     commands:
       - set -euo pipefail
       - bun install --frozen-lockfile
@@ -98,8 +100,9 @@ steps:
 
   - name: github-release
     image: bash
-    secrets:
-      - GITHUB_TOKEN
+    environment:
+      GITHUB_TOKEN:
+        from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
       - export GH_TOKEN="$GITHUB_TOKEN"
