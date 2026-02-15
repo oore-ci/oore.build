@@ -115,14 +115,52 @@ fn resolve_default_branch(path: &PathBuf) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+struct LocalRepoInspection {
+    canonical_str: String,
+    default_branch: Option<String>,
+    repo_name: String,
+}
+
+async fn inspect_local_repo_for_project(
+    raw_path: &str,
+) -> Result<LocalRepoInspection, (StatusCode, Json<ApiError>)> {
+    let raw_path = raw_path.to_string();
+    tokio::task::spawn_blocking(move || {
+        let canonical_path = normalize_local_repo_path(&raw_path)?;
+        assert_git_repo(&canonical_path)?;
+
+        let default_branch = resolve_default_branch(&canonical_path);
+        let canonical_str = canonical_path.to_string_lossy().into_owned();
+        let repo_name = canonical_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "local-repo".to_string());
+
+        Ok(LocalRepoInspection {
+            canonical_str,
+            default_branch,
+            repo_name,
+        })
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local repository inspection task panicked or was cancelled");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to inspect local repository",
+        )
+    })?
+}
+
 async fn ensure_local_repository_for_project(
     pool: &sqlx::SqlitePool,
     actor_user_id: &str,
     raw_path: &str,
 ) -> Result<(String, Option<String>), (StatusCode, Json<ApiError>)> {
-    let canonical_path = normalize_local_repo_path(raw_path)?;
-    assert_git_repo(&canonical_path)?;
-    let canonical_str = canonical_path.to_string_lossy().into_owned();
+    let inspection = inspect_local_repo_for_project(raw_path).await?;
+    let canonical_str = inspection.canonical_str.clone();
 
     let existing = sqlx::query(
         "SELECT r.id as repository_id, r.default_branch as default_branch \
@@ -150,12 +188,8 @@ async fn ensure_local_repository_for_project(
         return Ok((repository_id, default_branch));
     }
 
-    let default_branch = resolve_default_branch(&canonical_path);
-    let repo_name = canonical_path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "local-repo".to_string());
+    let default_branch = inspection.default_branch;
+    let repo_name = inspection.repo_name;
     let now = now_unix();
     let integration_id = Uuid::new_v4().to_string();
     let installation_id = Uuid::new_v4().to_string();

@@ -19,3 +19,7 @@ Rules:
   - OOR-7: https://linear.app/oorebuild/issue/OOR-7/use-effective-client-ip-for-loopback-only-external-access-settings
 - Clarified the auth contract: OIDC is required for non-loopback access (Remote mode), while Local Only mode supports loopback-only local login for onboarding (no passwords).
   - OOR-8: https://linear.app/oorebuild/issue/OOR-8/resolve-oidc-only-setup-gating-rule-conflict-with-local-loginauto
+- Fixed GitHub App install callback redirects to prefer the frontend origin (not the daemon `public_url`) when multiple External Access origins are configured.
+  - OOR-34: https://linear.app/oorebuild/issue/OOR-34/github-installed-redirect-picks-wrong-origin-from-allowed-origins
+- Moved local repository filesystem + git inspection work onto `spawn_blocking` to avoid blocking Tokio threads during project creation and local-git browsing/integration.
+  - OOR-35: https://linear.app/oorebuild/issue/OOR-35/avoid-blocking-gitfs-operations-on-async-handlers-for-local-repos

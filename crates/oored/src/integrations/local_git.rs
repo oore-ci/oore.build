@@ -101,6 +101,45 @@ fn resolve_default_branch(path: &PathBuf) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+struct LocalGitRepoInspection {
+    canonical_str: String,
+    default_branch: Option<String>,
+    repo_name: String,
+}
+
+async fn inspect_local_git_repo(
+    raw_path: &str,
+) -> Result<LocalGitRepoInspection, (StatusCode, Json<ApiError>)> {
+    let raw_path = raw_path.to_string();
+    tokio::task::spawn_blocking(move || {
+        let canonical_path = normalize_repo_path(&raw_path)?;
+        assert_git_repo(&canonical_path)?;
+
+        let default_branch = resolve_default_branch(&canonical_path);
+        let canonical_str = canonical_path.to_string_lossy().into_owned();
+        let repo_name = canonical_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "local-repo".to_string());
+
+        Ok(LocalGitRepoInspection {
+            canonical_str,
+            default_branch,
+            repo_name,
+        })
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local git repository inspection task panicked or was cancelled");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to inspect repository_path",
+        )
+    })?
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BrowseLocalGitDirectoriesQuery {
     pub path: Option<String>,
@@ -212,72 +251,86 @@ pub async fn browse_local_git_directories(
         ));
     }
 
-    let current_path = if let Some(path) = params.path.as_deref() {
-        canonicalize_directory(path)?
-    } else {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        std::fs::canonicalize(&home).unwrap_or(home)
-    };
-
-    let read_dir = std::fs::read_dir(&current_path).map_err(|_| {
-        api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "path does not exist or is not accessible",
-        )
-    })?;
-
-    let mut directories = Vec::new();
-    for entry_result in read_dir {
-        let entry = match entry_result {
-            Ok(value) => value,
-            Err(_) => continue,
+    let requested_path = params.path.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let current_path = if let Some(path) = requested_path.as_deref() {
+            canonicalize_directory(path)?
+        } else {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+            std::fs::canonicalize(&home).unwrap_or(home)
         };
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name.starts_with('.') {
-            continue;
+
+        let read_dir = std::fs::read_dir(&current_path).map_err(|_| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "path does not exist or is not accessible",
+            )
+        })?;
+
+        let mut directories = Vec::new();
+        for entry_result in read_dir {
+            let entry = match entry_result {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            let candidate = entry.path();
+            let metadata = match std::fs::metadata(&candidate) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if !metadata.is_dir() {
+                continue;
+            }
+
+            let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+            directories.push(LocalGitDirectoryEntry {
+                name: file_name,
+                path: canonical.to_string_lossy().into_owned(),
+                is_git_repository: looks_like_git_repository(&canonical),
+            });
+
+            if directories.len() >= MAX_BROWSE_DIRECTORY_ENTRIES {
+                break;
+            }
         }
 
-        let candidate = entry.path();
-        let metadata = match std::fs::metadata(&candidate) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if !metadata.is_dir() {
-            continue;
-        }
-
-        let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        directories.push(LocalGitDirectoryEntry {
-            name: file_name,
-            path: canonical.to_string_lossy().into_owned(),
-            is_git_repository: looks_like_git_repository(&canonical),
+        directories.sort_by(|a, b| {
+            b.is_git_repository
+                .cmp(&a.is_git_repository)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
 
-        if directories.len() >= MAX_BROWSE_DIRECTORY_ENTRIES {
-            break;
-        }
-    }
+        let current_path_str = current_path.to_string_lossy().into_owned();
+        let parent_path = current_path
+            .parent()
+            .map(|path| path.to_string_lossy().into_owned())
+            .filter(|path| path != &current_path_str && !path.is_empty());
 
-    directories.sort_by(|a, b| {
-        b.is_git_repository
-            .cmp(&a.is_git_repository)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+        Ok(BrowseLocalGitDirectoriesResponse {
+            current_path: current_path_str,
+            current_is_git_repository: looks_like_git_repository(&current_path),
+            parent_path,
+            directories,
+            suggestions: build_browse_suggestions(&current_path),
+        })
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local git directory browsing task panicked or was cancelled");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to browse local filesystem",
+        )
+    })??;
 
-    let current_path_str = current_path.to_string_lossy().into_owned();
-    let parent_path = current_path
-        .parent()
-        .map(|path| path.to_string_lossy().into_owned())
-        .filter(|path| path != &current_path_str && !path.is_empty());
-
-    Ok(Json(BrowseLocalGitDirectoriesResponse {
-        current_path: current_path_str,
-        current_is_git_repository: looks_like_git_repository(&current_path),
-        parent_path,
-        directories,
-        suggestions: build_browse_suggestions(&current_path),
-    }))
+    Ok(Json(response))
 }
 
 /// `POST /v1/integrations/local-git`
@@ -295,15 +348,10 @@ pub async fn create_local_git_integration(
         store.pool().clone()
     };
 
-    let canonical_path = normalize_repo_path(&req.repository_path)?;
-    assert_git_repo(&canonical_path)?;
-    let default_branch = resolve_default_branch(&canonical_path);
-    let canonical_str = canonical_path.to_string_lossy().into_owned();
-    let repo_name = canonical_path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "local-repo".to_string());
+    let inspection = inspect_local_git_repo(&req.repository_path).await?;
+    let canonical_str = inspection.canonical_str.clone();
+    let default_branch = inspection.default_branch;
+    let repo_name = inspection.repo_name;
     let display_name = req
         .display_name
         .as_ref()

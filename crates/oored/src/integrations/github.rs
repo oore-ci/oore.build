@@ -73,13 +73,32 @@ fn validate_redirect_origin(
     Ok(())
 }
 
-fn preferred_frontend_origin(allowed_origins: &[String]) -> String {
+fn preferred_frontend_origin(allowed_origins: &[String], public_url: Option<&str>) -> String {
+    let public_origin = public_url
+        .and_then(|raw| url::Url::parse(raw).ok())
+        .map(|parsed| parsed.origin().ascii_serialization());
+
+    // Prefer an origin that isn't one of the local defaults and (when present)
+    // isn't the daemon's own public_url origin. This avoids redirecting users to
+    // the daemon origin when multiple External Access origins are configured.
     allowed_origins
         .iter()
         .find(|origin| {
-            !crate::instance_settings::DEFAULT_ALLOWED_ORIGINS.contains(&origin.as_str())
+            if crate::instance_settings::DEFAULT_ALLOWED_ORIGINS.contains(&origin.as_str()) {
+                return false;
+            }
+            match public_origin.as_ref() {
+                Some(public_origin) => public_origin != origin.as_str(),
+                None => true,
+            }
         })
         .cloned()
+        .or_else(|| {
+            allowed_origins.iter().find(|origin| {
+                !crate::instance_settings::DEFAULT_ALLOWED_ORIGINS.contains(&origin.as_str())
+            })
+            .cloned()
+        })
         .or_else(|| allowed_origins.first().cloned())
         .unwrap_or_else(|| "http://localhost:3000".to_string())
 }
@@ -611,7 +630,8 @@ pub async fn github_installed(
     }
 
     let allowed_origins = state.allowed_origins.read().await.clone();
-    let frontend_base = preferred_frontend_origin(&allowed_origins);
+    let public_url = state.public_url.read().await.clone();
+    let frontend_base = preferred_frontend_origin(&allowed_origins, public_url.as_deref());
 
     let redirect_target = if let Some(ref id) = integration_id {
         format!(
@@ -1282,7 +1302,7 @@ use super::{error_page, favicon_data_uri, html_escape, require_remote_mode};
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cookie_secure_override, validate_redirect_origin};
+    use super::{parse_cookie_secure_override, preferred_frontend_origin, validate_redirect_origin};
 
     #[test]
     fn redirect_origin_accepts_default_localhost_origin() {
@@ -1324,5 +1344,22 @@ mod tests {
     fn cookie_secure_override_invalid_value() {
         assert_eq!(parse_cookie_secure_override("maybe"), None);
         assert_eq!(parse_cookie_secure_override(""), None);
+    }
+
+    #[test]
+    fn preferred_frontend_origin_skips_public_url_origin_when_possible() {
+        let allowed = vec![
+            "https://daemon.example.com".to_string(),
+            "https://ci.oore.build".to_string(),
+        ];
+        let resolved = preferred_frontend_origin(&allowed, Some("https://daemon.example.com"));
+        assert_eq!(resolved, "https://ci.oore.build");
+    }
+
+    #[test]
+    fn preferred_frontend_origin_falls_back_to_public_url_origin_when_only_choice() {
+        let allowed = vec!["https://daemon.example.com".to_string()];
+        let resolved = preferred_frontend_origin(&allowed, Some("https://daemon.example.com"));
+        assert_eq!(resolved, "https://daemon.example.com");
     }
 }
