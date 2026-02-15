@@ -21,8 +21,10 @@ when:
   event:
     - push
   branch:
+    - alpha
+    - beta
+    - stable
     - master
-    - main
 
 steps:
   - name: validate
@@ -44,8 +46,7 @@ when:
   event:
     - push
   branch:
-    - master
-    - main
+    - stable
 
 steps:
   - name: checkout
@@ -65,12 +66,7 @@ steps:
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
       - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
-      - |
-        if git show-ref --verify --quiet refs/remotes/origin/master; then
-          git checkout -B master "origin/master"
-        else
-          git checkout -B main "origin/main"
-        fi
+      - git checkout -B stable "origin/stable"
 
   - name: bump-tag
     image: bash
@@ -176,7 +172,6 @@ when:
     - push
   branch:
     - alpha
-    - release/alpha
 
 steps:
   - name: checkout
@@ -195,12 +190,7 @@ steps:
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
       - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
-      - |
-        if git show-ref --verify --quiet refs/remotes/origin/release/alpha; then
-          git checkout -B release/alpha "origin/release/alpha"
-        else
-          git checkout -B alpha "origin/alpha"
-        fi
+      - git checkout -B alpha "origin/alpha"
 
   - name: tag-alpha
     image: bash
@@ -266,7 +256,6 @@ when:
     - push
   branch:
     - beta
-    - release/beta
 
 steps:
   - name: checkout
@@ -285,12 +274,7 @@ steps:
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
       - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
-      - |
-        if git show-ref --verify --quiet refs/remotes/origin/release/beta; then
-          git checkout -B release/beta "origin/release/beta"
-        else
-          git checkout -B beta "origin/beta"
-        fi
+      - git checkout -B beta "origin/beta"
 
   - name: tag-beta
     image: bash

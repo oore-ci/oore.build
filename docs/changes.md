@@ -37,3 +37,5 @@ Rules:
   - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
 - Added branch-driven prerelease automation: merges to `alpha` / `release/alpha` cut `vX.Y.Z-alpha.N`; merges to `beta` / `release/beta` cut `vX.Y.Z-beta.N`; merges to `master`/`main` cut production tags.
   - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
+- Renamed release branches to `alpha`, `beta`, and `stable`; `master` remains a non-stable playground branch (no tagging).
+  - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
