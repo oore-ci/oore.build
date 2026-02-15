@@ -63,6 +63,18 @@ Treat those as the source of truth.
 - Run docs gate locally before finalizing:
 - `bun run docs:check`
 
+## Release Channels (Alpha/Beta/Stable)
+
+Release automation is branch + tag driven via Woodpecker:
+
+- Merge to `alpha` -> cuts `vX.Y.Z-alpha.N` prerelease tags
+- Merge to `beta` -> cuts `vX.Y.Z-beta.N` prerelease tags
+- Merge to `stable` -> cuts `vX.Y.Z` production tags
+- `master` is a playground branch (validated but not auto-tagged)
+
+Source of truth doc (Linear-first):
+https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+
 ## Backend Bootstrap Direction
 
 - Rust workspace crates:

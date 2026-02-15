@@ -19,6 +19,18 @@ oore.build is a self-hosted, Flutter-first mobile CI and internal app distributi
 
 All common commands have `make` targets. Use `make <target>` from the repo root.
 
+## Release Channels (Alpha/Beta/Stable)
+
+Release automation is Woodpecker-driven and tag-based. Branch merges cut tags automatically, which triggers the release pipeline and publishes GitHub Releases.
+
+- `alpha` -> `vX.Y.Z-alpha.N` prerelease tags (and prerelease GitHub Releases)
+- `beta` -> `vX.Y.Z-beta.N` prerelease tags (and prerelease GitHub Releases)
+- `stable` -> `vX.Y.Z` production tags (and production GitHub Releases)
+- `master` is a playground branch: validated by CI but not auto-tagged.
+
+Source of truth doc (Linear-first):
+https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+
 | Target | What it does |
 |---|---|
 | `make dev-web` | Web app dev server (port 3000) |
