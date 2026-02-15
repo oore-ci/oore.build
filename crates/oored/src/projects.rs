@@ -286,8 +286,10 @@ pub async fn create_project(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     if req.repository_id.is_some() && req.local_repository_path.is_some() {
         return Err(api_err(
@@ -307,7 +309,7 @@ pub async fn create_project(
                 "SELECT COUNT(*) > 0 FROM integration_repositories WHERE id = ?1",
             )
             .bind(&repo_id)
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .unwrap_or(false);
 
@@ -322,7 +324,8 @@ pub async fn create_project(
         }
         (None, Some(local_repo_path)) => {
             let (repo_id, branch) =
-                ensure_local_repository_for_project(pool, &auth.0.user_id, local_repo_path).await?;
+                ensure_local_repository_for_project(&pool, &auth.0.user_id, local_repo_path)
+                    .await?;
             (Some(repo_id), branch)
         }
         (None, None) => {
@@ -354,7 +357,7 @@ pub async fn create_project(
     .bind(&default_branch)
     .bind(&auth.0.user_id)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to create project");
@@ -368,7 +371,7 @@ pub async fn create_project(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "project_created",
         "project",

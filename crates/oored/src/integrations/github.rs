@@ -685,7 +685,11 @@ pub async fn github_installed(
     );
 
     let mut resp = Html(html).into_response();
-    let cookie_secure = cookie_secure_enabled(redirect_target.starts_with("https://"));
+    let cookie_secure = cookie_secure_enabled(
+        public_url
+            .as_deref()
+            .is_some_and(|value| value.starts_with("https://")),
+    );
     // Clear install-state cookie after callback handling.
     set_cookie_headers(
         &mut resp,
