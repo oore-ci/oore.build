@@ -79,6 +79,28 @@ steps:
           exit 0
         fi
       - |
+        semver_gt() {
+          # return 0 if $1 > $2, else 1
+          local a b c x y z
+          IFS=. read -r a b c <<<"${1:-0.0.0}"
+          IFS=. read -r x y z <<<"${2:-0.0.0}"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          x=${x:-0}; y=${y:-0}; z=${z:-0}
+          if (( a > x )); then return 0; fi
+          if (( a < x )); then return 1; fi
+          if (( b > y )); then return 0; fi
+          if (( b < y )); then return 1; fi
+          if (( c > z )); then return 0; fi
+          return 1
+        }
+
+        bump_patch() {
+          local a b c
+          IFS=. read -r a b c <<<"${1:-0.0.0}"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          printf '%s.%s.%s\n' "$a" "$b" "$((c+1))"
+        }
+
         cargo_ver="$(
           awk -F'\"' '
             /^\\[workspace\\.package\\]/ { in_section=1; next }
@@ -97,62 +119,21 @@ steps:
           latest_prod_ver="0.0.0"
         fi
 
-        python3 - "$cargo_ver" "$latest_prod_ver" <<'PY'
-        import sys
-        def parse(v: str):
-          parts = v.split(".")
-          if len(parts) != 3:
-            raise SystemExit(f"invalid semver: {v}")
-          return tuple(int(x) for x in parts)
-        c = parse(sys.argv[1])
-        p = parse(sys.argv[2])
-        sys.exit(0 if c > p else 1)
-        PY
-        ahead="$?"
-
-        if [ "$ahead" -eq 0 ] && ! git show-ref --tags --quiet "refs/tags/v${cargo_ver}"; then
-          tag="v${cargo_ver}"
-          echo "Tagging existing version for production: ${tag}"
-          git tag -a "$tag" -m "Release $tag"
+        base="$latest_prod_ver"
+        if semver_gt "$cargo_ver" "$latest_prod_ver"; then
+          base="$cargo_ver"
         else
-          IFS=. read -r major minor patch <<<"$cargo_ver"
-          next="${major}.${minor}.$((patch+1))"
-          tag="v${next}"
-          echo "Bumping $cargo_ver -> $next ($tag)"
-          python3 - "$next" <<'PY'
-          import sys
-          from pathlib import Path
-          new_version = sys.argv[1]
-          p = Path("Cargo.toml")
-          lines = p.read_text().splitlines(True)
-          out = []
-          in_ws = False
-          updated = False
-          for line in lines:
-              if line.strip() == "[workspace.package]":
-                  in_ws = True
-                  out.append(line)
-                  continue
-              if in_ws and line.startswith("[") and not line.strip().startswith("[workspace.package]"):
-                  in_ws = False
-              if in_ws and line.lstrip().startswith("version") and "=" in line and not updated:
-                  prefix = line.split("=", 1)[0]
-                  out.append(f'{prefix}= "{new_version}"\n')
-                  updated = True
-                  continue
-              out.append(line)
-          if not updated:
-              raise SystemExit("Failed to update workspace.package.version in Cargo.toml")
-          p.write_text("".join(out))
-          PY
-          git add Cargo.toml
-          git -c user.name="oore.build CI" -c user.email="ci@oore.build" commit -m "chore(release): bump version to ${next} [CI SKIP]"
-          git tag -a "$tag" -m "Release $tag"
+          base="$(bump_patch "$latest_prod_ver")"
         fi
 
-        branch="$(git rev-parse --abbrev-ref HEAD)"
-        # Push branch commit (if any), then tag.
-        git push origin "$branch" || true
+        next="$base"
+        while git show-ref --tags --quiet "refs/tags/v${next}"; do
+          next="$(bump_patch "$next")"
+        done
+        tag="v${next}"
+
+        echo "Prod tag: ${tag}"
+        git tag -a "$tag" -m "Release $tag"
         git push origin "$tag"
 
   # ----- Autotag: Alpha (alpha -> vX.Y.Z-alpha.N) -----
@@ -212,7 +193,34 @@ steps:
           latest_prod_ver="0.0.0"
         fi
 
-        base="$(python3 - "$cargo_ver" "$latest_prod_ver" <<'PY'\nimport sys\n\ndef parse(v: str):\n  parts=v.split('.')\n  if len(parts)!=3:\n    raise SystemExit(f'invalid semver: {v}')\n  return tuple(int(x) for x in parts)\n\ndef bump_patch(v: str):\n  a,b,c=parse(v)\n  return f\"{a}.{b}.{c+1}\"\n\ncargo=sys.argv[1]\nprod=sys.argv[2]\nif parse(cargo) > parse(prod):\n  print(cargo)\nelse:\n  print(bump_patch(prod))\nPY\n)"
+        semver_gt() {
+          # return 0 if $1 > $2, else 1
+          local a b c x y z
+          IFS=. read -r a b c <<<"${1:-0.0.0}"
+          IFS=. read -r x y z <<<"${2:-0.0.0}"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          x=${x:-0}; y=${y:-0}; z=${z:-0}
+          if (( a > x )); then return 0; fi
+          if (( a < x )); then return 1; fi
+          if (( b > y )); then return 0; fi
+          if (( b < y )); then return 1; fi
+          if (( c > z )); then return 0; fi
+          return 1
+        }
+
+        bump_patch() {
+          local a b c
+          IFS=. read -r a b c <<<"${1:-0.0.0}"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          printf '%s.%s.%s\n' "$a" "$b" "$((c+1))"
+        }
+
+        base="$latest_prod_ver"
+        if semver_gt "$cargo_ver" "$latest_prod_ver"; then
+          base="$cargo_ver"
+        else
+          base="$(bump_patch "$latest_prod_ver")"
+        fi
 
         prev="$(git tag -l \"v${base}-alpha.*\" --sort=-v:refname | head -n1 || true)"
         if [ -n "$prev" ]; then
@@ -224,15 +232,7 @@ steps:
         tag="v${base}-alpha.${next_n}"
         echo "Alpha tag: ${tag}"
 
-        if [ "$cargo_ver" != "$base" ]; then
-          python3 - "$base" <<'PY'\nimport sys\nfrom pathlib import Path\nnew_version=sys.argv[1]\np=Path('Cargo.toml')\nlines=p.read_text().splitlines(True)\nout=[]\nin_ws=False\nupdated=False\nfor line in lines:\n  if line.strip() == '[workspace.package]':\n    in_ws=True\n    out.append(line)\n    continue\n  if in_ws and line.startswith('[') and not line.strip().startswith('[workspace.package]'):\n    in_ws=False\n  if in_ws and line.lstrip().startswith('version') and '=' in line and not updated:\n    prefix=line.split('=',1)[0]\n    out.append(f\"{prefix}= \\\"{new_version}\\\"\\n\")\n    updated=True\n    continue\n  out.append(line)\nif not updated:\n  raise SystemExit('Failed to update workspace.package.version in Cargo.toml')\np.write_text(''.join(out))\nPY\n"
-          git add Cargo.toml
-          git -c user.name="oore.build CI" -c user.email="ci@oore.build" commit -m "chore(release): set prerelease base version to ${base} [CI SKIP]"
-        fi
-
         git tag -a "$tag" -m "Alpha $tag"
-        branch="$(git rev-parse --abbrev-ref HEAD)"
-        git push origin "$branch"
         git push origin "$tag"
 
   # ----- Autotag: Beta (beta -> vX.Y.Z-beta.N) -----
@@ -292,7 +292,34 @@ steps:
           latest_prod_ver="0.0.0"
         fi
 
-        base="$(python3 - "$cargo_ver" "$latest_prod_ver" <<'PY'\nimport sys\n\ndef parse(v: str):\n  parts=v.split('.')\n  if len(parts)!=3:\n    raise SystemExit(f'invalid semver: {v}')\n  return tuple(int(x) for x in parts)\n\ndef bump_patch(v: str):\n  a,b,c=parse(v)\n  return f\"{a}.{b}.{c+1}\"\n\ncargo=sys.argv[1]\nprod=sys.argv[2]\nif parse(cargo) > parse(prod):\n  print(cargo)\nelse:\n  print(bump_patch(prod))\nPY\n)"
+        semver_gt() {
+          # return 0 if $1 > $2, else 1
+          local a b c x y z
+          IFS=. read -r a b c <<<"${1:-0.0.0}"
+          IFS=. read -r x y z <<<"${2:-0.0.0}"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          x=${x:-0}; y=${y:-0}; z=${z:-0}
+          if (( a > x )); then return 0; fi
+          if (( a < x )); then return 1; fi
+          if (( b > y )); then return 0; fi
+          if (( b < y )); then return 1; fi
+          if (( c > z )); then return 0; fi
+          return 1
+        }
+
+        bump_patch() {
+          local a b c
+          IFS=. read -r a b c <<<"${1:-0.0.0}"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          printf '%s.%s.%s\n' "$a" "$b" "$((c+1))"
+        }
+
+        base="$latest_prod_ver"
+        if semver_gt "$cargo_ver" "$latest_prod_ver"; then
+          base="$cargo_ver"
+        else
+          base="$(bump_patch "$latest_prod_ver")"
+        fi
 
         prev="$(git tag -l \"v${base}-beta.*\" --sort=-v:refname | head -n1 || true)"
         if [ -n "$prev" ]; then
@@ -304,15 +331,7 @@ steps:
         tag="v${base}-beta.${next_n}"
         echo "Beta tag: ${tag}"
 
-        if [ "$cargo_ver" != "$base" ]; then
-          python3 - "$base" <<'PY'\nimport sys\nfrom pathlib import Path\nnew_version=sys.argv[1]\np=Path('Cargo.toml')\nlines=p.read_text().splitlines(True)\nout=[]\nin_ws=False\nupdated=False\nfor line in lines:\n  if line.strip() == '[workspace.package]':\n    in_ws=True\n    out.append(line)\n    continue\n  if in_ws and line.startswith('[') and not line.strip().startswith('[workspace.package]'):\n    in_ws=False\n  if in_ws and line.lstrip().startswith('version') and '=' in line and not updated:\n    prefix=line.split('=',1)[0]\n    out.append(f\"{prefix}= \\\"{new_version}\\\"\\n\")\n    updated=True\n    continue\n  out.append(line)\nif not updated:\n  raise SystemExit('Failed to update workspace.package.version in Cargo.toml')\np.write_text(''.join(out))\nPY\n"
-          git add Cargo.toml
-          git -c user.name="oore.build CI" -c user.email="ci@oore.build" commit -m "chore(release): set prerelease base version to ${base} [CI SKIP]"
-        fi
-
         git tag -a "$tag" -m "Beta $tag"
-        branch="$(git rev-parse --abbrev-ref HEAD)"
-        git push origin "$branch"
         git push origin "$tag"
 
   # ----- Release: Tag -> Pages Deploy + GitHub Release -----
