@@ -50,3 +50,6 @@ Rules:
 - Added a platform-contract amendment documenting Remote auth provider policy (`oidc` default + `trusted_proxy` opt-in) and trust-boundary constraints.
   - Contract amendment: https://linear.app/oorebuild/document/platform-contract-amendment-remote-auth-providers-9975f97813a8
 - Fixed GitLab integrations to use provider-aware install sync, and relaxed OAuth host reachability precheck to treat auth-gated `/api/v4/version` (401/403) as reachable.
+  - OOR-52: https://linear.app/oorebuild/issue/OOR-52/fix-gitlab-install-sync-dispatch-oauth-reachability-precheck
+- Updated web demo mode (MSW handlers) to support latest onboarding + External Access APIs (`remote_auth_mode`, setup preferences, trusted proxy endpoints, and External Access settings/preflight routes).
+  - OOR-53: https://linear.app/oorebuild/issue/OOR-53/update-web-demo-mode-for-remote-auth-external-access-endpoints

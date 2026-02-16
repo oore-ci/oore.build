@@ -1270,8 +1270,8 @@
         "tags": [
           "Integrations"
         ],
-        "summary": "Sync GitHub App installations",
-        "description": "Fetches new installations from GitHub and syncs their repositories.",
+        "summary": "Sync integration installations",
+        "description": "- **GitHub**: Fetches GitHub App installations and syncs their repositories.\n- **GitLab**: Refreshes accessible projects for linked accounts and syncs them as repositories.",
         "operationId": "sync_installations",
         "parameters": [
           {
