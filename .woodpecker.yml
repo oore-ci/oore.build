@@ -475,6 +475,7 @@ steps:
       CARGO_HOME: /Users/arya/.cargo
       RUSTUP_HOME: /Users/arya/.rustup
       PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
+      CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
       CLOUDFLARE_API_TOKEN:
         from_secret: CLOUDFLARE_API_TOKEN
     commands:
@@ -483,24 +484,35 @@ steps:
         tag="$(printenv CI_COMMIT_TAG || true)"
         test -n "$tag"
         channel="prod"
-        suffix=""
+        pages_branch=""
         if echo "$tag" | grep -q -- '-alpha\\.'; then
           channel="alpha"
-          suffix="-alpha"
+          pages_branch="alpha"
         elif echo "$tag" | grep -q -- '-beta\\.'; then
           channel="beta"
-          suffix="-beta"
+          pages_branch="beta"
         fi
 
-        export PAGES_PROJECT_SITE="oore$suffix"
-        export PAGES_PROJECT_DOCS="oore-docs$suffix"
-        export PAGES_PROJECT_WEB="oore-ci$suffix"
-        export PAGES_PROJECT_DEMO="oore-demo$suffix"
+        export PAGES_PROJECT_SITE="oore"
+        export PAGES_PROJECT_DOCS="oore-docs"
+        export PAGES_PROJECT_WEB="oore-ci"
+        export PAGES_PROJECT_DEMO="oore-demo"
+        export PAGES_BRANCH="$pages_branch"
 
-        echo "Deploy channel=$channel site=$PAGES_PROJECT_SITE docs=$PAGES_PROJECT_DOCS web=$PAGES_PROJECT_WEB"
+        echo "Deploy channel=$channel branch=$PAGES_BRANCH site=$PAGES_PROJECT_SITE docs=$PAGES_PROJECT_DOCS web=$PAGES_PROJECT_WEB"
       - ulimit -n 8192
       - bun install --frozen-lockfile
       - make build-site build-docs build-web
+      - |
+        token_len="$(printenv CLOUDFLARE_API_TOKEN | tr -d '\n' | wc -c | tr -d ' ')"
+        echo "CLOUDFLARE_API_TOKEN length=$token_len"
+        if [ "$token_len" -lt 20 ]; then
+          echo "CLOUDFLARE_API_TOKEN missing/empty for this step." >&2
+          exit 1
+        fi
+        token_hash="$(printenv CLOUDFLARE_API_TOKEN | tr -d '\n' | shasum -a 256 | awk '{print $1}' | cut -c1-12)"
+        echo "CLOUDFLARE_API_TOKEN sha256_prefix=$token_hash"
+      - bunx --bun wrangler whoami
       - make deploy-site deploy-docs deploy-web
 
   - name: release-generate-notes
@@ -569,17 +581,81 @@ steps:
 
         # Install gh (user-local, no brew)
         tmp="$(mktemp -d)"
-        curl -fsSL -o "$tmp/gh.tgz" "https://github.com/cli/cli/releases/latest/download/gh_$(uname -s | tr '[:upper:]' '[:lower:]')_arm64.tar.gz"
-        tar -xzf "$tmp/gh.tgz" -C "$tmp"
+        os="$(uname -s)"
+        arch="$(uname -m)"
+        json="$tmp/gh_release.json"
+
+        curl -fsSL -o "$json" "https://api.github.com/repos/cli/cli/releases/latest"
+        asset_url="$(
+          python3 - "$json" "$os" "$arch" <<'PY'
+        import json
+        import sys
+
+        path = sys.argv[1]
+        os_name = sys.argv[2]
+        arch = sys.argv[3]
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if os_name == "Darwin":
+            os_id = "macOS"
+        elif os_name == "Linux":
+            os_id = "linux"
+        else:
+            print("", end="")
+            sys.exit(0)
+
+        if arch in ("arm64", "aarch64"):
+            arch_id = "arm64"
+        elif arch in ("x86_64", "amd64"):
+            arch_id = "amd64"
+        else:
+            print("", end="")
+            sys.exit(0)
+
+        ext = ".tar.gz"
+        if os_id == "macOS":
+            ext = ".zip"
+
+        want = "_" + os_id + "_" + arch_id + ext
+        for a in data.get("assets", []):
+            name = a.get("name") or ""
+            if name.endswith(want):
+                print(a.get("browser_download_url") or "", end="")
+                break
+        PY
+        )"
+        if [ -z "$asset_url" ]; then
+          echo "Failed to find gh release asset for os=$os arch=$arch" >&2
+          exit 1
+        fi
+
+        archive="$tmp/gh.asset"
+        case "$asset_url" in
+          *.zip) archive="$tmp/gh.zip" ;;
+          *.tar.gz) archive="$tmp/gh.tgz" ;;
+          *) echo "Unknown gh asset URL: $asset_url" >&2; exit 1 ;;
+        esac
+        curl -fsSL -L -o "$archive" "$asset_url"
+        if echo "$archive" | grep -q '\\.zip$'; then
+          unzip -q "$archive" -d "$tmp"
+        else
+          tar -xzf "$archive" -C "$tmp"
+        fi
         ghbin="$(find "$tmp" -type f -path '*/bin/gh' | head -n1)"
         "$ghbin" --version
 
-        repo="$(
-          git config --get remote.origin.url \
-            | sed -n 's#.*github\\.com[:/]\\([^/]*\\/[^.]*\\)\\(\\.git\\)\\{0,1\\}$#\\1#p'
-        )"
+        repo="$(printenv CI_REPO || true)"
         if [ -z "$repo" ]; then
-          repo="$CI_REPO"
+          repo="$(
+            git config --get remote.origin.url \
+              | sed -n 's#.*github\\.com[:/]\\([^/]*\\/[^/]*\\)\\(\\.git\\)\\{0,1\\}$#\\1#p'
+          )"
+        fi
+        if ! echo "$repo" | grep -q '/'; then
+          echo "Failed to determine GitHub repo (got: $repo)" >&2
+          exit 1
         fi
 
         # Create or update release
