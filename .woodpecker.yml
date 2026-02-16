@@ -1,5 +1,3 @@
-name: ci
-
 steps:
   - name: validate-pr
     image: bash
@@ -523,4 +521,3 @@ steps:
         fi
 
         "$ghbin" release upload "$tag" "$dir"/*.tar.gz "$dir"/*.txt "$notes" --repo "$repo" --clobber
-
