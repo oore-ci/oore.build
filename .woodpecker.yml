@@ -11,6 +11,7 @@ steps:
       PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
     commands:
       - set -euo pipefail
+      - ulimit -n 8192
       - bun install --frozen-lockfile
       - make validate
 
@@ -31,6 +32,7 @@ steps:
       PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
     commands:
       - set -euo pipefail
+      - ulimit -n 8192
       - bun install --frozen-lockfile
       - make validate
 
@@ -368,6 +370,7 @@ steps:
       - test -n "${CI_COMMIT_TAG:-}"
       - ver="${CI_COMMIT_TAG#v}"
       - mkdir -p "dist/releases/${CI_COMMIT_TAG}"
+      - ulimit -n 8192
       - bun install --frozen-lockfile
       - bun run build:web
       - rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -435,6 +438,7 @@ steps:
         export PAGES_PROJECT_DEMO="oore-demo${suffix}"
 
         echo "Deploy channel=${channel} site=${PAGES_PROJECT_SITE} docs=${PAGES_PROJECT_DOCS} web=${PAGES_PROJECT_WEB}"
+      - ulimit -n 8192
       - bun install --frozen-lockfile
       - make build-site build-docs build-web
       - make deploy-site deploy-docs deploy-web
