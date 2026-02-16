@@ -581,7 +581,53 @@ steps:
 
         # Install gh (user-local, no brew)
         tmp="$(mktemp -d)"
-        curl -fsSL -o "$tmp/gh.tgz" "https://github.com/cli/cli/releases/latest/download/gh_$(uname -s | tr '[:upper:]' '[:lower:]')_arm64.tar.gz"
+        os="$(uname -s)"
+        arch="$(uname -m)"
+        json="$tmp/gh_release.json"
+
+        curl -fsSL -o "$json" "https://api.github.com/repos/cli/cli/releases/latest"
+        asset_url="$(
+          python3 - "$json" "$os" "$arch" <<'PY'
+        import json
+        import sys
+
+        path = sys.argv[1]
+        os_name = sys.argv[2]
+        arch = sys.argv[3]
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if os_name == "Darwin":
+            os_id = "macOS"
+        elif os_name == "Linux":
+            os_id = "linux"
+        else:
+            print("", end="")
+            sys.exit(0)
+
+        if arch in ("arm64", "aarch64"):
+            arch_id = "arm64"
+        elif arch in ("x86_64", "amd64"):
+            arch_id = "amd64"
+        else:
+            print("", end="")
+            sys.exit(0)
+
+        want = "_" + os_id + "_" + arch_id + ".tar.gz"
+        for a in data.get("assets", []):
+            name = a.get("name") or ""
+            if name.endswith(want):
+                print(a.get("browser_download_url") or "", end="")
+                break
+        PY
+        )"
+        if [ -z "$asset_url" ]; then
+          echo "Failed to find gh release asset for os=$os arch=$arch" >&2
+          exit 1
+        fi
+
+        curl -fsSL -L -o "$tmp/gh.tgz" "$asset_url"
         tar -xzf "$tmp/gh.tgz" -C "$tmp"
         ghbin="$(find "$tmp" -type f -path '*/bin/gh' | head -n1)"
         "$ghbin" --version
