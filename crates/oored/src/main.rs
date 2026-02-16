@@ -102,9 +102,12 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
     info!(listen = %addr, "starting oored daemon");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .await
-        .context("oored server failed")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .context("oored server failed")?;
 
     // Best-effort flush of OTel spans on shutdown
     observability::shutdown_tracing();

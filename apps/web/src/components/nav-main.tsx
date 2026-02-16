@@ -51,7 +51,7 @@ const ADMIN_ITEMS: Array<NavItem> = [
     adminOnly: true,
   },
   {
-    title: 'Integrations',
+    title: 'Sources',
     to: '/settings/integrations',
     icon: Link04Icon,
     adminOnly: true,

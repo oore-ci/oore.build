@@ -23,7 +23,7 @@ oore.build lets you run your own mobile CI server. V1 targets Android, iOS, and 
 - A **daemon** (`oored`) that orchestrates builds and serves the API
 - An **operator CLI** (`oore`) for setup, admin, and runner management
 - A **web UI** for managing builds, apps, and team access
-- **OIDC-only authentication** — no local passwords
+- **OIDC authentication for non-loopback access** — no local passwords (loopback-only local login supported for local-first onboarding)
 
 ## Prerequisites
 
@@ -80,7 +80,7 @@ crates/oored/       Daemon — Axum HTTP server
 crates/oore/        Operator CLI — Clap
 crates/oore-runner/ Build runner agent
 crates/oore-contract/ Shared data types (Serde structs)
-docs/               Design docs, platform contract, feature specs
+docs/               Internal docs pointers + change ledger (canonical docs live in Linear)
 ```
 
 ## Common Commands
@@ -103,18 +103,14 @@ make dev-fresh-setup  # Fresh local build + tunnel + token-first UI setup simula
 make doctor           # Check system prerequisites
 ```
 
-## Release Automation (macOS + R2)
+## Releases (macOS, Automated)
 
-Releases are published from a dedicated Mac mini:
+Releases are published from a dedicated macOS host (for example, a Mac mini) using Woodpecker CI.
 
-```bash
-make release-cut VERSION=0.2.0             # Bump version, commit, push, tag, push tag
-make release-local TAG=v0.2.0          # Build + upload one release to R2
-sudo make install-release-webhook-daemon  # Install LaunchDaemon webhook listener
-make install-release-poller               # Optional polling fallback
-```
+High-level flow:
 
-Artifacts are published under `https://dl.oore.build/releases/`.
+- Merge to `main` -> CI bumps `workspace.package.version`, commits, tags (for example `v0.2.1`)
+- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages sites, and publishes a GitHub Release with attached artifacts
 
 ## Contributing
 

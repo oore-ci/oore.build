@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 use axum::Json;
@@ -40,6 +42,222 @@ fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
     }
 }
 
+fn normalize_local_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "local_repository_path is required",
+        ));
+    }
+
+    let candidate = PathBuf::from(trimmed);
+    if !candidate.is_absolute() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "local_repository_path must be an absolute path",
+        ));
+    }
+
+    std::fs::canonicalize(&candidate).map_err(|_| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "local_repository_path does not exist or is not accessible",
+        )
+    })
+}
+
+fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let path_str = path.to_string_lossy().into_owned();
+
+    let inside = Command::new("git")
+        .args([
+            "-C",
+            path_str.as_str(),
+            "rev-parse",
+            "--is-inside-work-tree",
+        ])
+        .output();
+    if let Ok(output) = inside {
+        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
+            return Ok(());
+        }
+    }
+
+    let bare = Command::new("git")
+        .args(["-C", path_str.as_str(), "rev-parse", "--is-bare-repository"])
+        .output();
+    if let Ok(output) = bare {
+        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
+            return Ok(());
+        }
+    }
+
+    Err(api_err(
+        StatusCode::BAD_REQUEST,
+        "invalid_repository",
+        "local_repository_path is not a valid git repository",
+    ))
+}
+
+fn resolve_default_branch(path: &PathBuf) -> Option<String> {
+    let path_str = path.to_string_lossy().into_owned();
+    Command::new("git")
+        .args(["-C", path_str.as_str(), "symbolic-ref", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+struct LocalRepoInspection {
+    canonical_str: String,
+    default_branch: Option<String>,
+    repo_name: String,
+}
+
+async fn inspect_local_repo_for_project(
+    raw_path: &str,
+) -> Result<LocalRepoInspection, (StatusCode, Json<ApiError>)> {
+    let raw_path = raw_path.to_string();
+    tokio::task::spawn_blocking(move || {
+        let canonical_path = normalize_local_repo_path(&raw_path)?;
+        assert_git_repo(&canonical_path)?;
+
+        let default_branch = resolve_default_branch(&canonical_path);
+        let canonical_str = canonical_path.to_string_lossy().into_owned();
+        let repo_name = canonical_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "local-repo".to_string());
+
+        Ok(LocalRepoInspection {
+            canonical_str,
+            default_branch,
+            repo_name,
+        })
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local repository inspection task panicked or was cancelled");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to inspect local repository",
+        )
+    })?
+}
+
+async fn ensure_local_repository_for_project(
+    pool: &sqlx::SqlitePool,
+    actor_user_id: &str,
+    raw_path: &str,
+) -> Result<(String, Option<String>), (StatusCode, Json<ApiError>)> {
+    let inspection = inspect_local_repo_for_project(raw_path).await?;
+    let canonical_str = inspection.canonical_str.clone();
+
+    let existing = sqlx::query(
+        "SELECT r.id as repository_id, r.default_branch as default_branch \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE i.provider = 'local_git' AND r.external_id = ?1 \
+         LIMIT 1",
+    )
+    .bind(&canonical_str)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to query existing local repository mapping");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to check existing repository mappings",
+        )
+    })?;
+
+    if let Some(row) = existing {
+        let repository_id: String = row.get("repository_id");
+        let default_branch: Option<String> = row.get("default_branch");
+        return Ok((repository_id, default_branch));
+    }
+
+    let default_branch = inspection.default_branch;
+    let repo_name = inspection.repo_name;
+    let now = now_unix();
+    let integration_id = Uuid::new_v4().to_string();
+    let installation_id = Uuid::new_v4().to_string();
+    let repository_id = Uuid::new_v4().to_string();
+
+    sqlx::query(
+        "INSERT INTO integrations (id, provider, host_url, auth_mode, status, display_name, created_by, created_at, updated_at) \
+         VALUES (?1, 'local_git', 'local://filesystem', 'local_path', 'active', ?2, ?3, ?4, ?4)",
+    )
+    .bind(&integration_id)
+    .bind(&repo_name)
+    .bind(actor_user_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to create local integration during project create");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to register local repository",
+        )
+    })?;
+
+    sqlx::query(
+        "INSERT INTO integration_installations (id, integration_id, external_id, account_name, account_type, permissions, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'local', 'filesystem', '{}', ?4, ?4)",
+    )
+    .bind(&installation_id)
+    .bind(&integration_id)
+    .bind(&canonical_str)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to create local installation during project create");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to register local repository",
+        )
+    })?;
+
+    sqlx::query(
+        "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?7)",
+    )
+    .bind(&repository_id)
+    .bind(&installation_id)
+    .bind(&canonical_str)
+    .bind(&repo_name)
+    .bind(&default_branch)
+    .bind(&canonical_str)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to create local repository during project create");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to register local repository",
+        )
+    })?;
+
+    Ok((repository_id, default_branch))
+}
+
 // ── Query parameters ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -68,26 +286,62 @@ pub async fn create_project(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    // Validate repository_id if provided
-    if let Some(ref repo_id) = req.repository_id {
-        let repo_exists: bool =
-            sqlx::query_scalar("SELECT COUNT(*) > 0 FROM integration_repositories WHERE id = ?1")
-                .bind(repo_id)
-                .fetch_one(pool)
-                .await
-                .unwrap_or(false);
+    if req.repository_id.is_some() && req.local_repository_path.is_some() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Provide either repository_id or local_repository_path, not both",
+        ));
+    }
 
-        if !repo_exists {
+    let (repository_id, inferred_default_branch) = match (
+        req.repository_id.clone(),
+        req.local_repository_path.as_deref(),
+    ) {
+        (Some(repo_id), None) => {
+            // Validate repository_id if provided
+            let repo_exists: bool = sqlx::query_scalar(
+                "SELECT COUNT(*) > 0 FROM integration_repositories WHERE id = ?1",
+            )
+            .bind(&repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(false);
+
+            if !repo_exists {
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_repository",
+                    "Repository not found",
+                ));
+            }
+            (Some(repo_id), None)
+        }
+        (None, Some(local_repo_path)) => {
+            let (repo_id, branch) =
+                ensure_local_repository_for_project(&pool, &auth.0.user_id, local_repo_path)
+                    .await?;
+            (Some(repo_id), branch)
+        }
+        (None, None) => {
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
-                "invalid_repository",
-                "Repository not found",
+                "invalid_input",
+                "repository_id or local_repository_path is required",
             ));
         }
-    }
+        (Some(_), Some(_)) => {
+            // Already validated above.
+            unreachable!("validated mutually exclusive repository inputs")
+        }
+    };
+
+    let default_branch = req.default_branch.clone().or(inferred_default_branch);
 
     let now = now_unix();
     let project_id = Uuid::new_v4().to_string();
@@ -99,11 +353,11 @@ pub async fn create_project(
     .bind(&project_id)
     .bind(name)
     .bind(&req.description)
-    .bind(&req.repository_id)
-    .bind(&req.default_branch)
+    .bind(&repository_id)
+    .bind(&default_branch)
     .bind(&auth.0.user_id)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to create project");
@@ -113,10 +367,11 @@ pub async fn create_project(
     let details = serde_json::json!({
         "project_name": name,
         "created_by": auth.0.email,
+        "repository_id": repository_id,
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "project_created",
         "project",
@@ -131,9 +386,9 @@ pub async fn create_project(
         id: project_id,
         name: name.to_string(),
         description: req.description,
-        repository_id: req.repository_id,
+        repository_id,
         settings: serde_json::json!({}),
-        default_branch: req.default_branch,
+        default_branch,
         created_by: auth.0.user_id,
         created_at: now,
         updated_at: now,

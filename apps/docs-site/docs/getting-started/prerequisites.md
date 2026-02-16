@@ -12,7 +12,7 @@ Before installing oore.build, verify that your system meets these requirements.
 | Requirement | Details |
 |---|---|
 | **Operating system** | macOS (required for daemon and CLI in V1) |
-| **Network access** | Reachability to `dl.oore.build`, your OIDC provider, and your source control provider |
+| **Network access** | Reachability to GitHub (`github.com`), your OIDC provider, and your source control provider |
 | **Xcode Command Line Tools** | Required for iOS/macOS build jobs (`xcode-select --install`) |
 
 ## Required tools for release installer

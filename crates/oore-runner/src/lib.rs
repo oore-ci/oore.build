@@ -1529,24 +1529,31 @@ fn default_platform_command(
     }
 }
 
-fn materialize_stage_commands(config: &PipelineExecutionConfig) -> PipelineCommandStages {
+fn materialize_stage_commands(
+    config: &PipelineExecutionConfig,
+    include_default_platform_commands: bool,
+) -> PipelineCommandStages {
     let mut pre_build = Vec::new();
-    if !config.platforms.is_empty() {
+    if include_default_platform_commands && !config.platforms.is_empty() {
         pre_build.push("flutter pub get".to_string());
     }
     pre_build.extend(config.commands.pre_build.clone());
 
-    let mut build = config
-        .platforms
-        .iter()
-        .map(|platform| {
-            default_platform_command(
-                platform,
-                &config.platform_commands,
-                &config.platform_build_args,
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut build = if include_default_platform_commands {
+        config
+            .platforms
+            .iter()
+            .map(|platform| {
+                default_platform_command(
+                    platform,
+                    &config.platform_commands,
+                    &config.platform_build_args,
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     build.extend(config.commands.build.clone());
 
     PipelineCommandStages {
@@ -1606,7 +1613,8 @@ fn resolve_execution_plan(
         let resolved_flutter_version = fvmrc_version
             .clone()
             .or_else(|| file_config.flutter_version.clone());
-        let mut stage_commands = materialize_stage_commands(&file_config);
+        let include_defaults = file_config.commands.build.is_empty();
+        let mut stage_commands = materialize_stage_commands(&file_config, include_defaults);
         if let Some(version) = resolved_flutter_version {
             stage_commands = apply_fvm_wrappers(stage_commands);
             stage_commands
@@ -1624,7 +1632,7 @@ fn resolve_execution_plan(
 
     let fallback = load_ui_execution_config(snapshot)?;
     let resolved_flutter_version = fvmrc_version.or_else(|| fallback.flutter_version.clone());
-    let mut stage_commands = materialize_stage_commands(&fallback);
+    let mut stage_commands = materialize_stage_commands(&fallback, true);
     if let Some(version) = resolved_flutter_version {
         stage_commands = apply_fvm_wrappers(stage_commands);
         stage_commands
@@ -2254,10 +2262,16 @@ async fn execute_build(
                     )
                     .await;
                     if exit_code != 0 {
-                        return (
-                            steps,
-                            Err(anyhow::anyhow!("Step failed with exit code {}", exit_code)),
-                        );
+                        let err = if exit_code == 127 {
+                            anyhow::anyhow!(
+                                "Step failed with exit code 127 (command not found). \
+Install required tooling (for example Flutter/FVM) or override build commands. Command: {}",
+                                command_preview
+                            )
+                        } else {
+                            anyhow::anyhow!("Step failed with exit code {}", exit_code)
+                        };
+                        return (steps, Err(err));
                     }
                 }
             }
@@ -3139,6 +3153,43 @@ mod tests {
     }
 
     #[test]
+    fn repo_file_custom_build_commands_override_default_platform_commands() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\ncommands:\n  pre_build: [\"echo pre\"]\n  build: [\"echo custom-build\"]\n  post_build: [\"echo post\"]\nartifacts:\n  patterns: [\"*.txt\"]\n",
+        )
+        .expect("write repo config");
+
+        let snapshot = serde_json::json!({
+            "config_path_explicit": false,
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": ["*.apk"]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
+        assert_eq!(
+            plan.source,
+            format!("file:{}", workspace.join(".oore.yaml").display())
+        );
+        assert_eq!(plan.stage_commands.pre_build, vec!["echo pre".to_string()]);
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["echo custom-build".to_string()]
+        );
+        assert_eq!(
+            plan.stage_commands.post_build,
+            vec!["echo post".to_string()]
+        );
+        assert_eq!(plan.artifact_patterns, vec!["*.txt".to_string()]);
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
     fn fvmrc_flutter_version_is_applied_to_flutter_commands() {
         let workspace = temp_workspace();
         fs::write(workspace.join(".fvmrc"), "{ \"flutter\": \"3.24.0\" }\n").expect("write .fvmrc");
@@ -3233,7 +3284,7 @@ mod tests {
             env: Vec::new(),
             artifact_patterns: vec!["*.apk".to_string()],
         };
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec![
@@ -3260,7 +3311,7 @@ mod tests {
             artifact_patterns: vec!["*.apk".to_string()],
         };
 
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec![
@@ -3289,7 +3340,7 @@ mod tests {
             artifact_patterns: vec!["*.apk".to_string()],
         };
 
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec![
@@ -3318,7 +3369,7 @@ mod tests {
             artifact_patterns: vec!["*.apk".to_string()],
         };
 
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec!["flutter build appbundle --release".to_string()]

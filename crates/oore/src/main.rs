@@ -33,7 +33,7 @@ struct Cli {
 enum Commands {
     Setup(SetupArgs),
     Login,
-    Status,
+    Status(StatusArgs),
     Runner(RunnerArgs),
     Config(ConfigArgs),
     Doctor,
@@ -82,6 +82,15 @@ struct SetupTokenArgs {
 
     #[arg(long, env = "OORE_SETUP_STATE_FILE")]
     state_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct StatusArgs {
+    #[arg(long, env = "OORE_DAEMON_URL", default_value = "http://127.0.0.1:8787")]
+    daemon_url: String,
+
+    #[arg(long, default_value = "false")]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -513,7 +522,7 @@ async fn generate_bootstrap_token(
     Ok(plaintext_token)
 }
 
-async fn handle_setup_token(args: SetupTokenArgs) -> anyhow::Result<()> {
+async fn handle_setup_token(args: SetupTokenArgs, daemon_url: &str) -> anyhow::Result<()> {
     let ttl = parse_ttl(&args.ttl)?;
 
     // 1. Resolve database path
@@ -522,6 +531,29 @@ async fn handle_setup_token(args: SetupTokenArgs) -> anyhow::Result<()> {
     // 2. Connect and load or create state
     let pool = connect_db(&db_path).await?;
     let mut state = load_or_create_state(&pool).await?;
+
+    let client = reqwest::Client::new();
+    let daemon_status = fetch_setup_status(&client, daemon_url).await;
+    if let Ok(status) = &daemon_status {
+        if status.instance_id != state.instance_id {
+            eprintln!(
+                "Daemon instance mismatch.\n\
+                 Daemon:   {} (instance {})\n\
+                 State DB: {} (instance {})\n\
+                 Set OORE_SETUP_STATE_FILE (or --state-file) to the daemon setup DB and retry.",
+                daemon_url,
+                status.instance_id,
+                db_path.display(),
+                state.instance_id
+            );
+            std::process::exit(1);
+        }
+    } else if let Err(err) = daemon_status {
+        eprintln!(
+            "Warning: unable to verify daemon instance at {}: {}",
+            daemon_url, err
+        );
+    }
 
     // 3. Validate state — if Ready, error out
     if state.setup_state == SetupState::Ready {
@@ -691,12 +723,53 @@ async fn extract_error_message(resp: reqwest::Response) -> String {
     }
 }
 
+async fn fetch_setup_status(
+    client: &reqwest::Client,
+    daemon_url: &str,
+) -> anyhow::Result<SetupStatus> {
+    let status_url = format!(
+        "{}/v1/public/setup-status",
+        daemon_url.trim_end_matches('/')
+    );
+    let response = client
+        .get(&status_url)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if response.status().is_success() {
+        return response
+            .json()
+            .await
+            .context("failed to parse setup-status response");
+    }
+
+    let status = response.status();
+    let msg = extract_error_message(response).await;
+    anyhow::bail!(
+        "daemon status check failed at {daemon_url} (HTTP {}): {}",
+        status.as_u16(),
+        msg
+    )
+}
+
 /// Acquire a session token by generating a bootstrap token and verifying it with the daemon.
 /// Used both for initial setup (step 1) and when resuming from a later state with an expired session.
 async fn acquire_session(client: &reqwest::Client, daemon_url: &str) -> anyhow::Result<String> {
     let db_path = resolve_db_path(None)?;
     let pool = connect_db(&db_path).await?;
     let mut local_state = load_or_create_state(&pool).await?;
+    let remote_status = fetch_setup_status(client, daemon_url).await?;
+    if remote_status.instance_id != local_state.instance_id {
+        anyhow::bail!(
+            "daemon instance mismatch: daemon {} is instance {}, but local setup state {} is instance {}. \
+Use OORE_SETUP_STATE_FILE or --state-file to point at the daemon setup DB and retry",
+            daemon_url,
+            remote_status.instance_id,
+            db_path.display(),
+            local_state.instance_id
+        );
+    }
 
     let plaintext_token =
         generate_bootstrap_token(&mut local_state, &pool, Duration::from_secs(15 * 60)).await?;
@@ -742,24 +815,14 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
 
     // ── Step 0: Check daemon connectivity and get current state ──
 
-    let status_url = format!("{}/v1/public/setup-status", daemon_url);
-    let status_resp = client.get(&status_url).send().await;
-
-    let status: SetupStatus = match status_resp {
-        Ok(resp) if resp.status().is_success() => resp
-            .json()
-            .await
-            .context("failed to parse setup-status response")?,
-        Ok(resp) => {
-            let msg = extract_error_message(resp).await;
-            anyhow::bail!("Cannot reach oored at {daemon_url}: {msg}");
-        }
+    let status: SetupStatus = match fetch_setup_status(&client, daemon_url).await {
+        Ok(status) => status,
         Err(e) => {
             eprintln!(
                 "Cannot reach oored at {}. Is the daemon running? Start it with: oored run",
                 daemon_url
             );
-            return Err(e.into());
+            return Err(e);
         }
     };
 
@@ -1101,6 +1164,33 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+async fn handle_status(args: StatusArgs) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let status = fetch_setup_status(&client, &args.daemon_url).await?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+        return Ok(());
+    }
+
+    println!("oore status");
+    println!();
+    println!("Daemon:   {}", args.daemon_url);
+    println!("Instance: {}", status.instance_id);
+    println!("State:    {}", status.state);
+    println!("Mode:     {}", status.runtime_mode);
+    println!(
+        "Setup:    {}",
+        if status.setup_mode {
+            "in_progress"
+        } else {
+            "complete"
+        }
+    );
 
     Ok(())
 }
@@ -1633,7 +1723,7 @@ fn main() -> anyhow::Result<()> {
             Some(SetupSubcommand::Token(args) | SetupSubcommand::Open(args)) => {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_setup_token(args))?;
+                runtime.block_on(handle_setup_token(args, &setup.daemon_url))?;
             }
             None => {
                 let runtime =
@@ -1648,13 +1738,10 @@ fn main() -> anyhow::Result<()> {
             );
             std::process::exit(2);
         }
-        Commands::Status => {
-            eprintln!(
-                "Not implemented in this release: `oore status`.\n\
-                 Workaround: run `curl http://127.0.0.1:8787/v1/public/setup-status` \
-                 (or replace the host/port)."
-            );
-            std::process::exit(2);
+        Commands::Status(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(handle_status(args))?;
         }
         Commands::Runner(runner) => match runner.command {
             RunnerSubcommand::Register(args) => {

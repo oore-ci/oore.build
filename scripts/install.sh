@@ -3,8 +3,9 @@ set -euo pipefail
 
 OORE_VERSION="${OORE_VERSION:-latest}"
 OORE_INSTALL_ROOT="${OORE_INSTALL_ROOT:-$HOME/.oore}"
-OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://dl.oore.build/releases}"
-OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-$OORE_RELEASE_BASE_URL/latest.json}"
+OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-devaryakjha/oore.build}"
+OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://github.com/$OORE_GITHUB_REPO/releases/download}"
+OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases/latest}"
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_HOSTED_UI="${OORE_HOSTED_UI:-https://ci.oore.build}"
@@ -29,6 +30,28 @@ RELEASE_ARCH=""
 TMP_DIR=""
 CURRENT_STEP=0
 TOTAL_STEPS=5
+
+print_help() {
+  cat <<'EOF'
+oore.build installer (macOS)
+
+Usage:
+  ./scripts/install.sh
+  ./scripts/install.sh --help
+
+Environment overrides:
+  OORE_VERSION               Release tag or "latest" (default: latest)
+  OORE_INSTALL_ROOT          Install root (default: ~/.oore)
+  OORE_NONINTERACTIVE        Non-interactive mode (true/false)
+  OORE_START_DAEMON          Start daemon in non-interactive mode (true/false)
+  OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
+  OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
+  OORE_HOSTED_UI             Hosted UI URL (default: https://ci.oore.build)
+  OORE_GITHUB_REPO           GitHub repo (default: devaryakjha/oore.build)
+  OORE_RELEASE_BASE_URL      Release asset base URL (default: GitHub Releases download base)
+  OORE_RELEASE_MANIFEST_URL  Release metadata URL for latest tag resolution (default: GitHub Releases API)
+EOF
+}
 
 step() {
   CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -157,7 +180,8 @@ resolve_release_tag() {
     curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL" \
       || die "Unable to fetch release manifest: $OORE_RELEASE_MANIFEST_URL"
 
-    tag="$(sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
+    # GitHub API returns "tag_name": "vX.Y.Z"
+    tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
     [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
   else
     if [[ "$OORE_VERSION" == v* ]]; then
@@ -479,40 +503,37 @@ configure_local_web_noninteractive() {
 
 handle_local_backend_onboarding() {
   printf '\n'
-  log "Your backend is on localhost. The hosted UI ($OORE_HOSTED_UI)"
-  log "cannot reach a local HTTP backend due to browser security restrictions."
+  log "Backend is running locally at $DAEMON_URL."
+  log "Recommended first-run path is local-only setup."
   log ""
-  log "Setup options:"
-  log "  1. CLI setup:    $BIN_DIR/oore setup"
-  log "  2. Tunnel:       cloudflared tunnel --url $DAEMON_URL"
-  log "                   then open ${OORE_HOSTED_UI}/setup?backend=<tunnel-url>"
-
-  if ! has_local_web_bundle; then
-    log "  3. Local web UI: not bundled in this release build."
-    return 0
+  log "Local-first options:"
+  if has_local_web_bundle; then
+    log "  1. Local web UI: $LOCAL_WEB_URL/setup"
+    log "     Add instance and leave Backend URL empty (uses local proxy)."
+  else
+    log "  1. Local web UI: not bundled in this release build."
   fi
+  log "  2. CLI setup:    $BIN_DIR/oore setup"
+  log ""
+  log "Remote mode (optional later):"
+  log "  - Expose backend over HTTPS and open: ${OORE_HOSTED_UI}/setup?backend=<https-url>"
+  log "  - Example tunnel command: cloudflared tunnel --url $DAEMON_URL"
 
-  log "  3. Local web UI: $LOCAL_WEB_URL/setup"
-  log "                   Add instance and leave Backend URL empty (uses local proxy)."
-
-  if prompt_yes_no "Will you expose this backend over HTTPS for hosted UI?" 'n'; then
-    if prompt_yes_no "Open hosted setup URL in your browser now?" 'n'; then
-      if have_cmd open; then
-        open "${OORE_HOSTED_UI}/setup" >/dev/null 2>&1 || true
-      fi
-    fi
-    return 0
-  fi
-
-  if prompt_yes_no "Start bundled local web UI now at $LOCAL_WEB_URL?" 'y'; then
+  if has_local_web_bundle && prompt_yes_no "Start local web UI now at $LOCAL_WEB_URL?" 'y'; then
     start_local_web || true
     if have_cmd open && prompt_yes_no "Open local setup UI in browser now?" 'y'; then
       open "${LOCAL_WEB_URL}/setup" >/dev/null 2>&1 || true
     fi
+    if prompt_yes_no "Auto-start local web UI at login with launchd?" 'n'; then
+      install_local_web_launch_agent || log "Failed to install launch agent."
+    fi
+    return 0
   fi
 
-  if prompt_yes_no "Auto-start local web UI at login with launchd?" 'n'; then
-    install_local_web_launch_agent || log "Failed to install launch agent."
+  if prompt_yes_no "Show hosted UI setup URL now (remote mode path)?" 'n'; then
+    if have_cmd open; then
+      open "${OORE_HOSTED_UI}/setup" >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -602,34 +623,35 @@ print_next_steps() {
 
   if "$daemon_running"; then
     printf 'Daemon is running at %s\n\n' "$DAEMON_URL"
-    printf 'Complete setup:\n'
+    printf 'Complete setup (local-first):\n'
+    if has_local_web_bundle; then
+      printf '  %s/setup\n' "$LOCAL_WEB_URL"
+      printf '  (or use CLI below)\n'
+    fi
     printf '  oore setup                    # interactive CLI setup\n'
     printf '  oore setup token --ttl 15m     # generate a new bootstrap token\n'
-    printf '\n'
-    printf 'Hosted UI (requires HTTPS-reachable backend):\n'
-    printf '  %s\n' "$OORE_HOSTED_UI"
-    if has_local_web_bundle; then
-      printf '\nLocal web UI (works with localhost backend):\n'
-      printf '  %s/setup\n' "$LOCAL_WEB_URL"
-      if "$local_web_running"; then
-        printf '  status: running\n'
-      else
-        printf '  start:  oore-web --backend-url %s\n' "$DAEMON_URL"
-      fi
+    if has_local_web_bundle && "$local_web_running"; then
+      printf '  local web status: running\n'
+    elif has_local_web_bundle; then
+      printf '  local web start:  oore-web --backend-url %s\n' "$DAEMON_URL"
     fi
+    printf '\nRemote mode (optional later, requires HTTPS backend):\n'
+    printf '  %s\n' "$OORE_HOSTED_UI"
   else
     printf 'Start the daemon:\n'
     printf '  oored run --listen 127.0.0.1:8787\n\n'
-    printf 'Then complete setup:\n'
+    printf 'Then complete setup (local-first):\n'
+    if has_local_web_bundle; then
+      printf '  %s/setup\n' "$LOCAL_WEB_URL"
+      printf '  (or use CLI below)\n'
+    fi
     printf '  oore setup                    # interactive CLI setup\n'
     printf '  oore setup token --ttl 15m     # generate a bootstrap token\n'
-    printf '\n'
-    printf 'Hosted UI (requires HTTPS-reachable backend):\n'
-    printf '  %s\n' "$OORE_HOSTED_UI"
     if has_local_web_bundle; then
-      printf '\nLocal web UI (works with localhost backend):\n'
-      printf '  oore-web --backend-url %s\n' "$DAEMON_URL"
+      printf '  local web start:  oore-web --backend-url %s\n' "$DAEMON_URL"
     fi
+    printf '\nRemote mode (optional later, requires HTTPS backend):\n'
+    printf '  %s\n' "$OORE_HOSTED_UI"
   fi
 
   printf '\nDocs: https://docs.oore.build\n'
@@ -642,6 +664,18 @@ cleanup() {
 }
 
 main() {
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      -h|--help)
+        print_help
+        return 0
+        ;;
+      *)
+        die "Unknown argument: $1 (use --help)"
+        ;;
+    esac
+  fi
+
   trap cleanup EXIT
 
   validate_local_web_mode

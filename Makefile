@@ -4,7 +4,7 @@
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
 	       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 	       docs-check ui-init install-local validate gen-openapi \
-	       release-local release-poll-tags release-webhook-server install-release-poller install-release-webhook install-release-webhook-daemon release-cut
+	       release-local release-cut
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -17,6 +17,11 @@ OORED_DEV_LISTEN_ADDR ?= 127.0.0.1:8787
 OORED_DEV_DAEMON_URL ?= http://$(OORED_DEV_LISTEN_ADDR)
 OORE_DEV_ENABLE_TUNNEL ?= 1
 OORE_DEV_SETUP_MODE ?= token
+WRANGLER ?= bunx --bun wrangler
+PAGES_PROJECT_WEB ?= oore-ci
+PAGES_PROJECT_DEMO ?= oore-demo
+PAGES_PROJECT_SITE ?= oore
+PAGES_PROJECT_DOCS ?= oore-docs
 
 # ── Frontend: Web App ─────────────────────────────────────────────
 dev-web:
@@ -26,13 +31,13 @@ build-web:
 	bun run build:web
 
 deploy-web: build-web
-	wrangler pages deploy apps/web/dist --project-name=oore-ci
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)
 
 build-demo:
 	cd apps/web && VITE_DEMO_MODE=true bun run build
 
 deploy-demo: build-demo
-	wrangler pages deploy apps/web/dist --project-name=oore-demo
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)
 
 test-web:
 	cd apps/web && bun run test
@@ -57,10 +62,10 @@ build-site:
 	bun run build:site
 
 deploy-site: build-site
-	wrangler pages deploy apps/site/dist --project-name=oore
+	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)
 
 deploy-docs: build-docs
-	wrangler pages deploy apps/docs-site/docs/.vitepress/dist --project-name=oore-docs
+	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)
 
 test-docs:
 	cd apps/docs-site && bun run test
@@ -76,13 +81,13 @@ cargo-check:
 	cargo check --workspace
 
 run-daemon:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=$(OORED_LOG_LEVEL) cargo run -p oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=$(OORED_LOG_LEVEL) cargo run -p oored --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-daemon-debug:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=debug cargo run -p oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=debug cargo run -p oored --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-daemon-release:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release -- run --listen $(OORED_DEV_LISTEN_ADDR)
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-runner:
 	cargo run -p oore -- runner start --daemon-url $(RUNNER_DAEMON_URL) --config $(RUNNER_CONFIG)
@@ -98,10 +103,10 @@ doctor:
 	cargo run -p oore -- doctor
 
 clean-dev-state:
-	OORED_DEV_DATA_DIR=$(OORED_DEV_DATA_DIR) OORED_DEV_LISTEN_ADDR=$(OORED_DEV_LISTEN_ADDR) OORE_DEV_DAEMON_URL=$(OORED_DEV_DAEMON_URL) bash scripts/clean-dev-state.sh
+	OORED_DEV_DATA_DIR=$(OORED_DEV_DATA_DIR) OORED_DEV_LISTEN_ADDR=$(OORED_DEV_LISTEN_ADDR) OORE_DEV_DAEMON_URL=$(OORED_DEV_DAEMON_URL) bash tools/clean-dev-state.sh
 
 dev-fresh-setup:
-	OORED_DEV_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_DEV_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) OORED_DEV_LISTEN_ADDR=$(OORED_DEV_LISTEN_ADDR) OORE_DEV_DAEMON_URL=$(OORED_DEV_DAEMON_URL) OORE_DEV_ENABLE_TUNNEL=$(OORE_DEV_ENABLE_TUNNEL) OORE_DEV_SETUP_MODE=$(OORE_DEV_SETUP_MODE) bash scripts/dev-fresh-setup.sh
+	OORED_DEV_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_DEV_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) OORED_DEV_LISTEN_ADDR=$(OORED_DEV_LISTEN_ADDR) OORE_DEV_DAEMON_URL=$(OORED_DEV_DAEMON_URL) OORE_DEV_ENABLE_TUNNEL=$(OORE_DEV_ENABLE_TUNNEL) OORE_DEV_SETUP_MODE=$(OORE_DEV_SETUP_MODE) bash tools/dev-fresh-setup.sh
 
 install-local:
 	bash scripts/install.sh
@@ -109,28 +114,15 @@ install-local:
 test-rust:
 	cargo test -p oored --features test-support
 
+# Release automation now lives in Woodpecker (tag -> GitHub release).
 release-local:
-	@test -n "$(TAG)" || (echo "TAG is required (example: make release-local TAG=v0.2.0)"; exit 1)
-	bash scripts/release-local.sh "$(TAG)"
+	@echo "Use Woodpecker tag pipeline to publish releases."
+	@echo "If you need a manual release, create/push a semver tag like v0.2.0."
+	@exit 1
 
 release-cut:
-	@test -n "$(VERSION)" || (echo "VERSION is required (example: make release-cut VERSION=0.2.0)"; exit 1)
-	bash scripts/release-cut.sh "$(VERSION)"
-
-release-poll-tags:
-	bash scripts/release-poll-tags.sh
-
-release-webhook-server:
-	bash scripts/release-webhook-server.sh
-
-install-release-poller:
-	bash scripts/install-launchd-release-poller.sh
-
-install-release-webhook:
-	bash scripts/install-launchd-release-webhook.sh
-
-install-release-webhook-daemon:
-	bash scripts/install-launchd-release-webhook-daemon.sh
+	@echo "Use Woodpecker push-to-main pipeline to auto-cut tags (or push a tag manually)."
+	@exit 1
 
 # ── OpenAPI Spec Generation ───────────────────────────────────────
 gen-openapi:

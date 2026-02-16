@@ -16,6 +16,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
+import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
   useDeletePipeline,
@@ -137,6 +138,9 @@ function PipelineDetailPage() {
   const canWrite = useHasPermission('pipelines', 'write')
   const canDelete = useHasPermission('pipelines', 'delete')
   const canTriggerBuild = useHasPermission('builds', 'write')
+  const repoProviderQuery = useRepositoryProvider(
+    projectData?.project.repository_id,
+  )
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
@@ -172,6 +176,8 @@ function PipelineDetailPage() {
 
   const { pipeline } = data
   const builds = buildsData?.builds ?? []
+  const projectHasSource = !!projectData?.project.repository_id
+  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
 
   function handleToggleEnabled() {
     updateMutation.mutate(
@@ -222,7 +228,10 @@ function PipelineDetailPage() {
           canWrite || canDelete || canTriggerBuild ? (
             <>
               {canTriggerBuild ? (
-                <Button onClick={() => setTriggerBuildOpen(true)}>
+                <Button
+                  onClick={() => setTriggerBuildOpen(true)}
+                  disabled={!projectHasSource}
+                >
                   <HugeiconsIcon icon={PlayIcon} size={16} />
                   Run Build
                 </Button>
@@ -245,6 +254,7 @@ function PipelineDetailPage() {
                       params={{ projectId, pipelineId }}
                     />
                   }
+                  nativeButton={false}
                 >
                   <HugeiconsIcon icon={Edit02Icon} size={16} />
                   Edit
@@ -263,6 +273,15 @@ function PipelineDetailPage() {
           ) : undefined
         }
       />
+      {!projectHasSource ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            This project has no linked source repository. Link a repository
+            before triggering builds.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {/* Collapsible config sections */}
       <Card>
@@ -290,36 +309,42 @@ function PipelineDetailPage() {
           </Section>
 
           <Section title="Triggers">
-            <KV label="Events">
-              {pipeline.trigger_config.events.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {pipeline.trigger_config.events.map((e) => (
-                    <Badge key={e} variant="outline" className="text-[11px]">
-                      {e}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                'all events'
-              )}
-            </KV>
-            <KV label="Branch patterns">
-              {pipeline.trigger_config.branches.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {pipeline.trigger_config.branches.map((b) => (
-                    <Badge
-                      key={b}
-                      variant="outline"
-                      className="font-mono text-[11px]"
-                    >
-                      {b}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                'all branches'
-              )}
-            </KV>
+            {manualOnlyTriggers ? (
+              <KV label="Mode">manual only</KV>
+            ) : (
+              <>
+                <KV label="Events">
+                  {pipeline.trigger_config.events.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {pipeline.trigger_config.events.map((e) => (
+                        <Badge key={e} variant="outline" className="text-[11px]">
+                          {e}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    'all events'
+                  )}
+                </KV>
+                <KV label="Branch patterns">
+                  {pipeline.trigger_config.branches.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {pipeline.trigger_config.branches.map((b) => (
+                        <Badge
+                          key={b}
+                          variant="outline"
+                          className="font-mono text-[11px]"
+                        >
+                          {b}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    'all branches'
+                  )}
+                </KV>
+              </>
+            )}
             <KV label="Cancel previous">
               {pipeline.concurrency.cancel_previous ? 'yes' : 'no'}
             </KV>
@@ -361,7 +386,7 @@ function PipelineDetailPage() {
               </KV>
             ) : null}
             {(pipeline.execution_config.platform_build_args?.ios.length ?? 0) >
-            0 ? (
+              0 ? (
               <KV label="iOS args">
                 <span className="font-mono">
                   {pipeline.execution_config.platform_build_args?.ios.join(' ')}
@@ -379,8 +404,8 @@ function PipelineDetailPage() {
               </KV>
             ) : null}
             {pipeline.execution_config.platform_commands?.android ||
-            pipeline.execution_config.platform_commands?.ios ||
-            pipeline.execution_config.platform_commands?.macos ? (
+              pipeline.execution_config.platform_commands?.ios ||
+              pipeline.execution_config.platform_commands?.macos ? (
               <KV label="Command overrides">
                 <span className="font-mono">
                   {[
@@ -476,33 +501,33 @@ function PipelineDetailPage() {
                       )}
                       {(iosSigningQuery.data.mode === 'manual' ||
                         iosSigningQuery.data.mode === 'hybrid') && (
-                        <KV label="Certificate">
-                          {iosSigningQuery.data.has_p12
-                            ? iosSigningQuery.data.p12_filename ?? 'configured'
-                            : 'not uploaded'}
-                        </KV>
-                      )}
+                          <KV label="Certificate">
+                            {iosSigningQuery.data.has_p12
+                              ? iosSigningQuery.data.p12_filename ?? 'configured'
+                              : 'not uploaded'}
+                          </KV>
+                        )}
                       {(iosSigningQuery.data.mode === 'api' ||
                         iosSigningQuery.data.mode === 'hybrid') && (
-                        <>
-                          <KV label="API key">
-                            {iosSigningQuery.data.has_api_key
-                              ? `Key ${iosSigningQuery.data.api_key_id ?? 'configured'}`
-                              : 'not configured'}
-                          </KV>
-                        </>
-                      )}
+                          <>
+                            <KV label="API key">
+                              {iosSigningQuery.data.has_api_key
+                                ? `Key ${iosSigningQuery.data.api_key_id ?? 'configured'}`
+                                : 'not configured'}
+                            </KV>
+                          </>
+                        )}
                       {iosSigningQuery.data.provisioning_profiles.length >
                         0 && (
-                        <KV label="Profiles">
-                          {iosSigningQuery.data.provisioning_profiles.length}{' '}
-                          provisioning profile
-                          {iosSigningQuery.data.provisioning_profiles.length !==
-                          1
-                            ? 's'
-                            : ''}
-                        </KV>
-                      )}
+                          <KV label="Profiles">
+                            {iosSigningQuery.data.provisioning_profiles.length}{' '}
+                            provisioning profile
+                            {iosSigningQuery.data.provisioning_profiles.length !==
+                              1
+                              ? 's'
+                              : ''}
+                          </KV>
+                        )}
                     </>
                   )}
                 </>
@@ -523,7 +548,7 @@ function PipelineDetailPage() {
           {builds.length === 0 ? (
             <div className="space-y-2 py-3">
               <p className="text-sm text-muted-foreground">No builds yet.</p>
-              {canTriggerBuild ? (
+              {canTriggerBuild && projectHasSource ? (
                 <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
                   <HugeiconsIcon icon={PlayIcon} size={14} />
                   Trigger first build

@@ -269,6 +269,7 @@ function ProjectDetailPage() {
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
   const builds = buildsData?.builds ?? []
+  const projectHasSource = !!project.repository_id
 
   function setTab(value: TabValue) {
     void navigate({
@@ -333,7 +334,7 @@ function ProjectDetailPage() {
               {canTriggerBuild ? (
                 <Button
                   onClick={() => openTriggerBuild()}
-                  disabled={pipelines.length === 0}
+                  disabled={pipelines.length === 0 || !projectHasSource}
                 >
                   <HugeiconsIcon icon={PlayIcon} size={16} />
                   Run Build
@@ -352,6 +353,15 @@ function ProjectDetailPage() {
           ) : undefined
         }
       />
+      {!projectHasSource ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            This project has no linked source repository. Link a repository
+            before triggering builds.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Tabs value={activeTab} onValueChange={(val) => setTab(val as TabValue)}>
         <TabsList variant="line">
@@ -398,7 +408,7 @@ function ProjectDetailPage() {
                     projectId={projectId}
                     defaultBranch={project.default_branch}
                     canWrite={canWritePipelines}
-                    canTriggerBuild={canTriggerBuild}
+                    canTriggerBuild={canTriggerBuild && projectHasSource}
                     lastBuildStatus={lb?.status}
                     lastBuildTime={lb?.time}
                   />
@@ -418,7 +428,7 @@ function ProjectDetailPage() {
                     <p className="text-sm text-muted-foreground">
                       No builds yet.
                     </p>
-                    {canTriggerBuild && pipelines.length > 0 ? (
+                    {canTriggerBuild && pipelines.length > 0 && projectHasSource ? (
                       <Button size="sm" onClick={() => openTriggerBuild()}>
                         <HugeiconsIcon icon={PlayIcon} size={14} />
                         Trigger first build

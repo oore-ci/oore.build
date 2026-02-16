@@ -108,16 +108,23 @@ export default function TriggerBuildDialog({
     shouldUnregister: false,
   })
 
-  const projectsQuery = useProjects(
-    { limit: 200 },
-    { enabled: open && !fixedProjectId },
-  )
+  const projectsQuery = useProjects({ limit: 200 }, { enabled: open })
   const projects = useMemo(
     () => projectsQuery.data?.projects ?? [],
     [projectsQuery.data?.projects],
   )
 
   const projectId = fixedProjectId ?? form.watch('project_id') ?? ''
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === projectId),
+    [projects, projectId],
+  )
+  const sourceMissing =
+    !!projectId &&
+    !projectsQuery.isLoading &&
+    !projectsQuery.error &&
+    !!activeProject &&
+    !activeProject.repository_id
 
   const pipelinesQuery = usePipelines(
     projectId,
@@ -199,6 +206,12 @@ export default function TriggerBuildDialog({
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
       form.setError('project_id', { message: 'Project is required' })
+      return
+    }
+    if (sourceMissing) {
+      toast.error(
+        'Project source is not linked. Connect and link a repository before triggering builds.',
+      )
       return
     }
 
@@ -397,6 +410,14 @@ export default function TriggerBuildDialog({
                 </AlertDescription>
               </Alert>
             ) : null}
+            {sourceMissing ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  This project is not linked to a source repository. Link a
+                  repository before triggering builds.
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={handleClose}>
@@ -408,6 +429,7 @@ export default function TriggerBuildDialog({
                   createBuildMutation.isPending ||
                   noProjects ||
                   noPipelines ||
+                  sourceMissing ||
                   (!fixedProjectId && !projectId)
                 }
                 onClick={() => {

@@ -1,16 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
+  CreateLocalGitIntegrationRequest,
   GitHubAppStartRequest,
   GitLabAuthorizeRequest,
   GitLabStartRequest,
 } from '@/lib/types'
 import {
+  browseLocalGitDirectories,
+  createLocalGitIntegration,
+  deleteLocalGitIntegration,
   deleteIntegration,
   getIntegration,
   githubAppComplete,
   githubAppStart,
   gitlabAuthorize,
   gitlabStart,
+  listLocalGitIntegrations,
   listInstallations,
   listIntegrationRepos,
   listIntegrations,
@@ -77,6 +82,38 @@ export function useIntegrationRepos(integrationId: string) {
     queryKey: [instance?.id ?? '__none__', 'integration-repos', integrationId],
     queryFn: () => listIntegrationRepos(baseUrl!, token!, integrationId),
     enabled: !!baseUrl && !!token && !!integrationId,
+  })
+}
+
+export function useRepositoryProvider(repositoryId?: string, enabled = true) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'repository-provider',
+      repositoryId ?? '__none__',
+    ],
+    queryFn: async () => {
+      if (!baseUrl || !token || !repositoryId) return null
+      const integrations = await listIntegrations(baseUrl, token)
+
+      for (const integration of integrations.integrations) {
+        try {
+          const repos = await listIntegrationRepos(baseUrl, token, integration.id)
+          if (repos.repositories.some((repo) => repo.id === repositoryId)) {
+            return integration.provider
+          }
+        } catch {
+          // skip integrations that fail to list repositories
+        }
+      }
+
+      return null
+    },
+    enabled: enabled && !!baseUrl && !!token && !!repositoryId,
   })
 }
 
@@ -194,6 +231,80 @@ export function useDeleteIntegration() {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'integrations'],
+      })
+    },
+  })
+}
+
+export function useLocalGitIntegrations(enabled = true) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
+    queryFn: () => listLocalGitIntegrations(baseUrl!, token!),
+    enabled: enabled && !!baseUrl && !!token,
+  })
+}
+
+export function useCreateLocalGitIntegration() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (data: CreateLocalGitIntegrationRequest) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return createLocalGitIntegration(baseUrl, token, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'integrations'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
+      })
+    },
+  })
+}
+
+export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'local-git-directory-browser',
+      path ?? '__default__',
+    ],
+    queryFn: () => browseLocalGitDirectories(baseUrl!, token!, path),
+    enabled: enabled && !!baseUrl && !!token,
+  })
+}
+
+export function useDeleteLocalGitIntegration() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (id: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return deleteLocalGitIntegration(baseUrl, token, id)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'integrations'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
       })
     },
   })

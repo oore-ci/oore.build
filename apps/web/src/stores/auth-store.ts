@@ -15,11 +15,16 @@ interface AuthStoreState {
   expiresAt: number | null
   user: AuthUser | null
   setInstanceContext: (instanceId: string | null) => void
-  setAuth: (token: string, expiresAt: number, user: AuthUser) => void
+  setAuth: (
+    token: string,
+    expiresAt: number,
+    user: AuthUser,
+    method?: LastAuthMethod,
+  ) => void
   clearAuth: () => void
 }
 
-export type LastAuthMethod = 'oidc'
+export type LastAuthMethod = 'oidc' | 'local' | 'trusted_proxy'
 
 export interface LastAuthMeta {
   method: LastAuthMethod
@@ -132,10 +137,14 @@ export function getLastAuthMetaForInstance(
   try {
     const method = localStorage.getItem(lastMethodKey(instanceId))
     const atRaw = localStorage.getItem(lastAtKey(instanceId))
-    if (method !== 'oidc' || !atRaw) return null
+    if (
+      (method !== 'oidc' && method !== 'local' && method !== 'trusted_proxy') ||
+      !atRaw
+    )
+      return null
     const at = Number(atRaw)
     if (!Number.isFinite(at) || at <= 0) return null
-    return { method, at }
+    return { method: method as LastAuthMethod, at }
   } catch {
     return null
   }
@@ -163,9 +172,9 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     })
   },
 
-  setAuth: (token, expiresAt, user) => {
+  setAuth: (token, expiresAt, user, method = 'oidc') => {
     const { instanceId } = get()
-    saveLastAuthMeta(instanceId, 'oidc', Math.floor(Date.now() / 1000))
+    saveLastAuthMeta(instanceId, method, Math.floor(Date.now() / 1000))
     saveAuth(instanceId, token, expiresAt, user)
     set({ token, expiresAt, user })
   },

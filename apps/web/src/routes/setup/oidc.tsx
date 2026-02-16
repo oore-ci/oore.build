@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useConfigureOidc } from '@/hooks/use-setup'
+import { useConfigureOidc, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
@@ -150,6 +150,7 @@ function OidcConfigStep() {
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const configureMutation = useConfigureOidc()
+  const { data: status } = useSetupStatus()
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>('google')
 
   const provider = PROVIDERS.find((p) => p.id === selectedProvider) ?? PROVIDERS[0]
@@ -186,8 +187,14 @@ function OidcConfigStep() {
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
   useEffect(() => {
-    setCurrentStep(1)
+    setCurrentStep(2)
   }, [setCurrentStep])
+
+  useEffect(() => {
+    if (status?.runtime_mode !== 'remote' || status?.remote_auth_mode !== 'oidc') {
+      void navigate({ to: '/setup/mode' })
+    }
+  }, [status?.runtime_mode, status?.remote_auth_mode, navigate])
 
   function handleProviderChange(value: ProviderId) {
     setSelectedProvider(value)

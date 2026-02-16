@@ -229,6 +229,17 @@ fn parse_execution_config(raw: &str) -> PipelineExecutionConfig {
     serde_json::from_str(raw).unwrap_or_else(|_| PipelineExecutionConfig::default())
 }
 
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 async fn fetch_build_number(
     pool: &sqlx::SqlitePool,
     build_id: &str,
@@ -435,21 +446,51 @@ pub async fn create_build(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    // Verify project exists
-    let project_exists: bool =
-        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
-            .bind(&project_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(false);
+    let requested_branch = normalize_optional(req.branch);
+    let commit_sha = normalize_optional(req.commit_sha);
+    let trigger_ref = normalize_optional(req.trigger_ref);
 
-    if !project_exists {
+    // Verify project exists and has source linkage.
+    let project_row =
+        sqlx::query("SELECT repository_id, default_branch FROM projects WHERE id = ?1")
+            .bind(&project_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch project");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch project",
+                )
+            })?
+            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"))?;
+
+    let repository_id: Option<String> = project_row.get("repository_id");
+    if repository_id.is_none() {
         return Err(api_err(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "Project not found",
+            StatusCode::CONFLICT,
+            "source_not_configured",
+            "Project is not linked to a source repository. Link a repository before triggering builds.",
         ));
     }
+
+    let default_branch = normalize_optional(project_row.get::<Option<String>, _>("default_branch"));
+    let branch = requested_branch.or_else(|| {
+        if commit_sha.is_none() {
+            default_branch.clone()
+        } else {
+            None
+        }
+    });
+    if commit_sha.is_none() && branch.is_none() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Provide branch or commit_sha, or set a project default_branch before triggering builds.",
+        ));
+    }
+    let trigger_ref = trigger_ref.or_else(|| branch.clone());
 
     // Verify pipeline exists and belongs to this project
     let pipeline_row = sqlx::query(
@@ -480,7 +521,7 @@ pub async fn create_build(
         let canceled = apply_cancel_previous(
             pool,
             &req.pipeline_id,
-            req.branch.as_deref(),
+            branch.as_deref(),
             Some(&auth.0.email),
         )
         .await?;
@@ -497,7 +538,10 @@ pub async fn create_build(
 
     // Resolve repo clone URL from project's linked repository
     let repo_url: Option<String> = sqlx::query_scalar(
-        "SELECT i.host_url || '/' || r.full_name || '.git' \
+        "SELECT CASE \
+            WHEN i.provider = 'local_git' THEN r.html_url \
+            ELSE i.host_url || '/' || r.full_name || '.git' \
+         END \
          FROM projects p \
          JOIN integration_repositories r ON r.id = p.repository_id \
          JOIN integration_installations inst ON inst.id = r.installation_id \
@@ -507,15 +551,37 @@ pub async fn create_build(
     .bind(&project_id)
     .fetch_optional(pool)
     .await
-    .unwrap_or(None);
+    .map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to resolve project repository URL");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve project source",
+        )
+    })?
+    .and_then(|raw: String| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
+    if repo_url.is_none() {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "source_unresolvable",
+            "Project source repository could not be resolved. Reconnect the source integration and repository mapping.",
+        ));
+    }
 
     let config_snapshot = create_config_snapshot(
         &config_path,
         config_path_explicit != 0,
         &execution_config,
         "manual",
-        req.commit_sha.as_deref(),
-        req.branch.as_deref(),
+        commit_sha.as_deref(),
+        branch.as_deref(),
         repo_url.as_deref(),
     );
 
@@ -528,9 +594,9 @@ pub async fn create_build(
             pipeline_id: &req.pipeline_id,
             actor: Some(&auth.0.email),
             event_type: None,
-            trigger_ref: req.trigger_ref.as_deref(),
-            commit_sha: req.commit_sha.as_deref(),
-            branch: req.branch.as_deref(),
+            trigger_ref: trigger_ref.as_deref(),
+            commit_sha: commit_sha.as_deref(),
+            branch: branch.as_deref(),
             config_snapshot: &snapshot_str,
             webhook_id: None,
             now,
@@ -591,9 +657,9 @@ pub async fn create_build(
         trigger_type: "manual".to_string(),
         trigger_actor: Some(auth.0.email),
         trigger_event: None,
-        trigger_ref: req.trigger_ref,
-        commit_sha: req.commit_sha,
-        branch: req.branch,
+        trigger_ref,
+        commit_sha,
+        branch,
         config_snapshot,
         runner_id: None,
         step_results: None,
@@ -812,17 +878,53 @@ pub async fn trigger_build_from_webhook(
     let mut created_builds = Vec::new();
     let now = now_unix();
 
-    // Resolve repo clone URL from integration host_url
-    let repo_url: Option<String> =
-        sqlx::query_scalar("SELECT host_url FROM integrations WHERE id = ?1")
-            .bind(integration_id)
-            .fetch_optional(pool)
-            .await
-            .unwrap_or(None)
-            .map(|host_url: String| format!("{}/{}.git", host_url, repo_full_name));
-
     for project_row in &project_rows {
         let project_id: String = project_row.get("id");
+
+        // Resolve repo clone URL for this specific project/repository.
+        let repo_url: Option<String> = sqlx::query_scalar(
+            "SELECT CASE \
+                WHEN i.provider = 'local_git' THEN r.html_url \
+                ELSE i.host_url || '/' || r.full_name || '.git' \
+             END \
+             FROM projects p \
+             JOIN integration_repositories r ON r.id = p.repository_id \
+             JOIN integration_installations inst ON inst.id = r.installation_id \
+             JOIN integrations i ON i.id = inst.integration_id \
+             WHERE p.id = ?1",
+        )
+        .bind(&project_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(
+                error = %e,
+                project_id = %project_id,
+                "failed to resolve project repository URL"
+            );
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to resolve project source repository",
+            )
+        })?
+        .and_then(|raw: String| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+        if repo_url.is_none() {
+            warn!(
+                project_id = %project_id,
+                repo_full_name = %repo_full_name,
+                "skipping webhook-triggered builds because repository URL could not be resolved"
+            );
+            continue;
+        }
 
         // Find enabled pipelines for this project
         let pipeline_rows = sqlx::query(
@@ -864,6 +966,14 @@ pub async fn trigger_build_from_webhook(
                     event_type = %event_type,
                     branch = ?branch,
                     "webhook event filtered by trigger_config, skipping pipeline"
+                );
+                continue;
+            }
+            if commit_sha.is_none() && branch.is_none() {
+                warn!(
+                    pipeline_id = %pipeline_id,
+                    event_type = %event_type,
+                    "webhook payload missing branch and commit_sha; skipping build creation"
                 );
                 continue;
             }

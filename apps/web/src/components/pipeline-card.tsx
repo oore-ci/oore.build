@@ -88,14 +88,14 @@ export default function PipelineCard({
                 ))}
                 {pipeline.trigger_config.events.length > 0
                   ? pipeline.trigger_config.events.map((e) => (
-                      <Badge
-                        key={e}
-                        variant="secondary"
-                        className="text-[11px]"
-                      >
-                        {e}
-                      </Badge>
-                    ))
+                    <Badge
+                      key={e}
+                      variant="secondary"
+                      className="text-[11px]"
+                    >
+                      {e}
+                    </Badge>
+                  ))
                   : null}
               </div>
             </div>
@@ -130,6 +130,7 @@ export default function PipelineCard({
                     params={{ projectId, pipelineId: pipeline.id }}
                   />
                 }
+                nativeButton={false}
               >
                 <HugeiconsIcon icon={Edit02Icon} size={14} />
                 Edit
@@ -154,6 +155,7 @@ export default function PipelineCard({
                   params={{ projectId, pipelineId: pipeline.id }}
                 />
               }
+              nativeButton={false}
             >
               <HugeiconsIcon icon={Link01Icon} size={14} />
               Permalink
@@ -236,8 +238,8 @@ export default function PipelineCard({
                     <dd className="font-mono">
                       {pipeline.execution_config.commands.pre_build.length > 0
                         ? pipeline.execution_config.commands.pre_build.join(
-                            ' && ',
-                          )
+                          ' && ',
+                        )
                         : 'none'}
                     </dd>
                     <dt>Build</dt>
@@ -250,8 +252,8 @@ export default function PipelineCard({
                     <dd className="font-mono">
                       {pipeline.execution_config.commands.post_build.length > 0
                         ? pipeline.execution_config.commands.post_build.join(
-                            ' && ',
-                          )
+                          ' && ',
+                        )
                         : 'none'}
                     </dd>
                     <dt>Artifact patterns</dt>

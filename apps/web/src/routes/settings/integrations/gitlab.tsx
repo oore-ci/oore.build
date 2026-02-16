@@ -8,9 +8,11 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useGitLabStart } from '@/hooks/use-integrations'
 import { PageMeta } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Form,
@@ -80,6 +82,8 @@ export const Route = createFileRoute('/settings/integrations/gitlab')({
 function GitLabSetupPage() {
   const navigate = useNavigate()
   const startMutation = useGitLabStart()
+  const { data: preferences } = useInstancePreferences()
+  const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
 
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
@@ -98,6 +102,7 @@ function GitLabSetupPage() {
   const hostUrl = form.watch('host_url')
 
   function handleSubmit(data: GitLabSetupForm) {
+    if (!remoteEnabled) return
     startMutation.mutate(
       {
         host_url: data.host_url.trim(),
@@ -142,11 +147,11 @@ function GitLabSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitLab" noindex />
+      <PageMeta title="Connect GitLab Source" noindex />
       <PageHeader
-        title="Connect GitLab"
-        description="Connect gitlab.com or a self-managed GitLab host for repositories and webhook events."
-        back={{ to: '/settings/integrations', label: 'Integrations' }}
+        title="Connect GitLab Source"
+        description="Connect gitlab.com or a self-managed GitLab source for repositories and webhook events."
+        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <Card>
@@ -154,6 +159,14 @@ function GitLabSetupPage() {
           <CardTitle className="text-base">GitLab connection</CardTitle>
         </CardHeader>
         <CardContent>
+          {!remoteEnabled ? (
+            <Alert>
+              <AlertDescription>
+                GitLab source connections are disabled in Local Only mode.
+                Enable External Access in Preferences to continue.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <Form {...form}>
             <form
               onSubmit={form.handleSubmit(handleSubmit)}
@@ -285,8 +298,15 @@ function GitLabSetupPage() {
                 </>
               )}
 
-              <Button type="submit" disabled={startMutation.isPending}>
-                {startMutation.isPending ? 'Connecting...' : 'Connect GitLab'}
+              <Button
+                type="submit"
+                disabled={startMutation.isPending || !remoteEnabled}
+              >
+                {!remoteEnabled
+                  ? 'External Access Required'
+                  : startMutation.isPending
+                    ? 'Connecting...'
+                    : 'Connect GitLab'}
               </Button>
             </form>
           </Form>

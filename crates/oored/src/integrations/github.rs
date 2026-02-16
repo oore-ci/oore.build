@@ -36,40 +36,10 @@ fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
-fn configured_redirect_origins() -> Vec<url::Url> {
-    let raw_origins = std::env::var("OORE_AUTH_REDIRECT_ORIGINS")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            std::env::var("OORE_CORS_ORIGINS")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-        })
-        .or_else(|| std::env::var("OORE_CORS_ORIGIN").ok())
-        .unwrap_or_else(|| "http://localhost:3000".to_string());
-
-    let mut origins = Vec::new();
-    for raw in raw_origins.split(',') {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match url::Url::parse(trimmed) {
-            Ok(url) => origins.push(url),
-            Err(err) => warn!(origin = trimmed, error = %err, "ignoring invalid redirect origin"),
-        }
-    }
-    if origins.is_empty() {
-        vec![
-            url::Url::parse("http://localhost:3000")
-                .expect("default redirect origin must be valid"),
-        ]
-    } else {
-        origins
-    }
-}
-
-fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+fn validate_redirect_origin(
+    url: &str,
+    allowed_origins: &[String],
+) -> Result<(), (StatusCode, Json<ApiError>)> {
     let parsed = url::Url::parse(url).map_err(|_| {
         api_err(
             StatusCode::BAD_REQUEST,
@@ -85,11 +55,13 @@ fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>
         ));
     }
 
-    let allowed = configured_redirect_origins();
-    let matches_allowed = allowed.iter().any(|candidate| {
-        parsed.scheme() == candidate.scheme()
-            && parsed.host_str() == candidate.host_str()
-            && parsed.port_or_known_default() == candidate.port_or_known_default()
+    let matches_allowed = allowed_origins.iter().any(|candidate| {
+        let Ok(candidate_url) = url::Url::parse(candidate) else {
+            return false;
+        };
+        parsed.scheme() == candidate_url.scheme()
+            && parsed.host_str() == candidate_url.host_str()
+            && parsed.port_or_known_default() == candidate_url.port_or_known_default()
     });
     if !matches_allowed {
         return Err(api_err(
@@ -99,6 +71,38 @@ fn validate_redirect_origin(url: &str) -> Result<(), (StatusCode, Json<ApiError>
         ));
     }
     Ok(())
+}
+
+fn preferred_frontend_origin(allowed_origins: &[String], public_url: Option<&str>) -> String {
+    let public_origin = public_url
+        .and_then(|raw| url::Url::parse(raw).ok())
+        .map(|parsed| parsed.origin().ascii_serialization());
+
+    // Prefer an origin that isn't one of the local defaults and (when present)
+    // isn't the daemon's own public_url origin. This avoids redirecting users to
+    // the daemon origin when multiple External Access origins are configured.
+    allowed_origins
+        .iter()
+        .find(|origin| {
+            if crate::instance_settings::DEFAULT_ALLOWED_ORIGINS.contains(&origin.as_str()) {
+                return false;
+            }
+            match public_origin.as_ref() {
+                Some(public_origin) => public_origin != origin.as_str(),
+                None => true,
+            }
+        })
+        .cloned()
+        .or_else(|| {
+            allowed_origins
+                .iter()
+                .find(|origin| {
+                    !crate::instance_settings::DEFAULT_ALLOWED_ORIGINS.contains(&origin.as_str())
+                })
+                .cloned()
+        })
+        .or_else(|| allowed_origins.first().cloned())
+        .unwrap_or_else(|| "http://localhost:3000".to_string())
 }
 
 fn cookie_secure_enabled(default_secure: bool) -> bool {
@@ -263,6 +267,11 @@ pub async fn github_start(
     Json(req): Json<GitHubAppStartRequest>,
 ) -> ApiResult<GitHubAppStartResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_remote_mode(&pool).await?;
 
     if req.webhook_url.is_empty() {
         return Err(api_err(
@@ -287,7 +296,8 @@ pub async fn github_start(
             "redirect_url is required",
         ));
     }
-    validate_redirect_origin(&req.redirect_url)?;
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    validate_redirect_origin(&req.redirect_url, &allowed_origins)?;
 
     let oauth_state = GitHubOAuthState {
         user_id: auth.0.user_id.clone(),
@@ -328,6 +338,18 @@ pub async fn github_create_page(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CreatePageQuery>,
 ) -> Response {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    if require_remote_mode(&pool).await.is_err() {
+        return Html(error_page(
+            "Remote mode required",
+            "GitHub integration setup is available only when remote mode is enabled.",
+        ))
+        .into_response();
+    }
+
     let oauth_state = match open_state(&params.state, &state.encryption_key) {
         Ok(s) => s,
         Err(e) => {
@@ -407,6 +429,18 @@ pub async fn github_callback(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CallbackQuery>,
 ) -> Response {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    if require_remote_mode(&pool).await.is_err() {
+        return Html(error_page(
+            "Remote mode required",
+            "GitHub integration setup is available only when remote mode is enabled.",
+        ))
+        .into_response();
+    }
+
     let code = match params.code {
         Some(c) if !c.is_empty() => c,
         _ => {
@@ -440,7 +474,8 @@ pub async fn github_callback(
             .into_response();
         }
     };
-    if validate_redirect_origin(&oauth_state.redirect_url).is_err() {
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    if validate_redirect_origin(&oauth_state.redirect_url, &allowed_origins).is_err() {
         warn!(
             redirect_url = %oauth_state.redirect_url,
             "github callback redirect_url does not match configured origins"
@@ -576,6 +611,14 @@ pub async fn github_installed(
         (pool, resolved)
     };
 
+    if require_remote_mode(&pool).await.is_err() {
+        return Html(error_page(
+            "Remote mode required",
+            "GitHub integration setup is available only when remote mode is enabled.",
+        ))
+        .into_response();
+    }
+
     // Auto-sync installations and repos so the detail page shows fresh data
     if let Some(ref id) = integration_id {
         match perform_sync(&pool, &state.encryption_key, id).await {
@@ -588,8 +631,9 @@ pub async fn github_installed(
         }
     }
 
-    let frontend_base =
-        std::env::var("OORE_CORS_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let allowed_origins = state.allowed_origins.read().await.clone();
+    let public_url = state.public_url.read().await.clone();
+    let frontend_base = preferred_frontend_origin(&allowed_origins, public_url.as_deref());
 
     let redirect_target = if let Some(ref id) = integration_id {
         format!(
@@ -644,9 +688,9 @@ pub async fn github_installed(
 
     let mut resp = Html(html).into_response();
     let cookie_secure = cookie_secure_enabled(
-        std::env::var("OORE_PUBLIC_URL")
-            .ok()
-            .is_some_and(|u| u.starts_with("https://")),
+        public_url
+            .as_deref()
+            .is_some_and(|value| value.starts_with("https://")),
     );
     // Clear install-state cookie after callback handling.
     set_cookie_headers(
@@ -824,6 +868,11 @@ pub async fn github_complete(
     Json(req): Json<GitHubAppCompleteRequest>,
 ) -> ApiResult<GitHubAppCompleteResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_remote_mode(&pool).await?;
 
     if req.code.is_empty() {
         return Err(api_err(
@@ -895,7 +944,7 @@ fn generate_github_jwt(
 /// and removes stale records that are no longer present on GitHub.
 ///
 /// Callable from both the authenticated handler and the unauthenticated install callback.
-async fn perform_sync(
+pub(crate) async fn perform_sync(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
     integration_id: &str,
@@ -1073,6 +1122,7 @@ pub async fn sync_installations(
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_remote_mode(&pool).await?;
 
     let installations = perform_sync(&pool, &state.encryption_key, &integration_id)
         .await
@@ -1254,27 +1304,32 @@ async fn sync_installation_repos(
 }
 
 // ── HTML helpers (re-exported from parent module) ─────────────────
-use super::{error_page, favicon_data_uri, html_escape};
+use super::{error_page, favicon_data_uri, html_escape, require_remote_mode};
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cookie_secure_override, validate_redirect_origin};
+    use super::{
+        parse_cookie_secure_override, preferred_frontend_origin, validate_redirect_origin,
+    };
 
     #[test]
     fn redirect_origin_accepts_default_localhost_origin() {
-        assert!(validate_redirect_origin("http://localhost:3000/callback?ok=1").is_ok());
+        let allowed = vec!["http://localhost:3000".to_string()];
+        assert!(validate_redirect_origin("http://localhost:3000/callback?ok=1", &allowed).is_ok());
     }
 
     #[test]
     fn redirect_origin_rejects_untrusted_origin() {
-        let err = validate_redirect_origin("https://evil.example/callback")
+        let allowed = vec!["http://localhost:3000".to_string()];
+        let err = validate_redirect_origin("https://evil.example/callback", &allowed)
             .expect_err("untrusted origin should be rejected");
         assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn redirect_origin_rejects_embedded_credentials() {
-        let err = validate_redirect_origin("http://user:pass@localhost:3000/callback")
+        let allowed = vec!["http://localhost:3000".to_string()];
+        let err = validate_redirect_origin("http://user:pass@localhost:3000/callback", &allowed)
             .expect_err("credential-bearing URL should be rejected");
         assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
     }
@@ -1297,5 +1352,22 @@ mod tests {
     fn cookie_secure_override_invalid_value() {
         assert_eq!(parse_cookie_secure_override("maybe"), None);
         assert_eq!(parse_cookie_secure_override(""), None);
+    }
+
+    #[test]
+    fn preferred_frontend_origin_skips_public_url_origin_when_possible() {
+        let allowed = vec![
+            "https://daemon.example.com".to_string(),
+            "https://ci.oore.build".to_string(),
+        ];
+        let resolved = preferred_frontend_origin(&allowed, Some("https://daemon.example.com"));
+        assert_eq!(resolved, "https://ci.oore.build");
+    }
+
+    #[test]
+    fn preferred_frontend_origin_falls_back_to_public_url_origin_when_only_choice() {
+        let allowed = vec!["https://daemon.example.com".to_string()];
+        let resolved = preferred_frontend_origin(&allowed, Some("https://daemon.example.com"));
+        assert_eq!(resolved, "https://daemon.example.com");
     }
 }

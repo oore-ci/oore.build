@@ -11,6 +11,7 @@ use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use super::require_remote_mode;
 use crate::AppState;
 use crate::crypto;
 use crate::util::{api_err, now_unix};
@@ -235,6 +236,7 @@ pub async fn github_webhook(
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_remote_mode(&pool).await?;
 
     let secrets =
         get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Github, false).await?;
@@ -466,6 +468,7 @@ pub async fn gitlab_webhook(
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_remote_mode(&pool).await?;
 
     let secrets =
         get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Gitlab, false).await?;

@@ -51,10 +51,11 @@ function CompleteStep() {
 
   const instanceId = completeMutation.data?.instance_id ?? null
   const isComplete = completeMutation.isSuccess
+  const isLocalMode = status?.runtime_mode === 'local'
 
   useEffect(() => {
-    setCurrentStep(3)
-  }, [setCurrentStep])
+    setCurrentStep(isLocalMode ? 3 : 4)
+  }, [isLocalMode, setCurrentStep])
 
   function handleComplete() {
     if (!sessionToken) return
@@ -65,10 +66,10 @@ function CompleteStep() {
   // so the indicator shows all steps as completed
   useEffect(() => {
     if (isComplete) {
-      setCurrentStep(4)
+      setCurrentStep(isLocalMode ? 4 : 5)
       useSetupStore.getState().setSessionToken(null)
     }
-  }, [isComplete, setCurrentStep])
+  }, [isComplete, isLocalMode, setCurrentStep])
 
   return (
     <div className="space-y-4">
@@ -146,8 +147,9 @@ function CompleteStep() {
             <AlertTitle>Warning — Irreversible action</AlertTitle>
             <AlertDescription>
               Completing setup will permanently lock down all setup endpoints.
-              This cannot be undone. Make sure your OIDC configuration and owner
-              email are correct before proceeding.
+              This cannot be undone. Make sure your owner details
+              {isLocalMode ? '' : ' and remote authentication configuration'} are
+              correct before proceeding.
             </AlertDescription>
           </Alert>
 

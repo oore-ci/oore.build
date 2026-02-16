@@ -106,6 +106,7 @@ describe('getSetupStatus', () => {
     const payload = {
       instance_id: 'test-id',
       state: 'uninitialized',
+      runtime_mode: 'local',
       setup_mode: true,
       is_configured: false,
     }
@@ -123,6 +124,7 @@ describe('getSetupStatus', () => {
     const payload = {
       instance_id: 'test-id',
       state: 'uninitialized',
+      runtime_mode: 'local',
       setup_mode: true,
       is_configured: false,
     }
@@ -358,7 +360,8 @@ describe('instance preferences api', () => {
   it('calls GET /v1/settings/preferences with auth header', async () => {
     const payload = {
       preferences: {
-        key_storage_mode: 'keychain',
+        key_storage_mode: 'file',
+        runtime_mode: 'local',
         restart_required: true,
         updated_at: 123,
       },
@@ -385,6 +388,7 @@ describe('instance preferences api', () => {
     const payload = {
       preferences: {
         key_storage_mode: 'file',
+        runtime_mode: 'remote',
         restart_required: true,
       },
     }
@@ -393,7 +397,7 @@ describe('instance preferences api', () => {
     const result = await updateInstancePreferences(
       'https://ci.example.com',
       'session-token',
-      { key_storage_mode: 'file' },
+      { key_storage_mode: 'file', runtime_mode: 'remote' },
     )
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -404,7 +408,7 @@ describe('instance preferences api', () => {
           'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
-        body: JSON.stringify({ key_storage_mode: 'file' }),
+        body: JSON.stringify({ key_storage_mode: 'file', runtime_mode: 'remote' }),
       },
     )
     expect(result).toEqual(payload)
