@@ -47,16 +47,12 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - rm -rf .git
-      - git init
       - |
-        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
-        git remote add origin "$clone_url"
         if [ -n "${GITHUB_TOKEN:-}" ]; then
           # Avoid embedding tokens in the remote URL.
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
-      - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+      - git fetch origin "+refs/heads/stable:refs/remotes/origin/stable" "+refs/tags/*:refs/tags/*"
       - git checkout -B stable "origin/stable"
 
   - name: autotag-prod-bump-tag
@@ -172,15 +168,11 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - rm -rf .git
-      - git init
       - |
-        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
-        git remote add origin "$clone_url"
         if [ -n "${GITHUB_TOKEN:-}" ]; then
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
-      - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+      - git fetch origin "+refs/heads/alpha:refs/remotes/origin/alpha" "+refs/tags/*:refs/tags/*"
       - git checkout -B alpha "origin/alpha"
 
   - name: autotag-alpha-tag
@@ -256,15 +248,11 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - rm -rf .git
-      - git init
       - |
-        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
-        git remote add origin "$clone_url"
         if [ -n "${GITHUB_TOKEN:-}" ]; then
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
-      - git fetch origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+      - git fetch origin "+refs/heads/beta:refs/remotes/origin/beta" "+refs/tags/*:refs/tags/*"
       - git checkout -B beta "origin/beta"
 
   - name: autotag-beta-tag
@@ -338,11 +326,7 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - rm -rf .git
-      - git init
       - |
-        clone_url="${CI_REPO_CLONE_URL:-https://github.com/${CI_REPO}.git}"
-        git remote add origin "$clone_url"
         if [ -n "${GITHUB_TOKEN:-}" ]; then
           # Avoid embedding tokens in the remote URL.
           git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
