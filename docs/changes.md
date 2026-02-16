@@ -49,3 +49,4 @@ Rules:
   - Feature doc: https://linear.app/oorebuild/document/feature-remote-trusted-proxy-auth-mode-warpgate-8b6f6f698f75
 - Added a platform-contract amendment documenting Remote auth provider policy (`oidc` default + `trusted_proxy` opt-in) and trust-boundary constraints.
   - Contract amendment: https://linear.app/oorebuild/document/platform-contract-amendment-remote-auth-providers-9975f97813a8
+- Fixed GitLab integrations to use provider-aware install sync, and relaxed OAuth host reachability precheck to treat auth-gated `/api/v4/version` (401/403) as reachable.

@@ -64,7 +64,7 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, Integration, IntegrationDetailResponse, IntegrationInstallation,
     IntegrationRepository, ListInstallationsResponse, ListIntegrationsResponse,
-    ListRepositoriesResponse, RuntimeMode,
+    ListRepositoriesResponse, RuntimeMode, SyncInstallationsRequest, SyncInstallationsResponse,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -465,4 +465,59 @@ pub async fn list_installations(
     let installations = rows.iter().map(row_to_installation).collect();
 
     Ok(Json(ListInstallationsResponse { installations }))
+}
+
+/// `POST /v1/integrations/{id}/installations` — sync installations and repositories.
+///
+/// - **GitHub**: fetch GitHub App installations + repositories and upsert them.
+/// - **GitLab**: refresh accessible projects for linked accounts and upsert them.
+pub async fn sync_installations(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Json(_req): Json<SyncInstallationsRequest>,
+) -> ApiResult<SyncInstallationsResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_remote_mode(&pool).await?;
+
+    let provider: Option<String> =
+        sqlx::query_scalar("SELECT provider FROM integrations WHERE id = ?1")
+            .bind(&id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch integration provider");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch integration",
+                )
+            })?;
+
+    let provider = provider
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"))?;
+
+    let installations = match provider.as_str() {
+        "github" => github::perform_sync(&pool, &state.encryption_key, &id)
+            .await
+            .map_err(|msg| {
+                error!(error = %msg, "sync failed");
+                api_err(StatusCode::BAD_GATEWAY, "sync_failed", msg)
+            })?,
+        "gitlab" => gitlab::perform_sync_installations(&pool, &state.encryption_key, &id).await?,
+        other => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_provider",
+                format!("Unsupported integration provider: {other}"),
+            ));
+        }
+    };
+
+    Ok(Json(SyncInstallationsResponse { installations }))
 }

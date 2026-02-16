@@ -944,7 +944,7 @@ fn generate_github_jwt(
 /// and removes stale records that are no longer present on GitHub.
 ///
 /// Callable from both the authenticated handler and the unauthenticated install callback.
-async fn perform_sync(
+pub(crate) async fn perform_sync(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
     integration_id: &str,

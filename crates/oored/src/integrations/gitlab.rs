@@ -7,14 +7,14 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use oore_contract::{
     ApiError, GitLabAuthorizeRequest, GitLabAuthorizeResponse, GitLabCompleteResponse,
-    GitLabStartRequest, Integration,
+    GitLabStartRequest, Integration, IntegrationInstallation,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::{error_page, require_remote_mode};
+use super::{error_page, require_remote_mode, row_to_installation};
 use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
@@ -32,6 +32,135 @@ fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
         .build()
+}
+
+/// Sync a GitLab integration by refreshing repositories for all installations.
+///
+/// For GitLab, "installations" correspond to authorized users/accounts. Sync
+/// re-fetches accessible projects and upserts them into `integration_repositories`.
+pub(crate) async fn perform_sync_installations(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+) -> Result<Vec<IntegrationInstallation>, (StatusCode, Json<ApiError>)> {
+    let row =
+        sqlx::query("SELECT provider, host_url, auth_mode, status FROM integrations WHERE id = ?1")
+            .bind(integration_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch integration");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch integration",
+                )
+            })?
+            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Integration not found"))?;
+
+    let provider: String = row.get("provider");
+    if provider != "gitlab" {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_provider",
+            "Integration is not a GitLab integration",
+        ));
+    }
+
+    let status: String = row.get("status");
+    if status != "active" {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "integration_inactive",
+            "Integration is not active",
+        ));
+    }
+
+    let host_url: String = row.get("host_url");
+    let auth_mode: String = row.get("auth_mode");
+    let use_bearer_auth = auth_mode == "oauth_app";
+
+    let encrypted_access_token: Option<String> = sqlx::query_scalar(
+        "SELECT encrypted_value FROM integration_credentials \
+         WHERE integration_id = ?1 AND credential_type = 'access_token'",
+    )
+    .bind(integration_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch GitLab access token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch credentials",
+        )
+    })?;
+
+    let encrypted_access_token = encrypted_access_token.ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "missing_credentials",
+            "GitLab access token is missing; re-connect or re-authorize the integration",
+        )
+    })?;
+
+    let token = crypto::decrypt(&encrypted_access_token, encryption_key).map_err(|e| {
+        error!(error = %e, "failed to decrypt GitLab access token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to decrypt credentials",
+        )
+    })?;
+
+    let installation_rows = sqlx::query(
+        "SELECT * FROM integration_installations WHERE integration_id = ?1 ORDER BY created_at DESC",
+    )
+    .bind(integration_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to list installations");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list installations",
+        )
+    })?;
+
+    let installations: Vec<IntegrationInstallation> =
+        installation_rows.iter().map(row_to_installation).collect();
+
+    // Nothing to do if we don't have any linked accounts yet.
+    if installations.is_empty() {
+        return Ok(installations);
+    }
+
+    let http_client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build HTTP client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create HTTP client",
+        )
+    })?;
+
+    let now = now_unix();
+    for inst in &installations {
+        // Refresh project list for each installation/user.
+        sync_gitlab_projects(
+            &http_client,
+            pool,
+            &host_url,
+            &token,
+            &inst.id,
+            use_bearer_auth,
+            now,
+        )
+        .await?;
+    }
+
+    Ok(installations)
 }
 
 /// `POST /v1/integrations/gitlab/start` — create GitLab integration (OAuth or token mode).
@@ -190,7 +319,13 @@ pub async fn gitlab_start(
                     )
                 })?;
 
-            if !resp.status().is_success() {
+            // Some self-managed GitLab instances restrict /version to authenticated requests.
+            // Treat 401/403 as "reachable" for the purpose of initial OAuth app setup.
+            let status = resp.status();
+            if !(status.is_success()
+                || status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN)
+            {
                 return Err(api_err(
                     StatusCode::BAD_GATEWAY,
                     "gitlab_unreachable",
@@ -198,21 +333,22 @@ pub async fn gitlab_start(
                 ));
             }
 
-            #[derive(serde::Deserialize)]
-            struct GitLabVersion {
-                version: String,
-            }
+            let display = if status.is_success() {
+                #[derive(serde::Deserialize)]
+                struct GitLabVersion {
+                    version: String,
+                }
 
-            let version: GitLabVersion = resp.json().await.map_err(|e| {
-                error!(error = %e, "failed to parse GitLab version response");
-                api_err(
-                    StatusCode::BAD_GATEWAY,
-                    "gitlab_parse_error",
-                    "Failed to parse GitLab response",
-                )
-            })?;
-
-            let display = format!("GitLab {}", version.version);
+                match resp.json::<GitLabVersion>().await {
+                    Ok(version) => format!("GitLab {}", version.version),
+                    Err(e) => {
+                        warn!(error = %e, "failed to parse GitLab version response (non-fatal)");
+                        "GitLab".to_string()
+                    }
+                }
+            } else {
+                "GitLab".to_string()
+            };
             (display, "oauth".to_string())
         }
         _ => unreachable!(),

@@ -858,9 +858,10 @@ mod paths {
     )]
     pub(super) async fn list_installations() {}
 
-    /// Sync GitHub App installations
+    /// Sync integration installations
     ///
-    /// Fetches new installations from GitHub and syncs their repositories.
+    /// - **GitHub**: Fetches GitHub App installations and syncs their repositories.
+    /// - **GitLab**: Refreshes accessible projects for linked accounts and syncs them as repositories.
     #[utoipa::path(post, path = "/v1/integrations/{id}/installations", tag = "Integrations",
         params(("id" = String, Path, description = "Integration ID")),
         request_body = SyncInstallationsRequest,

@@ -2107,7 +2107,7 @@ async fn build_router_inner(
         )
         .route(
             "/v1/integrations/{id}/installations",
-            get(integrations::list_installations).post(integrations::github::sync_installations),
+            get(integrations::list_installations).post(integrations::sync_installations),
         )
         .route(
             "/v1/integrations/gitlab/start",
