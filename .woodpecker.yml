@@ -575,7 +575,9 @@ steps:
       - notes="$dir/RELEASE_NOTES.md"
       - |
         prerelease_flag=""
-        if echo "$tag" | grep -q -- '-alpha\\.|-beta\\.'; then
+        if echo "$tag" | grep -q -- '-alpha\\.'; then
+          prerelease_flag="--prerelease"
+        elif echo "$tag" | grep -q -- '-beta\\.'; then
           prerelease_flag="--prerelease"
         fi
 
