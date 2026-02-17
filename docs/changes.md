@@ -67,6 +67,8 @@ Rules:
   - Apps: added missing `eslint` dependency to `apps/docs-site`, ignored generated VitePress artifacts in lint, and made docs tests pass when no test files exist (`vitest --passWithNoTests`).
   - Web: resolved TypeScript lint failures (`no-unnecessary-condition`) and ignored a non-TS tool script in eslint config.
   - CLI: updated `oore` status CLI test to assert the current (implemented) behavior when the daemon is unreachable.
+- Tooling: fixed `PAGES_BRANCH_FLAG` whitespace/empty-arg behavior so Pages deploy commands don’t fail when no branch is configured.
+  - OOR-64: https://linear.app/oorebuild/issue/OOR-64/p0-fix-pages-branch-flag-adding-additional-space-to-wrangler-commands
 - Installer: improved `OORE_CHANNEL=stable` behavior when no stable GitHub release exists yet (fallback + clearer guidance to use `OORE_CHANNEL=beta`/`alpha`).
   - OOR-61: https://linear.app/oorebuild/issue/OOR-61/beta-readiness-fix-linttest-gates-webdocscli
 - Rust hardening: fixed all `cargo clippy --workspace --all-targets --all-features -- -D warnings` findings and aligned formatting (`cargo fmt`).
