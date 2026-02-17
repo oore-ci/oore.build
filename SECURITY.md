@@ -1,6 +1,6 @@
 # Security Policy
 
-Thanks for helping keep oore.build safe.
+Thanks for helping keep Oore CI safe.
 
 ## Reporting a Vulnerability
 
@@ -41,4 +41,3 @@ We’ll do our best to:
 - Acknowledge receipt within a few days
 - Provide a timeline for a fix once impact is confirmed
 - Credit reporters in release notes if desired
-

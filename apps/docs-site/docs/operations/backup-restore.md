@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Back up and restore oore.build data including SQLite database and configuration."
+description: "Back up and restore Oore CI data including SQLite database and configuration."
 ---
 
 # Backup and Restore
 
-oore.build stores all state in two files: the SQLite database and the encryption key. Regular backups of both are essential.
+Oore CI stores all state in two files: the SQLite database and the encryption key. Regular backups of both are essential.
 
 ## What to back up
 

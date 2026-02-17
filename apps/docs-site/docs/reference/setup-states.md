@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Setup state machine transitions from uninitialized to ready in oore.build."
+description: "Setup state machine transitions from uninitialized to ready in Oore CI."
 ---
 
 # Setup State Machine
 
-Every oore.build instance progresses through a fixed sequence of states during first-run configuration. This page documents the state machine, transitions, and enforcement rules.
+Every Oore CI instance progresses through a fixed sequence of states during first-run configuration. This page documents the state machine, transitions, and enforcement rules.
 
 ## States
 

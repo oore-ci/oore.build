@@ -1,6 +1,6 @@
 # Internal Docs (Linear-First)
 
-oore.build internal technical docs (contracts, ADRs, audits, and feature docs) are now **stored in Linear**.
+Oore CI internal technical docs (contracts, ADRs, audits, and feature docs) are now **stored in Linear**.
 
 This repository keeps only a small index and change ledger under `docs/` to avoid ballooning the repo and to
 keep project tracking + documentation in one place.

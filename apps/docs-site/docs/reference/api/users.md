@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for user management and invitations in oore.build."
+description: "API endpoints for user management and invitations in Oore CI."
 ---
 
 # Users API

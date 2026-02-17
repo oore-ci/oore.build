@@ -1,24 +1,24 @@
 ---
 status: implemented
-description: "Set up Azure AD (Entra ID) OIDC authentication for oore.build."
+description: "Set up Azure AD (Entra ID) OIDC authentication for Oore CI."
 ---
 
 # Azure AD / Entra ID OIDC Setup
 
-This guide walks you through registering an application in Microsoft Entra ID (formerly Azure AD) and connecting it to oore.build.
+This guide walks you through registering an application in Microsoft Entra ID (formerly Azure AD) and connecting it to Oore CI.
 
 ## What you need
 
 - A [Microsoft Azure](https://portal.azure.com/) account
 - Permission to register applications in your Entra ID tenant
-- Your oore.build instance ready for setup
+- Your Oore CI instance ready for setup
 
 ## 1. Register an application
 
 1. Go to the [Azure Portal — App registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
 2. Click **New registration**
 3. Set:
-   - **Name**: `oore.build`
+   - **Name**: `Oore CI`
    - **Supported account types**: Choose based on who should access your instance
      - "Accounts in this organizational directory only" for single-tenant
      - "Accounts in any organizational directory" for multi-tenant
@@ -65,7 +65,7 @@ curl "https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-conf
 
 The **Application (client) ID** is on the **Overview** page of the app registration.
 
-## 6. Enter credentials in oore.build
+## 6. Enter credentials in Oore CI
 
 During setup, enter:
 

@@ -5,11 +5,11 @@ description: "Configure build pipelines using .oore.yaml in your repository."
 
 # Write a Pipeline Config (.oore.yaml)
 
-The `.oore.yaml` file defines how oore.build builds your Flutter application. Place it in the root of your repository — oore.build reads it at build time.
+The `.oore.yaml` file defines how Oore CI builds your Flutter application. Place it in the root of your repository — Oore CI reads it at build time.
 
 ## What you need
 
-- A [project](/guides/projects/create-project) in oore.build
+- A [project](/guides/projects/create-project) in Oore CI
 - A Flutter repository
 
 ## Minimal example
@@ -154,7 +154,7 @@ triggers:
 
 ## Config resolution
 
-oore.build resolves pipeline configuration in this order:
+Oore CI resolves pipeline configuration in this order:
 
 1. `.oore.yaml` (or `.oore.yml`) in the repository root — **highest priority**
 2. Pipeline execution config set via the UI — **fallback**

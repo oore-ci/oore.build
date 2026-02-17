@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Configure Gradle signing for Android builds in oore.build pipelines."
+description: "Configure Gradle signing for Android builds in Oore CI pipelines."
 ---
 
 # Configure Gradle Signing
 
-This guide covers advanced Gradle signing configuration for Android builds in oore.build.
+This guide covers advanced Gradle signing configuration for Android builds in Oore CI.
 
 ## What you need
 
@@ -13,7 +13,7 @@ This guide covers advanced Gradle signing configuration for Android builds in oo
 - An [Android keystore](/guides/signing/android-keystore) uploaded to your pipeline
 - A Flutter project with an `android/` directory
 
-## How oore.build signing works
+## How Oore CI signing works
 
 When a pipeline has Android signing configured, the runner:
 
@@ -23,7 +23,7 @@ When a pipeline has Android signing configured, the runner:
 4. Executes the build command (e.g., `flutter build apk --release`)
 5. Cleans up the keystore after the build completes
 
-You don't need to modify your `build.gradle` for basic signing — oore.build handles it automatically.
+You don't need to modify your `build.gradle` for basic signing — Oore CI handles it automatically.
 
 ## Custom Gradle configuration
 

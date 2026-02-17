@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Deploy oore.build in production including launchd, reverse proxy, and TLS setup."
+description: "Deploy Oore CI in production including launchd, reverse proxy, and TLS setup."
 ---
 
 # Production Deployment
 
-Checklist and guidance for deploying oore.build in a production environment.
+Checklist and guidance for deploying Oore CI in a production environment.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Checklist and guidance for deploying oore.build in a production environment.
 
 ```bash
 git clone https://github.com/devaryakjha/oore.build.git
-cd oore.build
+cd Oore CI
 cargo build --release -p oored
 cargo build --release -p oore
 ```

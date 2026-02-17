@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Trigger and monitor your first Flutter build on oore.build."
+description: "Trigger and monitor your first Flutter build on Oore CI."
 ---
 
 # Create Your First Build
@@ -9,7 +9,7 @@ This tutorial walks you through creating a project, configuring a pipeline, and 
 
 ## What you need
 
-- A running oore.build instance in `ready` state ([Set Up Your Instance](/getting-started/first-instance))
+- A running Oore CI instance in `ready` state ([Set Up Your Instance](/getting-started/first-instance))
 - A [GitHub](/getting-started/connect-github) or GitLab integration connected
 - A Flutter project repository accessible through your integration
 - The embedded runner active (default) or an external runner started
@@ -47,9 +47,9 @@ artifacts:
     - "**/*.apk"
 ```
 
-Push the file to your repository. oore.build reads this file at build time — no UI configuration needed.
+Push the file to your repository. Oore CI reads this file at build time — no UI configuration needed.
 
-If your repository includes a `.fvmrc` file, oore.build uses that Flutter version automatically. The `flutter_version` field in `.oore.yaml` is a fallback.
+If your repository includes a `.fvmrc` file, Oore CI uses that Flutter version automatically. The `flutter_version` field in `.oore.yaml` is a fallback.
 
 ### Option B: Configure via the UI
 

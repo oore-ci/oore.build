@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Overview of code signing in oore.build for Android and iOS builds."
+description: "Overview of code signing in Oore CI for Android and iOS builds."
 ---
 
-# Code Signing in oore.build
+# Code Signing in Oore CI
 
-This page explains why code signing exists, how oore.build handles it, and the tradeoffs between signing modes.
+This page explains why code signing exists, how Oore CI handles it, and the tradeoffs between signing modes.
 
 ## Why code signing matters
 
@@ -16,9 +16,9 @@ Mobile operating systems require apps to be cryptographically signed before they
 
 Without signing, builds produce unsigned artifacts that can't be installed on devices or submitted to app stores.
 
-## oore.build's approach
+## Oore CI's approach
 
-oore.build stores signing credentials (keystores, certificates, profiles, API keys) encrypted at rest and injects them into builds at execution time. The runner:
+Oore CI stores signing credentials (keystores, certificates, profiles, API keys) encrypted at rest and injects them into builds at execution time. The runner:
 
 1. Retrieves signing assets from the daemon before the build starts
 2. Places them in temporary locations accessible to the build process
@@ -29,9 +29,9 @@ Signing credentials never leave your infrastructure — they're stored on the da
 
 ## Android signing
 
-Android signing is straightforward: upload a keystore (`.jks` / `.keystore`), provide the passwords, and oore.build handles the rest.
+Android signing is straightforward: upload a keystore (`.jks` / `.keystore`), provide the passwords, and Oore CI handles the rest.
 
-| What you provide | What oore.build does |
+| What you provide | What Oore CI does |
 |---|---|
 | Keystore file + passwords | Stores encrypted, injects at build time |
 
@@ -39,11 +39,11 @@ See [Generate an Android Keystore](/guides/signing/android-keystore) and [Config
 
 ## iOS signing modes
 
-iOS signing is more complex because Apple requires both a certificate and a provisioning profile, and managing these assets involves the Apple Developer portal. oore.build offers two modes:
+iOS signing is more complex because Apple requires both a certificate and a provisioning profile, and managing these assets involves the Apple Developer portal. Oore CI offers two modes:
 
 ### Manual mode
 
-You obtain the certificate and profile yourself and upload them to oore.build.
+You obtain the certificate and profile yourself and upload them to Oore CI.
 
 | Pros | Cons |
 |---|---|
@@ -53,12 +53,12 @@ You obtain the certificate and profile yourself and upload them to oore.build.
 
 ### API mode
 
-You provide an App Store Connect API key, and oore.build manages certificates and profiles automatically.
+You provide an App Store Connect API key, and Oore CI manages certificates and profiles automatically.
 
 | Pros | Cons |
 |---|---|
 | Automatic certificate/profile management | Requires App Store Connect API access |
-| Register test devices through oore.build | Limited to Apple's API capabilities |
+| Register test devices through Oore CI | Limited to Apple's API capabilities |
 | Automatic profile regeneration on device changes | |
 
 See [iOS Manual Signing](/guides/signing/ios-manual-signing) and [iOS API Signing](/guides/signing/ios-api-signing).

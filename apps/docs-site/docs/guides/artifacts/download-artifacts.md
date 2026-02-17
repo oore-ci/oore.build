@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Download build artifacts from oore.build using signed time-limited URLs."
+description: "Download build artifacts from Oore CI using signed time-limited URLs."
 ---
 
 # Download Build Artifacts

@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "How oore.build uses .oore.yaml for repository-level pipeline configuration."
+description: "How Oore CI uses .oore.yaml for repository-level pipeline configuration."
 ---
 
 # File-First Configuration
 
-How oore.build resolves pipeline configuration from `.oore.yaml` files and UI settings.
+How Oore CI resolves pipeline configuration from `.oore.yaml` files and UI settings.
 
 ## The resolution policy
 
-oore.build uses a **file-first, UI-fallback** configuration model. When a build is created, the daemon captures a config snapshot with the policy `file_first_ui_fallback`:
+Oore CI uses a **file-first, UI-fallback** configuration model. When a build is created, the daemon captures a config snapshot with the policy `file_first_ui_fallback`:
 
 1. **Primary**: Look for a `.oore.yaml` file in the repository at the configured path
 2. **Fallback**: Use the pipeline's UI-configured execution settings

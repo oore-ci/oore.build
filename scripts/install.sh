@@ -36,7 +36,7 @@ TOTAL_STEPS=5
 
 print_help() {
   cat <<'EOF'
-oore.build installer (macOS)
+Oore CI installer (macOS)
 
 Usage:
   ./scripts/install.sh
@@ -423,7 +423,7 @@ ensure_on_path() {
   fi
 
   if is_noninteractive || prompt_yes_no "Add $BIN_DIR to your PATH (in $shell_rc)?" 'y'; then
-    printf '\n# oore.build\n%s\n' "$path_line" >> "$shell_rc"
+    printf '\n# Oore CI\n%s\n' "$path_line" >> "$shell_rc"
     export PATH="$BIN_DIR:$PATH"
     log "Added $BIN_DIR to PATH in $shell_rc"
     log "Run 'source $shell_rc' or open a new terminal to use 'oore' and 'oored' directly."
@@ -718,7 +718,7 @@ watch_setup() {
       instance_id="$(echo "$status_json" | sed -n 's/.*"instance_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
       printf '\n'
       printf 'Setup complete! Instance ID: %s\n' "$instance_id"
-      printf 'Your oore.build instance is ready.\n\n'
+      printf 'Your Oore instance is ready.\n\n'
       printf '  Dashboard:  %s\n' "$OORE_HOSTED_UI"
       printf '  API:        %s\n' "$DAEMON_URL"
       printf '  Docs:       https://docs.oore.build\n\n'
@@ -820,8 +820,8 @@ main() {
   fi
 
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    die 'oore.build V1 backend installer currently supports macOS only.'
-  fi
+    die 'Oore CI V1 backend installer currently supports macOS only.'
+fi
 
   ensure_dependency curl
   ensure_dependency tar

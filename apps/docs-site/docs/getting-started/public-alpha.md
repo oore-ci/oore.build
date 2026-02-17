@@ -5,12 +5,12 @@ description: "Public alpha release notes + the fastest paths to first success (a
 
 # Public Alpha (v0.1.x)
 
-oore.build is in **public alpha**.
+Oore CI is in **public alpha**.
 
 - Expect breaking changes (APIs, config formats, and CLI flags) between `v0.1.x` releases.
 - We still publish a `stable` channel to mean “the default install/update channel”, not “1.0 production maturity”.
 
-If you’re evaluating oore.build, this page is the shortest path to your first green build.
+If you’re evaluating Oore CI, this page is the shortest path to your first green build.
 
 ## The two supported onboarding paths
 

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for oore doctor, the diagnostic tool for oore.build installations."
+description: "CLI reference for oore doctor, the diagnostic tool for Oore CI installations."
 ---
 
 # oore doctor
@@ -15,7 +15,7 @@ oore doctor
 
 ## Description
 
-Checks for the presence and version of every tool required to build Flutter projects with oore.build. Returns exit code `0` if all tools are found, or `1` if any are missing.
+Checks for the presence and version of every tool required to build Flutter projects with Oore CI. Returns exit code `0` if all tools are found, or `1` if any are missing.
 
 ## Checks
 

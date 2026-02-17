@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Register and manage external build runners for oore.build."
+description: "Register and manage external build runners for Oore CI."
 ---
 
 # Register an External Runner
@@ -10,7 +10,7 @@ For builds on a separate machine or for isolating the build environment, registe
 ## What you need
 
 - **Role**: admin or owner (for registration)
-- The oore.build daemon running with `OORED_RUNNER_MODE=external` (or in addition to the embedded runner)
+- The Oore CI daemon running with `OORED_RUNNER_MODE=external` (or in addition to the embedded runner)
 - A user session token for registration
 - The runner machine must have all [prerequisites](/getting-started/prerequisites) installed
 

@@ -1,13 +1,13 @@
 ---
 title: OpenAPI Specification
-description: Interactive OpenAPI 3.1 reference for the oore.build REST API — browse endpoints, download the spec, or generate client libraries.
+description: Interactive OpenAPI 3.1 reference for the Oore CI REST API — browse endpoints, download the spec, or generate client libraries.
 aside: false
 outline: false
 ---
 
 # OpenAPI Specification
 
-The oore.build API is described using the [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) specification. You can use this spec to generate client libraries in any language, explore the API interactively, or integrate with tools like Postman, Insomnia, or Swagger Editor.
+The Oore CI API is described using the [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) specification. You can use this spec to generate client libraries in any language, explore the API interactively, or integrate with tools like Postman, Insomnia, or Swagger Editor.
 
 ## Download
 

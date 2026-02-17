@@ -286,7 +286,7 @@ function OidcConfigStep() {
           rel="noopener noreferrer"
           className="text-xs text-primary underline underline-offset-2"
         >
-          How to set up {provider.label} for oore.build
+          How to set up {provider.label} for Oore CI
         </a>
       </div>
 

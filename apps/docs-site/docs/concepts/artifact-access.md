@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "How oore.build generates signed download links for build artifacts."
+description: "How Oore CI generates signed download links for build artifacts."
 ---
 
 # Artifact Access Model
 
-How oore.build stores, secures, and serves build artifacts.
+How Oore CI stores, secures, and serves build artifacts.
 
 ## Storage backends
 
-oore.build supports three artifact storage backends:
+Oore CI supports three artifact storage backends:
 
 | Backend | Description | Best for |
 |---------|-------------|----------|

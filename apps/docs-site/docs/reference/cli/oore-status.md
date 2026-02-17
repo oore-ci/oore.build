@@ -9,7 +9,7 @@ description: "CLI reference for oore status to check daemon and runner health."
 This command is defined in the platform contract but has not been implemented yet. The interface described below reflects the planned behavior.
 :::
 
-Show the current state of the oore.build instance.
+Show the current state of the Oore CI instance.
 
 ## Planned synopsis
 

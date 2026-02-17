@@ -1,17 +1,17 @@
 ---
 status: implemented
-description: "Set up Keycloak OIDC authentication for oore.build."
+description: "Set up Keycloak OIDC authentication for Oore CI."
 ---
 
 # Keycloak OIDC Setup
 
-This guide walks you through creating a Keycloak client and connecting it to oore.build.
+This guide walks you through creating a Keycloak client and connecting it to Oore CI.
 
 ## What you need
 
 - A [Keycloak](https://www.keycloak.org/) instance with admin access
 - A realm configured for your organization
-- Your oore.build instance ready for setup
+- Your Oore CI instance ready for setup
 
 ## 1. Create a client
 
@@ -67,7 +67,7 @@ Verify discovery:
 curl https://auth.mycompany.com/realms/main/.well-known/openid-configuration | jq .issuer
 ```
 
-## 5. Enter credentials in oore.build
+## 5. Enter credentials in Oore CI
 
 During setup, enter:
 

@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "Run the oore.build setup wizard to configure OIDC and create your first admin account."
+description: "Run the Oore CI setup wizard to configure OIDC and create your first admin account."
 ---
 
 # Set Up Your Instance
 
-This tutorial walks you through the oore.build setup wizard — from starting the daemon to having a fully configured instance with OIDC authentication.
+This tutorial walks you through the Oore CI setup wizard — from starting the daemon to having a fully configured instance with OIDC authentication.
 
 ## What you need
 
-- oore.build [installed](/getting-started/install)
+- Oore CI [installed](/getting-started/install)
 - An OIDC provider configured with a client application (see [Configure OIDC](/guides/oidc/) if you haven't done this yet)
 - Your OIDC **issuer URL**, **client ID**, and **client secret** (if required by your provider)
 

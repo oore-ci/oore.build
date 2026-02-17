@@ -1,6 +1,6 @@
 # Contributing
 
-oore.build is in alpha. Contributions are welcome, but expect things to move fast and break.
+Oore CI is in alpha. Contributions are welcome, but expect things to move fast and break.
 
 ## Getting Started
 

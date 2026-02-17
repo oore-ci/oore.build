@@ -1,21 +1,21 @@
 ---
 status: implemented
-description: "Configure OpenID Connect authentication for oore.build with any OIDC-compatible identity provider."
+description: "Configure OpenID Connect authentication for Oore CI with any OIDC-compatible identity provider."
 ---
 
 # Configure OIDC Authentication
 
-oore.build supports OpenID Connect (OIDC) authentication and does not support local passwords.
+Oore CI supports OpenID Connect (OIDC) authentication and does not support local passwords.
 
 In Remote mode, OIDC is the default (`remote_auth_mode=oidc`). For local-first onboarding and operator access, the daemon also supports loopback-only local login (no OIDC). If you run behind an identity-aware proxy, you can opt into `remote_auth_mode=trusted_proxy` instead of OIDC.
 
 ## What you need
 
-- An oore.build instance that is either being set up or already running
+- An Oore CI instance that is either being set up or already running
 - Admin access to an OIDC-compatible identity provider
 - The ability to create an OAuth 2.0 / OIDC application in your provider
 
-## How OIDC works in oore.build
+## How OIDC works in Oore CI
 
 During setup, you provide three values:
 
@@ -25,13 +25,13 @@ During setup, you provide three values:
 | **Client ID** | `123456.apps.googleusercontent.com` | Created when you register an OAuth app |
 | **Client secret** | `GOCSPX-...` | Created with the OAuth app (optional for some providers) |
 
-oore.build uses the issuer URL to discover endpoints automatically via the [OpenID Connect Discovery](https://openid.net/specs/openid-connect-discovery-1_0.html) protocol. It fetches `{issuer_url}/.well-known/openid-configuration` to find the authorization, token, and JWKS endpoints.
+Oore CI uses the issuer URL to discover endpoints automatically via the [OpenID Connect Discovery](https://openid.net/specs/openid-connect-discovery-1_0.html) protocol. It fetches `{issuer_url}/.well-known/openid-configuration` to find the authorization, token, and JWKS endpoints.
 
 The client secret, if provided, is encrypted with AES-256-GCM before storage.
 
 ## Required OAuth scopes
 
-oore.build requests these scopes during authentication:
+Oore CI requests these scopes during authentication:
 
 - `openid` — required by the OIDC spec
 - `email` — used to identify users
@@ -78,7 +78,7 @@ Any provider that supports [OpenID Connect Discovery](https://openid.net/specs/o
 3. Add the redirect URIs listed above
 4. Enable the `openid`, `email`, and `profile` scopes
 5. Copy the issuer URL, client ID, and client secret
-6. Enter them during oore.build setup (see [Set Up Your Instance](/getting-started/first-instance))
+6. Enter them during Oore CI setup (see [Set Up Your Instance](/getting-started/first-instance))
 
 ## Verify OIDC discovery
 

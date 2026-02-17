@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for triggering, monitoring, and canceling builds in oore.build."
+description: "API endpoints for triggering, monitoring, and canceling builds in Oore CI."
 ---
 
 # Builds API

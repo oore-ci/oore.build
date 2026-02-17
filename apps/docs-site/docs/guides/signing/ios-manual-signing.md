@@ -5,7 +5,7 @@ description: "Configure manual iOS code signing with certificates and provisioni
 
 # iOS Manual Signing
 
-Upload your signing certificate and provisioning profile directly to oore.build for iOS builds.
+Upload your signing certificate and provisioning profile directly to Oore CI for iOS builds.
 
 ## What you need
 
@@ -51,7 +51,7 @@ codesign -dv --verbose=4 Payload/Runner.app
 Manual signing is appropriate when:
 
 - You manage a small number of certificates and profiles
-- You don't want to grant oore.build access to App Store Connect
+- You don't want to grant Oore CI access to App Store Connect
 - You're using enterprise distribution certificates
 
 For automatic certificate and profile management, see [API Signing](/guides/signing/ios-api-signing).

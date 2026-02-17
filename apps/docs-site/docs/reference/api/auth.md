@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for OIDC authentication and session management in oore.build."
+description: "API endpoints for OIDC authentication and session management in Oore CI."
 ---
 
 # Auth API
@@ -114,7 +114,7 @@ POST /v1/auth/oidc/callback
 | 502 | `missing_email` | ID token missing email claim |
 
 ::: info
-Users must be invited before they can sign in. If a user authenticates successfully with the OIDC provider but has no account in oore.build, the callback returns `403` with code `user_not_found`.
+Users must be invited before they can sign in. If a user authenticates successfully with the OIDC provider but has no account in Oore CI, the callback returns `403` with code `user_not_found`.
 :::
 
 ---

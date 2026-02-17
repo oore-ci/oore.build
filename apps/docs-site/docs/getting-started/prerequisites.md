@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "System requirements for running oore.build including macOS, Xcode, and Flutter dependencies."
+description: "System requirements for running Oore CI including macOS, Xcode, and Flutter dependencies."
 ---
 
 # Prerequisites
 
-Before installing oore.build, verify that your system meets these requirements.
+Before installing Oore CI, verify that your system meets these requirements.
 
 ## System requirements
 
@@ -51,14 +51,14 @@ xcodebuild -version
 
 ## Optional tools for source development
 
-If you plan to build oore.build from source (instead of using release binaries), install:
+If you plan to build Oore CI from source (instead of using release binaries), install:
 
 - Rust toolchain (`rustup`, Rust 1.85+)
 - Bun (frontend package manager/runtime)
 
 ## OIDC provider account
 
-oore.build does not support local passwords.
+Oore CI does not support local passwords.
 
 If you plan to use Remote mode with `remote_auth_mode=oidc` (default), you will need an OIDC provider:
 
@@ -80,4 +80,4 @@ oore doctor
 
 ## Next step
 
-[Install oore.build](/getting-started/install)
+[Install Oore CI](/getting-started/install)

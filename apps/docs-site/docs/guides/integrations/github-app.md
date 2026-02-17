@@ -1,16 +1,16 @@
 ---
 status: implemented
-description: "Install and configure a GitHub App integration for oore.build repository access and webhooks."
+description: "Install and configure a GitHub App integration for Oore CI repository access and webhooks."
 ---
 
 # Connect a GitHub App
 
-This guide covers connecting a GitHub App integration to your oore.build instance for repository access and webhook-triggered builds.
+This guide covers connecting a GitHub App integration to your Oore CI instance for repository access and webhook-triggered builds.
 
 ## What you need
 
 - **Role**: owner or admin
-- A running oore.build instance in `ready` state
+- A running Oore CI instance in `ready` state
 - A [GitHub](https://github.com/) account with permission to install GitHub Apps on your target organization or personal account
 
 ## Steps
@@ -19,7 +19,7 @@ This guide covers connecting a GitHub App integration to your oore.build instanc
 
 In the web UI, go to **Settings > Integrations** and click **Connect GitHub**.
 
-oore.build creates a [GitHub App](https://docs.github.com/en/apps/creating-github-apps/) scoped to your instance. This model provides:
+Oore CI creates a [GitHub App](https://docs.github.com/en/apps/creating-github-apps/) scoped to your instance. This model provides:
 
 - Fine-grained repository permissions (no broad personal access tokens)
 - Automatic webhook registration
@@ -31,9 +31,9 @@ oore.build creates a [GitHub App](https://docs.github.com/en/apps/creating-githu
 2. Select which repositories the app can access ("All repositories" or specific ones)
 3. Click **Install**
 
-### 3. Confirm in oore.build
+### 3. Confirm in Oore CI
 
-After GitHub redirects back, oore.build:
+After GitHub redirects back, Oore CI:
 
 1. Completes the OAuth handshake
 2. Stores the integration credentials (encrypted at rest)
@@ -51,10 +51,10 @@ After the initial setup, manage repository access from GitHub:
 
 1. Go to your GitHub organization or account settings
 2. Navigate to **Installed GitHub Apps**
-3. Click on the oore.build app
+3. Click on the Oore CI app
 4. Modify repository access as needed
 
-oore.build syncs installation changes automatically via webhooks. You can also force a sync from **Settings > Integrations > Sync** in the UI.
+Oore CI syncs installation changes automatically via webhooks. You can also force a sync from **Settings > Integrations > Sync** in the UI.
 
 ## Removing the integration
 
@@ -62,7 +62,7 @@ oore.build syncs installation changes automatically via webhooks. You can also f
 2. Click the GitHub integration
 3. Click **Delete**
 
-This removes the integration from oore.build. To also uninstall the GitHub App, go to your GitHub organization settings and uninstall it there.
+This removes the integration from Oore CI. To also uninstall the GitHub App, go to your GitHub organization settings and uninstall it there.
 
 ## API endpoints
 

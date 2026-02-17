@@ -132,10 +132,10 @@ export default function AddInstanceDialog({
           <DialogTitle>Add Instance</DialogTitle>
           <DialogDescription>
             {hostedUi
-              ? 'Connect to an HTTPS-reachable oore.build backend (tunnel or reverse proxy).'
+              ? 'Connect to an HTTPS-reachable Oore backend (tunnel or reverse proxy).'
               : localLauncher
                 ? 'Leave Backend URL empty to use the local oore-web proxy to your daemon.'
-                : 'Connect to an oore.build backend. Leave URL empty to use the local dev proxy.'}
+                : 'Connect to an Oore backend. Leave URL empty to use the local dev proxy.'}
           </DialogDescription>
         </DialogHeader>
 

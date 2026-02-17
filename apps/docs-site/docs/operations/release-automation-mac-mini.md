@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Automate oore.build releases on a Mac mini using Woodpecker CI and GitHub Releases."
+description: "Automate Oore CI releases on a Mac mini using Woodpecker CI and GitHub Releases."
 ---
 
 # Release Automation on macOS

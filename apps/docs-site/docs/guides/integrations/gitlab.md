@@ -1,16 +1,16 @@
 ---
 status: implemented
-description: "Connect GitLab repositories to oore.build for webhook-triggered builds."
+description: "Connect GitLab repositories to Oore CI for webhook-triggered builds."
 ---
 
 # Connect GitLab
 
-This guide covers connecting a GitLab instance to oore.build for repository access and webhook-triggered builds.
+This guide covers connecting a GitLab instance to Oore CI for repository access and webhook-triggered builds.
 
 ## What you need
 
 - **Role**: owner or admin
-- A running oore.build instance in `ready` state
+- A running Oore CI instance in `ready` state
 - A [GitLab](https://about.gitlab.com/) account (self-hosted or gitlab.com)
 - Permission to create OAuth applications in your GitLab instance
 
@@ -20,7 +20,7 @@ This guide covers connecting a GitLab instance to oore.build for repository acce
 
 1. In GitLab, go to **Admin Area > Applications** (for instance-wide) or **User Settings > Applications** (for personal)
 2. Create a new application:
-   - **Name**: `oore.build`
+   - **Name**: `Oore CI`
    - **Redirect URI**: `http://127.0.0.1:8787/v1/integrations/gitlab/callback`
    - **Scopes**: `api`, `read_repository`
    - **Confidential**: Yes
@@ -28,7 +28,7 @@ This guide covers connecting a GitLab instance to oore.build for repository acce
 
 For GitLab OAuth documentation, see [GitLab OAuth 2.0 provider](https://docs.gitlab.com/api/oauth2/).
 
-### 2. Start the integration in oore.build
+### 2. Start the integration in Oore CI
 
 1. In the web UI, go to **Settings > Integrations**
 2. Click **Connect GitLab**
@@ -37,7 +37,7 @@ For GitLab OAuth documentation, see [GitLab OAuth 2.0 provider](https://docs.git
 
 ### 3. Authorize
 
-oore.build redirects you to GitLab to authorize the OAuth application. After authorization, GitLab redirects back and oore.build stores the credentials.
+Oore CI redirects you to GitLab to authorize the OAuth application. After authorization, GitLab redirects back and Oore CI stores the credentials.
 
 ### 4. Verify
 
@@ -45,18 +45,18 @@ Go to **Projects > New Project** and confirm your GitLab repositories appear in 
 
 ## Webhook configuration
 
-When you create a project from a GitLab repository, oore.build needs webhooks for automatic build triggers. Configure the webhook in your GitLab project:
+When you create a project from a GitLab repository, Oore CI needs webhooks for automatic build triggers. Configure the webhook in your GitLab project:
 
 1. In GitLab, go to **Project Settings > Webhooks**
 2. Add a webhook:
    - **URL**: `http://<your-oore-instance>:8787/v1/webhooks/gitlab`
    - **Trigger**: Push events, Merge request events
-   - **Secret token**: (use the token from your oore.build integration settings)
+   - **Secret token**: (use the token from your Oore CI integration settings)
 3. Click **Add webhook**
 
 ## Removing the integration
 
-1. Go to **Settings > Integrations** in oore.build
+1. Go to **Settings > Integrations** in Oore CI
 2. Click the GitLab integration
 3. Click **Delete**
 

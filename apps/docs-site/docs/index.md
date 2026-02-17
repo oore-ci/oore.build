@@ -1,9 +1,9 @@
 ---
 layout: home
 status: implemented
-description: "Documentation for oore.build, a self-hosted Flutter-first mobile CI and internal app distribution platform."
+description: "Documentation for Oore CI, a self-hosted Flutter-first mobile CI and internal app distribution platform."
 hero:
-  name: oore.build
+  name: Oore CI
   text: Flutter-first mobile CI
   tagline: Self-hosted build system with internal app distribution. OIDC for remote access, macOS-native, no vendor lock-in.
   actions:
@@ -29,7 +29,7 @@ features:
 
 | I want to... | Start here |
 |---|---|
-| **Set up oore.build for the first time** | [Getting Started](/getting-started/) |
+| **Set up Oore CI for the first time** | [Getting Started](/getting-started/) |
 | **Configure my OIDC provider** | [OIDC Guides](/guides/oidc/) |
 | **Look up an API endpoint or CLI flag** | [Reference](/reference/api/) |
 

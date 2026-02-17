@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Upload and manage Android keystores for signing builds in oore.build."
+description: "Upload and manage Android keystores for signing builds in Oore CI."
 ---
 
 # Generate an Android Keystore
 
-This guide covers generating an Android signing keystore and uploading it to oore.build.
+This guide covers generating an Android signing keystore and uploading it to Oore CI.
 
 ## What you need
 
@@ -37,7 +37,7 @@ Store your keystore file and passwords securely. If lost, you cannot update apps
 
 For the full Android documentation on keystores, see [Sign your app - Android Developers](https://developer.android.com/studio/publish/app-signing#generate-key).
 
-## 2. Upload to oore.build
+## 2. Upload to Oore CI
 
 1. Open your project in the web UI
 2. Go to **Pipelines** and select the pipeline

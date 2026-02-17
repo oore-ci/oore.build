@@ -1,8 +1,8 @@
 <p align="center">
-  <img src=".github/logo.svg" alt="oore.build" width="80" height="80" />
+  <img src=".github/logo.svg" alt="Oore CI" width="80" height="80" />
 </p>
 
-<h1 align="center">oore.build</h1>
+<h1 align="center">Oore CI</h1>
 
 <p align="center">Self-hosted, Flutter-first mobile CI and internal app distribution platform.</p>
 
@@ -14,11 +14,11 @@
   <a href="https://zerodha.tech"><img src="https://zerodha.tech/static/images/github-badge.svg" /></a>
 </p>
 
-> **Alpha** — oore.build is under active development. APIs, config formats, and CLI flags will change without notice. Use at your own risk.
+> **Alpha** — Oore CI is under active development. APIs, config formats, and CLI flags will change without notice. Use at your own risk.
 
 ## What is this?
 
-oore.build lets you run your own mobile CI server. V1 targets Android, iOS, and macOS Flutter builds on a macOS host. It provides:
+Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and macOS Flutter builds on a macOS host. It provides:
 
 - A **daemon** (`oored`) that orchestrates builds and serves the API
 - An **operator CLI** (`oore`) for setup, admin, and runner management

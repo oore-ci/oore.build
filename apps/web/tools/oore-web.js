@@ -11,7 +11,7 @@ const DEFAULT_DIST_DIR =
   path.resolve(path.dirname(process.execPath), '..', 'web-dist')
 
 function printHelp() {
-  console.log(`oore-web - local self-hosted oore.build frontend launcher
+  console.log(`oore-web - local self-hosted Oore CI frontend launcher
 
 Usage:
   oore-web [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
