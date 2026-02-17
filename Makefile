@@ -1,11 +1,11 @@
 .PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
-	       test-web lint-web fix-web \
-	       test-docs lint-docs fix-docs test-rust \
-	       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
-	       cargo-check run-daemon run-daemon-debug run-daemon-release \
-	       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-	       docs-check ui-init install-local validate gen-openapi \
-	       release-local release-cut
+		       test-web lint-web fix-web \
+		       test-docs lint-docs fix-docs test-rust \
+		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
+		       cargo-check run-daemon run-daemon-debug run-daemon-release \
+		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
+		       docs-check ui-init install-local validate gen-openapi \
+		       release-local release-cut
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -18,7 +18,10 @@ OORED_DEV_LISTEN_ADDR ?= 127.0.0.1:8787
 OORED_DEV_DAEMON_URL ?= http://$(OORED_DEV_LISTEN_ADDR)
 OORE_DEV_ENABLE_TUNNEL ?= 1
 OORE_DEV_SETUP_MODE ?= token
-WRANGLER ?= bunx --bun wrangler
+# Wrangler is Node-backed. Running it via `bunx --bun` has proven flaky on macOS
+# (observed silent failures in CI and locally). Use the real `wrangler` binary
+# by default and install/pin it in CI.
+WRANGLER ?= wrangler
 PAGES_PROJECT_WEB ?= oore-ci
 PAGES_PROJECT_DEMO ?= oore-demo
 PAGES_PROJECT_SITE ?= oore
@@ -40,10 +43,16 @@ build-web:
 deploy-web: build-web
 	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
+deploy-web-only:
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+
 build-demo:
 	cd apps/web && VITE_DEMO_MODE=true bun run build
 
 deploy-demo: build-demo
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+
+deploy-demo-only:
 	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 test-web:
@@ -71,7 +80,13 @@ build-site:
 deploy-site: build-site
 	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
+deploy-site-only:
+	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+
 deploy-docs: build-docs
+	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+
+deploy-docs-only:
 	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 test-docs:

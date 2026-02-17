@@ -1,9 +1,15 @@
+# Woodpecker CI
+#
+# Split into multiple pipelines to avoid "clone-only" builds from push events
+# on non-release branches. Each document below has its own top-level `when`.
+
+---
+when:
+  event:
+    - pull_request
 steps:
   - name: validate-pr
     image: bash
-    when:
-      event:
-        - pull_request
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -15,16 +21,35 @@ steps:
       - bun install --frozen-lockfile
       - make validate
 
+---
+when:
+  event:
+    - push
+  branch:
+    - master
+steps:
   - name: validate-push
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - alpha
-        - beta
-        - stable
-        - master
+    environment:
+      HOME: /Users/arya
+      CARGO_HOME: /Users/arya/.cargo
+      RUSTUP_HOME: /Users/arya/.rustup
+      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    commands:
+      - set -euo pipefail
+      - ulimit -n 8192
+      - bun install --frozen-lockfile
+      - make validate
+
+---
+when:
+  event:
+    - push
+  branch:
+    - stable
+steps:
+  - name: validate-push
+    image: bash
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -39,11 +64,6 @@ steps:
   # ----- Autotag: Production (stable -> vX.Y.Z) -----
   - name: autotag-prod-checkout
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - stable
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -60,11 +80,6 @@ steps:
 
   - name: autotag-prod-bump-tag
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - stable
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -154,14 +169,29 @@ steps:
         git tag -a "$tag" -m "Release $tag"
         git push origin "$tag"
 
+---
+when:
+  event:
+    - push
+  branch:
+    - alpha
+steps:
+  - name: validate-push
+    image: bash
+    environment:
+      HOME: /Users/arya
+      CARGO_HOME: /Users/arya/.cargo
+      RUSTUP_HOME: /Users/arya/.rustup
+      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    commands:
+      - set -euo pipefail
+      - ulimit -n 8192
+      - bun install --frozen-lockfile
+      - make validate
+
   # ----- Autotag: Alpha (alpha -> vX.Y.Z-alpha.N) -----
   - name: autotag-alpha-checkout
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - alpha
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -177,11 +207,6 @@ steps:
 
   - name: autotag-alpha-tag
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - alpha
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -272,14 +297,29 @@ steps:
         git tag -a "$tag" -m "Alpha $tag"
         git push origin "$tag"
 
+---
+when:
+  event:
+    - push
+  branch:
+    - beta
+steps:
+  - name: validate-push
+    image: bash
+    environment:
+      HOME: /Users/arya
+      CARGO_HOME: /Users/arya/.cargo
+      RUSTUP_HOME: /Users/arya/.rustup
+      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    commands:
+      - set -euo pipefail
+      - ulimit -n 8192
+      - bun install --frozen-lockfile
+      - make validate
+
   # ----- Autotag: Beta (beta -> vX.Y.Z-beta.N) -----
   - name: autotag-beta-checkout
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - beta
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -295,11 +335,6 @@ steps:
 
   - name: autotag-beta-tag
     image: bash
-    when:
-      event:
-        - push
-      branch:
-        - beta
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -390,12 +425,14 @@ steps:
         git tag -a "$tag" -m "Beta $tag"
         git push origin "$tag"
 
+---
+when:
+  event:
+    - tag
+steps:
   # ----- Release: Tag -> Pages Deploy + GitHub Release -----
   - name: release-checkout
     image: bash
-    when:
-      event:
-        - tag
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -414,9 +451,6 @@ steps:
 
   - name: release-build-assets
     image: bash
-    when:
-      event:
-        - tag
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -430,7 +464,8 @@ steps:
       - mkdir -p "dist/releases/$tag"
       - ulimit -n 8192
       - bun install --frozen-lockfile
-      - bun run build:web
+      # Build once here; release-deploy-pages reuses apps/web/dist via deploy-web-only.
+      - make build-web
       - rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - cargo build --release -p oored -p oore --target aarch64-apple-darwin
       - cargo build --release -p oored -p oore --target x86_64-apple-darwin
@@ -467,9 +502,6 @@ steps:
 
   - name: release-deploy-pages
     image: bash
-    when:
-      event:
-        - tag
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -480,6 +512,9 @@ steps:
         from_secret: CLOUDFLARE_API_TOKEN
     commands:
       - set -euo pipefail
+      - node --version
+      - bun install --frozen-lockfile
+      - ./node_modules/.bin/wrangler --version
       - |
         tag="$(printenv CI_COMMIT_TAG || true)"
         test -n "$tag"
@@ -501,8 +536,6 @@ steps:
 
         echo "Deploy channel=$channel branch=$PAGES_BRANCH site=$PAGES_PROJECT_SITE docs=$PAGES_PROJECT_DOCS web=$PAGES_PROJECT_WEB"
       - ulimit -n 8192
-      - bun install --frozen-lockfile
-      - make build-site build-docs build-web
       - |
         token_len="$(printenv CLOUDFLARE_API_TOKEN | tr -d '\n' | wc -c | tr -d ' ')"
         echo "CLOUDFLARE_API_TOKEN length=$token_len"
@@ -512,19 +545,22 @@ steps:
         fi
         token_hash="$(printenv CLOUDFLARE_API_TOKEN | tr -d '\n' | shasum -a 256 | awk '{print $1}' | cut -c1-12)"
         echo "CLOUDFLARE_API_TOKEN sha256_prefix=$token_hash"
-      - bunx --bun wrangler whoami
-      - make deploy-site deploy-docs deploy-web deploy-demo
+      - ./node_modules/.bin/wrangler whoami
+      # Avoid rebuilding web twice; build-assets already produced apps/web/dist.
+      - make build-site build-docs
+      - make deploy-site-only deploy-docs-only deploy-web-only
+      # Demo build intentionally overwrites apps/web/dist.
+      - make build-demo
+      - make deploy-demo-only
 
   - name: release-generate-notes
     image: bash
-    when:
-      event:
-        - tag
     commands:
       - set -euo pipefail
-      - tag="$(printenv CI_COMMIT_TAG || true)"
-      - test -n "$tag"
       - |
+        tag="$(printenv CI_COMMIT_TAG || true)"
+        test -n "$tag"
+
         channel="prod"
         if echo "$tag" | grep -q -- '-alpha\\.'; then
           channel="alpha"
@@ -532,66 +568,71 @@ steps:
           channel="beta"
         fi
 
+        # Determine previous tag in the same channel.
+        prev=""
         if [ "$channel" = "alpha" ]; then
-          prev="$(git tag -l 'v*-alpha.*' --sort=-v:refname | grep -v \"^$tag$\" | head -n1 || true)"
+          prev="$(git tag -l 'v*-alpha.*' --sort=-v:refname | grep -v -F "$tag" | head -n1 || true)"
         elif [ "$channel" = "beta" ]; then
-          prev="$(git tag -l 'v*-beta.*' --sort=-v:refname | grep -v \"^$tag$\" | head -n1 || true)"
+          prev="$(git tag -l 'v*-beta.*' --sort=-v:refname | grep -v -F "$tag" | head -n1 || true)"
         else
-          prev="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -v \"^$tag$\" | head -n1 || true)"
+          prev="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -v -F "$tag" | head -n1 || true)"
         fi
 
-        printf 'channel=%s\nprev=%s\n' "$channel" "$prev"
-      - out="dist/releases/$tag/RELEASE_NOTES.md"
-      - |
+        repo="$(printenv CI_REPO || true)"
+        if [ -z "$repo" ]; then
+          repo="$(
+            git config --get remote.origin.url \
+              | sed -n 's#.*github\\.com[:/]\\([^/]*\\/[^/]*\\)\\(\\.git\\)\\{0,1\\}$#\\1#p'
+          )"
+        fi
+        if ! echo "$repo" | grep -q '/'; then
+          echo "Failed to determine GitHub repo (got: $repo)" >&2
+          exit 1
+        fi
+
+        out="dist/releases/$tag/RELEASE_NOTES.md"
+        mkdir -p "$(dirname "$out")"
+
         {
           echo "# $tag"
           echo
+
           if [ -n "$prev" ]; then
             echo "Changes since $prev:"
             echo
             git log --no-merges --pretty=format:'- %s (%h)' "$prev..$tag" | grep -v '^- chore(release): bump version to ' || true
+            echo
+            echo "**Full Changelog**: https://github.com/$repo/compare/$prev...$tag"
           else
             echo "Changes:"
             echo
             git log --no-merges --pretty=format:'- %s (%h)' "$tag" | grep -v '^- chore(release): bump version to ' || true
+            echo
+            echo "**Full Changelog**: https://github.com/$repo/releases/tag/$tag"
           fi
           echo
         } > "$out"
 
   - name: release-github
     image: bash
-    when:
-      event:
-        - tag
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
       - export GH_TOKEN="$GITHUB_TOKEN"
-      - tag="$(printenv CI_COMMIT_TAG || true)"
-      - test -n "$tag"
-      - dir="dist/releases/$tag"
-      - notes="$dir/RELEASE_NOTES.md"
       - |
+        tag="$(printenv CI_COMMIT_TAG || true)"
+        test -n "$tag"
+        dir="dist/releases/$tag"
+        notes="$dir/RELEASE_NOTES.md"
+
         prerelease_flag=""
         if echo "$tag" | grep -q -- '-alpha\\.'; then
           prerelease_flag="--prerelease"
         elif echo "$tag" | grep -q -- '-beta\\.'; then
           prerelease_flag="--prerelease"
         fi
-
-        # Use GitHub auto-generated release notes (same behavior as the UI option).
-        # For alpha/beta, anchor notes to the previous alpha/beta tag (not the last stable tag).
-        prev=""
-        if echo "$tag" | grep -q -- '-alpha\\.'; then
-          prev="$(git tag -l 'v*-alpha.*' --sort=-v:refname | grep -v \"^$tag$\" | head -n1 || true)"
-        elif echo "$tag" | grep -q -- '-beta\\.'; then
-          prev="$(git tag -l 'v*-beta.*' --sort=-v:refname | grep -v \"^$tag$\" | head -n1 || true)"
-        else
-          prev="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -v \"^$tag$\" | head -n1 || true)"
-        fi
-        echo "notes_start_tag=$prev"
 
         # Install gh (user-local, no brew)
         tmp="$(mktemp -d)"
@@ -652,7 +693,7 @@ steps:
           *) echo "Unknown gh asset URL: $asset_url" >&2; exit 1 ;;
         esac
         curl -fsSL -L -o "$archive" "$asset_url"
-        if echo "$archive" | grep -q '\\.zip$'; then
+        if echo "$archive" | grep -q '\\zip$'; then
           unzip -q "$archive" -d "$tmp"
         else
           tar -xzf "$archive" -C "$tmp"
@@ -672,16 +713,13 @@ steps:
           exit 1
         fi
 
-        # Create or update release
+        # Create or update release (use deterministic notes file)
         if "$ghbin" release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-          "$ghbin" release edit "$tag" --repo "$repo" --title "$tag" $prerelease_flag
-        else
-          gen_flags="--generate-notes"
-          if [ -n "$prev" ]; then
-            gen_flags="$gen_flags --notes-start-tag $prev"
-          fi
           # shellcheck disable=SC2086
-          "$ghbin" release create "$tag" --repo "$repo" --title "$tag" $prerelease_flag $gen_flags
+          "$ghbin" release edit "$tag" --repo "$repo" --title "$tag" $prerelease_flag --notes-file "$notes"
+        else
+          # shellcheck disable=SC2086
+          "$ghbin" release create "$tag" --repo "$repo" --title "$tag" $prerelease_flag --notes-file "$notes"
         fi
 
         "$ghbin" release upload "$tag" "$dir"/*.tar.gz "$dir"/*.txt "$notes" --repo "$repo" --clobber

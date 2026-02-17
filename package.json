@@ -4,6 +4,9 @@
   "workspaces": [
     "apps/*"
   ],
+  "devDependencies": {
+    "wrangler": "4.65.0"
+  },
   "scripts": {
     "dev:web": "cd apps/web && bun run dev",
     "dev:docs": "cd apps/docs-site && bun run docs:dev",
