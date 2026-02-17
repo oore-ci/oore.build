@@ -8,20 +8,21 @@ import { routeTree } from './routeTree.gen'
 import './styles.css'
 import reportWebVitals from './reportWebVitals.ts'
 
-// Create a new router instance
-const router = createRouter({
-  routeTree,
-  context: {},
-  defaultPreload: 'intent',
-  scrollRestoration: true,
-  defaultStructuralSharing: true,
-  defaultPreloadStaleTime: 0,
-})
+function createAppRouter() {
+  return createRouter({
+    routeTree,
+    context: {},
+    defaultPreload: 'intent',
+    scrollRestoration: true,
+    defaultStructuralSharing: true,
+    defaultPreloadStaleTime: 0,
+  })
+}
 
 // Register the router instance for type safety
 declare module '@tanstack/react-router' {
   interface Register {
-    router: typeof router
+    router: ReturnType<typeof createAppRouter>
   }
   interface StaticDataRouteOption {
     breadcrumbLabel?: string
@@ -34,6 +35,11 @@ async function boot() {
     const { enableDemoMode } = await import('./demo/enable-demo')
     await enableDemoMode()
   }
+
+  // Create the router only after optional demo bootstrapping.
+  // Some routes read local/session storage in `beforeLoad` guards,
+  // so demo seeding must happen first to support deep links.
+  const router = createAppRouter()
 
   const rootElement = document.getElementById('app')
   if (rootElement && !rootElement.dataset.reactRoot) {
