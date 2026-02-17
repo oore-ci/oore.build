@@ -1,5 +1,5 @@
 ## 2026-02-17
-- OOR-65: Fix Woodpecker CI duplication/inefficiency: avoid clone-only runs, avoid rebuilding web in release deploy, pin wrangler for reliable Pages deploys (ensure CI PATH includes Homebrew node), and generate correct release compare links.
+- OOR-65: Fix Woodpecker CI duplication/inefficiency: avoid clone-only runs, avoid rebuilding web in release deploy, pin wrangler for reliable Pages deploys (ensure CI PATH includes Homebrew node; pass `--branch=stable` on prod tag deploys to avoid detached HEAD), and generate correct release compare links.
 # Change Ledger (Internal Docs Pointer)
 
 This file is the only required in-repo internal documentation artifact.

@@ -504,7 +504,10 @@ steps:
         tag="$(printenv CI_COMMIT_TAG || true)"
         test -n "$tag"
         channel="prod"
-        pages_branch=""
+        # Tag pipelines run in a detached HEAD checkout. If we don't explicitly pass
+        # a branch, Wrangler may infer "HEAD", which prevents Pages from treating this
+        # as a production deploy when the production branch is configured as `stable`.
+        pages_branch="stable"
         if echo "$tag" | grep -q -- '-alpha\\.'; then
           channel="alpha"
           pages_branch="alpha"
