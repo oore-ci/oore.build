@@ -163,7 +163,7 @@ pub async fn invite_user(
     )
     .bind(&user_id)
     .bind(&req.email)
-    .bind(&format!("pending-{user_id}")) // placeholder oidc_subject until first login
+    .bind(format!("pending-{user_id}")) // placeholder oidc_subject until first login
     .bind(&req.email)
     .bind(role)
     .bind(&auth.0.user_id)

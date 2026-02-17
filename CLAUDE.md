@@ -6,11 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Before making any code or architecture change, read these files (they are the source of truth):
 
-- `docs/platform-contract.md` — finalized V1 decisions
-- `docs/strict-guidelines.md` — mandatory rules
-- `docs/documentation-policy.md` — CI documentation requirements
+- `docs/README.md` — internal docs pointers (Linear-first) + change ledger
+- Docs Index (Linear): https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 - `AGENTS.md` — agent-specific guidance
-- `docs/v1-roadmap.md` — implementation phases and progress
+- V1 Roadmap (Linear): https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
 
 ## What This Project Is
 
@@ -19,6 +18,18 @@ oore.build is a self-hosted, Flutter-first mobile CI and internal app distributi
 ## Build / Test / Lint Commands
 
 All common commands have `make` targets. Use `make <target>` from the repo root.
+
+## Release Channels (Alpha/Beta/Stable)
+
+Release automation is Woodpecker-driven and tag-based. Branch merges cut tags automatically, which triggers the release pipeline and publishes GitHub Releases.
+
+- `alpha` -> `vX.Y.Z-alpha.N` prerelease tags (and prerelease GitHub Releases)
+- `beta` -> `vX.Y.Z-beta.N` prerelease tags (and prerelease GitHub Releases)
+- `stable` -> `vX.Y.Z` production tags (and production GitHub Releases)
+- `master` is a playground branch: validated by CI but not auto-tagged.
+
+Source of truth doc (Linear-first):
+https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
 
 | Target | What it does |
 |---|---|
@@ -32,7 +43,7 @@ All common commands have `make` targets. Use `make <target>` from the repo root.
 | `make cargo-check` | Compile check all Rust crates |
 | `make run-daemon` | Run oored on 127.0.0.1:8787 |
 | `make run-cli` | Run oore setup token --ttl 15m |
-| `make docs-check` | Validate feature docs against template |
+| `make docs-check` | Validate internal docs pointers + change ledger |
 | `make ui-init` | Re-initialize shadcn from shared preset |
 | `make gen-openapi` | Regenerate OpenAPI spec into docs site |
 | `make build` | build-web + build-docs + cargo-check |
@@ -54,8 +65,8 @@ make validate
 - **`crates/oored`** — daemon runtime and control plane (Axum HTTP server)
 - **`crates/oore`** — operator CLI/TUI for setup and admin (Clap)
 - **`crates/oore-contract`** — shared backend data contracts (pure Serde structs)
-- **`docs/features/`** — required feature documentation entries
-- **`scripts/`** — build and validation scripts
+- **`docs/`** — repo pointer index + `docs/changes.md` change ledger (internal docs live in Linear)
+- **`tools/`** — build and validation scripts
 
 ### Frontend Stack
 
@@ -84,7 +95,7 @@ Run `bun run ui:init` to re-initialize shadcn from the shared preset.
 - **Async runtime:** Tokio
 - **Web framework:** Axum 0.8
 - **CLI:** Clap 4.5
-- **Auth:** OIDC-only (no local username/password in V1)
+- **Auth:** OIDC for any non-loopback access; loopback-only local login exists (auto-bootstrap requires Local Only mode; no passwords)
 - **Command surfaces are stable contracts:**
   - `oored` — daemon/runtime lifecycle
   - `oore` — operator/setup/admin flows
@@ -93,7 +104,7 @@ Run `bun run ui:init` to re-initialize shadcn from the shared preset.
 
 `uninitialized` → `bootstrap_pending` → `idp_configured` → `owner_created` → `ready`
 
-Setup mutating endpoints are token-gated and auto-disabled after `ready`. The `/v1/public/setup-status` endpoint is always public and non-sensitive.
+Setup mutating endpoints are token-gated and auto-disabled after `ready` (exception: Local Only mode may auto-complete setup on first loopback local login). The `/v1/public/setup-status` endpoint is always public and non-sensitive.
 
 ## Makefile Maintenance
 
@@ -102,17 +113,23 @@ When adding new build scripts, test commands, or tooling workflows, add a corres
 ## Non-Negotiable V1 Rules
 
 - Frontend and backend are strictly separated
-- OIDC-only auth (no local passwords)
+- OIDC for any non-loopback access; loopback-only local login exists (auto-bootstrap requires Local Only mode; no local passwords)
 - macOS-only backend runtime
 - TanStack Router file-based routing (no Next.js)
 - shadcn uses Base UI primitives (not Radix)
-- Every user-facing feature requires a doc in `docs/features/` following `docs/templates/feature-doc-template.md`
-- Changing a finalized decision requires: ADR + contract update + feature doc update
+- Every user-facing feature requires a Linear feature doc (template):
+  - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
+- Any code change under `apps/`, `crates/`, `tools/`, etc. MUST update `docs/changes.md`
+- Changing a finalized decision requires: ADR + contract update + feature doc update (all in Linear)
 - **Any endpoint change (create/update/remove) in `crates/oored` must include an update to the OpenAPI spec** — update `crates/oored/src/bin/openapi_export.rs`, run `make gen-openapi`, and commit the regenerated `apps/docs-site/docs/public/openapi.json`
 
 ## V1 Roadmap
 
-`docs/v1-roadmap.md` tracks remaining implementation phases. Update it when completing phases or discovering new work. The roadmap sequences existing platform-contract commitments — it does not override them.
+V1 roadmap lives in Linear. Update it when completing phases or discovering new work:
+
+- https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+
+The roadmap sequences existing platform-contract commitments — it does not override them.
 
 ## Documentation Standards
 When generating or updating documentation, always check for existing CLAUDE.md, README.md, and docs/ directory first. Preserve existing content and append/update rather than overwriting.

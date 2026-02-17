@@ -38,3 +38,5 @@ Follow these pages in order to get your first instance running:
 2. [**Install**](/getting-started/install) — install release binaries via `curl -fsSL https://oore.build/install | bash`
 3. [**Hosted UI Onboarding**](/getting-started/hosted-ui-onboarding) — connect your backend to `ci.oore.build`
 4. [**Set Up Your Instance**](/getting-started/first-instance) — run the setup wizard and connect your identity provider
+
+If you’re new, start with: [**Public Alpha (v0.1.x)**](/getting-started/public-alpha) (common blockers + fastest paths).

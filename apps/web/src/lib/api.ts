@@ -3,15 +3,22 @@ import type {
   ArtifactDownloadLinkResponse,
   ArtifactStorageSettingsResponse,
   BootstrapTokenVerifyResponse,
+  BrowseLocalGitDirectoriesResponse,
   BuildDetailResponse,
   BuildLogsResponse,
   CancelBuildResponse,
+  ConfigureExternalAccessOidcRequest,
+  ConfigureExternalAccessOidcResponse,
   CreateBuildRequest,
   CreateBuildResponse,
+  CreateLocalGitIntegrationRequest,
+  CreateLocalGitIntegrationResponse,
   CreatePipelineRequest,
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
+  ExternalAccessNetworkSettingsResponse,
+  ExternalAccessPreflightResponse,
   GitHubAppCompleteRequest,
   GitHubAppCompleteResponse,
   GitHubAppStartRequest,
@@ -26,29 +33,42 @@ import type {
   InviteUserResponse,
   ListArtifactsResponse,
   ListBuildsResponse,
-  ListPipelineIosDevicesResponse,
   ListInstallationsResponse,
   ListIntegrationsResponse,
+  ListPipelineIosDevicesResponse,
   ListPipelinesResponse,
   ListProjectsResponse,
   ListRepositoriesResponse,
   ListRunnersResponse,
   ListUsersResponse,
+  LocalLoginRequest,
+  LocalLoginResponse,
   LogoutResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
   PipelineAndroidSigningResponse,
-  PipelineIosSigningResponse,
   PipelineDetailResponse,
+  PipelineIosSigningResponse,
   ProjectDetailResponse,
   ReEnableUserResponse,
+  RegisterIosDeviceRequest,
+  RegisterIosDeviceResponse,
   SetupCompleteResponse,
+  SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
   SetupOidcVerifyResponse,
+  SetupPreferencesRequest,
+  SetupPreferencesResponse,
   SetupStatus,
   SetupSummaryResponse,
+  SetupTrustedProxyClaimOwnerResponse,
+  SetupTrustedProxyConfigureRequest,
+  SetupTrustedProxyConfigureResponse,
   SyncInstallationsResponse,
+  SyncPipelineIosSigningResponse,
+  TrustedProxySettingsResponse,
   UpdateArtifactStorageSettingsRequest,
+  UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
@@ -56,14 +76,12 @@ import type {
   UpdateProjectRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
+  UpdateTrustedProxySettingsRequest,
   UpdateUserRoleRequest,
   UpdateUserRoleResponse,
   UserProfileResponse,
   ValidatePipelineRequest,
   ValidatePipelineResponse,
-  RegisterIosDeviceRequest,
-  RegisterIosDeviceResponse,
-  SyncPipelineIosSigningResponse,
 } from '@/lib/types'
 
 // ── Error class ─────────────────────────────────────────────────
@@ -204,6 +222,64 @@ export function setupOidcVerify(
   )
 }
 
+export function setupLocalOwnerCreate(
+  baseUrl: string,
+  sessionToken: string,
+  email: string,
+): Promise<SetupLocalOwnerCreateResponse> {
+  return request<SetupLocalOwnerCreateResponse>(
+    baseUrl,
+    '/v1/setup/local-owner/create',
+    {
+      method: 'POST',
+      headers: authHeaders(sessionToken),
+      body: JSON.stringify({ email }),
+    },
+  )
+}
+
+export function setupPreferences(
+  baseUrl: string,
+  sessionToken: string,
+  data: SetupPreferencesRequest,
+): Promise<SetupPreferencesResponse> {
+  return request<SetupPreferencesResponse>(baseUrl, '/v1/setup/preferences', {
+    method: 'POST',
+    headers: authHeaders(sessionToken),
+    body: JSON.stringify(data),
+  })
+}
+
+export function setupTrustedProxyConfigure(
+  baseUrl: string,
+  sessionToken: string,
+  data: SetupTrustedProxyConfigureRequest,
+): Promise<SetupTrustedProxyConfigureResponse> {
+  return request<SetupTrustedProxyConfigureResponse>(
+    baseUrl,
+    '/v1/setup/trusted-proxy/configure',
+    {
+      method: 'POST',
+      headers: authHeaders(sessionToken),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function setupTrustedProxyClaimOwner(
+  baseUrl: string,
+  sessionToken: string,
+): Promise<SetupTrustedProxyClaimOwnerResponse> {
+  return request<SetupTrustedProxyClaimOwnerResponse>(
+    baseUrl,
+    '/v1/setup/owner/claim-trusted-proxy',
+    {
+      method: 'POST',
+      headers: authHeaders(sessionToken),
+    },
+  )
+}
+
 export function completeSetup(
   baseUrl: string,
   sessionToken: string,
@@ -297,6 +373,24 @@ export function logout(
   return request<LogoutResponse>(baseUrl, '/v1/auth/logout', {
     method: 'POST',
     headers: authHeaders(token),
+  })
+}
+
+export function localLogin(
+  baseUrl: string,
+  data: LocalLoginRequest,
+): Promise<LocalLoginResponse> {
+  return request<LocalLoginResponse>(baseUrl, '/v1/auth/local/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function trustedProxyLogin(
+  baseUrl: string,
+): Promise<LocalLoginResponse> {
+  return request<LocalLoginResponse>(baseUrl, '/v1/auth/trusted-proxy/login', {
+    method: 'POST',
   })
 }
 
@@ -444,6 +538,65 @@ export function gitlabAuthorize(
   )
 }
 
+export function createLocalGitIntegration(
+  baseUrl: string,
+  token: string,
+  data: CreateLocalGitIntegrationRequest,
+): Promise<CreateLocalGitIntegrationResponse> {
+  return request<CreateLocalGitIntegrationResponse>(
+    baseUrl,
+    '/v1/integrations/local-git',
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function browseLocalGitDirectories(
+  baseUrl: string,
+  token: string,
+  path?: string,
+): Promise<BrowseLocalGitDirectoriesResponse> {
+  const params = new URLSearchParams()
+  if (path?.trim()) {
+    params.set('path', path.trim())
+  }
+  const query = params.toString()
+  const endpoint = query
+    ? `/v1/integrations/local-git/directories?${query}`
+    : '/v1/integrations/local-git/directories'
+
+  return request<BrowseLocalGitDirectoriesResponse>(baseUrl, endpoint, {
+    headers: authHeaders(token),
+  })
+}
+
+export function listLocalGitIntegrations(
+  baseUrl: string,
+  token: string,
+): Promise<ListIntegrationsResponse> {
+  return request<ListIntegrationsResponse>(
+    baseUrl,
+    '/v1/integrations/local-git',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function deleteLocalGitIntegration(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(baseUrl, `/v1/integrations/local-git/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
+}
+
 // ── Runner API ─────────────────────────────────────────────────
 
 export function listRunners(
@@ -508,6 +661,93 @@ export function getInstancePreferences(
     '/v1/settings/preferences',
     {
       headers: authHeaders(token),
+    },
+  )
+}
+
+export function getExternalAccessPreflight(
+  baseUrl: string,
+  token: string,
+): Promise<ExternalAccessPreflightResponse> {
+  return request<ExternalAccessPreflightResponse>(
+    baseUrl,
+    '/v1/settings/external-access/preflight',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function getExternalAccessNetworkSettings(
+  baseUrl: string,
+  token: string,
+): Promise<ExternalAccessNetworkSettingsResponse> {
+  return request<ExternalAccessNetworkSettingsResponse>(
+    baseUrl,
+    '/v1/settings/external-access/network',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function updateExternalAccessNetworkSettings(
+  baseUrl: string,
+  token: string,
+  data: UpdateExternalAccessNetworkSettingsRequest,
+): Promise<ExternalAccessNetworkSettingsResponse> {
+  return request<ExternalAccessNetworkSettingsResponse>(
+    baseUrl,
+    '/v1/settings/external-access/network',
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function getExternalAccessTrustedProxySettings(
+  baseUrl: string,
+  token: string,
+): Promise<TrustedProxySettingsResponse> {
+  return request<TrustedProxySettingsResponse>(
+    baseUrl,
+    '/v1/settings/external-access/trusted-proxy',
+    {
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function updateExternalAccessTrustedProxySettings(
+  baseUrl: string,
+  token: string,
+  data: UpdateTrustedProxySettingsRequest,
+): Promise<TrustedProxySettingsResponse> {
+  return request<TrustedProxySettingsResponse>(
+    baseUrl,
+    '/v1/settings/external-access/trusted-proxy',
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function configureExternalAccessOidc(
+  baseUrl: string,
+  token: string,
+  data: ConfigureExternalAccessOidcRequest,
+): Promise<ConfigureExternalAccessOidcResponse> {
+  return request<ConfigureExternalAccessOidcResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc',
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
     },
   )
 }

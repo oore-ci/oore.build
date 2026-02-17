@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "oore.build API",
-    "description": "REST API for oore.build — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) handle OIDC login/logout flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince oore.build is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
+    "description": "REST API for oore.build — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support local-mode login and OIDC login/logout flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince oore.build is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
     "contact": {
       "name": "oore.build",
       "url": "https://oore.build"
@@ -85,6 +85,58 @@
             "bearer_auth": []
           }
         ]
+      }
+    },
+    "/v1/auth/local/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Local login",
+        "description": "Creates a loopback-only local session without OIDC.\nIf setup is still pending in Local Only mode, first login auto-finalizes\nlocal owner bootstrap. When setup is already complete, loopback local\nlogin remains available even if External Access is enabled.",
+        "operationId": "local_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Email required or invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Blocked by mode policy or non-loopback source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/auth/logout": {
@@ -221,6 +273,58 @@
           },
           "409": {
             "description": "Setup not complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/trusted-proxy/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Trusted proxy login",
+        "description": "Creates a session from trusted proxy identity headers when remote auth\nmode is configured to trusted proxy.",
+        "operationId": "trusted_proxy_login",
+        "responses": {
+          "200": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Identity header missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Untrusted peer, disabled user, or user missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup incomplete",
             "content": {
               "application/json": {
                 "schema": {
@@ -670,6 +774,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -704,6 +818,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GitHubAppStartResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -743,6 +867,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -777,6 +911,228 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GitLabCompleteResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/integrations/local-git": {
+      "get": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "List local git integrations",
+        "operationId": "list_local_git_integrations",
+        "responses": {
+          "200": {
+            "description": "Local git integration list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListIntegrationsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Local mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Create local git integration",
+        "operationId": "create_local_git_integration",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLocalGitIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Local git integration created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateLocalGitIntegrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Local mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Repository already connected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/integrations/local-git/directories": {
+      "get": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Browse local directories for local repository registration",
+        "operationId": "browse_local_git_directories",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Absolute directory path to browse. Defaults to the daemon user's home directory",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Directory listing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowseLocalGitDirectoriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or inaccessible path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Local mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/integrations/local-git/{id}": {
+      "delete": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Delete local git integration",
+        "operationId": "delete_local_git_integration",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Local mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Integration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -914,8 +1270,8 @@
         "tags": [
           "Integrations"
         ],
-        "summary": "Sync GitHub App installations",
-        "description": "Fetches new installations from GitHub and syncs their repositories.",
+        "summary": "Sync integration installations",
+        "description": "- **GitHub**: Fetches GitHub App installations and syncs their repositories.\n- **GitLab**: Refreshes accessible projects for linked accounts and syncs them as repositories.",
         "operationId": "sync_installations",
         "parameters": [
           {
@@ -945,6 +1301,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SyncInstallationsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -1766,6 +2132,26 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Project or pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Project source is not configured or resolvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2400,6 +2786,282 @@
         ]
       }
     },
+    "/v1/settings/external-access/network": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get External Access network settings",
+        "description": "Returns effective public URL and allowed frontend origins used by External Access checks.",
+        "operationId": "get_external_access_network_settings",
+        "responses": {
+          "200": {
+            "description": "External Access network settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAccessNetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Update External Access network settings",
+        "description": "Owner-only update for public URL and allowed frontend origins.",
+        "operationId": "update_external_access_network_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateExternalAccessNetworkSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "External Access network settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAccessNetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only or loopback-only restriction violated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/external-access/oidc": {
+      "put": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Configure OIDC for External Access",
+        "description": "Owner-only endpoint to configure runtime OIDC after setup is complete.\nPerforms provider discovery and stores issuer/client settings.",
+        "operationId": "configure_external_access_oidc",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureExternalAccessOidcRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OIDC configured for External Access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigureExternalAccessOidcResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or OIDC discovery failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup state does not allow runtime OIDC configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/external-access/preflight": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get External Access preflight readiness",
+        "description": "Returns check-by-check readiness required before enabling External Access (`runtime_mode=remote`).",
+        "operationId": "get_external_access_preflight",
+        "responses": {
+          "200": {
+            "description": "External Access preflight result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAccessPreflightResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/external-access/trusted-proxy": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get trusted proxy runtime settings",
+        "operationId": "get_external_access_trusted_proxy_settings",
+        "responses": {
+          "200": {
+            "description": "Trusted proxy settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedProxySettingsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Update trusted proxy runtime settings",
+        "operationId": "update_external_access_trusted_proxy_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTrustedProxySettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Trusted proxy settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedProxySettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid header/CIDR/secret input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only or loopback-only restriction violated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/settings/preferences": {
       "get": {
         "tags": [
@@ -2449,6 +3111,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InstancePreferencesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "External Access preflight failed or unsupported values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only mode change attempted by non-owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -2580,6 +3262,83 @@
         ]
       }
     },
+    "/v1/setup/local-owner/create": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Create local owner (local mode)",
+        "description": "Creates the setup owner without OIDC when runtime mode is `local`.",
+        "operationId": "setup_local_owner_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupLocalOwnerCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Owner created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupLocalOwnerCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid owner email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid setup session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Remote mode enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid setup state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/setup/oidc/configure": {
       "post": {
         "tags": [
@@ -2631,6 +3390,63 @@
           },
           "409": {
             "description": "Invalid state or already configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/setup/owner/claim-trusted-proxy": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Claim owner identity from trusted proxy headers",
+        "description": "Creates owner record from trusted proxy identity headers (email).",
+        "operationId": "setup_owner_claim_trusted_proxy",
+        "responses": {
+          "200": {
+            "description": "Owner created from trusted proxy identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupTrustedProxyClaimOwnerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid setup session or missing/invalid identity header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not in trusted-proxy mode or untrusted proxy peer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid setup state",
             "content": {
               "application/json": {
                 "schema": {
@@ -2791,6 +3607,63 @@
         ]
       }
     },
+    "/v1/setup/preferences": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Persist setup mode preferences",
+        "description": "Stores setup-time runtime mode and remote auth mode before owner creation.",
+        "operationId": "setup_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupPreferencesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Setup preferences saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupPreferencesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid setup session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup already complete or owner already created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/setup/summary": {
       "get": {
         "tags": [
@@ -2812,6 +3685,83 @@
           },
           "401": {
             "description": "Invalid setup session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/setup/trusted-proxy/configure": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Configure trusted proxy auth during setup",
+        "description": "Upserts trusted proxy settings for remote trusted-proxy mode.",
+        "operationId": "setup_trusted_proxy_configure",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupTrustedProxyConfigureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Trusted proxy setup configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupTrustedProxyConfigureResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid header/CIDR/secret input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid setup session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not in remote trusted-proxy mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup already complete or owner already created",
             "content": {
               "application/json": {
                 "schema": {
@@ -3160,6 +4110,16 @@
           },
           "401": {
             "description": "Invalid signature"
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -3178,6 +4138,16 @@
           },
           "401": {
             "description": "Invalid token"
+          },
+          "403": {
+            "description": "Remote mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -3536,6 +4506,41 @@
           }
         }
       },
+      "BrowseLocalGitDirectoriesResponse": {
+        "type": "object",
+        "required": [
+          "current_path",
+          "current_is_git_repository",
+          "directories",
+          "suggestions"
+        ],
+        "properties": {
+          "current_is_git_repository": {
+            "type": "boolean"
+          },
+          "current_path": {
+            "type": "string"
+          },
+          "directories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocalGitDirectoryEntry"
+            }
+          },
+          "parent_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocalGitPathSuggestion"
+            }
+          }
+        }
+      },
       "Build": {
         "type": "object",
         "required": [
@@ -3861,6 +4866,47 @@
           }
         }
       },
+      "ConfigureExternalAccessOidcRequest": {
+        "type": "object",
+        "required": [
+          "issuer_url",
+          "client_id"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issuer_url": {
+            "type": "string"
+          }
+        }
+      },
+      "ConfigureExternalAccessOidcResponse": {
+        "type": "object",
+        "required": [
+          "discovered_issuer",
+          "has_client_secret",
+          "configured_at"
+        ],
+        "properties": {
+          "configured_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "discovered_issuer": {
+            "type": "string"
+          },
+          "has_client_secret": {
+            "type": "boolean"
+          }
+        }
+      },
       "CreateArtifactRequest": {
         "type": "object",
         "required": [
@@ -3947,6 +4993,38 @@
           }
         }
       },
+      "CreateLocalGitIntegrationRequest": {
+        "type": "object",
+        "required": [
+          "repository_path"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_path": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateLocalGitIntegrationResponse": {
+        "type": "object",
+        "required": [
+          "integration",
+          "repository"
+        ],
+        "properties": {
+          "integration": {
+            "$ref": "#/components/schemas/Integration"
+          },
+          "repository": {
+            "$ref": "#/components/schemas/IntegrationRepository"
+          }
+        }
+      },
       "CreatePipelineRequest": {
         "type": "object",
         "required": [
@@ -4029,6 +5107,12 @@
               "null"
             ]
           },
+          "local_repository_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -4048,6 +5132,103 @@
         "properties": {
           "project": {
             "$ref": "#/components/schemas/Project"
+          }
+        }
+      },
+      "ExternalAccessNetworkSettings": {
+        "type": "object",
+        "required": [
+          "allowed_origins",
+          "source"
+        ],
+        "properties": {
+          "allowed_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExternalAccessNetworkSource"
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "ExternalAccessNetworkSettingsResponse": {
+        "type": "object",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/ExternalAccessNetworkSettings"
+          }
+        }
+      },
+      "ExternalAccessNetworkSource": {
+        "type": "string",
+        "enum": [
+          "database",
+          "environment",
+          "default"
+        ]
+      },
+      "ExternalAccessPreflightCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "ok",
+          "message"
+        ],
+        "properties": {
+          "failure_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExternalAccessPreflightResponse": {
+        "type": "object",
+        "required": [
+          "ready",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalAccessPreflightCheck"
+            }
+          },
+          "ready": {
+            "type": "boolean"
           }
         }
       },
@@ -4179,14 +5360,22 @@
         "type": "object",
         "required": [
           "key_storage_mode",
+          "runtime_mode",
+          "remote_auth_mode",
           "restart_required"
         ],
         "properties": {
           "key_storage_mode": {
             "$ref": "#/components/schemas/KeyStorageMode"
           },
+          "remote_auth_mode": {
+            "$ref": "#/components/schemas/RemoteAuthMode"
+          },
           "restart_required": {
             "type": "boolean"
+          },
+          "runtime_mode": {
+            "$ref": "#/components/schemas/RuntimeMode"
           },
           "updated_at": {
             "type": [
@@ -4272,7 +5461,8 @@
         "enum": [
           "github_app",
           "oauth_app",
-          "personal_token"
+          "personal_token",
+          "local_path"
         ]
       },
       "IntegrationDetailResponse": {
@@ -4721,6 +5911,71 @@
             "items": {
               "$ref": "#/components/schemas/User"
             }
+          }
+        }
+      },
+      "LocalGitDirectoryEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "is_git_repository"
+        ],
+        "properties": {
+          "is_git_repository": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalGitPathSuggestion": {
+        "type": "object",
+        "required": [
+          "label",
+          "path"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "LocalLoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "LocalLoginResponse": {
+        "type": "object",
+        "required": [
+          "session_token",
+          "expires_at",
+          "user"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_token": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AuthenticatedUser"
           }
         }
       },
@@ -5309,6 +6564,13 @@
           }
         }
       },
+      "RemoteAuthMode": {
+        "type": "string",
+        "enum": [
+          "oidc",
+          "trusted_proxy"
+        ]
+      },
       "Runner": {
         "type": "object",
         "required": [
@@ -5378,11 +6640,19 @@
           "draining"
         ]
       },
+      "RuntimeMode": {
+        "type": "string",
+        "enum": [
+          "local",
+          "remote"
+        ]
+      },
       "ScmProvider": {
         "type": "string",
         "enum": [
           "github",
-          "gitlab"
+          "gitlab",
+          "local_git"
         ]
       },
       "SetupCompleteResponse": {
@@ -5394,6 +6664,39 @@
         "properties": {
           "instance_id": {
             "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState"
+          }
+        }
+      },
+      "SetupLocalOwnerCreateRequest": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        }
+      },
+      "SetupLocalOwnerCreateResponse": {
+        "type": "object",
+        "required": [
+          "state",
+          "owner_email"
+        ],
+        "properties": {
+          "owner_email": {
+            "type": "string"
+          },
+          "session_expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           },
           "state": {
             "$ref": "#/components/schemas/SetupState"
@@ -5467,6 +6770,49 @@
           }
         }
       },
+      "SetupPreferencesRequest": {
+        "type": "object",
+        "required": [
+          "runtime_mode"
+        ],
+        "properties": {
+          "remote_auth_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RemoteAuthMode"
+              }
+            ]
+          },
+          "runtime_mode": {
+            "$ref": "#/components/schemas/RuntimeMode"
+          }
+        }
+      },
+      "SetupPreferencesResponse": {
+        "type": "object",
+        "required": [
+          "runtime_mode",
+          "remote_auth_mode"
+        ],
+        "properties": {
+          "remote_auth_mode": {
+            "$ref": "#/components/schemas/RemoteAuthMode"
+          },
+          "runtime_mode": {
+            "$ref": "#/components/schemas/RuntimeMode"
+          },
+          "session_expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "SetupState": {
         "type": "string",
         "enum": [
@@ -5482,6 +6828,8 @@
         "required": [
           "instance_id",
           "state",
+          "runtime_mode",
+          "remote_auth_mode",
           "setup_mode",
           "is_configured"
         ],
@@ -5491,6 +6839,12 @@
           },
           "is_configured": {
             "type": "boolean"
+          },
+          "remote_auth_mode": {
+            "$ref": "#/components/schemas/RemoteAuthMode"
+          },
+          "runtime_mode": {
+            "$ref": "#/components/schemas/RuntimeMode"
           },
           "setup_mode": {
             "type": "boolean"
@@ -5521,6 +6875,78 @@
               "string",
               "null"
             ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState"
+          }
+        }
+      },
+      "SetupTrustedProxyClaimOwnerResponse": {
+        "type": "object",
+        "required": [
+          "state",
+          "owner_email"
+        ],
+        "properties": {
+          "owner_email": {
+            "type": "string"
+          },
+          "session_expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState"
+          }
+        }
+      },
+      "SetupTrustedProxyConfigureRequest": {
+        "type": "object",
+        "properties": {
+          "shared_secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trusted_proxy_cidrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "user_email_header": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SetupTrustedProxyConfigureResponse": {
+        "type": "object",
+        "required": [
+          "state",
+          "has_shared_secret",
+          "configured_at"
+        ],
+        "properties": {
+          "configured_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_shared_secret": {
+            "type": "boolean"
+          },
+          "session_expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           },
           "state": {
             "$ref": "#/components/schemas/SetupState"
@@ -5647,6 +7073,46 @@
           "schedule"
         ]
       },
+      "TrustedProxySettingsPublic": {
+        "type": "object",
+        "required": [
+          "user_email_header",
+          "trusted_proxy_cidrs",
+          "has_shared_secret"
+        ],
+        "properties": {
+          "has_shared_secret": {
+            "type": "boolean"
+          },
+          "trusted_proxy_cidrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "user_email_header": {
+            "type": "string"
+          }
+        }
+      },
+      "TrustedProxySettingsResponse": {
+        "type": "object",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/TrustedProxySettingsPublic"
+          }
+        }
+      },
       "UpdateArtifactStorageSettingsRequest": {
         "type": "object",
         "required": [
@@ -5694,6 +7160,26 @@
           }
         }
       },
+      "UpdateExternalAccessNetworkSettingsRequest": {
+        "type": "object",
+        "required": [
+          "allowed_origins"
+        ],
+        "properties": {
+          "allowed_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "UpdateInstancePreferencesRequest": {
         "type": "object",
         "required": [
@@ -5702,6 +7188,26 @@
         "properties": {
           "key_storage_mode": {
             "$ref": "#/components/schemas/KeyStorageMode"
+          },
+          "remote_auth_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RemoteAuthMode"
+              }
+            ]
+          },
+          "runtime_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeMode"
+              }
+            ]
           }
         }
       },
@@ -5928,6 +7434,29 @@
           }
         }
       },
+      "UpdateTrustedProxySettingsRequest": {
+        "type": "object",
+        "properties": {
+          "shared_secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trusted_proxy_cidrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "user_email_header": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "UpdateUserRoleRequest": {
         "type": "object",
         "required": [
@@ -6102,11 +7631,11 @@
     },
     {
       "name": "Setup",
-      "description": "Initial instance setup flow (bootstrap token → OIDC → owner creation). Auto-disabled after setup completes."
+      "description": "Initial instance setup flow (bootstrap token → mode-aware owner creation). Auto-disabled after setup completes."
     },
     {
       "name": "Auth",
-      "description": "OIDC authentication and session management. Enabled only after setup is complete."
+      "description": "Mode-aware authentication and session management. Enabled only after setup is complete."
     },
     {
       "name": "Users",
@@ -6118,7 +7647,7 @@
     },
     {
       "name": "Integrations",
-      "description": "SCM integrations — GitHub App and GitLab OAuth."
+      "description": "SCM integrations — local git, GitHub App, and GitLab."
     },
     {
       "name": "Projects",

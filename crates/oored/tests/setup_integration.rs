@@ -2,11 +2,13 @@
 // Run with: cargo test -p oored --features test-support
 #![cfg(feature = "test-support")]
 
+use std::net::SocketAddr;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use http_body_util::BodyExt;
 use hyper::Request;
 use oore_contract::{BootstrapTokenRecord, SetupSessionRecord, SetupState};
@@ -149,6 +151,26 @@ async fn set_state(path: &Path, state: SetupState) {
     let mut sf = store.load().await.expect("failed to load state");
     sf.setup_state = state;
     store.save(&sf).await.expect("failed to save state");
+}
+
+async fn set_runtime_and_remote_auth_mode(path: &Path, runtime_mode: &str, remote_auth_mode: &str) {
+    let store = connect_store(path).await;
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, remote_auth_mode, created_at, updated_at)
+         VALUES (1, 'file', ?1, ?2, ?3, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            key_storage_mode = excluded.key_storage_mode,
+            runtime_mode = excluded.runtime_mode,
+            remote_auth_mode = excluded.remote_auth_mode,
+            updated_at = excluded.updated_at",
+    )
+    .bind(runtime_mode)
+    .bind(remote_auth_mode)
+    .bind(now)
+    .execute(store.pool())
+    .await
+    .expect("failed to set runtime/auth mode");
 }
 
 /// Extract the JSON body from a response.
@@ -306,7 +328,7 @@ async fn test_setup_status_returns_bootstrap_pending() {
     assert_eq!(body["setup_mode"], true);
     assert_eq!(body["is_configured"], false);
     // instance_id should be a non-empty string
-    assert!(body["instance_id"].as_str().unwrap().len() > 0);
+    assert!(!body["instance_id"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -457,7 +479,7 @@ async fn test_full_setup_flow() {
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["state"], "ready");
-    assert!(body["instance_id"].as_str().unwrap().len() > 0);
+    assert!(!body["instance_id"].as_str().unwrap().is_empty());
 
     // Verify final status
     let resp = app
@@ -972,6 +994,35 @@ async fn test_complete_setup_wrong_state() {
     assert_eq!(resp.status(), 409);
     let body = body_json(resp).await;
     assert_eq!(body["code"], "invalid_state");
+}
+
+#[tokio::test]
+async fn test_setup_owner_claim_trusted_proxy_requires_configuration() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let session_token = seed_session_token(&db_path).await;
+
+    set_state(&db_path, SetupState::IdpConfigured).await;
+    set_runtime_and_remote_auth_mode(&db_path, "remote", "trusted_proxy").await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/claim-trusted-proxy")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .header("x-warpgate-username", "owner@example.com")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41234))))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 409);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "trusted_proxy_not_configured");
 }
 
 // ── Ready-locked tests ──────────────────────────────────────────

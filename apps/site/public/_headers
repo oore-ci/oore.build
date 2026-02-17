@@ -1,9 +1,9 @@
 # Install/uninstall scripts — short cache for quick updates
 /install
-  Cache-Control: public, max-age=60, s-maxage=60, must-revalidate
+  Cache-Control: no-store
   Content-Type: text/plain; charset=utf-8
 /uninstall
-  Cache-Control: public, max-age=60, s-maxage=60, must-revalidate
+  Cache-Control: no-store
   Content-Type: text/plain; charset=utf-8
 
 # HTML — always revalidate

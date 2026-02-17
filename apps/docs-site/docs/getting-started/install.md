@@ -5,19 +5,40 @@ description: "Install oore.build daemon and CLI binaries on macOS with a single 
 
 # Install oore.build
 
-This page walks you through installing prebuilt backend binaries from the oore release bucket (`dl.oore.build`).
+This page walks you through installing prebuilt backend binaries from GitHub Releases.
 
 ## What you need
 
 - macOS host (V1 backend runtime target)
 - `curl`
-- Internet access to `dl.oore.build`, `ci.oore.build`, and `docs.oore.build`
+- Internet access to GitHub (`github.com`), `ci.oore.build`, and `docs.oore.build`
 
 ## Install (latest release)
 
 ```bash
 curl -fsSL https://oore.build/install | bash
 ```
+
+## Install by channel (stable/beta/alpha)
+
+The installer supports release channels:
+
+- `stable` (default): latest non-prerelease GitHub Release
+- `beta`: latest `vX.Y.Z-beta.N` prerelease
+- `alpha`: latest `vX.Y.Z-alpha.N` prerelease
+
+```bash
+# stable (default)
+curl -fsSL https://oore.build/install | bash
+
+# beta
+curl -fsSL https://oore.build/install | OORE_CHANNEL=beta bash
+
+# alpha
+curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+```
+
+`OORE_VERSION` (pinned tag/version) always overrides channel selection.
 
 The installer:
 
@@ -35,14 +56,13 @@ The installer:
 ## Install a pinned version
 
 ```bash
-OORE_VERSION=v0.2.0 curl -fsSL https://oore.build/install | bash
+curl -fsSL https://oore.build/install | OORE_VERSION=v0.2.0 bash
 ```
 
 ## Non-interactive mode (automation)
 
 ```bash
-OORE_NONINTERACTIVE=1 OORE_START_DAEMON=true \
-  curl -fsSL https://oore.build/install | bash
+curl -fsSL https://oore.build/install | OORE_NONINTERACTIVE=1 OORE_START_DAEMON=true bash
 ```
 
 If `OORE_NONINTERACTIVE=1` and `OORE_START_DAEMON` is not set, daemon startup is skipped.
@@ -50,8 +70,25 @@ If `OORE_NONINTERACTIVE=1` and `OORE_START_DAEMON` is not set, daemon startup is
 ## Verify installation
 
 ```bash
-~/.oore/bin/oored version
-~/.oore/bin/oore --version
+oored version
+oore version
+```
+
+If `oore`/`oored` are not found, open a new terminal (so your shell picks up PATH changes) or use the full path under `~/.oore/bin`.
+
+## Update (self-update)
+
+`oore update` downloads the latest release for your installed channel and updates binaries in-place.
+
+```bash
+oore update --check
+oore update
+```
+
+Override channel explicitly:
+
+```bash
+oore update --channel alpha
 ```
 
 ## Next step: choose setup path
@@ -61,9 +98,9 @@ Before using hosted UI, ensure your backend is HTTPS-reachable from the browser.
 
 If your backend is local-only:
 
-- Use CLI setup: `~/.oore/bin/oore setup`, or
+- Use CLI setup: `oore setup`, or
 - expose it via tunnel first (for example `cloudflared tunnel --url http://127.0.0.1:8787`), or
-- run local frontend: `~/.oore/bin/oore-web --backend-url http://127.0.0.1:8787`.
+- run local frontend: `oore-web --backend-url http://127.0.0.1:8787`.
   In the local web UI, add an instance and leave **Backend URL** empty so requests use the built-in proxy.
 
 For hosted setup, open [ci.oore.build](https://ci.oore.build), add your backend URL, and complete setup.  
@@ -76,9 +113,12 @@ Continue with [Hosted UI Onboarding](/getting-started/hosted-ui-onboarding).
 | Variable | Default | Description |
 |---|---|---|
 | `OORE_VERSION` | `latest` | Release selector (`latest` or tag like `v0.2.0`) |
+| `OORE_CHANNEL` | `stable` | Channel selector when `OORE_VERSION=latest`: `stable`, `beta`, or `alpha` |
 | `OORE_INSTALL_ROOT` | `~/.oore` | Installation directory |
-| `OORE_RELEASE_BASE_URL` | `https://dl.oore.build/releases` | Base URL that contains `<tag>/` release assets |
-| `OORE_RELEASE_MANIFEST_URL` | `https://dl.oore.build/releases/latest.json` | Manifest URL used when `OORE_VERSION=latest` |
+| `OORE_GITHUB_REPO` | `devaryakjha/oore.build` | GitHub repository used to resolve `latest` and download assets |
+| `OORE_RELEASE_BASE_URL` | `https://github.com/<repo>/releases/download` | Base URL that contains `<tag>/` release assets |
+| `OORE_RELEASE_MANIFEST_URL` | `https://api.github.com/repos/<repo>/releases/latest` | Metadata URL used when `OORE_VERSION=latest` |
+| `OORE_RELEASES_LIST_URL` | `https://api.github.com/repos/<repo>/releases?per_page=100` | Release list URL used when `OORE_VERSION=latest` and `OORE_CHANNEL` is `alpha` or `beta` |
 | `OORE_NONINTERACTIVE` | `0` | Disable prompts when set to `1` |
 | `OORE_START_DAEMON` | unset | Non-interactive daemon startup behavior (`true` or `false`) |
 | `OORE_LOCAL_WEB_MODE` | unset | Non-interactive local web behavior for localhost backends: `off`, `run`, or `login` (launch-at-login) |
@@ -92,7 +132,7 @@ The installer currently supports macOS `arm64` and `x86_64`.
 
 ### Checksum mismatch
 
-The installer exits before installing binaries if checksums do not match. Re-run once to rule out transient download issues. If it persists, do not continue and verify release assets in `https://dl.oore.build/releases/<tag>/`.
+The installer exits before installing binaries if checksums do not match. Re-run once to rule out transient download issues. If it persists, do not continue and verify release assets on the GitHub Release for that tag.
 
 ### Daemon startup failed
 
@@ -105,7 +145,7 @@ cat ~/.oore/logs/oored.log
 Then run diagnostics:
 
 ```bash
-~/.oore/bin/oore doctor
+oore doctor
 ```
 
 ### Permission denied under `~/.oore`
@@ -123,5 +163,5 @@ curl -fsSL https://oore.build/install | bash
 Or install to a different user-owned root:
 
 ```bash
-OORE_INSTALL_ROOT="$HOME/.oore-user" curl -fsSL https://oore.build/install | bash
+curl -fsSL https://oore.build/install | OORE_INSTALL_ROOT="$HOME/.oore-user" bash
 ```

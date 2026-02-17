@@ -13,6 +13,10 @@ use uuid::Uuid;
 
 use crate::util::{now_unix, resolve_oored_data_dir};
 
+fn local_subject_for_email(email: &str) -> String {
+    format!("local::{}", email.trim().to_lowercase())
+}
+
 /// SQLite-backed state store for the setup state machine.
 pub struct SetupStore {
     pool: SqlitePool,
@@ -191,8 +195,8 @@ impl SetupStore {
             .context("setup is Ready but no owner record exists")?;
         let oidc_subject = owner
             .oidc_subject
-            .as_ref()
-            .context("owner record missing oidc_subject")?;
+            .clone()
+            .unwrap_or_else(|| local_subject_for_email(&owner.email));
 
         let user_id = Uuid::new_v4().to_string();
         let now = now_unix();
@@ -203,7 +207,7 @@ impl SetupStore {
         )
         .bind(&user_id)
         .bind(&owner.email)
-        .bind(oidc_subject)
+        .bind(&oidc_subject)
         .bind(&owner.email)
         .bind(now)
         .execute(&self.pool)

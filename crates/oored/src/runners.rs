@@ -218,10 +218,7 @@ pub async fn runner_heartbeat(
     })?;
 
     let now = now_unix();
-    let has_capabilities = req
-        .capabilities
-        .as_object()
-        .map_or(false, |o| !o.is_empty());
+    let has_capabilities = req.capabilities.as_object().is_some_and(|o| !o.is_empty());
 
     let store = state.store.lock().await;
     let pool = store.pool();

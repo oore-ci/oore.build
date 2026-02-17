@@ -2622,6 +2622,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "hyper 1.8.1",
+ "ipnet",
  "jsonwebtoken",
  "metrics",
  "metrics-exporter-prometheus",

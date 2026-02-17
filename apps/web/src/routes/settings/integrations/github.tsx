@@ -11,6 +11,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useGitHubAppStart } from '@/hooks/use-integrations'
 import { PageMeta } from '@/lib/seo'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -33,12 +34,15 @@ export const Route = createFileRoute('/settings/integrations/github')({
 function GitHubSetupPage() {
   const instance = useActiveInstance()
   const startMutation = useGitHubAppStart()
+  const { data: preferences } = useInstancePreferences()
+  const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
 
   const backendUrl = instance?.url ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
   const redirectUrl = `${window.location.origin}/settings/integrations`
 
   function handleConnect() {
+    if (!remoteEnabled) return
     startMutation.mutate(
       { webhook_url: webhookUrl, redirect_url: redirectUrl },
       {
@@ -54,11 +58,11 @@ function GitHubSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitHub" noindex />
+      <PageMeta title="Connect GitHub Source" noindex />
       <PageHeader
-        title="Connect GitHub"
-        description="Generate and install a GitHub App for repository access and webhook delivery."
-        back={{ to: '/settings/integrations', label: 'Integrations' }}
+        title="Connect GitHub Source"
+        description="Generate and install a GitHub App source for repository access and webhook delivery."
+        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -71,9 +75,16 @@ function GitHubSetupPage() {
               oore creates a GitHub App manifest, redirects you to GitHub, then
               returns here after install.
             </p>
-            <Button onClick={handleConnect} disabled={startMutation.isPending}>
+            <Button
+              onClick={handleConnect}
+              disabled={startMutation.isPending || !remoteEnabled}
+            >
               <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-              {startMutation.isPending ? 'Starting...' : 'Create GitHub App'}
+              {!remoteEnabled
+                ? 'External Access Required'
+                : startMutation.isPending
+                  ? 'Starting...'
+                  : 'Create GitHub App'}
               {!startMutation.isPending ? (
                 <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
               ) : null}
@@ -113,8 +124,9 @@ function GitHubSetupPage() {
       <Alert>
         <HugeiconsIcon icon={InformationCircleIcon} size={16} />
         <AlertDescription>
-          After GitHub installation, you will return to Integrations with the
-          connection status updated.
+          {remoteEnabled
+            ? 'After GitHub installation, you will return to Sources with the connection status updated.'
+            : 'GitHub source connections are disabled in Local Only mode. Enable External Access in Preferences to continue.'}
         </AlertDescription>
       </Alert>
     </PageLayout>

@@ -263,7 +263,11 @@ export function useUpdatePipelineIosSigning() {
         ],
       })
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'pipeline', variables.pipelineId],
+        queryKey: [
+          instance?.id ?? '__none__',
+          'pipeline',
+          variables.pipelineId,
+        ],
       })
     },
   })

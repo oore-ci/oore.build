@@ -25,3 +25,7 @@ Thumbs.db
 *~
 
 dist/releases
+
+# local agent metadata
+.claude/
+.codex/
