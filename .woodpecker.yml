@@ -513,7 +513,7 @@ steps:
         token_hash="$(printenv CLOUDFLARE_API_TOKEN | tr -d '\n' | shasum -a 256 | awk '{print $1}' | cut -c1-12)"
         echo "CLOUDFLARE_API_TOKEN sha256_prefix=$token_hash"
       - bunx --bun wrangler whoami
-      - make deploy-site deploy-docs deploy-web
+      - make deploy-site deploy-docs deploy-web deploy-demo
 
   - name: release-generate-notes
     image: bash

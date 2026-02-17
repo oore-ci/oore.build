@@ -57,3 +57,5 @@ Rules:
   - OOR-55: https://linear.app/oorebuild/issue/OOR-55/fix-docs-openapi-pages-ssr-errors-from-localstorage-access
 - Hardened release-binary install/update flows: added channel-aware `latest` resolution (`OORE_CHANNEL`), persisted install metadata (`CHANNEL`, `GITHUB_REPO`), switched `oore update` to GitHub Releases (channel-aware), and made `oore version` / `oored version` report the installed `VERSION` (including `-alpha.N` / `-beta.N`).
   - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
+- Ensured Pages deploys are non-interactive (wrangler `--commit-dirty=true`) and added `oore-demo` Pages deployment to the tag release pipeline.
+  - OOR-36: https://linear.app/oorebuild/issue/OOR-36/replace-scripts-makefile-releasedeploy-tooling-with-woodpecker-driven
