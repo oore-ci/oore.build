@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Invite new users to your oore.build instance via email."
+description: "Invite new users to your Oore CI instance via email."
 ---
 
 # Invite Team Members
 
-Add new users to your oore.build instance by sending email invitations.
+Add new users to your Oore CI instance by sending email invitations.
 
 ## What you need
 

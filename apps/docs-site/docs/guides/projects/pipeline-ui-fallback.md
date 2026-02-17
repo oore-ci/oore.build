@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Create and edit build pipelines through the oore.build web UI."
+description: "Create and edit build pipelines through the Oore CI web UI."
 ---
 
 # Configure a Pipeline via the UI
@@ -10,7 +10,7 @@ If your repository doesn't contain a `.oore.yaml` file, you can configure the pi
 ## What you need
 
 - **Role**: any authenticated user
-- A [project](/guides/projects/create-project) in oore.build
+- A [project](/guides/projects/create-project) in Oore CI
 
 ## Steps
 
@@ -63,7 +63,7 @@ Click **Save Pipeline**. The configuration is stored and used when no `.oore.yam
 
 When a build is triggered:
 
-1. oore.build checks the repository root for `.oore.yaml` (or `.oore.yml`)
+1. Oore CI checks the repository root for `.oore.yaml` (or `.oore.yml`)
 2. If found, the file config is used — the UI config is ignored
 3. If not found, the UI fallback config is used
 

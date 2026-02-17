@@ -1161,7 +1161,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
                 body.instance_id
             );
             println!();
-            println!("Your oore.build instance is ready. Run 'oore status' to verify.");
+            println!("Your Oore instance is ready. Run 'oore status' to verify.");
         } else {
             let status_code = complete_resp.status();
             let msg = extract_error_message(complete_resp).await;

@@ -16,8 +16,8 @@ export default function Header() {
           <span className="text-xl leading-none">menu</span>
         </button>
         <Link to="/" className="ml-4 inline-flex items-center gap-2">
-          <img src="/logo.svg" alt="oore.build logo" className="h-8 w-8" />
-          <span className="text-lg font-semibold tracking-tight">oore.build</span>
+          <img src="/logo.svg" alt="Oore CI logo" className="h-8 w-8" />
+          <span className="text-lg font-semibold tracking-tight">Oore CI</span>
         </Link>
       </header>
 

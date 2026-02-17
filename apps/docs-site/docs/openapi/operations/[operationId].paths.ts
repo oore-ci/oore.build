@@ -8,7 +8,7 @@ export default {
       .map(({ operationId, summary }) => ({
         params: {
           operationId,
-          pageTitle: `${summary} - oore.build API`,
+          pageTitle: `${summary} - Oore CI API`,
         },
       }));
   },

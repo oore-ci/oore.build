@@ -1,9 +1,9 @@
 ---
 status: implemented
-description: "Install oore.build daemon and CLI binaries on macOS with a single command."
+description: "Install Oore CI daemon and CLI binaries on macOS with a single command."
 ---
 
-# Install oore.build
+# Install Oore CI
 
 This page walks you through installing prebuilt backend binaries from GitHub Releases.
 

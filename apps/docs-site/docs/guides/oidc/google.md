@@ -1,17 +1,17 @@
 ---
 status: implemented
-description: "Set up Google Workspace OIDC authentication for oore.build."
+description: "Set up Google Workspace OIDC authentication for Oore CI."
 ---
 
 # Google OIDC Setup
 
-This guide walks you through creating a Google OAuth 2.0 application and connecting it to oore.build as your OIDC identity provider.
+This guide walks you through creating a Google OAuth 2.0 application and connecting it to Oore CI as your OIDC identity provider.
 
 ## What you need
 
 - A [Google Cloud](https://console.cloud.google.com/) account with a project
 - Permission to create OAuth 2.0 credentials in the Google Cloud Console
-- Your oore.build instance ready for setup (see [Set Up Your Instance](/getting-started/first-instance))
+- Your Oore CI instance ready for setup (see [Set Up Your Instance](/getting-started/first-instance))
 
 ## 1. Create OAuth credentials
 
@@ -27,7 +27,7 @@ This guide walks you through creating a Google OAuth 2.0 application and connect
 
 4. For application type, select **Web application**.
 
-5. Set a name (e.g., "oore.build").
+5. Set a name (e.g., "Oore CI").
 
 6. Under **Authorized redirect URIs**, add:
 
@@ -45,7 +45,7 @@ This guide walks you through creating a Google OAuth 2.0 application and connect
 
 7. Click **Create**.
 
-8. Copy the **Client ID** and **Client Secret** from the dialog. You'll need these during oore.build setup.
+8. Copy the **Client ID** and **Client Secret** from the dialog. You'll need these during Oore CI setup.
 
 ## 2. Note the issuer URL
 
@@ -62,7 +62,7 @@ curl https://accounts.google.com/.well-known/openid-configuration | jq .issuer
 # Expected: "https://accounts.google.com"
 ```
 
-## 3. Enter credentials during oore.build setup
+## 3. Enter credentials during Oore CI setup
 
 During setup (either web UI or CLI), enter:
 
@@ -72,7 +72,7 @@ During setup (either web UI or CLI), enter:
 | **Client ID** | The client ID from step 1 (e.g., `123456789.apps.googleusercontent.com`) |
 | **Client secret** | The client secret from step 1 (e.g., `GOCSPX-...`) |
 
-oore.build will perform OIDC discovery against the issuer URL, verify the configuration, and store the credentials (the client secret is encrypted with AES-256-GCM).
+Oore CI will perform OIDC discovery against the issuer URL, verify the configuration, and store the credentials (the client secret is encrypted with AES-256-GCM).
 
 ## 4. Verify authentication
 
@@ -81,7 +81,7 @@ After setup completes:
 1. Open the web UI at `http://127.0.0.1:4173` (or `http://localhost:3000` in dev mode)
 2. Click **Sign in**
 3. You should be redirected to Google's sign-in page
-4. After authenticating, you should be redirected back to oore.build and logged in
+4. After authenticating, you should be redirected back to Oore CI and logged in
 
 ## Google Workspace considerations
 
@@ -93,7 +93,7 @@ If you chose **Internal** for the consent screen:
 
 If you chose **External**:
 
-- Any Google account can sign in (subject to your oore.build RBAC — uninvited users will be rejected)
+- Any Google account can sign in (subject to your Oore CI RBAC — uninvited users will be rejected)
 - Google may require app verification for production use
 - For internal/testing use, you can add test users in the consent screen settings
 
@@ -109,7 +109,7 @@ curl -s https://accounts.google.com/.well-known/openid-configuration | jq .
 
 ### "Redirect URI mismatch"
 
-Google is strict about redirect URI matching. Ensure the URI in your OAuth credentials exactly matches what oore.build sends. Check for:
+Google is strict about redirect URI matching. Ensure the URI in your OAuth credentials exactly matches what Oore CI sends. Check for:
 
 - `http` vs `https`
 - Trailing slashes

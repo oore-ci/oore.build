@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for managing projects in oore.build."
+description: "API endpoints for managing projects in Oore CI."
 ---
 
 # Projects API

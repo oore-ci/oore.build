@@ -1,17 +1,17 @@
 ---
 status: implemented
-description: "Set up Auth0 OIDC authentication for oore.build."
+description: "Set up Auth0 OIDC authentication for Oore CI."
 ---
 
 # Auth0 OIDC Setup
 
-This guide walks you through creating an Auth0 application and connecting it to oore.build.
+This guide walks you through creating an Auth0 application and connecting it to Oore CI.
 
 ## What you need
 
 - An [Auth0](https://auth0.com/) account
 - Permission to create applications in your Auth0 tenant
-- Your oore.build instance ready for setup
+- Your Oore CI instance ready for setup
 
 ## 1. Create an application
 
@@ -19,7 +19,7 @@ This guide walks you through creating an Auth0 application and connecting it to 
 2. Go to **Applications > Applications**
 3. Click **Create Application**
 4. Set:
-   - **Name**: `oore.build`
+   - **Name**: `Oore CI`
    - **Application type**: Regular Web Applications
 5. Click **Create**
 
@@ -65,7 +65,7 @@ Verify discovery:
 curl https://your-tenant.auth0.com/.well-known/openid-configuration | jq .issuer
 ```
 
-## 5. Enter credentials in oore.build
+## 5. Enter credentials in Oore CI
 
 During setup, enter:
 
@@ -83,7 +83,7 @@ Verify the issuer URL includes the trailing slash and uses your Auth0 custom dom
 
 ### User can't sign in
 
-Ensure the user exists in your Auth0 tenant and their email matches the invitation in oore.build.
+Ensure the user exists in your Auth0 tenant and their email matches the invitation in Oore CI.
 
 ## Reference
 

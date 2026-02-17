@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Upload iOS signing certificates and provisioning profiles to oore.build."
+description: "Upload iOS signing certificates and provisioning profiles to Oore CI."
 ---
 
 # Acquire iOS Certificates and Profiles
 
-Before you can sign iOS builds in oore.build, you need signing certificates and provisioning profiles from Apple. This guide explains how to obtain them.
+Before you can sign iOS builds in Oore CI, you need signing certificates and provisioning profiles from Apple. This guide explains how to obtain them.
 
 ## What you need
 
@@ -35,13 +35,13 @@ iOS code signing requires two assets:
 
 ### Export as .p12
 
-oore.build needs the certificate in `.p12` format (which includes the private key):
+Oore CI needs the certificate in `.p12` format (which includes the private key):
 
 1. Open **Keychain Access** on your Mac
 2. Find the certificate you just installed (under "My Certificates")
 3. Right-click and select **Export**
 4. Choose **Personal Information Exchange (.p12)** format
-5. Set an export password (you'll need this in oore.build)
+5. Set an export password (you'll need this in Oore CI)
 6. Save the file
 
 ## 2. Create a provisioning profile
@@ -57,7 +57,7 @@ oore.build needs the certificate in `.p12` format (which includes the private ke
 6. For Ad Hoc profiles, select the test devices
 7. Name the profile and download it
 
-## 3. Upload to oore.build
+## 3. Upload to Oore CI
 
 See one of:
 

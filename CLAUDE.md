@@ -13,7 +13,7 @@ Before making any code or architecture change, read these files (they are the so
 
 ## What This Project Is
 
-oore.build is a self-hosted, Flutter-first mobile CI and internal app distribution platform. V1 targets Android, iOS, and macOS builds. The backend runs on macOS only in V1. The hosted offering at `ci.oore.build` is UI-only (frontend connects to customer's self-hosted backend).
+Oore CI is a self-hosted, Flutter-first mobile CI and internal app distribution platform. V1 targets Android, iOS, and macOS builds. The backend runs on macOS only in V1. The hosted offering at `ci.oore.build` is UI-only (frontend connects to customer's self-hosted backend).
 
 ## Build / Test / Lint Commands
 

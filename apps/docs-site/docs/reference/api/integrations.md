@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for GitHub and GitLab integrations in oore.build."
+description: "API endpoints for GitHub and GitLab integrations in Oore CI."
 ---
 
 # Integrations API

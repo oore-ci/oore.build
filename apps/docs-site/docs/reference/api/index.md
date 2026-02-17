@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Complete REST API reference for the oore.build daemon including endpoints, auth, and error codes."
+description: "Complete REST API reference for the Oore CI daemon including endpoints, auth, and error codes."
 ---
 
 # API Reference
 
-The oore.build daemon (`oored`) exposes a RESTful JSON API.
+The Oore CI daemon (`oored`) exposes a RESTful JSON API.
 
 ## Base URL
 

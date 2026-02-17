@@ -1,17 +1,17 @@
 ---
 status: implemented
-description: "Set up Okta OIDC authentication for oore.build."
+description: "Set up Okta OIDC authentication for Oore CI."
 ---
 
 # Okta OIDC Setup
 
-This guide walks you through creating an Okta OIDC application and connecting it to oore.build.
+This guide walks you through creating an Okta OIDC application and connecting it to Oore CI.
 
 ## What you need
 
 - An [Okta](https://www.okta.com/) account with admin access
 - Permission to create applications in your Okta organization
-- Your oore.build instance ready for setup
+- Your Oore CI instance ready for setup
 
 ## 1. Create an OIDC application
 
@@ -25,7 +25,7 @@ This guide walks you through creating an Okta OIDC application and connecting it
 
 | Field | Value |
 |---|---|
-| **App integration name** | `oore.build` |
+| **App integration name** | `Oore CI` |
 | **Grant type** | Authorization Code |
 | **Sign-in redirect URIs** | `http://127.0.0.1:4173/auth/callback`, `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
 | **Sign-out redirect URIs** | `http://127.0.0.1:4173`, `http://localhost:3000` |
@@ -58,7 +58,7 @@ Verify it supports OIDC discovery:
 curl https://dev-123456.okta.com/oauth2/default/.well-known/openid-configuration | jq .issuer
 ```
 
-## 5. Enter credentials in oore.build
+## 5. Enter credentials in Oore CI
 
 During setup, enter:
 
@@ -72,7 +72,7 @@ During setup, enter:
 
 ### "Redirect URI mismatch"
 
-Ensure the redirect URIs in Okta exactly match what oore.build sends. Check for trailing slashes and `http` vs `https`.
+Ensure the redirect URIs in Okta exactly match what Oore CI sends. Check for trailing slashes and `http` vs `https`.
 
 ### "OIDC discovery failed"
 

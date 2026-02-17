@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "Security architecture of oore.build including Remote auth providers, RBAC, and encryption."
+description: "Security architecture of Oore CI including Remote auth providers, RBAC, and encryption."
 ---
 
 # Security Model
 
-This page explains the security design decisions in oore.build and how they protect your instance.
+This page explains the security design decisions in Oore CI and how they protect your instance.
 
 ## Authentication: Remote OIDC or Trusted Proxy + Loopback Local Login (Local Only)
 
-For any non-loopback access (`runtime_mode=remote`), oore.build requires one of:
+For any non-loopback access (`runtime_mode=remote`), Oore CI requires one of:
 
 - OpenID Connect (OIDC)
 - Trusted Proxy mode (for example Warpgate / IAP)
@@ -22,7 +22,7 @@ The daemon also supports loopback-only local login (`POST /v1/auth/local/login`)
 
 ### Trusted Proxy mode (Warpgate / IAP)
 
-In Trusted Proxy mode, oore.build trusts identity headers from an upstream proxy and creates normal Oore sessions per user.
+In Trusted Proxy mode, Oore CI trusts identity headers from an upstream proxy and creates normal Oore sessions per user.
 
 - Default identity header: `x-warpgate-username` (expected to be an email)
 - Trust boundary: headers are accepted only when the immediate peer is trusted (loopback by default, optional CIDR allowlist for remote proxy peers)
@@ -95,7 +95,7 @@ The API restricts cross-origin requests:
 
 ## Network model
 
-oore.build is designed for local-network deployment:
+Oore CI is designed for local-network deployment:
 
 - The daemon listens on `127.0.0.1:8787` by default (localhost only)
 - For remote access, place the daemon behind a reverse proxy with TLS

@@ -5,7 +5,7 @@ description: "Role-based access control model with owner, admin, developer, and 
 
 # Roles and Permissions (RBAC)
 
-oore.build uses role-based access control with four roles. Each user has exactly one role.
+Oore CI uses role-based access control with four roles. Each user has exactly one role.
 
 ## Roles
 

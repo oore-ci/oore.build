@@ -8,7 +8,7 @@ This document governs **`apps/web`** only. `apps/docs-site` (VitePress) follows 
 
 ## Design Philosophy
 
-1. **Industrial command-center aesthetic.** oore.build is a CI platform, not a consumer app. The UI should feel like mission control — authoritative, information-dense, and confident. Every element should communicate competence and production-readiness.
+1. **Industrial command-center aesthetic.** Oore CI is a CI platform, not a consumer app. The UI should feel like mission control — authoritative, information-dense, and confident. Every element should communicate competence and production-readiness.
 2. **shadcn-first.** Use shadcn registry components before building custom ones.
 3. **Consistency over novelty.** Reuse established patterns across all pages.
 4. **Accessible by default.** All interactive elements must be keyboard-navigable and screen-reader friendly.

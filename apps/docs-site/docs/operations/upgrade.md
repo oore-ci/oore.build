@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Upgrade oore.build to a new version with zero-downtime strategies."
+description: "Upgrade Oore CI to a new version with zero-downtime strategies."
 ---
 
 # Upgrade Procedures
 
-How to upgrade your oore.build instance to a new version.
+How to upgrade your Oore CI instance to a new version.
 
 ## Before upgrading
 
@@ -18,7 +18,7 @@ How to upgrade your oore.build instance to a new version.
 ### 1. Pull the latest code
 
 ```bash
-cd /path/to/oore.build
+cd /path/to/Oore CI
 git fetch origin
 git checkout <target-version-tag>
 ```

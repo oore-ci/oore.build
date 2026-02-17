@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Monitor oore.build health with Prometheus metrics and alerting."
+description: "Monitor Oore CI health with Prometheus metrics and alerting."
 ---
 
 # Monitoring
 
-oore.build exposes a Prometheus-compatible metrics endpoint and structured logging for monitoring.
+Oore CI exposes a Prometheus-compatible metrics endpoint and structured logging for monitoring.
 
 ## Health check
 

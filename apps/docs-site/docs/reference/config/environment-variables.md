@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Environment variables for configuring the oore.build daemon and CLI."
+description: "Environment variables for configuring the Oore CI daemon and CLI."
 ---
 
 # Environment Variables
 
-All environment variables recognized by oore.build components.
+All environment variables recognized by Oore CI components.
 
 ## Daemon (oored)
 

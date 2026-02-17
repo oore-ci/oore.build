@@ -1,16 +1,16 @@
 ---
 status: implemented
-description: "Register iOS test devices for ad hoc distribution with oore.build."
+description: "Register iOS test devices for ad hoc distribution with Oore CI."
 ---
 
 # Register iOS Test Devices
 
-For ad hoc distribution, you must register each test device's UDID with Apple. This guide covers registering devices through oore.build.
+For ad hoc distribution, you must register each test device's UDID with Apple. This guide covers registering devices through Oore CI.
 
 ## What you need
 
 - **Role**: developer, admin, or owner
-- A pipeline with [iOS API signing](/guides/signing/ios-api-signing) configured (API mode required for device registration through oore.build)
+- A pipeline with [iOS API signing](/guides/signing/ios-api-signing) configured (API mode required for device registration through Oore CI)
 - The test device's **UDID** (see below for how to find it)
 
 ## Find a device UDID
@@ -28,7 +28,7 @@ For ad hoc distribution, you must register each test device's UDID with Apple. T
 2. Go to **Window > Devices and Simulators**
 3. Select the device — the **Identifier** field is the UDID
 
-## Register through oore.build
+## Register through Oore CI
 
 1. Open your project in the web UI
 2. Go to **Pipelines** and select the pipeline with iOS signing
@@ -37,7 +37,7 @@ For ad hoc distribution, you must register each test device's UDID with Apple. T
 5. Enter the device **name** and **UDID**
 6. Click **Register**
 
-oore.build registers the device with Apple via the App Store Connect API and updates the provisioning profile to include the new device.
+Oore CI registers the device with Apple via the App Store Connect API and updates the provisioning profile to include the new device.
 
 ## Register via API
 

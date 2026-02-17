@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Trigger builds manually, via webhook, or through the oore.build API."
+description: "Trigger builds manually, via webhook, or through the Oore CI API."
 ---
 
 # Trigger Builds
 
-oore.build supports three ways to trigger builds: manual triggers from the UI, webhook triggers from GitHub/GitLab, and direct API calls.
+Oore CI supports three ways to trigger builds: manual triggers from the UI, webhook triggers from GitHub/GitLab, and direct API calls.
 
 ## What you need
 

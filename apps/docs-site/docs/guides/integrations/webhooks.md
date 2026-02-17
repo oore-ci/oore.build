@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure webhook events and payloads for oore.build integrations."
+description: "Configure webhook events and payloads for Oore CI integrations."
 ---
 
 # Webhook Troubleshooting
@@ -11,7 +11,7 @@ Webhooks enable automatic build triggers from GitHub and GitLab. This guide cove
 
 When you push code or open a pull request:
 
-1. GitHub/GitLab sends a POST request to your oore.build instance
+1. GitHub/GitLab sends a POST request to your Oore CI instance
 2. The daemon verifies the webhook signature/token
 3. If the event matches a pipeline's trigger config, a build is created
 
@@ -33,7 +33,7 @@ When you [connect a GitHub App](/guides/integrations/github-app), webhooks are r
 Check GitHub's webhook delivery log:
 
 1. Go to your GitHub organization settings
-2. Navigate to **Installed GitHub Apps > oore.build > Advanced**
+2. Navigate to **Installed GitHub Apps > Oore CI > Advanced**
 3. Check the **Recent Deliveries** list for failures
 
 Common causes:
@@ -64,7 +64,7 @@ In GitLab, go to **Project Settings > Webhooks** and click **Test** to send a te
 
 ### Signature verification
 
-Ensure the webhook secret token in GitLab matches the token from your oore.build integration settings.
+Ensure the webhook secret token in GitLab matches the token from your Oore CI integration settings.
 
 ## General troubleshooting
 

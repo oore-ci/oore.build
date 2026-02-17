@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "The HTTP-based protocol between oore.build runners and the daemon."
+description: "The HTTP-based protocol between Oore CI runners and the daemon."
 ---
 
 # Runner Protocol
 
-How runners communicate with the oore.build daemon to claim and execute builds.
+How runners communicate with the Oore CI daemon to claim and execute builds.
 
 ## Overview
 

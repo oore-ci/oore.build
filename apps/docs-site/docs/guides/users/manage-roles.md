@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Assign and manage user roles and permissions in oore.build."
+description: "Assign and manage user roles and permissions in Oore CI."
 ---
 
 # Manage User Roles

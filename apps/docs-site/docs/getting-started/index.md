@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "Learn what oore.build is and how its components work together to provide self-hosted Flutter CI."
+description: "Learn what Oore CI is and how its components work together to provide self-hosted Flutter CI."
 ---
 
-# What is oore.build?
+# What is Oore CI?
 
-oore.build is a self-hosted, Flutter-first mobile CI and internal app distribution platform. It runs on your macOS hardware, builds Android, iOS, and macOS apps, and distributes them to your team — without sending source code or signing keys to a third-party service.
+Oore CI is a self-hosted, Flutter-first mobile CI and internal app distribution platform. It runs on your macOS hardware, builds Android, iOS, and macOS apps, and distributes them to your team — without sending source code or signing keys to a third-party service.
 
 ## How it works
 
-oore.build has three components:
+Oore CI has three components:
 
 | Component | What it does |
 |---|---|

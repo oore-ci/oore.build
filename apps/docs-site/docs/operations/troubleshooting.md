@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Diagnose and fix common oore.build issues including builds, auth, and connectivity."
+description: "Diagnose and fix common Oore CI issues including builds, auth, and connectivity."
 ---
 
 # Troubleshooting
 
-Common problems and solutions for oore.build operators.
+Common problems and solutions for Oore CI operators.
 
 ## Daemon won't start
 
@@ -95,14 +95,14 @@ The daemon can't reach the OIDC provider:
 
 ### "user_not_found" after successful OIDC login
 
-The user authenticated with the OIDC provider but doesn't have an account in oore.build:
+The user authenticated with the OIDC provider but doesn't have an account in Oore CI:
 
 1. The user needs to be [invited](/guides/users/invite-users) first
 2. The invitation email must exactly match the email in the OIDC provider's ID token
 
 ### "Redirect URI mismatch"
 
-The redirect URI sent by oore.build doesn't match what's configured in the OIDC provider:
+The redirect URI sent by Oore CI doesn't match what's configured in the OIDC provider:
 
 1. Check the provider's allowed redirect URIs
 2. Ensure `http` vs `https` matches

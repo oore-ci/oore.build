@@ -107,11 +107,11 @@ function RootLayout() {
                 <Link to="/" className="flex items-center gap-2 pr-1">
                   <img
                     src="/logo.svg"
-                    alt="oore.build logo"
+                    alt="Oore CI logo"
                     className="size-5"
                   />
                   <span className="hidden text-sm font-semibold tracking-tight sm:inline">
-                    oore.build
+                    Oore CI
                   </span>
                 </Link>
                 <Separator

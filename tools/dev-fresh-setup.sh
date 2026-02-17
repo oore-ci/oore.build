@@ -276,7 +276,7 @@ watch_setup() {
       local instance_id
       instance_id="$(echo "$status_json" | sed -n 's/.*"instance_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
       printf '\nSetup complete! Instance ID: %s\n' "$instance_id"
-      printf 'Your oore.build dev instance is ready.\n\n'
+      printf 'Your Oore dev instance is ready.\n\n'
       local backend_url="$OORE_DEV_DAEMON_URL"
       if [[ -n "$OORE_DEV_PUBLIC_TUNNEL_URL" ]]; then
         backend_url="$OORE_DEV_PUBLIC_TUNNEL_URL"
@@ -371,4 +371,3 @@ main() {
 }
 
 main "$@"
-

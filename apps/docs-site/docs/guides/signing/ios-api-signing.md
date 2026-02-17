@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Use App Store Connect API for automatic iOS signing in oore.build."
+description: "Use App Store Connect API for automatic iOS signing in Oore CI."
 ---
 
 # iOS App Store Connect API Signing
 
-Use the App Store Connect API to let oore.build automatically manage certificates and provisioning profiles.
+Use the App Store Connect API to let Oore CI automatically manage certificates and provisioning profiles.
 
 ## What you need
 
@@ -18,7 +18,7 @@ Use the App Store Connect API to let oore.build automatically manage certificate
 
 1. Go to [App Store Connect — Users and Access — Keys](https://appstoreconnect.apple.com/access/api)
 2. Click **Generate API Key**
-3. Set a name (e.g., "oore.build signing")
+3. Set a name (e.g., "Oore CI signing")
 4. Select the **Developer** or **Admin** role
 5. Click **Generate**
 6. Download the `.p8` key file (you can only download it once)
@@ -26,7 +26,7 @@ Use the App Store Connect API to let oore.build automatically manage certificate
 
 For detailed instructions, see [Creating API Keys for App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi/creating_api_keys_for_app_store_connect_api).
 
-## 2. Configure in oore.build
+## 2. Configure in Oore CI
 
 1. Open your project in the web UI
 2. Go to **Pipelines** and select the pipeline
@@ -43,7 +43,7 @@ For detailed instructions, see [Creating API Keys for App Store Connect API](htt
 After configuring the API key:
 
 1. Click **Sync** in the signing configuration
-2. oore.build connects to App Store Connect and fetches available certificates and profiles
+2. Oore CI connects to App Store Connect and fetches available certificates and profiles
 3. Select the certificate and profile to use for this pipeline
 
 This calls `POST /v1/pipelines/{pipeline_id}/ios-signing/sync`.
@@ -56,9 +56,9 @@ Trigger a build. The runner uses the synced certificate and profile for signing.
 
 API signing is appropriate when:
 
-- You want oore.build to manage certificates and profiles automatically
+- You want Oore CI to manage certificates and profiles automatically
 - You have many pipelines or frequently rotate signing assets
-- You want to register test devices through oore.build
+- You want to register test devices through Oore CI
 
 ## API endpoints
 

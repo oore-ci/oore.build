@@ -675,7 +675,7 @@ pub async fn github_installed(
   <div class="container">
     <div class="spinner"></div>
     <p>GitHub App installed successfully!</p>
-    <p style="color: #a1a1a1; font-size: 0.875rem;">Syncing and redirecting to oore.build...</p>
+    <p style="color: #a1a1a1; font-size: 0.875rem;">Syncing and redirecting to Oore CI...</p>
     <p style="font-size: 0.75rem; margin-top: 16px;">
       <a href="{redirect_url}">Click here if not redirected</a>
     </p>

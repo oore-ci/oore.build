@@ -1,16 +1,16 @@
 ---
 status: implemented
-description: "Add additional oore.build backend instances to the web UI."
+description: "Add additional Oore CI backend instances to the web UI."
 ---
 
 # Connect to Multiple Backends
 
-The oore.build web UI supports connecting to multiple backend instances simultaneously. Each instance has its own isolated session, query cache, and data.
+The Oore CI web UI supports connecting to multiple backend instances simultaneously. Each instance has its own isolated session, query cache, and data.
 
 ## What you need
 
-- The oore.build web UI running (at `ci.oore.build` or self-hosted)
-- URLs of the oore.build backend instances you want to connect to
+- The Oore CI web UI running (at `ci.oore.build` or self-hosted)
+- URLs of the Oore CI backend instances you want to connect to
 - User accounts on each instance
 
 ## Add an instance

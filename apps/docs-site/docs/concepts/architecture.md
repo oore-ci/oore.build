@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "Understand oore.build system architecture including daemon, CLI, and web UI components."
+description: "Understand Oore CI system architecture including daemon, CLI, and web UI components."
 ---
 
 # System Architecture
 
-This page explains how oore.build's components fit together and why the system is designed this way.
+This page explains how Oore CI's components fit together and why the system is designed this way.
 
 ## Components
 
-oore.build consists of three components that communicate over HTTP:
+Oore CI consists of three components that communicate over HTTP:
 
 ```
 ┌─────────────┐     HTTPS/API     ┌──────────────┐
@@ -91,7 +91,7 @@ The hosted UI at `ci.oore.build` is UI-only — it connects to the customer's se
 
 ## Why self-hosted?
 
-Mobile CI requires macOS hardware for iOS and macOS builds (Xcode is macOS-only). Rather than renting Mac hardware from cloud providers, oore.build runs on your own Mac:
+Mobile CI requires macOS hardware for iOS and macOS builds (Xcode is macOS-only). Rather than renting Mac hardware from cloud providers, Oore CI runs on your own Mac:
 
 - **Signing keys stay on your hardware** — no need to upload certificates to a third party
 - **Build artifacts are local** — distribute internally without external hosting
@@ -100,14 +100,14 @@ Mobile CI requires macOS hardware for iOS and macOS builds (Xcode is macOS-only)
 
 ## Why OIDC (default)?
 
-In Remote mode, oore.build defaults to OIDC (`remote_auth_mode=oidc`) for authentication on any non-loopback access path.
+In Remote mode, Oore CI defaults to OIDC (`remote_auth_mode=oidc`) for authentication on any non-loopback access path.
 If you deploy behind an identity-aware proxy, you can opt into `remote_auth_mode=trusted_proxy` so user identity is asserted by a trusted proxy header (with peer validation).
 
 OIDC (default) uses your existing identity provider:
 
 - **No password storage** — eliminates an entire class of security concerns
 - **Single sign-on** — users authenticate with the same credentials they use everywhere else
-- **Centralized access control** — disable a user in your IdP and they lose access to oore.build
+- **Centralized access control** — disable a user in your IdP and they lose access to Oore CI
 - **Enterprise ready** — works with Google Workspace, Okta, Azure AD, Auth0, Keycloak, and any OIDC-compliant provider
 
 The daemon also supports loopback-only local login (no OIDC) for local-first onboarding and local operator access (auto-bootstrap requires Local Only mode).

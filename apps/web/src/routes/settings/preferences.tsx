@@ -1308,7 +1308,7 @@ function PreferencesPage() {
                             />
                           </FormControl>
                           <FormDescription>
-                            Keep this bucket private. oore.build serves files
+                            Keep this bucket private. Oore serves files
                             via time-limited signed URLs.
                           </FormDescription>
                           <FormMessage />

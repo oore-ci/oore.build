@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Build lifecycle states and transitions in oore.build."
+description: "Build lifecycle states and transitions in Oore CI."
 ---
 
 # Build States
 
-Every build in oore.build transitions through a defined set of states from creation to completion.
+Every build in Oore CI transitions through a defined set of states from creation to completion.
 
 ## States
 

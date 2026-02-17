@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for first-run oore.build instance setup and configuration."
+description: "API endpoints for first-run Oore CI instance setup and configuration."
 ---
 
 # Setup API
@@ -34,7 +34,7 @@ GET /v1/public/setup-status
 
 | Field | Type | Description |
 |---|---|---|
-| `instance_id` | `string` | UUID of this oore.build instance |
+| `instance_id` | `string` | UUID of this Oore CI instance |
 | `state` | `string` | Current setup state: `uninitialized`, `bootstrap_pending`, `idp_configured`, `owner_created`, or `ready` |
 | `setup_mode` | `boolean` | `true` when setup is not yet complete |
 | `is_configured` | `boolean` | `true` when state is `ready` |

@@ -5,7 +5,7 @@ description: "CLI reference for the oore operator tool including all commands an
 
 # CLI Reference
 
-oore.build provides two command-line tools:
+Oore CI provides two command-line tools:
 
 - **`oored`** — the daemon (control plane and API server)
 - **`oore`** — the operator CLI for setup, administration, and daily use

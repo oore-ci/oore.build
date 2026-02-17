@@ -1,15 +1,15 @@
 ---
 status: implemented
-description: "How the oore.build web UI manages connections to multiple backend instances."
+description: "How the Oore CI web UI manages connections to multiple backend instances."
 ---
 
 # Multi-Instance Architecture
 
-The oore.build web UI supports connecting to multiple backend instances from a single browser session. This page explains how instance isolation works and why it's designed this way.
+The Oore CI web UI supports connecting to multiple backend instances from a single browser session. This page explains how instance isolation works and why it's designed this way.
 
 ## Why multi-instance?
 
-Teams often run separate oore.build instances for different purposes:
+Teams often run separate Oore CI instances for different purposes:
 
 - **Production** and **staging** environments
 - Separate instances per **team** or **department**

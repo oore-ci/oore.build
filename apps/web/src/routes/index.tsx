@@ -248,11 +248,11 @@ function IndexPage() {
             <div className="mx-auto flex size-14 items-center justify-center">
               <img
                 src="/logo.svg"
-                alt="oore.build logo"
+                alt="Oore CI logo"
                 className="size-full"
               />
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">oore.build</h1>
+            <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
             <p className="text-sm text-muted-foreground">
               Self-hosted mobile CI and app distribution platform.
               <br />

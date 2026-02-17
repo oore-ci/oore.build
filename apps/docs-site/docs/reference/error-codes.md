@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "Complete list of machine-readable error codes returned by the oore.build API."
+description: "Complete list of machine-readable error codes returned by the Oore CI API."
 ---
 
 # Error Codes
 
-All error codes returned by the oore.build API, consolidated from all endpoint groups.
+All error codes returned by the Oore CI API, consolidated from all endpoint groups.
 
 ## Error format
 

@@ -5,7 +5,7 @@ description: "CLI reference for the oore setup command and bootstrap token manag
 
 # oore setup
 
-The `setup` command configures a fresh oore.build instance. It can be run interactively (default) or used to generate bootstrap tokens with the `token` subcommand.
+The `setup` command configures a fresh Oore CI instance. It can be run interactively (default) or used to generate bootstrap tokens with the `token` subcommand.
 
 ## Interactive setup
 
@@ -95,7 +95,7 @@ If the browser cannot be opened automatically, the authorization URL is printed 
   Completing setup...
   > Setup complete! Instance ID: 550e8400-e29b-41d4-a716-446655440000
 
-Your oore.build instance is ready.
+Your Oore CI instance is ready.
 ```
 
 Calls `POST /v1/setup/complete` with Bearer auth.
@@ -126,7 +126,7 @@ If the daemon is already past certain steps (e.g., OIDC was configured in a prev
 oore setup token [--ttl <duration>] [--json] [--state-file <path>]
 ```
 
-Generate a one-time bootstrap token for initializing an oore.build instance. This token is used as the first step in the setup process.
+Generate a one-time bootstrap token for initializing an Oore CI instance. This token is used as the first step in the setup process.
 
 ### Flags
 

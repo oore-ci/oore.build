@@ -1,6 +1,6 @@
 ---
 status: placeholder
-description: "CLI reference for oore login to authenticate with an oore.build instance."
+description: "CLI reference for oore login to authenticate with an Oore CI instance."
 ---
 
 # oore login
@@ -9,7 +9,7 @@ description: "CLI reference for oore login to authenticate with an oore.build in
 This command is defined in the platform contract but has not been implemented yet. The interface described below reflects the planned behavior.
 :::
 
-Authenticate the CLI with a running oore.build instance.
+Authenticate the CLI with a running Oore CI instance.
 
 ## Planned synopsis
 

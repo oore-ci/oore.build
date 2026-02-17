@@ -135,9 +135,9 @@ remove_from_path() {
 
     if grep -qF "$BIN_DIR" "$rc" 2>/dev/null; then
       log "Removing PATH entry from $rc..."
-      # Remove the "# oore.build" comment line and the export PATH line
+      # Remove install marker comment line(s) and the export PATH line
       local tmp="$rc.oore-uninstall.tmp"
-      grep -v "# oore.build" "$rc" | grep -vF "$BIN_DIR" > "$tmp" || true
+      grep -v -e "# oore.build" -e "# Oore CI" "$rc" | grep -vF "$BIN_DIR" > "$tmp" || true
       mv "$tmp" "$rc"
     fi
   done
@@ -171,11 +171,11 @@ remove_data_dir() {
 
 main() {
   if [[ ! -d "$OORE_INSTALL_ROOT" ]] && ! grep -rqF "$BIN_DIR" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" 2>/dev/null; then
-    log "oore.build does not appear to be installed."
+    log "Oore CI does not appear to be installed."
     exit 0
   fi
 
-  log "This will uninstall oore.build from your system."
+  log "This will uninstall Oore CI from your system."
   log ""
   log "  Install dir: $OORE_INSTALL_ROOT"
   log "  Data dir:    $DATA_DIR"
@@ -196,7 +196,7 @@ main() {
   remove_data_dir
 
   log ""
-  log "oore.build has been uninstalled."
+  log "Oore CI has been uninstalled."
   log "Open a new terminal for PATH changes to take effect."
 }
 

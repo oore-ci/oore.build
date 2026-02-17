@@ -1,16 +1,16 @@
 ---
 status: implemented
-description: "Invite team members to your oore.build instance with role-based access control."
+description: "Invite team members to your Oore CI instance with role-based access control."
 ---
 
 # Invite Your Team
 
-This tutorial walks you through inviting team members to your oore.build instance and assigning them appropriate roles.
+This tutorial walks you through inviting team members to your Oore CI instance and assigning them appropriate roles.
 
 ## What you need
 
 - **Role**: owner or admin
-- A running oore.build instance in `ready` state
+- A running Oore CI instance in `ready` state
 - Your team members' email addresses (must match their OIDC provider accounts)
 
 ## 1. Open user management
