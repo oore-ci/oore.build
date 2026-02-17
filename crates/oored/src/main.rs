@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::{ffi::OsStr, fs};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -102,14 +104,46 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
     info!(listen = %addr, "starting oored daemon");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .await
-        .context("oored server failed")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .context("oored server failed")?;
 
     // Best-effort flush of OTel spans on shutdown
     observability::shutdown_tracing();
 
     Ok(())
+}
+
+fn read_trimmed_file(path: &std::path::Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn resolve_install_root() -> anyhow::Result<PathBuf> {
+    if let Ok(val) = std::env::var("OORE_INSTALL_ROOT") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(bin_dir) = exe.parent()
+        && bin_dir.file_name() == Some(OsStr::new("bin"))
+        && let Some(root) = bin_dir.parent()
+    {
+        return Ok(root.to_path_buf());
+    }
+
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    Ok(home.join(".oore"))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -127,7 +161,12 @@ fn main() -> anyhow::Result<()> {
             println!("uninstall-service placeholder (launchd integration pending)");
         }
         Commands::Version => {
-            println!("{}", env!("CARGO_PKG_VERSION"));
+            let install_root = resolve_install_root()?;
+            if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {
+                println!("{v}");
+            } else {
+                println!("{}", env!("CARGO_PKG_VERSION"));
+            }
         }
     }
 

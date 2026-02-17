@@ -78,9 +78,12 @@ The `details` field is omitted when not applicable.
 Default allowed origins:
 
 - `http://localhost:3000`
-- `https://ci.oore.build`
+- `http://127.0.0.1:3000`
+- `http://localhost:4173`
+- `http://127.0.0.1:4173`
 
-Override with environment variables:
+Primary configuration lives in Settings API / Preferences UI. Environment
+variables still work as fallback defaults:
 
 - `OORE_CORS_ORIGINS` — comma-separated list (preferred)
 - `OORE_CORS_ORIGIN` — single origin (backward compatible)

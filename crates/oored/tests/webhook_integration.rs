@@ -16,6 +16,7 @@ async fn test_github_webhook_happy_path() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gh-test-secret-happy";
@@ -59,6 +60,7 @@ async fn test_github_webhook_idempotency() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gh-test-secret-idemp";
@@ -117,6 +119,7 @@ async fn test_github_webhook_invalid_signature() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let _integration_id = common::seed_github_integration(&pool, &user_id, "real-secret").await;
@@ -147,6 +150,7 @@ async fn test_github_webhook_secret_rotation_refreshes_cache_without_restart() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let old_secret = "gh-rotate-old-secret";
@@ -264,6 +268,7 @@ async fn test_github_webhook_invalid_json() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gh-test-secret-badjson";
@@ -295,6 +300,7 @@ async fn test_gitlab_webhook_happy_path() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gl-test-secret-happy";
@@ -336,6 +342,7 @@ async fn test_gitlab_webhook_idempotency() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gl-test-idemp";
@@ -391,6 +398,7 @@ async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let old_secret = "gl-rotate-old-secret";
@@ -458,6 +466,7 @@ async fn test_gitlab_webhook_wrong_token() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let _integration_id = common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
@@ -509,6 +518,7 @@ async fn test_gitlab_webhook_stale_event() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gl-stale-secret";
@@ -574,6 +584,7 @@ async fn test_webhook_triggers_only_linked_project() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gh-linked-secret";
@@ -619,6 +630,7 @@ async fn test_webhook_unknown_repo_no_builds() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gh-unknown-repo-secret";
@@ -657,6 +669,7 @@ async fn test_gitlab_callback_rejects_bad_redirect_origin() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let integration_id = common::seed_gitlab_oauth_integration(
@@ -695,6 +708,7 @@ async fn test_gitlab_oauth_failure_keeps_integration_inactive() {
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
     let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
     let integration_id = common::seed_gitlab_oauth_integration(

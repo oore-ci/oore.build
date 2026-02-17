@@ -32,7 +32,10 @@ export const demoIntegrations: Array<Integration> = [
   },
 ]
 
-export const demoInstallations: Record<string, Array<IntegrationInstallation>> = {
+export const demoInstallations: Record<
+  string,
+  Array<IntegrationInstallation>
+> = {
   [INTEGRATION_IDS.github]: [
     {
       id: 'install-001',

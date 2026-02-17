@@ -40,6 +40,8 @@ describe('types', () => {
     const status: SetupStatus = {
       instance_id: 'test',
       state: 'uninitialized',
+      runtime_mode: 'local',
+      remote_auth_mode: 'oidc',
       setup_mode: true,
       is_configured: false,
     }
@@ -201,12 +203,15 @@ describe('types', () => {
 
   it('Instance preferences types can be constructed', () => {
     const prefs: InstancePreferences = {
-      key_storage_mode: 'keychain',
+      key_storage_mode: 'file',
+      runtime_mode: 'local',
+      remote_auth_mode: 'oidc',
       restart_required: true,
       updated_at: 123,
     }
     const response: InstancePreferencesResponse = { preferences: prefs }
-    expect(response.preferences.key_storage_mode).toBe('keychain')
+    expect(response.preferences.key_storage_mode).toBe('file')
+    expect(response.preferences.runtime_mode).toBe('local')
     expect(response.preferences.restart_required).toBe(true)
   })
 })

@@ -49,6 +49,7 @@ export default function ProjectCard({
                 params={{ projectId: project.id }}
               />
             }
+            nativeButton={false}
           >
             <HugeiconsIcon icon={Setting07Icon} size={14} />
           </Button>

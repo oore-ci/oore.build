@@ -12,13 +12,22 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
 import { getSetupStatus } from '@/lib/api'
-import { getConnectivityIssue, isHostedUiOrigin, isMixedContentBlocked } from '@/lib/connectivity'
+import {
+  getConnectivityIssue,
+  isHostedUiOrigin,
+  isMixedContentBlocked,
+} from '@/lib/connectivity'
 import { getActiveInstanceOrRedirect } from '@/lib/instance-context'
 import { useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === '127.0.0.1' || hostname === 'localhost'
+}
 
 function maybeAutoAddBackendInstance() {
   const params = new URLSearchParams(window.location.search)
@@ -37,10 +46,9 @@ function maybeAutoAddBackendInstance() {
   if (Object.keys(store.instances).length > 0) return
 
   // Auto-add the instance
-  const id = store.addInstance(
-    new URL(backendUrl).hostname,
-    backendUrl.replace(/\/+$/, ''),
-  )
+  const parsed = new URL(backendUrl)
+  const label = isLoopbackHost(parsed.hostname) ? 'Local' : parsed.hostname
+  const id = store.addInstance(label, backendUrl.replace(/\/+$/, ''))
   store.setActiveInstance(id)
 
   // Scrub the query parameter from the URL
@@ -73,12 +81,16 @@ export const Route = createFileRoute('/setup')({
   errorComponent: SetupError,
 })
 
-const STEPS = ['Token', 'OIDC', 'Owner', 'Complete'] as const
-
-function StepIndicator({ currentStep }: { currentStep: number }) {
+function StepIndicator({
+  currentStep,
+  steps,
+}: {
+  currentStep: number
+  steps: Array<string>
+}) {
   return (
     <div className="flex items-center justify-center gap-1">
-      {STEPS.map((label, index) => {
+      {steps.map((label, index) => {
         const isActive = index === currentStep
         const isCompleted = index < currentStep
 
@@ -117,8 +129,15 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
 
 function SetupLayout() {
   const currentStep = useSetupStore((s) => s.currentStep)
+  const { data: status } = useSetupStatus()
   const { formatted, isWarning, isExpired } = useSessionCountdown()
   const navigate = useNavigate()
+  const steps =
+    status?.runtime_mode === 'local'
+      ? ['Token', 'Mode', 'Owner', 'Complete']
+      : status?.remote_auth_mode === 'trusted_proxy'
+        ? ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
+        : ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
 
   useEffect(() => {
     if (isExpired) {
@@ -133,7 +152,7 @@ function SetupLayout() {
       <div className="w-full max-w-lg space-y-8">
         <div className="text-center space-y-4">
           <div className="mx-auto flex size-14 items-center justify-center">
-            <img src="/logo.svg" alt="oore.build logo" className="size-7" />
+            <img src="/logo.svg" alt="Oore logo" className="size-full" />
           </div>
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight">
@@ -145,7 +164,7 @@ function SetupLayout() {
           </div>
         </div>
 
-        <StepIndicator currentStep={currentStep} />
+        <StepIndicator currentStep={currentStep} steps={steps} />
 
         {formatted && !isExpired ? (
           <div className="text-center">
@@ -211,7 +230,9 @@ function SetupError({ error }: { error: Error }) {
               <p className="text-sm text-muted-foreground">
                 Complete first-run setup directly on the backend host:
               </p>
-              <code className="block bg-muted px-2 py-1 text-xs">oore setup</code>
+              <code className="block bg-muted px-2 py-1 text-xs">
+                oore setup
+              </code>
             </div>
 
             <div className="space-y-1">
@@ -226,9 +247,12 @@ function SetupError({ error }: { error: Error }) {
 
             {hostedUi ? (
               <div className="space-y-1">
-                <p className="text-sm font-medium">Use local/self-hosted web UI</p>
+                <p className="text-sm font-medium">
+                  Use local/self-hosted web UI
+                </p>
                 <p className="text-sm text-muted-foreground">
-                  If backend stays local-only, run the bundled local web launcher:
+                  If backend stays local-only, run the bundled local web
+                  launcher:
                 </p>
                 <code className="block bg-muted px-2 py-1 text-xs">
                   oore-web --backend-url {backendUrl}

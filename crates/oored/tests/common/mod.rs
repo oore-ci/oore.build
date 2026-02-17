@@ -41,6 +41,20 @@ pub async fn connect_pool(path: &Path) -> SqlitePool {
     store.pool().clone()
 }
 
+pub async fn set_runtime_mode(pool: &SqlitePool, mode: &str) {
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, created_at, updated_at) \
+         VALUES (1, 'keychain', ?1, ?2, ?2) \
+         ON CONFLICT(id) DO UPDATE SET runtime_mode = excluded.runtime_mode, updated_at = excluded.updated_at",
+    )
+    .bind(mode)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to set runtime mode");
+}
+
 /// Parse a response body as JSON value.
 pub async fn body_json(body: axum::body::Body) -> serde_json::Value {
     let bytes = http_body_util::BodyExt::collect(body)
@@ -164,7 +178,7 @@ pub async fn seed_project_chain(
     )
     .bind(&installation_id)
     .bind(integration_id)
-    .bind(&format!("ext-install-{}", &installation_id[..8]))
+    .bind(format!("ext-install-{}", &installation_id[..8]))
     .bind(now)
     .execute(pool)
     .await
@@ -177,7 +191,7 @@ pub async fn seed_project_chain(
     )
     .bind(&repo_id)
     .bind(&installation_id)
-    .bind(&format!("ext-repo-{}", &repo_id[..8]))
+    .bind(format!("ext-repo-{}", &repo_id[..8]))
     .bind(repo_full_name)
     .bind(now)
     .execute(pool)

@@ -5,7 +5,9 @@ description: "Configure OpenID Connect authentication for oore.build with any OI
 
 # Configure OIDC Authentication
 
-oore.build uses OpenID Connect (OIDC) as its sole authentication mechanism. There are no local passwords — every user signs in through your identity provider.
+oore.build supports OpenID Connect (OIDC) authentication and does not support local passwords.
+
+In Remote mode, OIDC is the default (`remote_auth_mode=oidc`). For local-first onboarding and operator access, the daemon also supports loopback-only local login (no OIDC). If you run behind an identity-aware proxy, you can opt into `remote_auth_mode=trusted_proxy` instead of OIDC.
 
 ## What you need
 

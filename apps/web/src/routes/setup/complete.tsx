@@ -3,7 +3,11 @@ import { useEffect } from 'react'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
-import { useCompleteSetup, useSetupSummary, useSetupStatus } from '@/hooks/use-setup'
+import {
+  useCompleteSetup,
+  useSetupStatus,
+  useSetupSummary,
+} from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
@@ -51,10 +55,11 @@ function CompleteStep() {
 
   const instanceId = completeMutation.data?.instance_id ?? null
   const isComplete = completeMutation.isSuccess
+  const isLocalMode = status?.runtime_mode === 'local'
 
   useEffect(() => {
-    setCurrentStep(3)
-  }, [setCurrentStep])
+    setCurrentStep(isLocalMode ? 3 : 4)
+  }, [isLocalMode, setCurrentStep])
 
   function handleComplete() {
     if (!sessionToken) return
@@ -65,10 +70,10 @@ function CompleteStep() {
   // so the indicator shows all steps as completed
   useEffect(() => {
     if (isComplete) {
-      setCurrentStep(4)
+      setCurrentStep(isLocalMode ? 4 : 5)
       useSetupStore.getState().setSessionToken(null)
     }
-  }, [isComplete, setCurrentStep])
+  }, [isComplete, isLocalMode, setCurrentStep])
 
   return (
     <div className="space-y-4">
@@ -106,7 +111,7 @@ function CompleteStep() {
       ) : (
         <div className="space-y-4">
           {/* Configuration review */}
-          {(status || summary) ? (
+          {status || summary ? (
             <div className="border p-3 space-y-2 text-sm">
               <p className="font-medium text-xs uppercase tracking-wider text-muted-foreground">
                 Configuration Summary
@@ -125,7 +130,9 @@ function CompleteStep() {
               </div>
               {summary?.issuer_url ? (
                 <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground shrink-0">OIDC Issuer</span>
+                  <span className="text-muted-foreground shrink-0">
+                    OIDC Issuer
+                  </span>
                   <code className="text-xs font-mono truncate">
                     {summary.issuer_url}
                   </code>
@@ -134,9 +141,7 @@ function CompleteStep() {
               {summary?.owner_email ? (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Owner</span>
-                  <span className="text-xs">
-                    {summary.owner_email}
-                  </span>
+                  <span className="text-xs">{summary.owner_email}</span>
                 </div>
               ) : null}
             </div>
@@ -146,8 +151,11 @@ function CompleteStep() {
             <AlertTitle>Warning — Irreversible action</AlertTitle>
             <AlertDescription>
               Completing setup will permanently lock down all setup endpoints.
-              This cannot be undone. Make sure your OIDC configuration and owner
-              email are correct before proceeding.
+              This cannot be undone. Make sure your owner details
+              {isLocalMode
+                ? ''
+                : ' and remote authentication configuration'}{' '}
+              are correct before proceeding.
             </AlertDescription>
           </Alert>
 

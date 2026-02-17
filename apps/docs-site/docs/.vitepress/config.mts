@@ -173,6 +173,7 @@ export default defineConfig({
           text: "Getting Started",
           items: [
             { text: "What is oore.build?", link: "/getting-started/" },
+            { text: "Public Alpha (v0.1.x)", link: "/getting-started/public-alpha" },
             { text: "Prerequisites", link: "/getting-started/prerequisites" },
             { text: "Install", link: "/getting-started/install" },
             {

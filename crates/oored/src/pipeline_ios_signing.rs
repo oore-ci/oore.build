@@ -698,10 +698,10 @@ fn reexport_p12_legacy_blocking(
 }
 
 fn generate_profile_filename(bundle_id: &str, profile_uuid: Option<&String>) -> String {
-    if let Some(uuid) = profile_uuid {
-        if !uuid.trim().is_empty() {
-            return format!("{uuid}.mobileprovision");
-        }
+    if let Some(uuid) = profile_uuid
+        && !uuid.trim().is_empty()
+    {
+        return format!("{uuid}.mobileprovision");
     }
     format!("{bundle_id}.mobileprovision")
 }
@@ -1515,15 +1515,9 @@ async fn sync_ios_signing_assets(
             .map(|record| record.certificate_id.clone());
     }
 
-    let should_generate_cert = if selected_certificate_id.is_some() {
-        false
-    } else if existing_p12.is_none() || existing_password.is_none() {
-        matches!(mode, IosSigningMode::Api)
-    } else if p12_metadata.is_some() {
-        matches!(mode, IosSigningMode::Api)
-    } else {
-        false
-    };
+    let should_generate_cert = selected_certificate_id.is_none()
+        && matches!(mode, IosSigningMode::Api)
+        && (existing_p12.is_none() || existing_password.is_none() || p12_metadata.is_some());
 
     let mut generated_certificate = None;
     if should_generate_cert {
@@ -1744,56 +1738,55 @@ async fn sync_ios_signing_assets(
             )
         })?;
         warnings.push("Generated and stored a new iOS distribution certificate bundle from App Store Connect API".to_string());
-    } else if p12_was_reexported {
-        if let (Some(ref reexported_b64), Some(ref reexported_pass)) =
-            (existing_p12.clone(), existing_password.clone())
-        {
-            let p12_encrypted =
-                encrypt_opt(Some(reexported_b64.clone()), encryption_key).map_err(|e| {
-                    error!(error = %e, "failed to encrypt re-exported iOS p12");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "encryption_error",
-                        "Failed to persist re-exported iOS certificate",
-                    )
-                })?;
-            let p12_password_encrypted = encrypt_opt(Some(reexported_pass.clone()), encryption_key)
-                .map_err(|e| {
-                    error!(error = %e, "failed to encrypt re-exported iOS p12 password");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "encryption_error",
-                        "Failed to persist re-exported iOS certificate password",
-                    )
-                })?;
-            let reexported_bytes = decode_b64(reexported_b64).ok();
-            let reexported_fingerprint = reexported_bytes
-                .as_ref()
-                .map(|b| hex::encode(Sha256::digest(b)));
-            sqlx::query(
-                "UPDATE pipeline_ios_signing_settings
-                 SET p12_encrypted = ?1,
-                     p12_password_encrypted = ?2,
-                     p12_fingerprint = ?3,
-                     updated_at = ?4
-                 WHERE id = ?5",
-            )
-            .bind(p12_encrypted)
-            .bind(p12_password_encrypted)
-            .bind(reexported_fingerprint)
-            .bind(now)
-            .bind(&settings.id)
-            .execute(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to store re-exported iOS certificate bundle");
+    } else if p12_was_reexported
+        && let (Some(reexported_b64), Some(reexported_pass)) =
+            (existing_p12.as_ref(), existing_password.as_ref())
+    {
+        let p12_encrypted =
+            encrypt_opt(Some(reexported_b64.clone()), encryption_key).map_err(|e| {
+                error!(error = %e, "failed to encrypt re-exported iOS p12");
                 api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
+                    "encryption_error",
                     "Failed to persist re-exported iOS certificate",
                 )
             })?;
-        }
+        let p12_password_encrypted = encrypt_opt(Some(reexported_pass.clone()), encryption_key)
+            .map_err(|e| {
+                error!(error = %e, "failed to encrypt re-exported iOS p12 password");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption_error",
+                    "Failed to persist re-exported iOS certificate password",
+                )
+            })?;
+        let reexported_bytes = decode_b64(reexported_b64).ok();
+        let reexported_fingerprint = reexported_bytes
+            .as_ref()
+            .map(|b| hex::encode(Sha256::digest(b)));
+        sqlx::query(
+            "UPDATE pipeline_ios_signing_settings
+             SET p12_encrypted = ?1,
+                 p12_password_encrypted = ?2,
+                 p12_fingerprint = ?3,
+                 updated_at = ?4
+             WHERE id = ?5",
+        )
+        .bind(p12_encrypted)
+        .bind(p12_password_encrypted)
+        .bind(reexported_fingerprint)
+        .bind(now)
+        .bind(&settings.id)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to store re-exported iOS certificate bundle");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to persist re-exported iOS certificate",
+            )
+        })?;
     }
 
     for (bundle_id, profile_bytes, parsed_profile, created_profile) in generated_profiles {

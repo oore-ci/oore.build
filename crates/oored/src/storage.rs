@@ -145,7 +145,7 @@ pub struct LocalStorageClient {
 }
 
 impl LocalStorageClient {
-    pub fn new(base_dir: PathBuf) -> anyhow::Result<Self> {
+    pub fn new(base_dir: PathBuf, public_base_url: Option<String>) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&base_dir).with_context(|| {
             format!(
                 "failed to create local artifacts directory: {}",
@@ -153,8 +153,11 @@ impl LocalStorageClient {
             )
         })?;
 
-        let public_base_url = std::env::var("OORE_PUBLIC_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8787".to_string())
+        let public_base_url = public_base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("http://127.0.0.1:8787")
             .trim_end_matches('/')
             .to_string();
 
@@ -390,6 +393,7 @@ fn default_local_artifacts_dir() -> PathBuf {
 
 pub fn build_backend_from_config(
     config: &EffectiveStorageConfig,
+    public_base_url: Option<String>,
 ) -> anyhow::Result<StorageBackend> {
     match config.provider {
         ArtifactStorageProvider::Disabled => Ok(StorageBackend::Disabled),
@@ -400,7 +404,7 @@ pub fn build_backend_from_config(
                 .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(default_local_artifacts_dir);
-            let client = LocalStorageClient::new(base_dir)?;
+            let client = LocalStorageClient::new(base_dir, public_base_url)?;
             Ok(StorageBackend::Local(Arc::new(client)))
         }
         ArtifactStorageProvider::S3 | ArtifactStorageProvider::R2 => {
@@ -515,9 +519,13 @@ pub async fn load_effective_config(
     })
 }
 
-pub async fn load_backend(pool: &sqlx::SqlitePool, encryption_key: &[u8]) -> StorageBackend {
+pub async fn load_backend(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    public_base_url: Option<String>,
+) -> StorageBackend {
     match load_effective_config(pool, encryption_key).await {
-        Ok(cfg) => match build_backend_from_config(&cfg) {
+        Ok(cfg) => match build_backend_from_config(&cfg, public_base_url) {
             Ok(backend) => backend,
             Err(e) => {
                 error!(error = %e, "failed to build artifact storage backend; using disabled backend");
