@@ -26,10 +26,9 @@ PAGES_PROJECT_DOCS ?= oore-docs
 PAGES_BRANCH ?=
 
 # If PAGES_BRANCH is set (e.g. alpha/beta), deploy to a Pages preview branch.
-PAGES_BRANCH_FLAG :=
-ifneq ($(strip $(PAGES_BRANCH)),)
-PAGES_BRANCH_FLAG := --branch=$(PAGES_BRANCH)
-endif
+# Important: avoid leaving behind extra whitespace in the shell command when unset.
+# `$(if ...)` preserves the leading space in the "then" clause, while plain `:=` assignments do not.
+PAGES_BRANCH_FLAG :=$(if $(strip $(PAGES_BRANCH)), --branch=$(PAGES_BRANCH),)
 
 # ── Frontend: Web App ─────────────────────────────────────────────
 dev-web:
@@ -39,13 +38,13 @@ build-web:
 	bun run build:web
 
 deploy-web: build-web
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB) $(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 build-demo:
 	cd apps/web && VITE_DEMO_MODE=true bun run build
 
 deploy-demo: build-demo
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO) $(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 test-web:
 	cd apps/web && bun run test
@@ -70,10 +69,10 @@ build-site:
 	bun run build:site
 
 deploy-site: build-site
-	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE) $(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 deploy-docs: build-docs
-	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS) $(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 test-docs:
 	cd apps/docs-site && bun run test
