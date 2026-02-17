@@ -77,3 +77,5 @@ Rules:
   - OOR-61: https://linear.app/oorebuild/issue/OOR-61/beta-readiness-fix-linttest-gates-webdocscli
 - Web: switched Zod imports to use the default export to avoid CI/runtime edge cases where the named `z` import is undefined.
   - OOR-61: https://linear.app/oorebuild/issue/OOR-61/beta-readiness-fix-linttest-gates-webdocscli
+- Public alpha release docs: added a first-time onboarding “Public Alpha (v0.1.x)” page and updated docs homepage wording to reflect remote-vs-loopback auth reality.
+  - OOR-62: https://linear.app/oorebuild/issue/OOR-62/public-alpha-release-messaging-onboarding-checklist-docs

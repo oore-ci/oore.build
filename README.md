@@ -39,6 +39,10 @@ For source development, also install [Rust](https://rustup.rs/) and [Bun](https:
 curl -fsSL https://oore.build/install | bash
 ```
 
+Public alpha onboarding guide (common first-time blockers + fastest paths):
+
+- https://docs.oore.build/getting-started/public-alpha
+
 Install prerelease channels:
 
 ```bash
