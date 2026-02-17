@@ -70,23 +70,25 @@ If `OORE_NONINTERACTIVE=1` and `OORE_START_DAEMON` is not set, daemon startup is
 ## Verify installation
 
 ```bash
-~/.oore/bin/oored version
-~/.oore/bin/oore version
+oored version
+oore version
 ```
+
+If `oore`/`oored` are not found, open a new terminal (so your shell picks up PATH changes) or use the full path under `~/.oore/bin`.
 
 ## Update (self-update)
 
 `oore update` downloads the latest release for your installed channel and updates binaries in-place.
 
 ```bash
-~/.oore/bin/oore update --check
-~/.oore/bin/oore update
+oore update --check
+oore update
 ```
 
 Override channel explicitly:
 
 ```bash
-~/.oore/bin/oore update --channel alpha
+oore update --channel alpha
 ```
 
 ## Next step: choose setup path
@@ -96,9 +98,9 @@ Before using hosted UI, ensure your backend is HTTPS-reachable from the browser.
 
 If your backend is local-only:
 
-- Use CLI setup: `~/.oore/bin/oore setup`, or
+- Use CLI setup: `oore setup`, or
 - expose it via tunnel first (for example `cloudflared tunnel --url http://127.0.0.1:8787`), or
-- run local frontend: `~/.oore/bin/oore-web --backend-url http://127.0.0.1:8787`.
+- run local frontend: `oore-web --backend-url http://127.0.0.1:8787`.
   In the local web UI, add an instance and leave **Backend URL** empty so requests use the built-in proxy.
 
 For hosted setup, open [ci.oore.build](https://ci.oore.build), add your backend URL, and complete setup.  
@@ -143,7 +145,7 @@ cat ~/.oore/logs/oored.log
 Then run diagnostics:
 
 ```bash
-~/.oore/bin/oore doctor
+oore doctor
 ```
 
 ### Permission denied under `~/.oore`

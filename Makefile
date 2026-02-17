@@ -1,6 +1,7 @@
 .PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
 	       test-web lint-web fix-web \
 	       test-docs lint-docs fix-docs test-rust \
+	       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
 	       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 	       docs-check ui-init install-local validate gen-openapi \
@@ -121,6 +122,19 @@ install-local:
 test-rust:
 	cargo test -p oored --features test-support
 
+# ── Rust: Lint/Fmt/Clippy/Test ───────────────────────────────────
+fmt-rust:
+	cargo fmt
+
+fmt-rust-check:
+	cargo fmt --check
+
+clippy-rust:
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+test-rust-workspace:
+	cargo test --workspace
+
 # Release automation now lives in Woodpecker (tag -> GitHub release).
 release-local:
 	@echo "Use Woodpecker tag pipeline to publish releases."
@@ -148,4 +162,8 @@ build: build-web build-docs build-site cargo-check
 
 check: lint-web cargo-check
 
-validate: docs-check build-web build-docs build-site cargo-check
+lint: lint-web lint-docs fmt-rust-check
+
+test: test-web test-docs test-rust-workspace
+
+validate: docs-check lint test clippy-rust build-web build-docs build-site cargo-check

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Folder02Icon } from '@hugeicons/core-free-icons'
@@ -162,7 +162,14 @@ export default function CreateProjectDialog({
 
     // Keep project creation unblocked if remote mode has no synced repos.
     setSourceKind('local')
-  }, [open, isRemoteMode, sourceKind, sourceKindTouched, reposLoading, hasRepos])
+  }, [
+    open,
+    isRemoteMode,
+    sourceKind,
+    sourceKindTouched,
+    reposLoading,
+    hasRepos,
+  ])
 
   useEffect(() => {
     if (!open) return
@@ -410,8 +417,8 @@ export default function CreateProjectDialog({
                     </Select>
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      No source repositories available. Connect a source and sync
-                      repositories first.
+                      No source repositories available. Connect a source and
+                      sync repositories first.
                     </p>
                   )}
                 </TabsContent>

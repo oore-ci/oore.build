@@ -308,10 +308,10 @@ async fn project_trigger_mode(
 fn validate_concurrency(cp: &ConcurrencyPolicy) -> Vec<String> {
     let mut errors = Vec::new();
 
-    if let Some(max) = cp.max_concurrent {
-        if !(1..=100).contains(&max) {
-            errors.push("max_concurrent must be between 1 and 100".to_string());
-        }
+    if let Some(max) = cp.max_concurrent
+        && !(1..=100).contains(&max)
+    {
+        errors.push("max_concurrent must be between 1 and 100".to_string());
     }
 
     errors

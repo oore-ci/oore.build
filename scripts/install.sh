@@ -242,17 +242,59 @@ resolve_latest_channel_tag_from_list() {
   return 1
 }
 
+resolve_latest_stable_tag_from_list() {
+  local json_file="$1"
+
+  # The GitHub API returns releases ordered newest-first.
+  # We'll pick the first non-draft, non-prerelease tag.
+  local tag=""
+  local draft=""
+  local prerelease=""
+  local line=""
+  while IFS= read -r line; do
+    if [[ -z "$tag" ]]; then
+      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
+    fi
+    if [[ -z "$draft" ]]; then
+      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$line" | head -n1)"
+    fi
+    if [[ -z "$prerelease" ]]; then
+      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$line" | head -n1)"
+    fi
+
+    if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
+      if [[ "$draft" == "false" && "$prerelease" == "false" ]]; then
+        printf '%s' "$tag"
+        return 0
+      fi
+      tag=""
+      draft=""
+      prerelease=""
+    fi
+  done < "$json_file"
+
+  return 1
+}
+
 resolve_release_tag() {
   local tag=""
   if [[ "$OORE_VERSION" == "latest" ]]; then
     if [[ "$OORE_CHANNEL" == "stable" ]]; then
       local manifest_file="$TMP_DIR/latest.json"
-      curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL" \
-        || die "Unable to fetch release manifest: $OORE_RELEASE_MANIFEST_URL"
+      if curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL"; then
+        # GitHub API returns "tag_name": "vX.Y.Z"
+        tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
+        [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
+      else
+        # GitHub returns 404 when there are no releases yet.
+        local list_file="$TMP_DIR/releases.json"
+        log "No stable release manifest found. Falling back to release list."
+        curl -fsSL --retry 3 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
+          || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
 
-      # GitHub API returns "tag_name": "vX.Y.Z"
-      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
-      [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
+        tag="$(resolve_latest_stable_tag_from_list "$list_file" || true)"
+        [[ -n "$tag" ]] || die "No stable releases found. Try a prerelease channel: OORE_CHANNEL=beta (or alpha)."
+      fi
     else
       local list_file="$TMP_DIR/releases.json"
       curl -fsSL --retry 3 --output "$list_file" "$OORE_RELEASES_LIST_URL" \

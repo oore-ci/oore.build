@@ -177,10 +177,10 @@ fn parse_ip_token(raw: &str) -> Option<IpAddr> {
 
     // IPv6 with port (Forwarded spec, best-effort): for="[2001:db8::1]:1234"
     // or XFF variants like: [2001:db8::1]:1234
-    if let Some(rest) = value.strip_prefix('[') {
-        if let Some(end) = rest.find(']') {
-            return rest[..end].parse::<IpAddr>().ok();
-        }
+    if let Some(rest) = value.strip_prefix('[')
+        && let Some(end) = rest.find(']')
+    {
+        return rest[..end].parse::<IpAddr>().ok();
     }
 
     // Raw IP.
@@ -189,12 +189,11 @@ fn parse_ip_token(raw: &str) -> Option<IpAddr> {
     }
 
     // IPv4 with port (best-effort)
-    if value.contains('.') {
-        if let Some((ip_part, _port)) = value.rsplit_once(':') {
-            if let Ok(ip) = ip_part.parse::<IpAddr>() {
-                return Some(ip);
-            }
-        }
+    if value.contains('.')
+        && let Some((ip_part, _port)) = value.rsplit_once(':')
+        && let Ok(ip) = ip_part.parse::<IpAddr>()
+    {
+        return Some(ip);
     }
 
     None
@@ -612,14 +611,14 @@ async fn configure_oidc(
         ));
     }
 
-    if let Some(ref secret) = req.client_secret {
-        if secret.is_empty() || secret.len() > 1024 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "client_secret must be between 1 and 1024 characters",
-            ));
-        }
+    if let Some(ref secret) = req.client_secret
+        && (secret.is_empty() || secret.len() > 1024)
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "client_secret must be between 1 and 1024 characters",
+        ));
     }
 
     let store = state.store.lock().await;
@@ -1739,10 +1738,10 @@ async fn complete_setup(
     }
 
     let now = now_unix();
-    if let Some(ref mut owner) = sf.owner {
-        if owner.oidc_subject.is_none() {
-            owner.oidc_subject = Some(local_subject_for_email(&owner.email));
-        }
+    if let Some(owner) = sf.owner.as_mut()
+        && owner.oidc_subject.is_none()
+    {
+        owner.oidc_subject = Some(local_subject_for_email(&owner.email));
     }
     sf.setup_state = SetupState::Ready;
     sf.setup_session = None; // Clear session on completion

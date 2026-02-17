@@ -178,7 +178,7 @@ pub async fn seed_project_chain(
     )
     .bind(&installation_id)
     .bind(integration_id)
-    .bind(&format!("ext-install-{}", &installation_id[..8]))
+    .bind(format!("ext-install-{}", &installation_id[..8]))
     .bind(now)
     .execute(pool)
     .await
@@ -191,7 +191,7 @@ pub async fn seed_project_chain(
     )
     .bind(&repo_id)
     .bind(&installation_id)
-    .bind(&format!("ext-repo-{}", &repo_id[..8]))
+    .bind(format!("ext-repo-{}", &repo_id[..8]))
     .bind(repo_full_name)
     .bind(now)
     .execute(pool)

@@ -5,13 +5,14 @@ mod common;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{self, Request, StatusCode};
 use common::{body_json, connect_pool, create_test_app, now_unix};
 use sqlx::Row;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 fn env_lock() -> &'static Mutex<()> {
@@ -282,7 +283,7 @@ async fn set_owner_created_with_setup_session(
 
 #[tokio::test]
 async fn test_external_access_preflight_reports_failures() {
-    let _env_guard = env_lock().lock().expect("env lock");
+    let _env_guard = env_lock().lock().await;
     let _public_url = EnvVarGuard::unset("OORE_PUBLIC_URL");
     let _cors_origins = EnvVarGuard::unset("OORE_CORS_ORIGINS");
     let _cors_origin = EnvVarGuard::unset("OORE_CORS_ORIGIN");
@@ -329,7 +330,7 @@ async fn test_external_access_preflight_reports_failures() {
 
 #[tokio::test]
 async fn test_external_access_preflight_all_checks_pass_with_valid_config() {
-    let _env_guard = env_lock().lock().expect("env lock");
+    let _env_guard = env_lock().lock().await;
     let _public_url = EnvVarGuard::set("OORE_PUBLIC_URL", "https://external.oore.test");
     let _cors = EnvVarGuard::set(
         "OORE_CORS_ORIGINS",
@@ -442,7 +443,7 @@ async fn test_owner_cannot_enable_external_access_when_preflight_fails() {
 
 #[tokio::test]
 async fn test_owner_can_enable_external_access_and_mode_change_revokes_sessions() {
-    let _env_guard = env_lock().lock().expect("env lock");
+    let _env_guard = env_lock().lock().await;
     let _public_url = EnvVarGuard::set("OORE_PUBLIC_URL", "https://external.oore.test");
     let _cors = EnvVarGuard::set(
         "OORE_CORS_ORIGINS",
@@ -875,7 +876,7 @@ async fn trusted_proxy_login_activates_invited_user() {
 
 #[tokio::test]
 async fn external_access_preflight_uses_trusted_proxy_check_when_selected() {
-    let _env_guard = env_lock().lock().expect("env lock");
+    let _env_guard = env_lock().lock().await;
     let _public_url = EnvVarGuard::set("OORE_PUBLIC_URL", "https://external.oore.test");
     let _cors = EnvVarGuard::set(
         "OORE_CORS_ORIGINS",

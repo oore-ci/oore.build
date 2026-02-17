@@ -227,7 +227,9 @@ function IntegrationsPage() {
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">{integration.provider}</Badge>
+                          <Badge variant="outline">
+                            {integration.provider}
+                          </Badge>
                           <Badge variant="outline">
                             {integration.provider === 'local_git'
                               ? 'Single repo'
@@ -240,7 +242,9 @@ function IntegrationsPage() {
                           >
                             {integration.status}
                           </Badge>
-                          <Badge variant="outline">{integration.auth_mode}</Badge>
+                          <Badge variant="outline">
+                            {integration.auth_mode}
+                          </Badge>
                         </div>
 
                         <p className="truncate text-xs text-muted-foreground">

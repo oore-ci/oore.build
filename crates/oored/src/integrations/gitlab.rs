@@ -218,14 +218,14 @@ pub async fn gitlab_start(
     // Validate mode-specific fields
     match auth_mode {
         "oauth_app" => {
-            if req.client_id.as_ref().map_or(true, |s| s.is_empty()) {
+            if req.client_id.as_ref().is_none_or(|s| s.is_empty()) {
                 return Err(api_err(
                     StatusCode::BAD_REQUEST,
                     "invalid_input",
                     "client_id required for OAuth mode",
                 ));
             }
-            if req.client_secret.as_ref().map_or(true, |s| s.is_empty()) {
+            if req.client_secret.as_ref().is_none_or(|s| s.is_empty()) {
                 return Err(api_err(
                     StatusCode::BAD_REQUEST,
                     "invalid_input",
@@ -234,7 +234,7 @@ pub async fn gitlab_start(
             }
         }
         "personal_token" => {
-            if req.access_token.as_ref().map_or(true, |s| s.is_empty()) {
+            if req.access_token.as_ref().is_none_or(|s| s.is_empty()) {
                 return Err(api_err(
                     StatusCode::BAD_REQUEST,
                     "invalid_input",

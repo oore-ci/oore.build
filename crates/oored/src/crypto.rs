@@ -104,7 +104,7 @@ fn write_key_file(path: &Path, key: &[u8]) -> anyhow::Result<()> {
     }
 
     // Write key with restrictive permissions
-    fs::write(path, &key)
+    fs::write(path, key)
         .with_context(|| format!("failed to write encryption key: {}", path.display()))?;
 
     // Set file permissions to 0o600 (owner read/write only)
@@ -140,11 +140,11 @@ pub fn load_runtime_key_with_mode(mode: KeyStorageMode) -> anyhow::Result<Runtim
         }
 
         let key = load_or_generate_key(&legacy_file_path)?;
-        return Ok(RuntimeKey {
+        Ok(RuntimeKey {
             key,
             source: KeySource::LegacyFile,
             legacy_file_path,
-        });
+        })
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -305,7 +305,7 @@ mod tests {
     fn test_load_or_generate_key_rejects_bad_length() {
         let tmp = tempfile::TempDir::new().unwrap();
         let key_path = tmp.path().join("bad.key");
-        fs::write(&key_path, &[0u8; 16]).unwrap(); // 16 bytes instead of 32
+        fs::write(&key_path, [0u8; 16]).unwrap(); // 16 bytes instead of 32
 
         assert!(load_or_generate_key(&key_path).is_err());
     }

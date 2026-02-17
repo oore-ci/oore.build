@@ -6,9 +6,9 @@ import {
   getSetupStatus,
   getSetupSummary,
   setupLocalOwnerCreate,
-  setupPreferences,
   setupOidcStart,
   setupOidcVerify,
+  setupPreferences,
   setupTrustedProxyClaimOwner,
   setupTrustedProxyConfigure,
   verifyBootstrapToken,
@@ -177,7 +177,7 @@ export function useSetupTrustedProxyConfigure() {
     }: {
       sessionToken: string
       userEmailHeader?: string
-      trustedProxyCidrs: string[]
+      trustedProxyCidrs: Array<string>
       sharedSecret?: string
     }) =>
       setupTrustedProxyConfigure(requireInstance(instance), sessionToken, {

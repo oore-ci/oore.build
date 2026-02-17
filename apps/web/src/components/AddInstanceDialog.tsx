@@ -1,6 +1,6 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -135,7 +135,7 @@ export default function AddInstanceDialog({
               ? 'Connect to an HTTPS-reachable oore.build backend (tunnel or reverse proxy).'
               : localLauncher
                 ? 'Leave Backend URL empty to use the local oore-web proxy to your daemon.'
-              : 'Connect to an oore.build backend. Leave URL empty to use the local dev proxy.'}
+                : 'Connect to an oore.build backend. Leave URL empty to use the local dev proxy.'}
           </DialogDescription>
         </DialogHeader>
 

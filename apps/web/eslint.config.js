@@ -5,6 +5,11 @@ import { tanstackConfig } from '@tanstack/eslint-config'
 export default [
   ...tanstackConfig,
   {
-    ignores: ['eslint.config.js', 'prettier.config.js', 'public/mockServiceWorker.js'],
+    ignores: [
+      'eslint.config.js',
+      'prettier.config.js',
+      'public/mockServiceWorker.js',
+      'tools/oore-web.js',
+    ],
   },
 ]

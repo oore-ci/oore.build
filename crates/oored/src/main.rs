@@ -134,14 +134,12 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
         }
     }
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            if bin_dir.file_name() == Some(OsStr::new("bin")) {
-                if let Some(root) = bin_dir.parent() {
-                    return Ok(root.to_path_buf());
-                }
-            }
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(bin_dir) = exe.parent()
+        && bin_dir.file_name() == Some(OsStr::new("bin"))
+        && let Some(root) = bin_dir.parent()
+    {
+        return Ok(root.to_path_buf());
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;

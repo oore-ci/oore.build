@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -428,7 +428,9 @@ function ProjectDetailPage() {
                     <p className="text-sm text-muted-foreground">
                       No builds yet.
                     </p>
-                    {canTriggerBuild && pipelines.length > 0 && projectHasSource ? (
+                    {canTriggerBuild &&
+                    pipelines.length > 0 &&
+                    projectHasSource ? (
                       <Button size="sm" onClick={() => openTriggerBuild()}>
                         <HugeiconsIcon icon={PlayIcon} size={14} />
                         Trigger first build

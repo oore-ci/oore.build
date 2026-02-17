@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,7 +13,13 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useSetupPreferences, useSetupStatus } from '@/hooks/use-setup'
 import { getApiErrorMessage } from '@/lib/api'
 import {
@@ -78,7 +84,10 @@ function SetupModeStep() {
 
   useEffect(() => {
     if (!status) return
-    form.setValue('mode', toModeValue(status.runtime_mode, status.remote_auth_mode))
+    form.setValue(
+      'mode',
+      toModeValue(status.runtime_mode, status.remote_auth_mode),
+    )
   }, [status, form])
 
   const errorMessage = setupModeMutation.error
@@ -152,7 +161,9 @@ function SetupModeStep() {
                       <SelectValue placeholder="Choose mode" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="local">Local Only (loopback login)</SelectItem>
+                      <SelectItem value="local">
+                        Local Only (loopback login)
+                      </SelectItem>
                       <SelectItem value="remote_oidc">Remote (OIDC)</SelectItem>
                       <SelectItem value="remote_trusted">
                         Remote (Trusted Proxy / Warpgate)

@@ -2,18 +2,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type {
   ConfigureExternalAccessOidcRequest,
-  UpdateExternalAccessNetworkSettingsRequest,
   UpdateArtifactStorageSettingsRequest,
+  UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
 } from '@/lib/types'
 import {
   configureExternalAccessOidc,
+  getArtifactStorageSettings,
   getExternalAccessNetworkSettings,
   getExternalAccessPreflight,
-  getArtifactStorageSettings,
   getInstancePreferences,
-  updateExternalAccessNetworkSettings,
   updateArtifactStorageSettings,
+  updateExternalAccessNetworkSettings,
   updateInstancePreferences,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -161,7 +161,10 @@ export function useUpdateExternalAccessNetworkSettings() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
+        queryKey: [
+          instance?.id ?? '__none__',
+          'external-access-network-settings',
+        ],
       })
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],

@@ -3,10 +3,12 @@ import type {
   ArtifactDownloadLinkResponse,
   ArtifactStorageSettingsResponse,
   BootstrapTokenVerifyResponse,
-  BuildDetailResponse,
   BrowseLocalGitDirectoriesResponse,
+  BuildDetailResponse,
   BuildLogsResponse,
   CancelBuildResponse,
+  ConfigureExternalAccessOidcRequest,
+  ConfigureExternalAccessOidcResponse,
   CreateBuildRequest,
   CreateBuildResponse,
   CreateLocalGitIntegrationRequest,
@@ -15,8 +17,6 @@ import type {
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
-  ConfigureExternalAccessOidcRequest,
-  ConfigureExternalAccessOidcResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
   GitHubAppCompleteRequest,
@@ -33,9 +33,9 @@ import type {
   InviteUserResponse,
   ListArtifactsResponse,
   ListBuildsResponse,
-  ListPipelineIosDevicesResponse,
   ListInstallationsResponse,
   ListIntegrationsResponse,
+  ListPipelineIosDevicesResponse,
   ListPipelinesResponse,
   ListProjectsResponse,
   ListRepositoriesResponse,
@@ -47,22 +47,25 @@ import type {
   OidcConfigureRequest,
   OidcConfigureResponse,
   PipelineAndroidSigningResponse,
-  PipelineIosSigningResponse,
   PipelineDetailResponse,
+  PipelineIosSigningResponse,
   ProjectDetailResponse,
   ReEnableUserResponse,
+  RegisterIosDeviceRequest,
+  RegisterIosDeviceResponse,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
-  SetupPreferencesRequest,
-  SetupPreferencesResponse,
   SetupOidcStartResponse,
   SetupOidcVerifyResponse,
+  SetupPreferencesRequest,
+  SetupPreferencesResponse,
   SetupStatus,
   SetupSummaryResponse,
   SetupTrustedProxyClaimOwnerResponse,
   SetupTrustedProxyConfigureRequest,
   SetupTrustedProxyConfigureResponse,
   SyncInstallationsResponse,
+  SyncPipelineIosSigningResponse,
   TrustedProxySettingsResponse,
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
@@ -79,9 +82,6 @@ import type {
   UserProfileResponse,
   ValidatePipelineRequest,
   ValidatePipelineResponse,
-  RegisterIosDeviceRequest,
-  RegisterIosDeviceResponse,
-  SyncPipelineIosSigningResponse,
 } from '@/lib/types'
 
 // ── Error class ─────────────────────────────────────────────────
@@ -386,7 +386,9 @@ export function localLogin(
   })
 }
 
-export function trustedProxyLogin(baseUrl: string): Promise<LocalLoginResponse> {
+export function trustedProxyLogin(
+  baseUrl: string,
+): Promise<LocalLoginResponse> {
   return request<LocalLoginResponse>(baseUrl, '/v1/auth/trusted-proxy/login', {
     method: 'POST',
   })
@@ -575,9 +577,13 @@ export function listLocalGitIntegrations(
   baseUrl: string,
   token: string,
 ): Promise<ListIntegrationsResponse> {
-  return request<ListIntegrationsResponse>(baseUrl, '/v1/integrations/local-git', {
-    headers: authHeaders(token),
-  })
+  return request<ListIntegrationsResponse>(
+    baseUrl,
+    '/v1/integrations/local-git',
+    {
+      headers: authHeaders(token),
+    },
+  )
 }
 
 export function deleteLocalGitIntegration(
@@ -585,14 +591,10 @@ export function deleteLocalGitIntegration(
   token: string,
   id: string,
 ): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    baseUrl,
-    `/v1/integrations/local-git/${id}`,
-    {
-      method: 'DELETE',
-      headers: authHeaders(token),
-    },
-  )
+  return request<{ ok: boolean }>(baseUrl, `/v1/integrations/local-git/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
 }
 
 // ── Runner API ─────────────────────────────────────────────────

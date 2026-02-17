@@ -3,7 +3,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, CreateProjectRequest, CreateProjectResponse, ListProjectsResponse, Project,
@@ -70,7 +70,7 @@ fn normalize_local_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<Api
     })
 }
 
-fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
+fn assert_git_repo(path: &std::path::Path) -> Result<(), (StatusCode, Json<ApiError>)> {
     let path_str = path.to_string_lossy().into_owned();
 
     let inside = Command::new("git")
@@ -81,19 +81,21 @@ fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
             "--is-inside-work-tree",
         ])
         .output();
-    if let Ok(output) = inside {
-        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
-            return Ok(());
-        }
+    if let Ok(output) = inside
+        && output.status.success()
+        && String::from_utf8_lossy(&output.stdout).trim() == "true"
+    {
+        return Ok(());
     }
 
     let bare = Command::new("git")
         .args(["-C", path_str.as_str(), "rev-parse", "--is-bare-repository"])
         .output();
-    if let Ok(output) = bare {
-        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
-            return Ok(());
-        }
+    if let Ok(output) = bare
+        && output.status.success()
+        && String::from_utf8_lossy(&output.stdout).trim() == "true"
+    {
+        return Ok(());
     }
 
     Err(api_err(
@@ -103,7 +105,7 @@ fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
     ))
 }
 
-fn resolve_default_branch(path: &PathBuf) -> Option<String> {
+fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
     let path_str = path.to_string_lossy().into_owned();
     Command::new("git")
         .args(["-C", path_str.as_str(), "symbolic-ref", "--short", "HEAD"])
@@ -473,7 +475,7 @@ pub async fn list_projects(
 pub async fn get_project(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(project_id): Path<String>,
+    AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<ProjectDetailResponse> {
     check_permission(&state.enforcer, &auth.0.role, "projects", "read").await?;
 
@@ -520,7 +522,7 @@ pub async fn get_project(
 pub async fn update_project(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(project_id): Path<String>,
+    AxumPath(project_id): AxumPath<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> ApiResult<CreateProjectResponse> {
     check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
@@ -544,14 +546,14 @@ pub async fn update_project(
     }
 
     // Validate name if provided
-    if let Some(ref name) = req.name {
-        if name.trim().is_empty() {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "Project name must not be empty",
-            ));
-        }
+    if let Some(ref name) = req.name
+        && name.trim().is_empty()
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Project name must not be empty",
+        ));
     }
 
     // Validate repository_id if provided
@@ -681,7 +683,7 @@ pub async fn update_project(
 pub async fn delete_project(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
-    Path(project_id): Path<String>,
+    AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<serde_json::Value> {
     check_permission(&state.enforcer, &auth.0.role, "projects", "delete").await?;
 

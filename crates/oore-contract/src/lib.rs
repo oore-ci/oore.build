@@ -830,7 +830,7 @@ impl FromStr for TriggerType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct ConcurrencyPolicy {
     #[serde(default)]
     pub cancel_previous: bool,
@@ -838,32 +838,14 @@ pub struct ConcurrencyPolicy {
     pub max_concurrent: Option<u32>,
 }
 
-impl Default for ConcurrencyPolicy {
-    fn default() -> Self {
-        Self {
-            cancel_previous: false,
-            max_concurrent: None,
-        }
-    }
-}
-
 // ── Trigger config ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct TriggerConfig {
     #[serde(default)]
     pub events: Vec<String>,
     #[serde(default)]
     pub branches: Vec<String>,
-}
-
-impl Default for TriggerConfig {
-    fn default() -> Self {
-        Self {
-            events: Vec::new(),
-            branches: Vec::new(),
-        }
-    }
 }
 
 impl TriggerConfig {

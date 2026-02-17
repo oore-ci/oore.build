@@ -178,7 +178,9 @@ export const integrationHandlers = [
 
   http.delete('/v1/integrations/local-git/:id', async ({ params }) => {
     await delay(120)
-    const index = localGitIntegrations.findIndex((item) => item.id === params.id)
+    const index = localGitIntegrations.findIndex(
+      (item) => item.id === params.id,
+    )
     if (index >= 0) {
       localGitIntegrations.splice(index, 1)
     }

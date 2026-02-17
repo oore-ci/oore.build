@@ -85,7 +85,9 @@ function LoginPage() {
     !!token && expiresAt != null && expiresAt > Math.floor(Date.now() / 1000)
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [runtimeMode, setRuntimeMode] = useState<'local' | 'remote' | null>(null)
+  const [runtimeMode, setRuntimeMode] = useState<'local' | 'remote' | null>(
+    null,
+  )
   const [remoteAuthMode, setRemoteAuthMode] = useState<
     'oidc' | 'trusted_proxy' | null
   >(null)
@@ -110,8 +112,7 @@ function LoginPage() {
     : false
   const loopbackLocalPath = uiIsLoopback && backendIsLoopback
   const localLoginAvailable = runtimeMode != null && loopbackLocalPath
-  const localModeNetworkBlocked =
-    runtimeMode === 'local' && !loopbackLocalPath
+  const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
   useEffect(() => {
     if (hasValidToken) {
@@ -182,7 +183,9 @@ function LoginPage() {
       setRemoteAuthMode(status.remote_auth_mode)
 
       const localUi = isLoopbackHostname(window.location.hostname)
-      const localBackend = isLoopbackHostname(resolveBackendHostname(instance.url))
+      const localBackend = isLoopbackHostname(
+        resolveBackendHostname(instance.url),
+      )
       const canUseLoopbackLocalLogin = localUi && localBackend
       if (status.runtime_mode === 'local' && !canUseLoopbackLocalLogin) {
         setError(
@@ -412,7 +415,9 @@ function LoginPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <p className="text-xs font-medium">Expose backend with tunnel</p>
+                  <p className="text-xs font-medium">
+                    Expose backend with tunnel
+                  </p>
                   <code className="block bg-muted px-2 py-1 text-xs">
                     cloudflared tunnel --url {instance.url}
                   </code>
@@ -437,14 +442,16 @@ function LoginPage() {
                   <Spinner className="size-4" />
                   {localLoginAvailable ? 'Signing in...' : 'Redirecting...'}
                 </>
+              ) : localLoginAvailable ? (
+                localModeNetworkBlocked ? (
+                  'Enable External Access first'
+                ) : (
+                  'Sign in locally'
+                )
+              ) : remoteAuthMode === 'trusted_proxy' ? (
+                'Sign in via Trusted Proxy'
               ) : (
-                localLoginAvailable
-                  ? localModeNetworkBlocked
-                    ? 'Enable External Access first'
-                    : 'Sign in locally'
-                  : remoteAuthMode === 'trusted_proxy'
-                    ? 'Sign in via Trusted Proxy'
-                    : 'Sign in with OIDC'
+                'Sign in with OIDC'
               )}
             </Button>
           </CardContent>

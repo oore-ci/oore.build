@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { toast } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  AlertCircleIcon,
   ArrowDown01Icon,
   ArrowRight01Icon,
   CheckmarkCircle02Icon,
-  AlertCircleIcon,
   Folder02Icon,
 } from '@hugeicons/core-free-icons'
 
@@ -22,13 +22,13 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
-  useExternalAccessPreflight,
-  useExternalAccessNetworkSettings,
   useArtifactStorageSettings,
   useConfigureExternalAccessOidc,
-  useUpdateExternalAccessNetworkSettings,
+  useExternalAccessNetworkSettings,
+  useExternalAccessPreflight,
   useInstancePreferences,
   useUpdateArtifactStorageSettings,
+  useUpdateExternalAccessNetworkSettings,
   useUpdateInstancePreferences,
 } from '@/hooks/use-artifact-storage'
 import PageLayout from '@/components/page-layout'
@@ -52,10 +52,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  ApiClientError,
-  getApiErrorMessage,
-} from '@/lib/api'
+import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import {
   Form,
   FormControl,
@@ -136,7 +133,9 @@ const storageSchema = z
       }
 
       const endpointRequired =
-        service === 'cloudflare_r2' || service === 'minio' || service === 'custom'
+        service === 'cloudflare_r2' ||
+        service === 'minio' ||
+        service === 'custom'
       if (endpointRequired && !endpoint) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -294,8 +293,8 @@ function PreferencesPage() {
 
     const region =
       settings.provider === 'r2'
-        ? settings.s3_region ?? 'auto'
-        : settings.s3_region ?? 'us-east-1'
+        ? (settings.s3_region ?? 'auto')
+        : (settings.s3_region ?? 'us-east-1')
 
     storageForm.reset({
       backend_kind,
@@ -358,11 +357,8 @@ function PreferencesPage() {
           ? values.local_base_dir?.trim()
           : undefined,
       s3_bucket:
-        values.backend_kind === 'object'
-          ? values.s3_bucket?.trim()
-          : undefined,
-      s3_region:
-        values.backend_kind === 'object' ? region : undefined,
+        values.backend_kind === 'object' ? values.s3_bucket?.trim() : undefined,
+      s3_region: values.backend_kind === 'object' ? region : undefined,
       s3_endpoint:
         values.backend_kind === 'object'
           ? values.s3_endpoint?.trim() || undefined
@@ -397,7 +393,8 @@ function PreferencesPage() {
             invalid_local_base_dir:
               'Local base directory must be an absolute path.',
             invalid_s3_bucket: 'Bucket is required for object storage.',
-            invalid_s3_endpoint: 'Endpoint is required for this service preset.',
+            invalid_s3_endpoint:
+              'Endpoint is required for this service preset.',
             missing_s3_credentials:
               'Access key ID and secret access key are required for object storage.',
             encryption_error: 'Failed to store credentials securely.',
@@ -408,7 +405,9 @@ function PreferencesPage() {
     })
   }
 
-  function onSubmitExternalAccessNetwork(values: ExternalAccessNetworkFormValues) {
+  function onSubmitExternalAccessNetwork(
+    values: ExternalAccessNetworkFormValues,
+  ) {
     if (!isOwner) return
 
     const allowedOrigins = parseAllowedOriginsInput(values.allowed_origins)
@@ -435,8 +434,7 @@ function PreferencesPage() {
                 'Only the owner can update External Access network settings.',
               external_access_loopback_required:
                 'In Local Only mode, network settings can only be changed from localhost on the host machine.',
-              external_access_https_required:
-                'Public URL must use HTTPS.',
+              external_access_https_required: 'Public URL must use HTTPS.',
               external_access_origin_not_allowed:
                 'Public URL origin must be included in allowed origins.',
               invalid_input:
@@ -566,7 +564,10 @@ function PreferencesPage() {
           } else {
             toast.error(message)
           }
-          if (error instanceof ApiClientError && error.code.startsWith('external_access')) {
+          if (
+            error instanceof ApiClientError &&
+            error.code.startsWith('external_access')
+          ) {
             setReadinessOpen(true)
           }
         },
@@ -672,7 +673,8 @@ function PreferencesPage() {
                       <div>
                         <p className="text-sm font-medium">1. Network</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {networkSettings?.public_url ?? 'Set Public URL and allowed origins.'}
+                          {networkSettings?.public_url ??
+                            'Set Public URL and allowed origins.'}
                         </p>
                       </div>
                       <Badge variant={networkReady ? 'success' : 'outline'}>
@@ -680,7 +682,8 @@ function PreferencesPage() {
                       </Badge>
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">
-                      {networkSettings?.allowed_origins.length ?? 0} allowed origins
+                      {networkSettings?.allowed_origins.length ?? 0} allowed
+                      origins
                     </p>
                     <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
                       Configure
@@ -698,7 +701,9 @@ function PreferencesPage() {
                       <div>
                         <p className="text-sm font-medium">2. Identity</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {oidcReady ? 'OIDC provider configured.' : 'Configure OIDC provider.'}
+                          {oidcReady
+                            ? 'OIDC provider configured.'
+                            : 'Configure OIDC provider.'}
                         </p>
                       </div>
                       <Badge variant={oidcReady ? 'success' : 'outline'}>
@@ -782,7 +787,10 @@ function PreferencesPage() {
                 <CollapsibleContent className="space-y-2">
                   {preflightQuery.data
                     ? preflightQuery.data.checks.map((check) => (
-                        <div key={check.id} className="border border-border/60 p-3">
+                        <div
+                          key={check.id}
+                          className="border border-border/60 p-3"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex items-start gap-2">
                               <HugeiconsIcon
@@ -797,7 +805,9 @@ function PreferencesPage() {
                                 }
                               />
                               <div>
-                                <p className="text-sm font-medium">{check.label}</p>
+                                <p className="text-sm font-medium">
+                                  {check.label}
+                                </p>
                                 <p className="text-xs text-muted-foreground">
                                   {check.ok
                                     ? check.message
@@ -835,7 +845,8 @@ function PreferencesPage() {
                 >
                   <p className="text-sm font-medium">Network settings</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {networkSettings?.public_url ?? 'Set Public URL and allowed origins.'}
+                    {networkSettings?.public_url ??
+                      'Set Public URL and allowed origins.'}
                   </p>
                   <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
                     Edit
@@ -1205,19 +1216,13 @@ function PreferencesPage() {
                                 variant="outline"
                                 size="icon"
                                 aria-label="Browse"
-                                title="Browse"
-                                onClick={() => {
-                                  if (!canBrowseLocalFs) {
-                                    toast.error(
-                                      'Browse is only available from localhost.',
-                                    )
-                                    return
-                                  }
-                                  setArtifactDirPickerOpen(true)
-                                }}
-                                disabled={
-                                  !canWrite || updateStorageMutation.isPending
-                                }
+	                                title="Browse"
+	                                onClick={() => {
+	                                  setArtifactDirPickerOpen(true)
+	                                }}
+	                                disabled={
+	                                  !canWrite || updateStorageMutation.isPending
+	                                }
                               >
                                 <HugeiconsIcon icon={Folder02Icon} size={16} />
                               </Button>
@@ -1303,8 +1308,8 @@ function PreferencesPage() {
                             />
                           </FormControl>
                           <FormDescription>
-                            Keep this bucket private. oore.build serves files via
-                            time-limited signed URLs.
+                            Keep this bucket private. oore.build serves files
+                            via time-limited signed URLs.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

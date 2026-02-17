@@ -328,7 +328,7 @@ async fn test_setup_status_returns_bootstrap_pending() {
     assert_eq!(body["setup_mode"], true);
     assert_eq!(body["is_configured"], false);
     // instance_id should be a non-empty string
-    assert!(body["instance_id"].as_str().unwrap().len() > 0);
+    assert!(!body["instance_id"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -479,7 +479,7 @@ async fn test_full_setup_flow() {
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["state"], "ready");
-    assert!(body["instance_id"].as_str().unwrap().len() > 0);
+    assert!(!body["instance_id"].as_str().unwrap().is_empty());
 
     // Verify final status
     let resp = app

@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
@@ -56,7 +55,7 @@ fn normalize_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>
     })
 }
 
-fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
+fn assert_git_repo(path: &std::path::Path) -> Result<(), (StatusCode, Json<ApiError>)> {
     let path_str = path.to_string_lossy().into_owned();
 
     let inside = Command::new("git")
@@ -67,19 +66,21 @@ fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
             "--is-inside-work-tree",
         ])
         .output();
-    if let Ok(output) = inside {
-        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
-            return Ok(());
-        }
+    if let Ok(output) = inside
+        && output.status.success()
+        && String::from_utf8_lossy(&output.stdout).trim() == "true"
+    {
+        return Ok(());
     }
 
     let bare = Command::new("git")
         .args(["-C", path_str.as_str(), "rev-parse", "--is-bare-repository"])
         .output();
-    if let Ok(output) = bare {
-        if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
-            return Ok(());
-        }
+    if let Ok(output) = bare
+        && output.status.success()
+        && String::from_utf8_lossy(&output.stdout).trim() == "true"
+    {
+        return Ok(());
     }
 
     Err(api_err(
@@ -89,7 +90,7 @@ fn assert_git_repo(path: &PathBuf) -> Result<(), (StatusCode, Json<ApiError>)> {
     ))
 }
 
-fn resolve_default_branch(path: &PathBuf) -> Option<String> {
+fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
     let path_str = path.to_string_lossy().into_owned();
     Command::new("git")
         .args(["-C", path_str.as_str(), "symbolic-ref", "--short", "HEAD"])
@@ -181,12 +182,12 @@ fn canonicalize_directory(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiErr
     Ok(canonical)
 }
 
-fn looks_like_git_repository(path: &Path) -> bool {
+fn looks_like_git_repository(path: &std::path::Path) -> bool {
     let dot_git = path.join(".git");
     dot_git.is_dir() || dot_git.is_file()
 }
 
-fn build_browse_suggestions(current_path: &Path) -> Vec<LocalGitPathSuggestion> {
+fn build_browse_suggestions(current_path: &std::path::Path) -> Vec<LocalGitPathSuggestion> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 

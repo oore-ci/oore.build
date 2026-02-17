@@ -298,20 +298,20 @@ async fn insert_build_with_retry(
 
 /// Check if an sqlx error is SQLITE_BUSY (error code 5).
 fn is_sqlite_busy(e: &sqlx::Error) -> bool {
-    if let sqlx::Error::Database(db_err) = e {
-        if let Some(code) = db_err.code() {
-            return code.as_ref() == "5";
-        }
+    if let sqlx::Error::Database(db_err) = e
+        && let Some(code) = db_err.code()
+    {
+        return code.as_ref() == "5";
     }
     false
 }
 
 /// Check if an sqlx error is SQLITE_CONSTRAINT_UNIQUE (error code 2067).
 fn is_sqlite_unique_violation(e: &sqlx::Error) -> bool {
-    if let sqlx::Error::Database(db_err) = e {
-        if let Some(code) = db_err.code() {
-            return code.as_ref() == "2067";
-        }
+    if let sqlx::Error::Database(db_err) = e
+        && let Some(code) = db_err.code()
+    {
+        return code.as_ref() == "2067";
     }
     false
 }
@@ -840,6 +840,7 @@ pub async fn cancel_build(
 ///
 /// Called from webhooks.rs after webhook normalization.
 /// Resolves matching projects/pipelines and creates build records.
+#[allow(clippy::too_many_arguments)]
 pub async fn trigger_build_from_webhook(
     pool: &sqlx::SqlitePool,
     webhook_id: &str,

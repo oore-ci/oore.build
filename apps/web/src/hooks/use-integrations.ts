@@ -8,17 +8,17 @@ import type {
 import {
   browseLocalGitDirectories,
   createLocalGitIntegration,
-  deleteLocalGitIntegration,
   deleteIntegration,
+  deleteLocalGitIntegration,
   getIntegration,
   githubAppComplete,
   githubAppStart,
   gitlabAuthorize,
   gitlabStart,
-  listLocalGitIntegrations,
   listInstallations,
   listIntegrationRepos,
   listIntegrations,
+  listLocalGitIntegrations,
   syncInstallations,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -102,7 +102,11 @@ export function useRepositoryProvider(repositoryId?: string, enabled = true) {
 
       for (const integration of integrations.integrations) {
         try {
-          const repos = await listIntegrationRepos(baseUrl, token, integration.id)
+          const repos = await listIntegrationRepos(
+            baseUrl,
+            token,
+            integration.id,
+          )
           if (repos.repositories.some((repo) => repo.id === repositoryId)) {
             return integration.provider
           }

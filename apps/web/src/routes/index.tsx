@@ -8,6 +8,7 @@ import {
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 
+import type { RuntimeMode } from '@/lib/types'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
@@ -33,10 +34,9 @@ import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
-import { localLogin, getSetupStatus } from '@/lib/api'
+import { getSetupStatus, localLogin } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
-import type { RuntimeMode } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 
@@ -108,7 +108,8 @@ function IndexPage() {
   const { data: status, isLoading, error } = useSetupStatus()
   const navigate = useNavigate()
   const [showAddInstance, setShowAddInstance] = useState(false)
-  const [isDetectingLocalInstance, setIsDetectingLocalInstance] = useState(false)
+  const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
+    useState(false)
   const [isAutoLocalSigningIn, setIsAutoLocalSigningIn] = useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const autoLocalLoginInstanceRef = useRef<string | null>(null)
@@ -134,8 +135,7 @@ function IndexPage() {
             normalizeUrl(candidate.url) === normalizeUrl(detectedUrl),
         )
         const instanceId =
-          existingInstance?.id ??
-          store.addInstance('Local', detectedUrl)
+          existingInstance?.id ?? store.addInstance('Local', detectedUrl)
         store.setActiveInstance(instanceId)
       })
       .catch(() => {
@@ -211,15 +211,7 @@ function IndexPage() {
       clearAuth()
       void navigate({ to: '/login' })
     }
-  }, [
-    status,
-    instance,
-    authToken,
-    authExpiresAt,
-    clearAuth,
-    setAuth,
-    navigate,
-  ])
+  }, [status, instance, authToken, authExpiresAt, clearAuth, setAuth, navigate])
 
   if (!instance && isDetectingLocalInstance) {
     return (
@@ -241,9 +233,7 @@ function IndexPage() {
         <PageMeta />
         <div className="flex items-center gap-3">
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Signing in locally...
-          </p>
+          <p className="text-sm text-muted-foreground">Signing in locally...</p>
         </div>
       </div>
     )
@@ -380,7 +370,9 @@ function ConfiguredDashboard({
     [integrationsQuery.data?.integrations],
   )
   const activeIntegrationsCount = useMemo(
-    () => integrations.filter((integration) => integration.status === 'active').length,
+    () =>
+      integrations.filter((integration) => integration.status === 'active')
+        .length,
     [integrations],
   )
 
@@ -399,7 +391,9 @@ function ConfiguredDashboard({
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
-    runtimeMode === 'remote' && integrationsResolved && activeIntegrationsCount === 0
+    runtimeMode === 'remote' &&
+    integrationsResolved &&
+    activeIntegrationsCount === 0
   const integrationConnectTo = '/settings/integrations'
   const canShowRunBuild = canWriteBuilds && hasProjects
 
@@ -495,7 +489,9 @@ function ConfiguredDashboard({
               <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
                 {canWriteProjects ? (
                   <Button
-                    render={<Link to="/projects" search={{ openCreate: '1' }} />}
+                    render={
+                      <Link to="/projects" search={{ openCreate: '1' }} />
+                    }
                     nativeButton={false}
                   >
                     <HugeiconsIcon icon={Add01Icon} size={14} />

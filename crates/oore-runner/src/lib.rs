@@ -383,10 +383,10 @@ async fn fetch_job_android_signing(
     Ok(Some(payload))
 }
 
-fn select_runner_signing_profile<'a>(
-    response: &'a RunnerAndroidSigningResponse,
+fn select_runner_signing_profile(
+    response: &RunnerAndroidSigningResponse,
     variant: AndroidSigningBuildType,
-) -> Option<&'a RunnerAndroidSigningProfile> {
+) -> Option<&RunnerAndroidSigningProfile> {
     match variant {
         AndroidSigningBuildType::Debug => response.debug.as_ref(),
         AndroidSigningBuildType::Release => response.release.as_ref(),
@@ -497,7 +497,7 @@ fn parse_codesigning_identity_hashes(raw: &str) -> Vec<String> {
         .filter_map(|line| {
             let trimmed = line.trim();
             let (_, rest) = trimmed.split_once(')')?;
-            let candidate = rest.trim().split_whitespace().next()?;
+            let candidate = rest.split_whitespace().next()?;
             if candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()) {
                 Some(candidate.to_string())
             } else {
@@ -1072,11 +1072,13 @@ async fn claim_and_execute(
         client,
         daemon_url,
         config,
-        &job.build_id,
-        "running",
-        None,
-        None,
-        &[],
+        StatusReport {
+            build_id: job.build_id.as_str(),
+            status: "running",
+            exit_code: None,
+            error_message: None,
+            steps: &[],
+        },
     )
     .await?;
 
@@ -1088,11 +1090,13 @@ async fn claim_and_execute(
                 client,
                 daemon_url,
                 config,
-                &job.build_id,
-                "succeeded",
-                Some(0),
-                None,
-                &steps,
+                StatusReport {
+                    build_id: job.build_id.as_str(),
+                    status: "succeeded",
+                    exit_code: Some(0),
+                    error_message: None,
+                    steps: &steps,
+                },
             )
             .await?;
             println!("Build {} succeeded", job.build_id);
@@ -1108,11 +1112,13 @@ async fn claim_and_execute(
                     client,
                     daemon_url,
                     config,
-                    &job.build_id,
-                    "failed",
-                    Some(1),
-                    Some(&e.to_string()),
-                    &steps,
+                    StatusReport {
+                        build_id: job.build_id.as_str(),
+                        status: "failed",
+                        exit_code: Some(1),
+                        error_message: Some(e.to_string()),
+                        steps: &steps,
+                    },
                 )
                 .await?;
                 eprintln!("Build {} failed: {}", job.build_id, e);
@@ -1129,14 +1135,14 @@ struct WorkspaceCleanup {
 
 impl Drop for WorkspaceCleanup {
     fn drop(&mut self) {
-        if self.path.exists() {
-            if let Err(e) = fs::remove_dir_all(&self.path) {
-                eprintln!(
-                    "Warning: failed to clean up workspace {}: {}",
-                    self.path.display(),
-                    e
-                );
-            }
+        if self.path.exists()
+            && let Err(e) = fs::remove_dir_all(&self.path)
+        {
+            eprintln!(
+                "Warning: failed to clean up workspace {}: {}",
+                self.path.display(),
+                e
+            );
         }
     }
 }
@@ -2567,10 +2573,12 @@ fn walk_dir_files(dir: &std::path::Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with('.') {
-                        continue;
-                    }
+                let is_hidden_dir = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| name.starts_with('.'));
+                if is_hidden_dir {
+                    continue;
                 }
                 walk(&path, result);
             } else if path.is_file() {
@@ -2735,16 +2743,28 @@ async fn scan_and_upload_artifacts(
     }
 }
 
+struct StatusReport<'a> {
+    build_id: &'a str,
+    status: &'a str,
+    exit_code: Option<i32>,
+    error_message: Option<String>,
+    steps: &'a [StepResult],
+}
+
 async fn report_status(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
-    build_id: &str,
-    status: &str,
-    exit_code: Option<i32>,
-    error_message: Option<&str>,
-    steps: &[StepResult],
+    report: StatusReport<'_>,
 ) -> anyhow::Result<()> {
+    let StatusReport {
+        build_id,
+        status,
+        exit_code,
+        error_message,
+        steps,
+    } = report;
+
     let body = serde_json::json!({
         "status": status,
         "exit_code": exit_code,
@@ -2892,10 +2912,7 @@ async fn run_and_stream(
 
     let status = tokio::select! {
         result = child.wait() => {
-            match result {
-                Ok(s) => Some(s),
-                Err(_) => None,
-            }
+            result.ok()
         },
         _ = cancel_fut => {
             child.kill().await.ok();

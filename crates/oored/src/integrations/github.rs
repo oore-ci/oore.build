@@ -1135,6 +1135,7 @@ pub async fn sync_installations(
 }
 
 /// Fetch repos for a GitHub App installation and upsert them.
+#[allow(clippy::too_many_arguments)]
 async fn sync_installation_repos(
     client: &reqwest::Client,
     pool: &sqlx::SqlitePool,

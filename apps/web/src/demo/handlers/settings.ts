@@ -19,7 +19,9 @@ function now(): number {
 }
 
 // Mutate module-scoped state so demo changes survive refresh-free navigation.
-let artifactStorageSettings: ArtifactStorageSettings = { ...demoArtifactStorageSettings }
+let artifactStorageSettings: ArtifactStorageSettings = {
+  ...demoArtifactStorageSettings,
+}
 let instancePreferences: InstancePreferences = { ...demoInstancePreferences }
 
 let externalAccessNetworkSettings: ExternalAccessNetworkSettings = {
@@ -65,7 +67,9 @@ function buildPreflight(origin: string) {
     {
       id: 'public_url_https',
       label: 'Public URL is HTTPS',
-      ok: (externalAccessNetworkSettings.public_url ?? '').startsWith('https://'),
+      ok: (externalAccessNetworkSettings.public_url ?? '').startsWith(
+        'https://',
+      ),
       message: 'Public URL uses HTTPS.',
       failure_code: 'external_access_https_required',
     },
@@ -110,13 +114,16 @@ export const settingsHandlers = [
     const body = (await request.json()) as Record<string, unknown>
 
     const accessKeyId = (body.access_key_id as string | undefined)?.trim()
-    const secretAccessKey = (body.secret_access_key as string | undefined)?.trim()
+    const secretAccessKey = (
+      body.secret_access_key as string | undefined
+    )?.trim()
 
     // Persist non-secret configuration in demo state; never echo secrets.
     artifactStorageSettings = {
       ...artifactStorageSettings,
       ...body,
-      has_access_key_id: artifactStorageSettings.has_access_key_id || !!accessKeyId,
+      has_access_key_id:
+        artifactStorageSettings.has_access_key_id || !!accessKeyId,
       has_secret_access_key:
         artifactStorageSettings.has_secret_access_key || !!secretAccessKey,
       updated_at: now(),
@@ -186,22 +193,27 @@ export const settingsHandlers = [
     return HttpResponse.json({ settings: trustedProxySettings })
   }),
 
-  http.put('/v1/settings/external-access/trusted-proxy', async ({ request }) => {
-    await delay(250)
-    const body = (await request.json()) as {
-      user_email_header?: string
-      trusted_proxy_cidrs: Array<string>
-      shared_secret?: string
-    }
-    trustedProxySettings = {
-      ...trustedProxySettings,
-      user_email_header: body.user_email_header ?? trustedProxySettings.user_email_header,
-      trusted_proxy_cidrs: body.trusted_proxy_cidrs,
-      has_shared_secret: trustedProxySettings.has_shared_secret || !!body.shared_secret,
-      updated_at: now(),
-    }
-    return HttpResponse.json({ settings: trustedProxySettings })
-  }),
+  http.put(
+    '/v1/settings/external-access/trusted-proxy',
+    async ({ request }) => {
+      await delay(250)
+      const body = (await request.json()) as {
+        user_email_header?: string
+        trusted_proxy_cidrs: Array<string>
+        shared_secret?: string
+      }
+      trustedProxySettings = {
+        ...trustedProxySettings,
+        user_email_header:
+          body.user_email_header ?? trustedProxySettings.user_email_header,
+        trusted_proxy_cidrs: body.trusted_proxy_cidrs,
+        has_shared_secret:
+          trustedProxySettings.has_shared_secret || !!body.shared_secret,
+        updated_at: now(),
+      }
+      return HttpResponse.json({ settings: trustedProxySettings })
+    },
+  ),
 
   http.put('/v1/settings/external-access/oidc', async ({ request }) => {
     await delay(250)

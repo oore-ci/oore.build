@@ -521,20 +521,20 @@ pub async fn gitlab_webhook(
     let now = now_unix();
 
     // Replay window check — reject events with timestamps > 5 min old
-    if let Some(timestamp) = payload.get("created_at").and_then(|v| v.as_str()) {
-        if let Ok(event_time) = chrono::DateTime::parse_from_rfc3339(timestamp) {
-            let event_unix = event_time.timestamp();
-            if now - event_unix > MAX_WEBHOOK_AGE_SECS {
-                warn!(
-                    event_age = now - event_unix,
-                    "rejecting stale GitLab webhook"
-                );
-                return Err(api_err(
-                    StatusCode::BAD_REQUEST,
-                    "stale_event",
-                    "Webhook event is too old",
-                ));
-            }
+    if let Some(timestamp) = payload.get("created_at").and_then(|v| v.as_str())
+        && let Ok(event_time) = chrono::DateTime::parse_from_rfc3339(timestamp)
+    {
+        let event_unix = event_time.timestamp();
+        if now - event_unix > MAX_WEBHOOK_AGE_SECS {
+            warn!(
+                event_age = now - event_unix,
+                "rejecting stale GitLab webhook"
+            );
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "stale_event",
+                "Webhook event is too old",
+            ));
         }
     }
 
@@ -672,40 +672,38 @@ async fn process_webhook_event(
         "push" | "pull_request" | "Push Hook" | "Merge Request Hook"
     );
 
-    if should_trigger {
-        if let Some(ref repo) = event.repository_full_name {
-            match trigger_build_from_webhook(
-                pool,
-                webhook_id,
-                &event.integration_id,
-                repo,
-                event.branch.as_deref(),
-                event.commit_sha.as_deref(),
-                &event.event_type,
-                event.actor.as_deref(),
-            )
-            .await
-            {
-                Ok(builds) => {
-                    info!(
-                        webhook_id = %webhook_id,
-                        builds_created = builds.len(),
-                        "webhook triggered builds"
-                    );
-                }
-                Err(e) => {
-                    error!(error = ?e, webhook_id = %webhook_id, "failed to trigger builds from webhook");
-                    let now = now_unix();
-                    let _ = sqlx::query(
-                        "UPDATE integration_webhooks SET status = 'failed', processing_error = ?1, processed_at = ?2 WHERE id = ?3",
-                    )
-                    .bind(format!("{e:?}"))
-                    .bind(now)
-                    .bind(webhook_id)
-                    .execute(pool)
-                    .await;
-                    return Ok(());
-                }
+    if should_trigger && let Some(repo) = event.repository_full_name.as_deref() {
+        match trigger_build_from_webhook(
+            pool,
+            webhook_id,
+            &event.integration_id,
+            repo,
+            event.branch.as_deref(),
+            event.commit_sha.as_deref(),
+            &event.event_type,
+            event.actor.as_deref(),
+        )
+        .await
+        {
+            Ok(builds) => {
+                info!(
+                    webhook_id = %webhook_id,
+                    builds_created = builds.len(),
+                    "webhook triggered builds"
+                );
+            }
+            Err(e) => {
+                error!(error = ?e, webhook_id = %webhook_id, "failed to trigger builds from webhook");
+                let now = now_unix();
+                let _ = sqlx::query(
+                    "UPDATE integration_webhooks SET status = 'failed', processing_error = ?1, processed_at = ?2 WHERE id = ?3",
+                )
+                .bind(format!("{e:?}"))
+                .bind(now)
+                .bind(webhook_id)
+                .execute(pool)
+                .await;
+                return Ok(());
             }
         }
     }

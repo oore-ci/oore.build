@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -92,13 +92,13 @@ function BootstrapTokenStep() {
       return
     }
 
-    const backendStep = stateToStep(
-      status.state,
-      status.runtime_mode,
-    )
+    const backendStep = stateToStep(status.state, status.runtime_mode)
     if (backendStep >= 1) {
       setCurrentStep(backendStep)
-      if (status.state === 'bootstrap_pending' || status.state === 'uninitialized') {
+      if (
+        status.state === 'bootstrap_pending' ||
+        status.state === 'uninitialized'
+      ) {
         void navigate({ to: '/setup/mode' })
       } else if (status.state === 'idp_configured') {
         void navigate({ to: '/setup/owner' })

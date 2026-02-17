@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,7 +14,10 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { useSetupStatus, useSetupTrustedProxyConfigure } from '@/hooks/use-setup'
+import {
+  useSetupStatus,
+  useSetupTrustedProxyConfigure,
+} from '@/hooks/use-setup'
 import { getApiErrorMessage } from '@/lib/api'
 import {
   getActiveInstanceOrRedirect,
@@ -51,7 +54,7 @@ function SetupTrustedProxyError({ error }: { error: Error }) {
   )
 }
 
-function parseCidrs(raw: string | undefined): string[] {
+function parseCidrs(raw: string | undefined): Array<string> {
   if (!raw) return []
   return raw
     .split(',')
@@ -89,7 +92,10 @@ function SetupTrustedProxyStep() {
 
   useEffect(() => {
     if (!status) return
-    if (status.runtime_mode !== 'remote' || status.remote_auth_mode !== 'trusted_proxy') {
+    if (
+      status.runtime_mode !== 'remote' ||
+      status.remote_auth_mode !== 'trusted_proxy'
+    ) {
       void navigate({ to: '/setup/mode' })
     }
   }, [status, navigate])
@@ -169,7 +175,8 @@ function SetupTrustedProxyStep() {
                   />
                 </FormControl>
                 <p className="text-xs text-muted-foreground">
-                  Leave empty when Warpgate runs on the same host as oored (loopback trust).
+                  Leave empty when Warpgate runs on the same host as oored
+                  (loopback trust).
                 </p>
                 <FormMessage />
               </FormItem>
@@ -204,7 +211,8 @@ function SetupTrustedProxyStep() {
                   Generate random secret
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  Save this value now. After configuration, the secret is write-only.
+                  Save this value now. After configuration, the secret is
+                  write-only.
                 </p>
                 <FormMessage />
               </FormItem>

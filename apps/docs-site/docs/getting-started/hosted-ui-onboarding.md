@@ -15,7 +15,7 @@ It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
 ## 1. Start the daemon
 
 ```bash
-~/.oore/bin/oored run --listen 0.0.0.0:8787
+oored run --listen 0.0.0.0:8787
 ```
 
 Use `127.0.0.1:8787` for local-only testing, or a reachable host/IP for remote browser access.
@@ -30,7 +30,7 @@ curl http://127.0.0.1:8787/v1/public/setup-status
 ## 3. Generate a setup token
 
 ```bash
-~/.oore/bin/oore setup token --ttl 15m
+oore setup token --ttl 15m
 ```
 
 Keep this token ready for the setup wizard.
@@ -51,7 +51,7 @@ Choose one:
 1. **CLI-only setup**
    - Run:
      ```bash
-     ~/.oore/bin/oore setup
+     oore setup
      ```
 2. **Temporary tunnel**
    - Expose your backend via Cloudflare Tunnel:
@@ -62,7 +62,7 @@ Choose one:
 3. **Self-host/local frontend**
    - Run the bundled local web UI and connect directly to your local backend:
      ```bash
-     ~/.oore/bin/oore-web --backend-url http://127.0.0.1:8787
+     oore-web --backend-url http://127.0.0.1:8787
      ```
    - Then open `http://127.0.0.1:4173`.
    - Add an instance and leave **Backend URL** empty (this uses local proxy mode).

@@ -1448,14 +1448,14 @@ pub async fn configure_external_access_oidc(
     }
 
     let client_secret = trim_opt(req.client_secret);
-    if let Some(secret) = client_secret.as_ref() {
-        if secret.len() > 1024 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "client_secret must be 1024 characters or fewer",
-            ));
-        }
+    if let Some(secret) = client_secret.as_ref()
+        && secret.len() > 1024
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "client_secret must be 1024 characters or fewer",
+        ));
     }
 
     let now = now_unix();

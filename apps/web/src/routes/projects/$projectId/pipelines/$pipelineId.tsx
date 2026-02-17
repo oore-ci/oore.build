@@ -317,7 +317,11 @@ function PipelineDetailPage() {
                   {pipeline.trigger_config.events.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {pipeline.trigger_config.events.map((e) => (
-                        <Badge key={e} variant="outline" className="text-[11px]">
+                        <Badge
+                          key={e}
+                          variant="outline"
+                          className="text-[11px]"
+                        >
                           {e}
                         </Badge>
                       ))}
@@ -386,7 +390,7 @@ function PipelineDetailPage() {
               </KV>
             ) : null}
             {(pipeline.execution_config.platform_build_args?.ios.length ?? 0) >
-              0 ? (
+            0 ? (
               <KV label="iOS args">
                 <span className="font-mono">
                   {pipeline.execution_config.platform_build_args?.ios.join(' ')}
@@ -404,8 +408,8 @@ function PipelineDetailPage() {
               </KV>
             ) : null}
             {pipeline.execution_config.platform_commands?.android ||
-              pipeline.execution_config.platform_commands?.ios ||
-              pipeline.execution_config.platform_commands?.macos ? (
+            pipeline.execution_config.platform_commands?.ios ||
+            pipeline.execution_config.platform_commands?.macos ? (
               <KV label="Command overrides">
                 <span className="font-mono">
                   {[
@@ -501,33 +505,34 @@ function PipelineDetailPage() {
                       )}
                       {(iosSigningQuery.data.mode === 'manual' ||
                         iosSigningQuery.data.mode === 'hybrid') && (
-                          <KV label="Certificate">
-                            {iosSigningQuery.data.has_p12
-                              ? iosSigningQuery.data.p12_filename ?? 'configured'
-                              : 'not uploaded'}
-                          </KV>
-                        )}
+                        <KV label="Certificate">
+                          {iosSigningQuery.data.has_p12
+                            ? (iosSigningQuery.data.p12_filename ??
+                              'configured')
+                            : 'not uploaded'}
+                        </KV>
+                      )}
                       {(iosSigningQuery.data.mode === 'api' ||
                         iosSigningQuery.data.mode === 'hybrid') && (
-                          <>
-                            <KV label="API key">
-                              {iosSigningQuery.data.has_api_key
-                                ? `Key ${iosSigningQuery.data.api_key_id ?? 'configured'}`
-                                : 'not configured'}
-                            </KV>
-                          </>
-                        )}
+                        <>
+                          <KV label="API key">
+                            {iosSigningQuery.data.has_api_key
+                              ? `Key ${iosSigningQuery.data.api_key_id ?? 'configured'}`
+                              : 'not configured'}
+                          </KV>
+                        </>
+                      )}
                       {iosSigningQuery.data.provisioning_profiles.length >
                         0 && (
-                          <KV label="Profiles">
-                            {iosSigningQuery.data.provisioning_profiles.length}{' '}
-                            provisioning profile
-                            {iosSigningQuery.data.provisioning_profiles.length !==
-                              1
-                              ? 's'
-                              : ''}
-                          </KV>
-                        )}
+                        <KV label="Profiles">
+                          {iosSigningQuery.data.provisioning_profiles.length}{' '}
+                          provisioning profile
+                          {iosSigningQuery.data.provisioning_profiles.length !==
+                          1
+                            ? 's'
+                            : ''}
+                        </KV>
+                      )}
                     </>
                   )}
                 </>

@@ -89,7 +89,9 @@ function ProjectsListPage() {
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
-    runtimeMode === 'remote' && integrationsResolved && activeIntegrationsCount === 0
+    runtimeMode === 'remote' &&
+    integrationsResolved &&
+    activeIntegrationsCount === 0
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 

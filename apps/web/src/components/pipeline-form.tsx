@@ -1444,11 +1444,12 @@ export default function PipelineForm({
                             </p>
                           ) : (
                             <div className="space-y-3">
-                              {iosBundleIds.map((bundleId) => {
-                                const existing =
-                                  iosProfilesByBundle.get(bundleId)
-                                return (
-                                  <FormItem key={bundleId}>
+	                              {iosBundleIds.map((bundleId) => {
+	                                const existing =
+	                                  iosProfilesByBundle.get(bundleId)
+	                                const selectedFile = iosProfileFiles[bundleId]
+	                                return (
+	                                  <FormItem key={bundleId}>
                                     <FormLabel className="font-mono text-xs">
                                       {bundleId}
                                     </FormLabel>
@@ -1465,17 +1466,17 @@ export default function PipelineForm({
                                           }))
                                         }}
                                       />
-                                    </FormControl>
-                                    <p className="text-xs text-muted-foreground">
-                                      {iosProfileFiles[bundleId]
-                                        ? `Selected: ${iosProfileFiles[bundleId]?.name}`
-                                        : existing?.has_profile
-                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
-                                          : 'Upload .mobileprovision for this bundle ID'}
-                                    </p>
-                                  </FormItem>
-                                )
-                              })}
+	                                    </FormControl>
+	                                    <p className="text-xs text-muted-foreground">
+	                                      {selectedFile
+	                                        ? `Selected: ${selectedFile.name}`
+	                                        : existing?.has_profile
+	                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
+	                                          : 'Upload .mobileprovision for this bundle ID'}
+	                                    </p>
+	                                  </FormItem>
+	                                )
+	                              })}
                             </div>
                           )}
                         </div>

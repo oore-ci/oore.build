@@ -408,7 +408,10 @@ describe('instance preferences api', () => {
           'Content-Type': 'application/json',
           Authorization: 'Bearer session-token',
         },
-        body: JSON.stringify({ key_storage_mode: 'file', runtime_mode: 'remote' }),
+        body: JSON.stringify({
+          key_storage_mode: 'file',
+          runtime_mode: 'remote',
+        }),
       },
     )
     expect(result).toEqual(payload)

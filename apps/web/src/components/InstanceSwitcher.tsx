@@ -24,12 +24,8 @@ import {
 } from '@/components/ui/sidebar'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 
-const AddInstanceDialog = lazy(
-  () => import('@/components/AddInstanceDialog'),
-)
-const EditInstanceDialog = lazy(
-  () => import('@/components/EditInstanceDialog'),
-)
+const AddInstanceDialog = lazy(() => import('@/components/AddInstanceDialog'))
+const EditInstanceDialog = lazy(() => import('@/components/EditInstanceDialog'))
 
 export default function InstanceSwitcher() {
   const { isMobile } = useSidebar()
@@ -156,7 +152,10 @@ export default function InstanceSwitcher() {
 
       {showAddDialog && (
         <Suspense>
-          <AddInstanceDialog open={showAddDialog} onOpenChange={setShowAddDialog} />
+          <AddInstanceDialog
+            open={showAddDialog}
+            onOpenChange={setShowAddDialog}
+          />
         </Suspense>
       )}
       {editingInstance !== null && (

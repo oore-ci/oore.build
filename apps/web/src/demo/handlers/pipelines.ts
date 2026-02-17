@@ -1,9 +1,9 @@
 import { HttpResponse, delay, http } from 'msw'
 import { demoPipelines } from '../data/pipelines'
 import { demoBuilds } from '../data/builds'
-import { ago, PIPELINE_IDS } from '../seed'
+import { PIPELINE_IDS, ago } from '../seed'
 
-const iosSigningByPipeline: Record<string, object> = {
+const iosSigningByPipeline: Partial<Record<string, Record<string, unknown>>> = {
   [PIPELINE_IDS.shopIos]: {
     enabled: true,
     mode: 'api',
@@ -62,7 +62,9 @@ const iosSigningByPipeline: Record<string, object> = {
   },
 }
 
-const iosDevicesByPipeline: Record<string, Array<object>> = {
+const iosDevicesByPipeline: Partial<
+  Record<string, Array<Record<string, unknown>>>
+> = {
   [PIPELINE_IDS.shopIos]: [
     {
       id: 'iosdev-001',
@@ -245,7 +247,12 @@ export const pipelineHandlers = [
       const id = params.pipelineId as string
       const body = (await request.json()) as Record<string, unknown>
       const existing = iosSigningByPipeline[id] ?? {}
-      const merged = { pipeline_id: id, ...existing, ...body, updated_at: ago(0) }
+      const merged = {
+        pipeline_id: id,
+        ...existing,
+        ...body,
+        updated_at: ago(0),
+      }
       iosSigningByPipeline[id] = merged
       return HttpResponse.json(merged)
     },

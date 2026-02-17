@@ -868,7 +868,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         println!("  Generating bootstrap token (TTL: 15m)...");
         println!("  Verifying token with daemon...");
 
-        session_token = Some(acquire_session(&client, &daemon_url).await?);
+        session_token = Some(acquire_session(&client, daemon_url).await?);
         current_state = SetupState::BootstrapPending;
 
         println!();
@@ -885,7 +885,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         // Acquire session token if we don't have one (resuming setup)
         if session_token.is_none() {
             println!("  Acquiring session token...");
-            session_token = Some(acquire_session(&client, &daemon_url).await?);
+            session_token = Some(acquire_session(&client, daemon_url).await?);
             println!();
         }
         let token = session_token.as_ref().unwrap();
@@ -981,7 +981,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         // Acquire session token if we don't have one (resuming setup)
         if session_token.is_none() {
             println!("  Acquiring session token...");
-            session_token = Some(acquire_session(&client, &daemon_url).await?);
+            session_token = Some(acquire_session(&client, daemon_url).await?);
             println!();
         }
         let token = session_token.as_ref().unwrap();
@@ -1123,7 +1123,7 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
         // Acquire session token if we don't have one (resuming setup)
         if session_token.is_none() {
             println!("  Acquiring session token...");
-            session_token = Some(acquire_session(&client, &daemon_url).await?);
+            session_token = Some(acquire_session(&client, daemon_url).await?);
             println!();
         }
         let token = session_token.as_ref().unwrap();
@@ -1310,10 +1310,10 @@ async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
     let config_path = args
         .config
         .map(|p| {
-            if p.starts_with("~/") {
+            if let Some(stripped) = p.strip_prefix("~/") {
                 dirs::home_dir()
                     .unwrap_or_else(|| PathBuf::from("."))
-                    .join(&p[2..])
+                    .join(stripped)
             } else {
                 PathBuf::from(p)
             }
@@ -1644,14 +1644,12 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
 
     // Prefer deriving install root from the current executable path so `oore update` works even
     // when users install to a non-default root and don't export `OORE_INSTALL_ROOT`.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            if bin_dir.file_name() == Some(std::ffi::OsStr::new("bin")) {
-                if let Some(root) = bin_dir.parent() {
-                    return Ok(root.to_path_buf());
-                }
-            }
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(bin_dir) = exe.parent()
+        && bin_dir.file_name() == Some(std::ffi::OsStr::new("bin"))
+        && let Some(root) = bin_dir.parent()
+    {
+        return Ok(root.to_path_buf());
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -1688,17 +1686,14 @@ fn stop_daemon(install_root: &Path) -> anyhow::Result<()> {
 
     // Try PID file first
     if pid_file.exists() {
-        if let Ok(contents) = fs::read_to_string(&pid_file) {
-            let pid_str = contents.trim();
-            if !pid_str.is_empty() {
-                if let Ok(pid) = pid_str.parse::<i32>() {
-                    // Check if process exists (kill -0)
-                    unsafe {
-                        if libc::kill(pid, 0) == 0 {
-                            libc::kill(pid, libc::SIGTERM);
-                            std::thread::sleep(Duration::from_secs(1));
-                        }
-                    }
+        if let Ok(contents) = fs::read_to_string(&pid_file)
+            && let Ok(pid) = contents.trim().parse::<i32>()
+        {
+            // Check if process exists (kill -0)
+            unsafe {
+                if libc::kill(pid, 0) == 0 {
+                    libc::kill(pid, libc::SIGTERM);
+                    std::thread::sleep(Duration::from_secs(1));
                 }
             }
         }
@@ -1709,19 +1704,18 @@ fn stop_daemon(install_root: &Path) -> anyhow::Result<()> {
     if let Ok(output) = std::process::Command::new("lsof")
         .args(["-nP", "-iTCP:8787", "-sTCP:LISTEN", "-t"])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let pids = String::from_utf8_lossy(&output.stdout);
-            for pid_str in pids.split_whitespace() {
-                if let Ok(pid) = pid_str.parse::<i32>() {
-                    unsafe {
-                        libc::kill(pid, libc::SIGTERM);
-                    }
+        let pids = String::from_utf8_lossy(&output.stdout);
+        for pid_str in pids.split_whitespace() {
+            if let Ok(pid) = pid_str.parse::<i32>() {
+                unsafe {
+                    libc::kill(pid, libc::SIGTERM);
                 }
             }
-            if !pids.trim().is_empty() {
-                std::thread::sleep(Duration::from_secs(1));
-            }
+        }
+        if !pids.trim().is_empty() {
+            std::thread::sleep(Duration::from_secs(1));
         }
     }
 

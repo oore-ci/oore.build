@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -14,6 +14,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import {
   useSetupLocalOwnerCreate,
   useSetupOidcStart,
@@ -75,7 +76,9 @@ function getOidcErrorMessage(error: Error | null): string | null {
         ) {
           return 'This frontend URL cannot be used for OIDC callback over HTTP. Use an HTTPS frontend URL or open setup from localhost/.local.'
         }
-        if (error.message.includes('origin is not in the allowed origins list')) {
+        if (
+          error.message.includes('origin is not in the allowed origins list')
+        ) {
           return 'This frontend origin is not allowed by the backend. Update allowed frontend origins in Preferences and try again.'
         }
         return 'OIDC callback URL is invalid. Ensure the callback path is /auth/callback.'
@@ -94,10 +97,6 @@ function OwnerStep() {
   const localOwnerMutation = useSetupLocalOwnerCreate()
   const trustedProxyClaimMutation = useSetupTrustedProxyClaimOwner()
   const { data: status } = useSetupStatus()
-  const isLocalMode = status?.runtime_mode === 'local'
-  const isTrustedProxyMode =
-    status?.runtime_mode === 'remote' &&
-    status?.remote_auth_mode === 'trusted_proxy'
 
   const localOwnerForm = useForm<LocalOwnerForm>({
     resolver: zodResolver(localOwnerSchema),
@@ -132,15 +131,30 @@ function OwnerStep() {
     : null
 
   useEffect(() => {
-    setCurrentStep(isLocalMode ? 2 : 3)
-  }, [isLocalMode, setCurrentStep])
+    if (!status) return
+    setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
+  }, [status, setCurrentStep])
 
   useEffect(() => {
-    if (status?.state === 'owner_created') {
-      setCurrentStep(isLocalMode ? 3 : 4)
+    if (!status) return
+    if (status.state === 'owner_created') {
+      setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
       void navigate({ to: '/setup/complete' })
     }
-  }, [status?.state, isLocalMode, setCurrentStep, navigate])
+  }, [status, setCurrentStep, navigate])
+
+  if (!status) {
+    return (
+      <div className="flex justify-center py-8">
+        <Spinner className="size-5" />
+      </div>
+    )
+  }
+
+  const isLocalMode = status.runtime_mode === 'local'
+  const isTrustedProxyMode =
+    status.runtime_mode === 'remote' &&
+    status.remote_auth_mode === 'trusted_proxy'
 
   const handleStartOidc = useCallback(() => {
     if (!sessionToken) return
@@ -207,7 +221,7 @@ function OwnerStep() {
             ? 'Create a local owner account to finish setup without OIDC.'
             : isTrustedProxyMode
               ? 'Confirm owner identity from your trusted proxy (Warpgate).'
-            : "Authenticate with your OIDC provider to verify your identity. Your email and OIDC subject will be extracted from the provider's ID token."}
+              : "Authenticate with your OIDC provider to verify your identity. Your email and OIDC subject will be extracted from the provider's ID token."}
         </p>
       </div>
 
@@ -320,7 +334,11 @@ function OwnerStep() {
         </>
       )}
 
-      <Button variant="outline" onClick={handleRestartFromToken} className="w-full">
+      <Button
+        variant="outline"
+        onClick={handleRestartFromToken}
+        className="w-full"
+      >
         Restart from Token Step
       </Button>
     </div>
