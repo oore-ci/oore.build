@@ -12,7 +12,7 @@ Checklist and guidance for deploying oore.build in a production environment.
 - macOS host with [all prerequisites](/getting-started/prerequisites) installed
 - A domain name for your instance (e.g., `ci.mycompany.com`)
 - TLS certificate for the domain
-- An OIDC provider configured ([OIDC guides](/guides/oidc/))
+- Remote auth configured (OIDC default via [OIDC guides](/guides/oidc/), or `trusted_proxy` if deployed behind an identity-aware proxy)
 
 ## Deployment checklist
 

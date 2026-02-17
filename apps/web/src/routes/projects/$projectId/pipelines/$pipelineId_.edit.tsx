@@ -25,6 +25,8 @@ import {
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
 } from '@/hooks/use-pipelines'
+import { useRepositoryProvider } from '@/hooks/use-integrations'
+import { useProject } from '@/hooks/use-projects'
 import {
   defaultArtifactPatterns,
   fileToBase64,
@@ -70,6 +72,11 @@ export const Route = createFileRoute(
 function EditPipelinePage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
+  const { data: projectData } = useProject(projectId)
+  const repoProviderQuery = useRepositoryProvider(
+    projectData?.project.repository_id,
+  )
+  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
   const { data, isLoading, error } = usePipeline(pipelineId)
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
@@ -169,7 +176,9 @@ function EditPipelinePage() {
       ),
     ),
     artifact_patterns: toMultiline(pipeline.execution_config.artifact_patterns),
-    branches: pipeline.trigger_config.branches.join(', '),
+    branches: manualOnlyTriggers
+      ? ''
+      : pipeline.trigger_config.branches.join(', '),
     max_concurrent: pipeline.concurrency.max_concurrent
       ? String(pipeline.concurrency.max_concurrent)
       : undefined,
@@ -193,10 +202,12 @@ function EditPipelinePage() {
       return
     }
 
-    const trigger_config: TriggerConfig = {
-      events,
-      branches: parseCsv(values.branches),
-    }
+    const trigger_config: TriggerConfig = manualOnlyTriggers
+      ? { events: [], branches: [] }
+      : {
+          events,
+          branches: parseCsv(values.branches),
+        }
 
     const concurrency: ConcurrencyPolicy = {
       cancel_previous: cancelPrevious,
@@ -265,14 +276,15 @@ function EditPipelinePage() {
       debugKeystoreFile,
       origSetErrors,
     )
-    const iosSigningPayload = await buildIosSigningPayload(
-      values,
-      iosSigningFiles,
-      origSetErrors,
-    )
-    if (hasPayloadErrors) {
-      return
-    }
+	    const iosSigningPayload = await buildIosSigningPayload(
+	      values,
+	      iosSigningFiles,
+	      origSetErrors,
+	    )
+	    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via origSetErrors callback during payload construction
+	    if (hasPayloadErrors) {
+	      return
+	    }
 
     try {
       await updateMutation.mutateAsync({
@@ -467,13 +479,13 @@ function EditPipelinePage() {
       if (!p12Password && !hasStoredP12Password)
         errors.push('Manual/Hybrid iOS signing requires p12 password')
 
-      for (const bundleId of bundleIds) {
-        const hasStoredProfile = !!existing?.provisioning_profiles?.find(
-          (profile) => profile.bundle_id === bundleId && profile.has_profile,
-        )
-        if (!iosSigningFiles.profileFiles[bundleId] && !hasStoredProfile) {
-          errors.push(
-            `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
+	      for (const bundleId of bundleIds) {
+	        const hasStoredProfile = !!existing?.provisioning_profiles.find(
+	          (profile) => profile.bundle_id === bundleId && profile.has_profile,
+	        )
+	        if (!iosSigningFiles.profileFiles[bundleId] && !hasStoredProfile) {
+	          errors.push(
+	            `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
           )
         }
       }
@@ -481,7 +493,8 @@ function EditPipelinePage() {
 
     if (
       values.ios_signing_enabled &&
-      (values.ios_signing_mode === 'api' || values.ios_signing_mode === 'hybrid')
+      (values.ios_signing_mode === 'api' ||
+        values.ios_signing_mode === 'hybrid')
     ) {
       const hasStoredApi = existing?.has_api_key ?? false
       if (!apiKeyId && !existing?.api_key_id)
@@ -539,7 +552,9 @@ function EditPipelinePage() {
           ? {
               key_id: apiKeyId ?? existing?.api_key_id,
               issuer_id: apiIssuerId ?? existing?.api_issuer_id,
-              private_key_base64: apiPrivateKey ? btoa(apiPrivateKey) : undefined,
+              private_key_base64: apiPrivateKey
+                ? btoa(apiPrivateKey)
+                : undefined,
             }
           : undefined,
     }
@@ -601,8 +616,11 @@ function EditPipelinePage() {
       <div className="mx-auto max-w-4xl">
         <PipelineForm
           initialValues={formInitialValues}
-          initialEvents={pipeline.trigger_config.events}
+          initialEvents={
+            manualOnlyTriggers ? [] : pipeline.trigger_config.events
+          }
           initialCancelPrevious={pipeline.concurrency.cancel_previous}
+          manualOnlyTriggers={manualOnlyTriggers}
           onSubmit={handleSubmit}
           onCancel={() =>
             void navigate({

@@ -139,8 +139,8 @@ pub async fn create_artifact(
 
     // Deduplicate artifacts within a build by checksum when available.
     // This avoids duplicate attachments when the same file is discovered more than once.
-    if let Some(checksum_value) = &checksum {
-        if let Some(existing_row) = sqlx::query(
+    if let Some(checksum_value) = &checksum
+        && let Some(existing_row) = sqlx::query(
             "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
              ORDER BY created_at ASC LIMIT 1",
         )
@@ -155,19 +155,19 @@ pub async fn create_artifact(
                 "store_error",
                 "Failed to create artifact",
             )
-        })? {
-            let artifact = row_to_artifact(&existing_row);
-            info!(
-                build_id = %build_id,
-                checksum = %checksum_value,
-                artifact_id = %artifact.id,
-                "artifact deduplicated by checksum"
-            );
-            return Ok(Json(CreateArtifactResponse {
-                artifact,
-                upload_url: String::new(),
-            }));
-        }
+        })?
+    {
+        let artifact = row_to_artifact(&existing_row);
+        info!(
+            build_id = %build_id,
+            checksum = %checksum_value,
+            artifact_id = %artifact.id,
+            "artifact deduplicated by checksum"
+        );
+        return Ok(Json(CreateArtifactResponse {
+            artifact,
+            upload_url: String::new(),
+        }));
     }
 
     let artifact_id = Uuid::new_v4().to_string();
@@ -214,37 +214,36 @@ pub async fn create_artifact(
 
     if let Err(e) = insert_result {
         // If another request inserted the same checksum concurrently, return the existing artifact.
-        if is_unique_constraint(&e) {
-            if let Some(checksum_value) = &checksum {
-                if let Some(existing_row) = sqlx::query(
-                    "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
-                     ORDER BY created_at ASC LIMIT 1",
+        if is_unique_constraint(&e)
+            && let Some(checksum_value) = &checksum
+            && let Some(existing_row) = sqlx::query(
+                "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
+                 ORDER BY created_at ASC LIMIT 1",
+            )
+            .bind(&build_id)
+            .bind(checksum_value)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|lookup_err| {
+                error!(error = %lookup_err, "failed to fetch deduplicated artifact");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to create artifact",
                 )
-                .bind(&build_id)
-                .bind(checksum_value)
-                .fetch_optional(&pool)
-                .await
-                .map_err(|lookup_err| {
-                    error!(error = %lookup_err, "failed to fetch deduplicated artifact");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "store_error",
-                        "Failed to create artifact",
-                    )
-                })? {
-                    let artifact = row_to_artifact(&existing_row);
-                    info!(
-                        build_id = %build_id,
-                        checksum = %checksum_value,
-                        artifact_id = %artifact.id,
-                        "artifact deduplicated by checksum after concurrent insert"
-                    );
-                    return Ok(Json(CreateArtifactResponse {
-                        artifact,
-                        upload_url: String::new(),
-                    }));
-                }
-            }
+            })?
+        {
+            let artifact = row_to_artifact(&existing_row);
+            info!(
+                build_id = %build_id,
+                checksum = %checksum_value,
+                artifact_id = %artifact.id,
+                "artifact deduplicated by checksum after concurrent insert"
+            );
+            return Ok(Json(CreateArtifactResponse {
+                artifact,
+                upload_url: String::new(),
+            }));
         }
 
         error!(error = %e, "failed to insert artifact");

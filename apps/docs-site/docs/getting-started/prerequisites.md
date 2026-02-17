@@ -12,7 +12,7 @@ Before installing oore.build, verify that your system meets these requirements.
 | Requirement | Details |
 |---|---|
 | **Operating system** | macOS (required for daemon and CLI in V1) |
-| **Network access** | Reachability to `dl.oore.build`, your OIDC provider, and your source control provider |
+| **Network access** | Reachability to GitHub (`github.com`), your OIDC provider, and your source control provider |
 | **Xcode Command Line Tools** | Required for iOS/macOS build jobs (`xcode-select --install`) |
 
 ## Required tools for release installer
@@ -58,7 +58,9 @@ If you plan to build oore.build from source (instead of using release binaries),
 
 ## OIDC provider account
 
-oore.build uses OIDC for all authentication. You will need:
+oore.build does not support local passwords.
+
+If you plan to use Remote mode with `remote_auth_mode=oidc` (default), you will need an OIDC provider:
 
 - **Issuer URL**
 - **Client ID**
@@ -71,7 +73,7 @@ If you don't have an OIDC provider configured yet, see [Configure OIDC](/guides/
 Run diagnostics after installation:
 
 ```bash
-~/.oore/bin/oore doctor
+oore doctor
 ```
 
 `oore doctor` currently checks a broad toolchain set (including Rust and Bun). Missing Rust/Bun does not block release-binary installation, but it does block source-development workflows.

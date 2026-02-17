@@ -18,7 +18,7 @@ This tutorial walks you through the oore.build setup wizard — from starting th
 Open a terminal and start `oored`:
 
 ```bash
-~/.oore/bin/oored run --listen 127.0.0.1:8787
+oored run --listen 127.0.0.1:8787
 ```
 
 You should see:
@@ -41,7 +41,7 @@ Override the listen address with `--listen` or the `OORED_LISTEN_ADDR` environme
 In a second terminal, generate a one-time bootstrap token:
 
 ```bash
-~/.oore/bin/oore setup token --ttl 15m
+oore setup token --ttl 15m
 ```
 
 This runs `oore setup token --ttl 15m` and outputs:
@@ -56,13 +56,13 @@ DB:      /Users/you/Library/Application Support/oore/oore.db
 
 To complete setup, either:
   1. Open https://ci.oore.build and add http://127.0.0.1:8787 as an instance, then continue setup
-  2. Run: ~/.oore/bin/oore setup
+  2. Run: oore setup
 ```
 
 Copy the token value. You'll need it in the next step.
 
 ::: warning
-The bootstrap token is single-use and expires after its TTL (default: 15 minutes). If it expires, run `~/.oore/bin/oore setup token --ttl 15m` again.
+The bootstrap token is single-use and expires after its TTL (default: 15 minutes). If it expires, run `oore setup token --ttl 15m` again.
 :::
 
 ## 3. Complete setup
@@ -89,7 +89,7 @@ Choose one of two methods: the **web UI** or the **interactive CLI**.
 Run the setup command:
 
 ```bash
-~/.oore/bin/oore setup
+oore setup
 ```
 
 The CLI walks through the same four steps:
@@ -175,7 +175,7 @@ For the full state machine reference, see [Setup States](/reference/setup-states
 Make sure `oored` is running. Start it with:
 
 ```bash
-~/.oore/bin/oored run --listen 127.0.0.1:8787
+oored run --listen 127.0.0.1:8787
 ```
 
 ### "Setup already complete"

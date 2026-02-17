@@ -3,10 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare:install": "bash ../../scripts/sync-install-script.sh",
-    "dev": "bash ../../scripts/sync-install-script.sh && vite --port 3002",
-    "build": "bash ../../scripts/sync-install-script.sh && vite build",
-    "preview": "vite preview --port 3002"
+    "dev": "bash ../../tools/sync-install-scripts.sh && vite --port 3002",
+    "build": "bash ../../tools/sync-install-scripts.sh && vite build",
+    "preview": "bash ../../tools/sync-install-scripts.sh && vite preview --port 3002"
   },
   "devDependencies": {
     "vite": "^7.1.7"

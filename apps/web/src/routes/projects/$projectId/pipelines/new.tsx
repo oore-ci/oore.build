@@ -20,6 +20,8 @@ import {
   useUpdatePipelineIosSigning,
   useValidatePipeline,
 } from '@/hooks/use-pipelines'
+import { useRepositoryProvider } from '@/hooks/use-integrations'
+import { useProject } from '@/hooks/use-projects'
 import {
   defaultArtifactPatterns,
   fileToBase64,
@@ -86,6 +88,11 @@ const emptyDefaults: PipelineFormValues = {
 function NewPipelinePage() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
+  const { data: projectData } = useProject(projectId)
+  const repoProviderQuery = useRepositoryProvider(
+    projectData?.project.repository_id,
+  )
+  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
   const createMutation = useCreatePipeline()
   const validateMutation = useValidatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
@@ -110,10 +117,12 @@ function NewPipelinePage() {
       return
     }
 
-    const trigger_config: TriggerConfig = {
-      events,
-      branches: parseCsv(data.branches),
-    }
+    const trigger_config: TriggerConfig = manualOnlyTriggers
+      ? { events: [], branches: [] }
+      : {
+          events,
+          branches: parseCsv(data.branches),
+        }
 
     const concurrency: ConcurrencyPolicy = {
       cancel_previous: cancelPrevious,
@@ -371,10 +380,14 @@ function NewPipelinePage() {
       (data.ios_signing_mode === 'manual' || data.ios_signing_mode === 'hybrid')
     ) {
       if (!iosSigningFiles.p12File)
-        errors.push('Manual/Hybrid iOS signing requires a .p12 certificate file')
+        errors.push(
+          'Manual/Hybrid iOS signing requires a .p12 certificate file',
+        )
       if (!p12Password)
         errors.push('Manual/Hybrid iOS signing requires p12 password')
-      if (bundleIds.some((bundleId) => !iosSigningFiles.profileFiles[bundleId])) {
+      if (
+        bundleIds.some((bundleId) => !iosSigningFiles.profileFiles[bundleId])
+      ) {
         errors.push(
           'Manual/Hybrid iOS signing requires provisioning profile files for all bundle IDs',
         )
@@ -386,7 +399,8 @@ function NewPipelinePage() {
       (data.ios_signing_mode === 'api' || data.ios_signing_mode === 'hybrid')
     ) {
       if (!apiKeyId) errors.push('API/Hybrid iOS signing requires API key ID')
-      if (!apiIssuerId) errors.push('API/Hybrid iOS signing requires API issuer ID')
+      if (!apiIssuerId)
+        errors.push('API/Hybrid iOS signing requires API issuer ID')
       if (!iosSigningFiles.apiKeyFile)
         errors.push('API/Hybrid iOS signing requires .p8 private key file')
     }
@@ -436,7 +450,9 @@ function NewPipelinePage() {
           ? {
               key_id: apiKeyId,
               issuer_id: apiIssuerId,
-              private_key_base64: apiPrivateKey ? btoa(apiPrivateKey) : undefined,
+              private_key_base64: apiPrivateKey
+                ? btoa(apiPrivateKey)
+                : undefined,
             }
           : undefined,
     }
@@ -452,8 +468,9 @@ function NewPipelinePage() {
       <div className="mx-auto max-w-4xl">
         <PipelineForm
           initialValues={emptyDefaults}
-          initialEvents={['push']}
+          initialEvents={manualOnlyTriggers ? [] : ['push']}
           initialCancelPrevious={true}
+          manualOnlyTriggers={manualOnlyTriggers}
           onSubmit={handleSubmit}
           onCancel={() =>
             void navigate({ to: '/projects/$projectId', params: { projectId } })

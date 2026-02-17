@@ -11,7 +11,9 @@ export const demoArtifactStorageSettings: ArtifactStorageSettings = {
 }
 
 export const demoInstancePreferences: InstancePreferences = {
-  key_storage_mode: 'keychain',
+  key_storage_mode: 'file',
+  runtime_mode: 'local',
+  remote_auth_mode: 'oidc',
   restart_required: false,
   updated_at: ago(86400 * 60),
 }

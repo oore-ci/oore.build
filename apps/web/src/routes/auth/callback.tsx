@@ -231,7 +231,10 @@ function AuthCallbackPage() {
             </p>
           ) : null}
           <div className="text-center">
-            <Button variant="link" onClick={() => void navigate({ to: errorTarget })}>
+            <Button
+              variant="link"
+              onClick={() => void navigate({ to: errorTarget })}
+            >
               {actionLabel}
             </Button>
           </div>

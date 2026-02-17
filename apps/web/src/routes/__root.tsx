@@ -80,7 +80,11 @@ function RootLayout() {
 
   // Show sidebar+header only when: not on setup/login AND instance+auth exist
   const showAppChrome =
-    !isSetupRoute && !isLoginRoute && !!activeInstanceId && !!authToken && !!authUser
+    !isSetupRoute &&
+    !isLoginRoute &&
+    !!activeInstanceId &&
+    !!authToken &&
+    !!authUser
 
   useEffect(() => {
     useSetupStore.getState().setInstanceContext(activeInstanceId)

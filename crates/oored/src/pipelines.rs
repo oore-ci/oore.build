@@ -34,6 +34,12 @@ const MAX_ENV_KEY_LENGTH: usize = 128;
 const MAX_ENV_VALUE_LENGTH: usize = 4096;
 const MAX_FLUTTER_VERSION_LENGTH: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectTriggerMode {
+    Full,
+    ManualOnly,
+}
+
 fn default_execution_config() -> PipelineExecutionConfig {
     PipelineExecutionConfig::default()
 }
@@ -254,13 +260,58 @@ fn validate_trigger_config(tc: &TriggerConfig) -> Vec<String> {
     errors
 }
 
+fn validate_manual_only_trigger_config(tc: &TriggerConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    if !tc.events.is_empty() {
+        errors.push("trigger_config.events must be empty for local repositories".to_string());
+    }
+    if !tc.branches.is_empty() {
+        errors.push("trigger_config.branches must be empty for local repositories".to_string());
+    }
+
+    errors
+}
+
+async fn project_trigger_mode(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<ProjectTriggerMode, (StatusCode, Json<ApiError>)> {
+    let provider: Option<String> = sqlx::query_scalar(
+        "SELECT i.provider \
+         FROM projects p \
+         LEFT JOIN integration_repositories r ON r.id = p.repository_id \
+         LEFT JOIN integration_installations inst ON inst.id = r.installation_id \
+         LEFT JOIN integrations i ON i.id = inst.integration_id \
+         WHERE p.id = ?1 \
+         LIMIT 1",
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to resolve project trigger mode");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve project source",
+        )
+    })?
+    .flatten();
+
+    Ok(match provider.as_deref() {
+        Some("local_git") => ProjectTriggerMode::ManualOnly,
+        _ => ProjectTriggerMode::Full,
+    })
+}
+
 fn validate_concurrency(cp: &ConcurrencyPolicy) -> Vec<String> {
     let mut errors = Vec::new();
 
-    if let Some(max) = cp.max_concurrent {
-        if !(1..=100).contains(&max) {
-            errors.push("max_concurrent must be between 1 and 100".to_string());
-        }
+    if let Some(max) = cp.max_concurrent
+        && !(1..=100).contains(&max)
+    {
+        errors.push("max_concurrent must be between 1 and 100".to_string());
     }
 
     errors
@@ -357,6 +408,16 @@ pub async fn create_pipeline(
             "invalid_trigger_config",
             tc_errors.join("; "),
         ));
+    }
+    if project_trigger_mode(pool, &project_id).await? == ProjectTriggerMode::ManualOnly {
+        let local_tc_errors = validate_manual_only_trigger_config(&trigger_config);
+        if !local_tc_errors.is_empty() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_trigger_config",
+                local_tc_errors.join("; "),
+            ));
+        }
     }
 
     // Validate concurrency if provided
@@ -597,6 +658,7 @@ pub async fn update_pipeline(
     }
 
     let mut pipeline = row_to_pipeline(&row);
+    let trigger_mode = project_trigger_mode(pool, &pipeline.project_id).await?;
 
     if let Some(name) = req.name {
         let trimmed = name.trim();
@@ -648,6 +710,16 @@ pub async fn update_pipeline(
                 "invalid_trigger_config",
                 errors.join("; "),
             ));
+        }
+        if trigger_mode == ProjectTriggerMode::ManualOnly {
+            let local_tc_errors = validate_manual_only_trigger_config(&trigger_config);
+            if !local_tc_errors.is_empty() {
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_trigger_config",
+                    local_tc_errors.join("; "),
+                ));
+            }
         }
         pipeline.trigger_config = trigger_config;
     }

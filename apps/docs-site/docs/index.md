@@ -5,7 +5,7 @@ description: "Documentation for oore.build, a self-hosted Flutter-first mobile C
 hero:
   name: oore.build
   text: Flutter-first mobile CI
-  tagline: Self-hosted build system with internal app distribution. OIDC-secured, macOS-native, no vendor lock-in.
+  tagline: Self-hosted build system with internal app distribution. OIDC for remote access, macOS-native, no vendor lock-in.
   actions:
     - theme: brand
       text: Get Started
@@ -20,7 +20,7 @@ features:
   - title: Flutter-First
     details: Purpose-built for Flutter. Android, iOS, and macOS builds with automatic Flutter version management via FVM and file-first pipeline configuration.
   - title: OIDC Security
-    details: Enterprise-grade authentication with your existing identity provider. Google, Okta, Azure AD, Auth0, and Keycloak — no local passwords, ever.
+    details: OIDC for non-loopback (remote) access, plus loopback-only local login for local-first onboarding. Google, Okta, Azure AD, Auth0, and Keycloak — no local passwords, ever.
 ---
 
 ## Who is this for?

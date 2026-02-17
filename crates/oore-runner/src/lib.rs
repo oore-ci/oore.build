@@ -383,10 +383,10 @@ async fn fetch_job_android_signing(
     Ok(Some(payload))
 }
 
-fn select_runner_signing_profile<'a>(
-    response: &'a RunnerAndroidSigningResponse,
+fn select_runner_signing_profile(
+    response: &RunnerAndroidSigningResponse,
     variant: AndroidSigningBuildType,
-) -> Option<&'a RunnerAndroidSigningProfile> {
+) -> Option<&RunnerAndroidSigningProfile> {
     match variant {
         AndroidSigningBuildType::Debug => response.debug.as_ref(),
         AndroidSigningBuildType::Release => response.release.as_ref(),
@@ -497,7 +497,7 @@ fn parse_codesigning_identity_hashes(raw: &str) -> Vec<String> {
         .filter_map(|line| {
             let trimmed = line.trim();
             let (_, rest) = trimmed.split_once(')')?;
-            let candidate = rest.trim().split_whitespace().next()?;
+            let candidate = rest.split_whitespace().next()?;
             if candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()) {
                 Some(candidate.to_string())
             } else {
@@ -1072,11 +1072,13 @@ async fn claim_and_execute(
         client,
         daemon_url,
         config,
-        &job.build_id,
-        "running",
-        None,
-        None,
-        &[],
+        StatusReport {
+            build_id: job.build_id.as_str(),
+            status: "running",
+            exit_code: None,
+            error_message: None,
+            steps: &[],
+        },
     )
     .await?;
 
@@ -1088,11 +1090,13 @@ async fn claim_and_execute(
                 client,
                 daemon_url,
                 config,
-                &job.build_id,
-                "succeeded",
-                Some(0),
-                None,
-                &steps,
+                StatusReport {
+                    build_id: job.build_id.as_str(),
+                    status: "succeeded",
+                    exit_code: Some(0),
+                    error_message: None,
+                    steps: &steps,
+                },
             )
             .await?;
             println!("Build {} succeeded", job.build_id);
@@ -1108,11 +1112,13 @@ async fn claim_and_execute(
                     client,
                     daemon_url,
                     config,
-                    &job.build_id,
-                    "failed",
-                    Some(1),
-                    Some(&e.to_string()),
-                    &steps,
+                    StatusReport {
+                        build_id: job.build_id.as_str(),
+                        status: "failed",
+                        exit_code: Some(1),
+                        error_message: Some(e.to_string()),
+                        steps: &steps,
+                    },
                 )
                 .await?;
                 eprintln!("Build {} failed: {}", job.build_id, e);
@@ -1129,14 +1135,14 @@ struct WorkspaceCleanup {
 
 impl Drop for WorkspaceCleanup {
     fn drop(&mut self) {
-        if self.path.exists() {
-            if let Err(e) = fs::remove_dir_all(&self.path) {
-                eprintln!(
-                    "Warning: failed to clean up workspace {}: {}",
-                    self.path.display(),
-                    e
-                );
-            }
+        if self.path.exists()
+            && let Err(e) = fs::remove_dir_all(&self.path)
+        {
+            eprintln!(
+                "Warning: failed to clean up workspace {}: {}",
+                self.path.display(),
+                e
+            );
         }
     }
 }
@@ -1529,24 +1535,31 @@ fn default_platform_command(
     }
 }
 
-fn materialize_stage_commands(config: &PipelineExecutionConfig) -> PipelineCommandStages {
+fn materialize_stage_commands(
+    config: &PipelineExecutionConfig,
+    include_default_platform_commands: bool,
+) -> PipelineCommandStages {
     let mut pre_build = Vec::new();
-    if !config.platforms.is_empty() {
+    if include_default_platform_commands && !config.platforms.is_empty() {
         pre_build.push("flutter pub get".to_string());
     }
     pre_build.extend(config.commands.pre_build.clone());
 
-    let mut build = config
-        .platforms
-        .iter()
-        .map(|platform| {
-            default_platform_command(
-                platform,
-                &config.platform_commands,
-                &config.platform_build_args,
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut build = if include_default_platform_commands {
+        config
+            .platforms
+            .iter()
+            .map(|platform| {
+                default_platform_command(
+                    platform,
+                    &config.platform_commands,
+                    &config.platform_build_args,
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     build.extend(config.commands.build.clone());
 
     PipelineCommandStages {
@@ -1606,7 +1619,8 @@ fn resolve_execution_plan(
         let resolved_flutter_version = fvmrc_version
             .clone()
             .or_else(|| file_config.flutter_version.clone());
-        let mut stage_commands = materialize_stage_commands(&file_config);
+        let include_defaults = file_config.commands.build.is_empty();
+        let mut stage_commands = materialize_stage_commands(&file_config, include_defaults);
         if let Some(version) = resolved_flutter_version {
             stage_commands = apply_fvm_wrappers(stage_commands);
             stage_commands
@@ -1624,7 +1638,7 @@ fn resolve_execution_plan(
 
     let fallback = load_ui_execution_config(snapshot)?;
     let resolved_flutter_version = fvmrc_version.or_else(|| fallback.flutter_version.clone());
-    let mut stage_commands = materialize_stage_commands(&fallback);
+    let mut stage_commands = materialize_stage_commands(&fallback, true);
     if let Some(version) = resolved_flutter_version {
         stage_commands = apply_fvm_wrappers(stage_commands);
         stage_commands
@@ -2254,10 +2268,16 @@ async fn execute_build(
                     )
                     .await;
                     if exit_code != 0 {
-                        return (
-                            steps,
-                            Err(anyhow::anyhow!("Step failed with exit code {}", exit_code)),
-                        );
+                        let err = if exit_code == 127 {
+                            anyhow::anyhow!(
+                                "Step failed with exit code 127 (command not found). \
+Install required tooling (for example Flutter/FVM) or override build commands. Command: {}",
+                                command_preview
+                            )
+                        } else {
+                            anyhow::anyhow!("Step failed with exit code {}", exit_code)
+                        };
+                        return (steps, Err(err));
                     }
                 }
             }
@@ -2553,10 +2573,12 @@ fn walk_dir_files(dir: &std::path::Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with('.') {
-                        continue;
-                    }
+                let is_hidden_dir = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| name.starts_with('.'));
+                if is_hidden_dir {
+                    continue;
                 }
                 walk(&path, result);
             } else if path.is_file() {
@@ -2721,16 +2743,28 @@ async fn scan_and_upload_artifacts(
     }
 }
 
+struct StatusReport<'a> {
+    build_id: &'a str,
+    status: &'a str,
+    exit_code: Option<i32>,
+    error_message: Option<String>,
+    steps: &'a [StepResult],
+}
+
 async fn report_status(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
-    build_id: &str,
-    status: &str,
-    exit_code: Option<i32>,
-    error_message: Option<&str>,
-    steps: &[StepResult],
+    report: StatusReport<'_>,
 ) -> anyhow::Result<()> {
+    let StatusReport {
+        build_id,
+        status,
+        exit_code,
+        error_message,
+        steps,
+    } = report;
+
     let body = serde_json::json!({
         "status": status,
         "exit_code": exit_code,
@@ -2878,10 +2912,7 @@ async fn run_and_stream(
 
     let status = tokio::select! {
         result = child.wait() => {
-            match result {
-                Ok(s) => Some(s),
-                Err(_) => None,
-            }
+            result.ok()
         },
         _ = cancel_fut => {
             child.kill().await.ok();
@@ -3139,6 +3170,43 @@ mod tests {
     }
 
     #[test]
+    fn repo_file_custom_build_commands_override_default_platform_commands() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\ncommands:\n  pre_build: [\"echo pre\"]\n  build: [\"echo custom-build\"]\n  post_build: [\"echo post\"]\nartifacts:\n  patterns: [\"*.txt\"]\n",
+        )
+        .expect("write repo config");
+
+        let snapshot = serde_json::json!({
+            "config_path_explicit": false,
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": ["*.apk"]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
+        assert_eq!(
+            plan.source,
+            format!("file:{}", workspace.join(".oore.yaml").display())
+        );
+        assert_eq!(plan.stage_commands.pre_build, vec!["echo pre".to_string()]);
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["echo custom-build".to_string()]
+        );
+        assert_eq!(
+            plan.stage_commands.post_build,
+            vec!["echo post".to_string()]
+        );
+        assert_eq!(plan.artifact_patterns, vec!["*.txt".to_string()]);
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
     fn fvmrc_flutter_version_is_applied_to_flutter_commands() {
         let workspace = temp_workspace();
         fs::write(workspace.join(".fvmrc"), "{ \"flutter\": \"3.24.0\" }\n").expect("write .fvmrc");
@@ -3233,7 +3301,7 @@ mod tests {
             env: Vec::new(),
             artifact_patterns: vec!["*.apk".to_string()],
         };
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec![
@@ -3260,7 +3328,7 @@ mod tests {
             artifact_patterns: vec!["*.apk".to_string()],
         };
 
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec![
@@ -3289,7 +3357,7 @@ mod tests {
             artifact_patterns: vec!["*.apk".to_string()],
         };
 
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec![
@@ -3318,7 +3386,7 @@ mod tests {
             artifact_patterns: vec!["*.apk".to_string()],
         };
 
-        let commands = materialize_stage_commands(&config);
+        let commands = materialize_stage_commands(&config, true);
         assert_eq!(
             commands.build,
             vec!["flutter build appbundle --release".to_string()]

@@ -350,7 +350,7 @@
             <li>Runs Flutter builds (iOS, Android, macOS)</li>
             <li>Signs iOS builds using macOS Keychain</li>
             <li>Stores build artifacts locally</li>
-            <li>Runs as a launchd system service</li>
+            <li>Optional launchd auto-start for local UI (oore-web)</li>
             <li>CLI, REST API, and web dashboard</li>
           </ul>
         </section>
@@ -358,16 +358,17 @@
         <section class="slide-up delay-300">
           <h2>Install</h2>
           <p class="small">Requires macOS.</p>
-          <pre>curl -fsSL https://oore.build/install | bash</pre>
+          <pre>curl -fsSL https://oore.build/install | bash
+curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash</pre>
         </section>
 
         <section class="slide-up delay-300">
           <h2>Usage</h2>
           <pre><span class="muted-line"># Start daemon</span>
-~/.oore/bin/oored run --listen 127.0.0.1:8787
+oored run --listen 127.0.0.1:8787
 
 <span class="muted-line"># Open setup window token</span>
-~/.oore/bin/oore setup token --ttl 15m
+oore setup token --ttl 15m
 
 <span class="muted-line"># Check health</span>
 curl http://127.0.0.1:8787/healthz

@@ -40,6 +40,7 @@ zeroize.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
 utoipa.workspace = true
+ipnet.workspace = true
 
 # Observability
 opentelemetry.workspace = true

@@ -74,6 +74,8 @@ interface PipelineFormProps {
   validationErrors?: Array<string>
   /** Content rendered after all form sections but before the sticky action bar */
   children?: React.ReactNode
+  /** Local-mode repositories only support manual/API build triggers for now. */
+  manualOnlyTriggers?: boolean
   signingData?: {
     release: {
       has_keystore: boolean
@@ -180,6 +182,7 @@ export default function PipelineForm({
   isPending,
   validationErrors = [],
   children,
+  manualOnlyTriggers = false,
   signingData,
   iosSigningData,
 }: PipelineFormProps) {
@@ -502,47 +505,62 @@ export default function PipelineForm({
               <CardHeader>
                 <SectionHeader
                   title="Triggers"
-                  summary={`${selectedEvents.length} event${selectedEvents.length !== 1 ? 's' : ''}, cancel previous: ${cancelPrevious ? 'on' : 'off'}`}
+                  summary={
+                    manualOnlyTriggers
+                      ? `manual only, cancel previous: ${cancelPrevious ? 'on' : 'off'}`
+                      : `${selectedEvents.length} event${selectedEvents.length !== 1 ? 's' : ''}, cancel previous: ${cancelPrevious ? 'on' : 'off'}`
+                  }
                   open={triggersOpen}
                 />
               </CardHeader>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <FormLabel>Trigger events</FormLabel>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    {TRIGGER_EVENTS.map((event) => (
-                      <label
-                        key={event}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <Checkbox
-                          checked={selectedEvents.includes(event)}
-                          onCheckedChange={() => toggleEvent(event)}
-                        />
-                        {event}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                {manualOnlyTriggers ? (
+                  <Alert>
+                    <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                    <AlertDescription>
+                      This repository uses manual-only pipeline triggers.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <FormLabel>Trigger events</FormLabel>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        {TRIGGER_EVENTS.map((event) => (
+                          <label
+                            key={event}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <Checkbox
+                              checked={selectedEvents.includes(event)}
+                              onCheckedChange={() => toggleEvent(event)}
+                            />
+                            {event}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
 
-                <FormField
-                  control={form.control}
-                  name="branches"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Branch patterns (optional)</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="main, develop, release/*"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                    <FormField
+                      control={form.control}
+                      name="branches"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Branch patterns (optional)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="main, develop, release/*"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
 
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm">
@@ -1426,11 +1444,12 @@ export default function PipelineForm({
                             </p>
                           ) : (
                             <div className="space-y-3">
-                              {iosBundleIds.map((bundleId) => {
-                                const existing =
-                                  iosProfilesByBundle.get(bundleId)
-                                return (
-                                  <FormItem key={bundleId}>
+	                              {iosBundleIds.map((bundleId) => {
+	                                const existing =
+	                                  iosProfilesByBundle.get(bundleId)
+	                                const selectedFile = iosProfileFiles[bundleId]
+	                                return (
+	                                  <FormItem key={bundleId}>
                                     <FormLabel className="font-mono text-xs">
                                       {bundleId}
                                     </FormLabel>
@@ -1447,17 +1466,17 @@ export default function PipelineForm({
                                           }))
                                         }}
                                       />
-                                    </FormControl>
-                                    <p className="text-xs text-muted-foreground">
-                                      {iosProfileFiles[bundleId]
-                                        ? `Selected: ${iosProfileFiles[bundleId]?.name}`
-                                        : existing?.has_profile
-                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
-                                          : 'Upload .mobileprovision for this bundle ID'}
-                                    </p>
-                                  </FormItem>
-                                )
-                              })}
+	                                    </FormControl>
+	                                    <p className="text-xs text-muted-foreground">
+	                                      {selectedFile
+	                                        ? `Selected: ${selectedFile.name}`
+	                                        : existing?.has_profile
+	                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
+	                                          : 'Upload .mobileprovision for this bundle ID'}
+	                                    </p>
+	                                  </FormItem>
+	                                )
+	                              })}
                             </div>
                           )}
                         </div>

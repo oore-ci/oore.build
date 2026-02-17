@@ -17,7 +17,11 @@ import type { Plugin } from 'vite'
  */
 function sitemapPlugin(): Plugin {
   const HOSTNAME = 'https://ci.oore.build'
-  const PUBLIC_ROUTES: Array<{ path: string; changefreq: string; priority: string }> = [
+  const PUBLIC_ROUTES: Array<{
+    path: string
+    changefreq: string
+    priority: string
+  }> = [
     { path: '/', changefreq: 'weekly', priority: '1.0' },
     { path: '/login', changefreq: 'monthly', priority: '0.5' },
   ]
@@ -77,10 +81,7 @@ function htmlOptimisePlugin(): Plugin {
       )
       if (fontFile) {
         const preload = `    <link rel="preload" href="/assets/${fontFile}" as="font" type="font/woff2" crossorigin>\n`
-        html = html.replace(
-          /(\s*<link rel="stylesheet")/,
-          `\n${preload}$1`,
-        )
+        html = html.replace(/(\s*<link rel="stylesheet")/, `\n${preload}$1`)
       }
 
       writeFileSync(htmlPath, html)
@@ -128,23 +129,32 @@ export default defineConfig({
             return 'react-vendor'
 
           // TanStack Query (no circular dep with react-vendor)
-          if (id.includes('/@tanstack/react-query/') || id.includes('/@tanstack/query-core/'))
+          if (
+            id.includes('/@tanstack/react-query/') ||
+            id.includes('/@tanstack/query-core/')
+          )
             return 'query-vendor'
 
           // Form libs (lazy-loaded via dialog components)
-          if (id.includes('/react-hook-form/') || id.includes('/zod/') || id.includes('/@hookform/'))
+          if (
+            id.includes('/react-hook-form/') ||
+            id.includes('/zod/') ||
+            id.includes('/@hookform/')
+          )
             return 'form-vendor'
 
           // Toast notifications
-          if (id.includes('/sonner/'))
-            return 'sonner'
+          if (id.includes('/sonner/')) return 'sonner'
 
           // Icon library
-          if (id.includes('/@hugeicons/'))
-            return 'icons'
+          if (id.includes('/@hugeicons/')) return 'icons'
 
           // Styling utilities (pure functions, no React)
-          if (id.includes('/tailwind-merge/') || id.includes('/class-variance-authority/') || id.includes('/clsx/'))
+          if (
+            id.includes('/tailwind-merge/') ||
+            id.includes('/class-variance-authority/') ||
+            id.includes('/clsx/')
+          )
             return 'ui-utils'
         },
       },

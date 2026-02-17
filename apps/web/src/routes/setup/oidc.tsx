@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useConfigureOidc } from '@/hooks/use-setup'
+import { useConfigureOidc, useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
@@ -150,9 +150,11 @@ function OidcConfigStep() {
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const configureMutation = useConfigureOidc()
+  const { data: status } = useSetupStatus()
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>('google')
 
-  const provider = PROVIDERS.find((p) => p.id === selectedProvider) ?? PROVIDERS[0]
+  const provider =
+    PROVIDERS.find((p) => p.id === selectedProvider) ?? PROVIDERS[0]
 
   const {
     register,
@@ -169,7 +171,8 @@ function OidcConfigStep() {
     mode: 'onBlur',
   })
 
-  const isFormDisabled = configureMutation.isPending || configureMutation.isSuccess
+  const isFormDisabled =
+    configureMutation.isPending || configureMutation.isSuccess
 
   const errorMessage = configureMutation.error
     ? getApiErrorMessage(configureMutation.error, {
@@ -186,13 +189,20 @@ function OidcConfigStep() {
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
   useEffect(() => {
-    setCurrentStep(1)
+    setCurrentStep(2)
   }, [setCurrentStep])
+
+  useEffect(() => {
+    if (!status) return
+    if (status.runtime_mode !== 'remote' || status.remote_auth_mode !== 'oidc') {
+      void navigate({ to: '/setup/mode' })
+    }
+  }, [status, navigate])
 
   function handleProviderChange(value: ProviderId) {
     setSelectedProvider(value)
     const nextProvider = PROVIDERS.find((pr) => pr.id === value) ?? PROVIDERS[0]
-    if (nextProvider.locked && nextProvider.issuerUrl) {
+    if (nextProvider.locked) {
       setValue('issuerUrl', nextProvider.issuerUrl, { shouldValidate: true })
     } else {
       setValue('issuerUrl', '', { shouldValidate: false })
@@ -240,7 +250,9 @@ function OidcConfigStep() {
 
       {/* Redirect URI guidance */}
       <Alert>
-        <AlertTitle>Configure this redirect URI in your identity provider</AlertTitle>
+        <AlertTitle>
+          Configure this redirect URI in your identity provider
+        </AlertTitle>
         <AlertDescription>
           <p className="text-sm text-muted-foreground mb-2">
             Add this as an authorized redirect URI when creating your OAuth app:

@@ -115,6 +115,12 @@ impl StreamTokenStore {
     }
 }
 
+impl Default for StreamTokenStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── Query parameters ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]

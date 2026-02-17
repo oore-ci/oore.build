@@ -14,10 +14,28 @@ use common::{
     seed_test_user,
 };
 use sqlx::Row;
+use std::path::PathBuf;
 use std::process::Command;
 use tower::ServiceExt;
 
 // ── Helpers ──────────────────────────────────────────────────────
+
+fn init_test_git_repo(root: &std::path::Path) -> PathBuf {
+    let repo_path = root.join("repo");
+    std::fs::create_dir_all(&repo_path).expect("create repo dir");
+
+    let output = Command::new("git")
+        .args(["-C", repo_path.to_str().unwrap(), "init"])
+        .output()
+        .expect("git init");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    repo_path
+}
 
 /// Create a session token for the test user.
 async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String {
@@ -160,6 +178,7 @@ fn generate_test_p12_base64(password: &str) -> String {
 #[tokio::test]
 async fn test_create_and_list_projects() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -175,6 +194,7 @@ async fn test_create_and_list_projects() {
         Some(serde_json::json!({
             "name": "Test Project",
             "description": "A test project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
             "default_branch": "main"
         })),
     )
@@ -214,6 +234,7 @@ async fn test_create_and_list_projects() {
 #[tokio::test]
 async fn test_get_project() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -226,7 +247,10 @@ async fn test_get_project() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Detail Project" })),
+        Some(serde_json::json!({
+            "name": "Detail Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
 
@@ -254,6 +278,7 @@ async fn test_get_project() {
 #[tokio::test]
 async fn test_update_project() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -266,7 +291,10 @@ async fn test_update_project() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Original Name" })),
+        Some(serde_json::json!({
+            "name": "Original Name",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
 
@@ -296,6 +324,7 @@ async fn test_update_project() {
 #[tokio::test]
 async fn test_delete_project() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -308,7 +337,10 @@ async fn test_delete_project() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Delete Me" })),
+        Some(serde_json::json!({
+            "name": "Delete Me",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
 
@@ -460,6 +492,7 @@ async fn test_create_project_empty_name() {
 #[tokio::test]
 async fn test_create_and_list_pipelines() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -472,7 +505,10 @@ async fn test_create_and_list_pipelines() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Pipeline Test Project" })),
+        Some(serde_json::json!({
+            "name": "Pipeline Test Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
 
@@ -485,16 +521,17 @@ async fn test_create_and_list_pipelines() {
         &format!("/v1/projects/{project_id}/pipelines"),
         &token,
         Some(serde_json::json!({
-            "name": "Build & Test",
-            "config_path": ".oore.yml",
-            "trigger_config": {
-                "events": ["push", "pull_request"],
-                "branches": ["main", "develop"]
-            },
-            "concurrency": {
-                "cancel_previous": true,
-                "max_concurrent": 3
-            }
+                "name": "Build & Test",
+                "config_path": ".oore.yml",
+                "trigger_config": {
+                    // Local repositories are manual-trigger-only in V1.
+                    "events": [],
+                    "branches": []
+                },
+                "concurrency": {
+                    "cancel_previous": true,
+                    "max_concurrent": 3
+                }
         })),
     )
     .await;
@@ -535,6 +572,7 @@ async fn test_create_and_list_pipelines() {
 #[tokio::test]
 async fn test_get_pipeline() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -547,7 +585,10 @@ async fn test_get_pipeline() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Get Pipeline Project" })),
+        Some(serde_json::json!({
+            "name": "Get Pipeline Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -587,6 +628,7 @@ async fn test_get_pipeline() {
 #[tokio::test]
 async fn test_update_pipeline() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -599,7 +641,10 @@ async fn test_update_pipeline() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Update Pipeline Project" })),
+        Some(serde_json::json!({
+            "name": "Update Pipeline Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -638,6 +683,7 @@ async fn test_update_pipeline() {
 #[tokio::test]
 async fn test_delete_pipeline() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -650,7 +696,10 @@ async fn test_delete_pipeline() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Delete Pipeline Project" })),
+        Some(serde_json::json!({
+            "name": "Delete Pipeline Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -910,6 +959,7 @@ async fn test_create_pipeline_for_nonexistent_project() {
 #[tokio::test]
 async fn test_create_pipeline_with_invalid_trigger() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -922,7 +972,10 @@ async fn test_create_pipeline_with_invalid_trigger() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Trigger Test Project" })),
+        Some(serde_json::json!({
+            "name": "Trigger Test Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -949,6 +1002,7 @@ async fn test_create_pipeline_with_invalid_trigger() {
 #[tokio::test]
 async fn test_create_pipeline_with_execution_config_and_explicit_path() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -960,7 +1014,10 @@ async fn test_create_pipeline_with_execution_config_and_explicit_path() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Execution Config Project" })),
+        Some(serde_json::json!({
+            "name": "Execution Config Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -1059,6 +1116,7 @@ async fn test_validate_pipeline_rejects_invalid_execution_config() {
 #[tokio::test]
 async fn test_pipeline_android_signing_crud() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -1070,7 +1128,10 @@ async fn test_pipeline_android_signing_crud() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "Signing Project" })),
+        Some(serde_json::json!({
+            "name": "Signing Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -1248,6 +1309,7 @@ async fn test_runner_fetches_pipeline_android_signing_for_assigned_job() {
 #[tokio::test]
 async fn test_pipeline_ios_signing_crud() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -1259,7 +1321,10 @@ async fn test_pipeline_ios_signing_crud() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "iOS Signing Project" })),
+        Some(serde_json::json!({
+            "name": "iOS Signing Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap();
@@ -1351,10 +1416,11 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
     .await
     .unwrap();
 
-    let p12_encrypted =
-        oored::crypto::encrypt("ZmFrZS1wMTItYnl0ZXM=", &common::TEST_ENCRYPTION_KEY).unwrap();
+    let p12_password = "p12-pass";
+    let p12_base64 = generate_test_p12_base64(p12_password);
+    let p12_encrypted = oored::crypto::encrypt(&p12_base64, &common::TEST_ENCRYPTION_KEY).unwrap();
     let p12_password_encrypted =
-        oored::crypto::encrypt("p12-pass", &common::TEST_ENCRYPTION_KEY).unwrap();
+        oored::crypto::encrypt(p12_password, &common::TEST_ENCRYPTION_KEY).unwrap();
     sqlx::query(
         "INSERT INTO pipeline_ios_signing_settings (
             id, pipeline_id, enabled, mode, team_id, export_method, bundle_ids_json,
@@ -1439,6 +1505,7 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
 #[tokio::test]
 async fn test_register_ios_device_with_mock_apple_api() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -1450,7 +1517,10 @@ async fn test_register_ios_device_with_mock_apple_api() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "iOS Register Device Project" })),
+        Some(serde_json::json!({
+            "name": "iOS Register Device Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap().to_string();
@@ -1542,6 +1612,7 @@ async fn test_register_ios_device_with_mock_apple_api() {
 #[tokio::test]
 async fn test_register_ios_device_surfaces_apple_error() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -1553,7 +1624,10 @@ async fn test_register_ios_device_surfaces_apple_error() {
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "iOS Register Device Error Project" })),
+        Some(serde_json::json!({
+            "name": "iOS Register Device Error Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap().to_string();
@@ -1647,6 +1721,7 @@ async fn test_register_ios_device_surfaces_apple_error() {
 #[tokio::test]
 async fn test_sync_ios_signing_falls_back_when_certificate_creation_conflicts() {
     let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
@@ -1658,7 +1733,10 @@ async fn test_sync_ios_signing_falls_back_when_certificate_creation_conflicts() 
         "POST",
         "/v1/projects",
         &token,
-        Some(serde_json::json!({ "name": "iOS Sync Fallback Project" })),
+        Some(serde_json::json!({
+            "name": "iOS Sync Fallback Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
     )
     .await;
     let project_id = json["project"]["id"].as_str().unwrap().to_string();

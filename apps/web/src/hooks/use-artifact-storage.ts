@@ -1,13 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type {
+  ConfigureExternalAccessOidcRequest,
   UpdateArtifactStorageSettingsRequest,
+  UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
 } from '@/lib/types'
 import {
+  configureExternalAccessOidc,
   getArtifactStorageSettings,
+  getExternalAccessNetworkSettings,
+  getExternalAccessPreflight,
   getInstancePreferences,
   updateArtifactStorageSettings,
+  updateExternalAccessNetworkSettings,
   updateInstancePreferences,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -87,6 +93,81 @@ export function useUpdateInstancePreferences() {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'instance-preferences'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+      })
+    },
+  })
+}
+
+export function useConfigureExternalAccessOidc() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (data: ConfigureExternalAccessOidcRequest) => {
+      if (!baseUrl || !token) {
+        return Promise.reject(new Error('Not authenticated'))
+      }
+      return configureExternalAccessOidc(baseUrl, token, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+      })
+    },
+  })
+}
+
+export function useExternalAccessPreflight() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+    queryFn: () => getExternalAccessPreflight(baseUrl!, token!),
+    enabled: !!baseUrl && !!token,
+  })
+}
+
+export function useExternalAccessNetworkSettings() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
+    queryFn: () => getExternalAccessNetworkSettings(baseUrl!, token!),
+    enabled: !!baseUrl && !!token,
+  })
+}
+
+export function useUpdateExternalAccessNetworkSettings() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (data: UpdateExternalAccessNetworkSettingsRequest) => {
+      if (!baseUrl || !token) {
+        return Promise.reject(new Error('Not authenticated'))
+      }
+      return updateExternalAccessNetworkSettings(baseUrl, token, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'external-access-network-settings',
+        ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
       })
     },
   })
