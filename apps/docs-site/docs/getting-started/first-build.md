@@ -127,10 +127,10 @@ For the full state machine, see [Build States](/reference/build-states).
 
 ### Flutter commands fail
 
-Run `~/.oore/bin/oore doctor` to check your toolchain:
+Run `oore doctor` to check your toolchain:
 
 ```bash
-~/.oore/bin/oore doctor
+oore doctor
 ```
 
 Ensure `fvm` and `flutter` are installed and accessible.

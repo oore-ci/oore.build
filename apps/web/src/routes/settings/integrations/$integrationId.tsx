@@ -84,7 +84,7 @@ function IntegrationDetailPage() {
   const label =
     detail?.integration.display_name ??
     detail?.integration.provider ??
-    'Integration Details'
+    'Source Details'
 
   useEffect(() => {
     if (detail?.integration) {
@@ -129,10 +129,10 @@ function IntegrationDetailPage() {
     const name =
       detail?.integration.display_name ??
       detail?.integration.provider ??
-      'integration'
+      'source'
     deleteMutation.mutate(integrationId, {
       onSuccess: () => {
-        toast.success(`Disconnected ${name}`)
+        toast.success(`Disconnected source: ${name}`)
         void navigate({ to: '/settings/integrations' })
       },
       onError: (err) => {
@@ -159,7 +159,7 @@ function IntegrationDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Failed to load integration: {error.message}
+            Failed to load source: {error.message}
           </AlertDescription>
         </Alert>
       </PageLayout>
@@ -171,14 +171,16 @@ function IntegrationDetailPage() {
   const { integration } = detail
   const installations = installationsData?.installations ?? []
   const repositories = reposData?.repositories ?? []
+  const canSyncInstallations =
+    integration.provider === 'github' || integration.provider === 'gitlab'
 
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
       <PageHeader
         title={integration.display_name ?? integration.provider}
-        back={{ to: '/settings/integrations', label: 'Integrations' }}
-        description="Installation and repository link state for this provider connection."
+        back={{ to: '/settings/integrations', label: 'Sources' }}
+        description="Installation and repository link state for this source connection."
         meta={
           <>
             <Badge variant={getIntegrationStatusVariant(integration.status)}>
@@ -311,6 +313,7 @@ function IntegrationDetailPage() {
                   rel="noopener noreferrer"
                 />
               }
+              nativeButton={false}
             >
               <HugeiconsIcon icon={Setting07Icon} size={16} />
               {installations.length > 0
@@ -319,14 +322,16 @@ function IntegrationDetailPage() {
             </Button>
           ) : null}
 
-          <Button
-            variant="outline"
-            onClick={handleSync}
-            disabled={syncMutation.isPending}
-          >
-            <HugeiconsIcon icon={Refresh01Icon} size={16} />
-            {syncMutation.isPending ? 'Syncing...' : 'Sync Installations'}
-          </Button>
+          {canSyncInstallations ? (
+            <Button
+              variant="outline"
+              onClick={handleSync}
+              disabled={syncMutation.isPending}
+            >
+              <HugeiconsIcon icon={Refresh01Icon} size={16} />
+              {syncMutation.isPending ? 'Syncing...' : 'Sync Installations'}
+            </Button>
+          ) : null}
 
           <AlertDialog>
             <AlertDialogTrigger
@@ -339,7 +344,7 @@ function IntegrationDetailPage() {
             />
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Disconnect integration?</AlertDialogTitle>
+                <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This removes credentials, installations, repository links, and
                   webhook behavior.

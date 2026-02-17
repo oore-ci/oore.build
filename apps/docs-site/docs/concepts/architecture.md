@@ -98,14 +98,19 @@ Mobile CI requires macOS hardware for iOS and macOS builds (Xcode is macOS-only)
 - **No per-minute billing** — your hardware, your schedule
 - **Full control** — configure OIDC, RBAC, and storage as needed
 
-## Why OIDC-only?
+## Why OIDC (default)?
 
-oore.build delegates all authentication to your existing identity provider:
+In Remote mode, oore.build defaults to OIDC (`remote_auth_mode=oidc`) for authentication on any non-loopback access path.
+If you deploy behind an identity-aware proxy, you can opt into `remote_auth_mode=trusted_proxy` so user identity is asserted by a trusted proxy header (with peer validation).
+
+OIDC (default) uses your existing identity provider:
 
 - **No password storage** — eliminates an entire class of security concerns
 - **Single sign-on** — users authenticate with the same credentials they use everywhere else
 - **Centralized access control** — disable a user in your IdP and they lose access to oore.build
 - **Enterprise ready** — works with Google Workspace, Okta, Azure AD, Auth0, Keycloak, and any OIDC-compliant provider
+
+The daemon also supports loopback-only local login (no OIDC) for local-first onboarding and local operator access (auto-bootstrap requires Local Only mode).
 
 ## Technology choices
 

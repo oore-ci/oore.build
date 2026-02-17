@@ -1,170 +1,44 @@
 ---
 status: implemented
-description: "Automate oore.build releases on Mac Mini with GitHub Actions and R2 storage."
+description: "Automate oore.build releases on a Mac mini using Woodpecker CI and GitHub Releases."
 ---
 
 # Release Automation on macOS
 
-Use this flow with a dedicated macOS host (for example, a Mac mini) that builds release artifacts and uploads them to Cloudflare R2 behind `https://dl.oore.build`.
+Use this flow with a dedicated macOS host (for example, a Mac mini) that runs Woodpecker CI, builds release artifacts, deploys Cloudflare Pages sites, and publishes GitHub Releases.
 
 ## Prerequisites
 
 - macOS host with Xcode command line tools
 - Rust toolchain installed
-- Bun installed (for web asset build + `oore-web` executable compile in release pipeline)
-- `wrangler` installed and authenticated (`wrangler whoami`)
-- R2 bucket and public domain already configured (example: `oore` and `dl.oore.build`)
-- Repo checked out on the macOS host
+- Bun installed (for web asset build + `oore-web` executable compile)
+- Woodpecker server + agent running on the macOS host
+- Cloudflare token configured in Woodpecker secrets (for `wrangler pages deploy`)
+- GitHub token configured in Woodpecker secrets (for pushing tags and creating releases)
 
-::: tip
-`scripts/release-local.sh` now auto-installs missing Rust cross target `x86_64-apple-darwin` for the active toolchain when needed.
-:::
+## Workflow
 
-## Webhook mode (recommended, LaunchDaemon)
+- Merge to `main`:
+  - CI bumps `workspace.package.version` (patch increment), commits, and creates a semver tag (for example `v0.2.1`).
+  - The bump commit includes `[CI SKIP]` to avoid re-trigger loops.
+- Tag push:
+  - CI builds release artifacts for:
+    - `aarch64-apple-darwin`
+    - `x86_64-apple-darwin`
+  - CI builds the web UI (`apps/web/dist`) and compiles `oore-web` for both macOS architectures.
+  - CI deploys Pages sites (web + docs + site) using `wrangler pages deploy`.
+  - CI creates/updates a GitHub Release and uploads artifacts + checksums + release notes.
 
-This mode reacts to Git tag pushes immediately.
+## Required Woodpecker Secrets
 
-### 1) Configure webhook secret on Mac mini
+Set these secrets in Woodpecker (repo/org/global as appropriate):
 
-```bash
-sudo mkdir -p /etc/oore
-sudo tee /etc/oore/release-webhook.env >/dev/null <<'EOF'
-OORE_WEBHOOK_SECRET=replace-with-strong-random-secret
-EOF
-sudo chmod 600 /etc/oore/release-webhook.env
-```
+- `GITHUB_TOKEN`:
+  - Used to clone/push and to create GitHub Releases.
+  - Must have permission to push to the repo and create releases.
+- `CLOUDFLARE_API_TOKEN`:
+  - Used by `wrangler pages deploy`.
 
-### 2) Install system daemon
+## Notes
 
-```bash
-sudo make install-release-webhook-daemon
-```
-
-If you already installed this daemon before onboarding-hardening changes, rerun the same command once to refresh launchd PATH and dependency checks.
-
-If `~/.oore` was previously created as `root` on this machine, reset ownership so user-level installer flows can write `~/.oore/bin` and `~/.oore/logs`:
-
-```bash
-sudo chown -R "$USER":staff ~/.oore
-```
-
-### 3) Expose listener publicly (Cloudflare Tunnel)
-
-Expose `http://127.0.0.1:8789` and map a hostname (for example `build-hook.oore.build`).
-
-Use webhook URL:
-
-- `https://build-hook.oore.build/github/webhook`
-
-### 4) Configure GitHub webhook
-
-- Event type: `Push`
-- Content type: `application/json`
-- Secret: same value as `OORE_WEBHOOK_SECRET`
-- URL: `https://build-hook.oore.build/github/webhook`
-
-### 5) Verify listener health
-
-```bash
-curl -fsSL http://127.0.0.1:8789/healthz
-tail -f ~/Library/Logs/oore-release-webhook.log
-```
-
-On tag push `refs/tags/v*.*.*`, the listener triggers release build/upload.
-
-### Check daemon status
-
-```bash
-sudo launchctl print system/com.oore.release-webhook | head -n 50
-```
-
-## LaunchAgent mode (fallback)
-
-If you do not want system-level setup, you can still run the per-user LaunchAgent:
-
-```bash
-make install-release-webhook
-```
-
-Logs:
-
-```bash
-tail -f ~/Library/Logs/oore-release-webhook.log
-```
-
-## Polling mode (backup fallback)
-
-If webhooks are unavailable, install the poller:
-
-```bash
-make install-release-poller
-```
-
-This `launchd` job:
-
-- polls semver tags (`v*.*.*`) every 2 minutes
-- builds and packages both macOS release artifacts, bundled local web launcher, and web assets
-- uploads artifacts and checksums to R2
-- updates `releases/latest.json` for `OORE_VERSION=latest`
-
-## Manual release publish
-
-To publish a specific tag immediately:
-
-```bash
-make release-local TAG=v0.2.0
-```
-
-## Cut version + tag in one command
-
-To bump `workspace.package.version`, push the version commit, and push a matching tag:
-
-```bash
-make release-cut VERSION=0.2.0
-```
-
-This target:
-
-- requires a clean git working tree
-- requires running from `master`
-- updates root `Cargo.toml` workspace version
-- commits and pushes the version bump
-- creates tag `v0.2.0` and pushes it
-
-Artifacts are uploaded to:
-
-- `https://dl.oore.build/releases/v0.2.0/oore_0.2.0_darwin_arm64.tar.gz`
-- `https://dl.oore.build/releases/v0.2.0/oore_0.2.0_darwin_x86_64.tar.gz`
-- `https://dl.oore.build/releases/v0.2.0/oore_0.2.0_checksums.txt`
-- `https://dl.oore.build/releases/latest.json`
-
-## Environment variables
-
-The release scripts support these overrides:
-
-| Variable | Default | Description |
-|---|---|---|
-| `OORE_R2_BUCKET` | `oore` | R2 bucket name |
-| `OORE_R2_PREFIX` | `releases` | Object key prefix in bucket |
-| `OORE_RELEASE_BASE_URL` | `https://dl.oore.build/releases` | Public base URL used in manifests |
-| `OORE_GIT_REMOTE` | `origin` | Git remote for tag polling/build source |
-| `OORE_TAG_PATTERN` | `v*.*.*` | Tag filter for poller |
-| `OORE_WEBHOOK_SECRET` | unset | Required for webhook signature verification |
-| `OORE_PUBLISH_LATEST` | `1` | Upload `latest.json` after release |
-| `OORE_SKIP_UPLOAD` | `0` | Build/package only, skip R2 upload |
-
-## Verification
-
-After publishing a tag:
-
-```bash
-curl -fsSL https://dl.oore.build/releases/latest.json
-curl -I https://dl.oore.build/releases/v0.2.0/oore_0.2.0_darwin_arm64.tar.gz
-curl -I https://oore.build/install
-```
-
-Then validate installer flow:
-
-```bash
-OORE_VERSION=latest curl -fsSL https://oore.build/install | bash
-```
+The legacy webhook/poller/R2-based release automation is replaced by Woodpecker pipelines and GitHub Releases.

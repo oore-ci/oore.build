@@ -15,8 +15,10 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as BuildsIndexRouteImport } from './routes/builds/index'
+import { Route as SetupTrustedProxyRouteImport } from './routes/setup/trusted-proxy'
 import { Route as SetupOwnerRouteImport } from './routes/setup/owner'
 import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
+import { Route as SetupModeRouteImport } from './routes/setup/mode'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
@@ -26,6 +28,7 @@ import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings/integrations/index'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
+import { Route as SettingsIntegrationsLocalGitRouteImport } from './routes/settings/integrations/local-git'
 import { Route as SettingsIntegrationsGitlabRouteImport } from './routes/settings/integrations/gitlab'
 import { Route as SettingsIntegrationsGithubRouteImport } from './routes/settings/integrations/github'
 import { Route as SettingsIntegrationsIntegrationIdRouteImport } from './routes/settings/integrations/$integrationId'
@@ -63,6 +66,11 @@ const BuildsIndexRoute = BuildsIndexRouteImport.update({
   path: '/builds/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SetupTrustedProxyRoute = SetupTrustedProxyRouteImport.update({
+  id: '/trusted-proxy',
+  path: '/trusted-proxy',
+  getParentRoute: () => SetupRoute,
+} as any)
 const SetupOwnerRoute = SetupOwnerRouteImport.update({
   id: '/owner',
   path: '/owner',
@@ -71,6 +79,11 @@ const SetupOwnerRoute = SetupOwnerRouteImport.update({
 const SetupOidcRoute = SetupOidcRouteImport.update({
   id: '/oidc',
   path: '/oidc',
+  getParentRoute: () => SetupRoute,
+} as any)
+const SetupModeRoute = SetupModeRouteImport.update({
+  id: '/mode',
+  path: '/mode',
   getParentRoute: () => SetupRoute,
 } as any)
 const SetupCompleteRoute = SetupCompleteRouteImport.update({
@@ -119,6 +132,12 @@ const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   path: '/projects/$projectId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsIntegrationsLocalGitRoute =
+  SettingsIntegrationsLocalGitRouteImport.update({
+    id: '/settings/integrations/local-git',
+    path: '/settings/integrations/local-git',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SettingsIntegrationsGitlabRoute =
   SettingsIntegrationsGitlabRouteImport.update({
     id: '/settings/integrations/gitlab',
@@ -167,14 +186,17 @@ export interface FileRoutesByFullPath {
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
+  '/setup/mode': typeof SetupModeRoute
   '/setup/oidc': typeof SetupOidcRoute
   '/setup/owner': typeof SetupOwnerRoute
+  '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds/': typeof BuildsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
+  '/settings/integrations/local-git': typeof SettingsIntegrationsLocalGitRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
   '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
@@ -191,14 +213,17 @@ export interface FileRoutesByTo {
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
+  '/setup/mode': typeof SetupModeRoute
   '/setup/oidc': typeof SetupOidcRoute
   '/setup/owner': typeof SetupOwnerRoute
+  '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds': typeof BuildsIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/setup': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
+  '/settings/integrations/local-git': typeof SettingsIntegrationsLocalGitRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations': typeof SettingsIntegrationsIndexRoute
   '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
@@ -217,14 +242,17 @@ export interface FileRoutesById {
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
+  '/setup/mode': typeof SetupModeRoute
   '/setup/oidc': typeof SetupOidcRoute
   '/setup/owner': typeof SetupOwnerRoute
+  '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds/': typeof BuildsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
+  '/settings/integrations/local-git': typeof SettingsIntegrationsLocalGitRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
   '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
@@ -244,14 +272,17 @@ export interface FileRouteTypes {
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
+    | '/setup/mode'
     | '/setup/oidc'
     | '/setup/owner'
+    | '/setup/trusted-proxy'
     | '/builds/'
     | '/projects/'
     | '/setup/'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
     | '/settings/integrations/gitlab'
+    | '/settings/integrations/local-git'
     | '/projects/$projectId/'
     | '/settings/integrations/'
     | '/projects/$projectId/pipelines/$pipelineId'
@@ -268,14 +299,17 @@ export interface FileRouteTypes {
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
+    | '/setup/mode'
     | '/setup/oidc'
     | '/setup/owner'
+    | '/setup/trusted-proxy'
     | '/builds'
     | '/projects'
     | '/setup'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
     | '/settings/integrations/gitlab'
+    | '/settings/integrations/local-git'
     | '/projects/$projectId'
     | '/settings/integrations'
     | '/projects/$projectId/pipelines/$pipelineId'
@@ -293,14 +327,17 @@ export interface FileRouteTypes {
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
+    | '/setup/mode'
     | '/setup/oidc'
     | '/setup/owner'
+    | '/setup/trusted-proxy'
     | '/builds/'
     | '/projects/'
     | '/setup/'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
     | '/settings/integrations/gitlab'
+    | '/settings/integrations/local-git'
     | '/projects/$projectId/'
     | '/settings/integrations/'
     | '/projects/$projectId/pipelines/$pipelineId'
@@ -323,6 +360,7 @@ export interface RootRouteChildren {
   SettingsIntegrationsIntegrationIdRoute: typeof SettingsIntegrationsIntegrationIdRoute
   SettingsIntegrationsGithubRoute: typeof SettingsIntegrationsGithubRoute
   SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
+  SettingsIntegrationsLocalGitRoute: typeof SettingsIntegrationsLocalGitRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
   ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
@@ -374,6 +412,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BuildsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/setup/trusted-proxy': {
+      id: '/setup/trusted-proxy'
+      path: '/trusted-proxy'
+      fullPath: '/setup/trusted-proxy'
+      preLoaderRoute: typeof SetupTrustedProxyRouteImport
+      parentRoute: typeof SetupRoute
+    }
     '/setup/owner': {
       id: '/setup/owner'
       path: '/owner'
@@ -386,6 +431,13 @@ declare module '@tanstack/react-router' {
       path: '/oidc'
       fullPath: '/setup/oidc'
       preLoaderRoute: typeof SetupOidcRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/mode': {
+      id: '/setup/mode'
+      path: '/mode'
+      fullPath: '/setup/mode'
+      preLoaderRoute: typeof SetupModeRouteImport
       parentRoute: typeof SetupRoute
     }
     '/setup/complete': {
@@ -451,6 +503,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/integrations/local-git': {
+      id: '/settings/integrations/local-git'
+      path: '/settings/integrations/local-git'
+      fullPath: '/settings/integrations/local-git'
+      preLoaderRoute: typeof SettingsIntegrationsLocalGitRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/integrations/gitlab': {
       id: '/settings/integrations/gitlab'
       path: '/settings/integrations/gitlab'
@@ -498,15 +557,19 @@ declare module '@tanstack/react-router' {
 
 interface SetupRouteChildren {
   SetupCompleteRoute: typeof SetupCompleteRoute
+  SetupModeRoute: typeof SetupModeRoute
   SetupOidcRoute: typeof SetupOidcRoute
   SetupOwnerRoute: typeof SetupOwnerRoute
+  SetupTrustedProxyRoute: typeof SetupTrustedProxyRoute
   SetupIndexRoute: typeof SetupIndexRoute
 }
 
 const SetupRouteChildren: SetupRouteChildren = {
   SetupCompleteRoute: SetupCompleteRoute,
+  SetupModeRoute: SetupModeRoute,
   SetupOidcRoute: SetupOidcRoute,
   SetupOwnerRoute: SetupOwnerRoute,
+  SetupTrustedProxyRoute: SetupTrustedProxyRoute,
   SetupIndexRoute: SetupIndexRoute,
 }
 
@@ -528,6 +591,7 @@ const rootRouteChildren: RootRouteChildren = {
     SettingsIntegrationsIntegrationIdRoute,
   SettingsIntegrationsGithubRoute: SettingsIntegrationsGithubRoute,
   SettingsIntegrationsGitlabRoute: SettingsIntegrationsGitlabRoute,
+  SettingsIntegrationsLocalGitRoute: SettingsIntegrationsLocalGitRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
   ProjectsProjectIdPipelinesPipelineIdRoute:

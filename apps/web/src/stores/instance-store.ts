@@ -5,7 +5,8 @@ import { queryClient } from '@/lib/query-client'
 import { clearAuthStorageForInstance } from '@/stores/auth-store'
 
 function generateInstanceId(): string {
-  const webCrypto = globalThis.crypto
+  // crypto can be missing in some test environments / older runtimes
+  const webCrypto = (globalThis as unknown as { crypto?: Crypto }).crypto
   if (webCrypto && typeof webCrypto.randomUUID === 'function') {
     return webCrypto.randomUUID()
   }

@@ -130,6 +130,7 @@ export default function PipelineCard({
                     params={{ projectId, pipelineId: pipeline.id }}
                   />
                 }
+                nativeButton={false}
               >
                 <HugeiconsIcon icon={Edit02Icon} size={14} />
                 Edit
@@ -154,6 +155,7 @@ export default function PipelineCard({
                   params={{ projectId, pipelineId: pipeline.id }}
                 />
               }
+              nativeButton={false}
             >
               <HugeiconsIcon icon={Link01Icon} size={14} />
               Permalink

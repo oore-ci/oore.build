@@ -22,6 +22,8 @@ export type SetupState =
 export interface SetupStatus {
   instance_id: string
   state: SetupState
+  runtime_mode: RuntimeMode
+  remote_auth_mode: RemoteAuthMode
   setup_mode: boolean
   is_configured: boolean
 }
@@ -66,6 +68,46 @@ export interface SetupOidcVerifyResponse {
   session_expires_at?: number
 }
 
+export interface SetupLocalOwnerCreateRequest {
+  email: string
+}
+
+export interface SetupLocalOwnerCreateResponse {
+  state: SetupState
+  owner_email: string
+  session_expires_at?: number
+}
+
+export interface SetupPreferencesRequest {
+  runtime_mode: RuntimeMode
+  remote_auth_mode?: RemoteAuthMode
+}
+
+export interface SetupPreferencesResponse {
+  runtime_mode: RuntimeMode
+  remote_auth_mode: RemoteAuthMode
+  session_expires_at?: number
+}
+
+export interface SetupTrustedProxyConfigureRequest {
+  user_email_header?: string
+  trusted_proxy_cidrs: Array<string>
+  shared_secret?: string
+}
+
+export interface SetupTrustedProxyConfigureResponse {
+  state: SetupState
+  has_shared_secret: boolean
+  configured_at: number
+  session_expires_at?: number
+}
+
+export interface SetupTrustedProxyClaimOwnerResponse {
+  state: SetupState
+  owner_email: string
+  session_expires_at?: number
+}
+
 export interface SetupCompleteResponse {
   state: SetupState
   instance_id: string
@@ -89,6 +131,16 @@ export interface AuthenticatedUser {
 }
 
 export interface OidcCallbackResponse {
+  session_token: string
+  expires_at: number
+  user: AuthenticatedUser
+}
+
+export interface LocalLoginRequest {
+  email?: string
+}
+
+export interface LocalLoginResponse {
   session_token: string
   expires_at: number
   user: AuthenticatedUser
@@ -154,9 +206,13 @@ export interface ApiError {
 
 // ── SCM Integration types ──────────────────────────────────────
 
-export type ScmProvider = 'github' | 'gitlab'
+export type ScmProvider = 'github' | 'gitlab' | 'local_git'
 
-export type IntegrationAuthMode = 'github_app' | 'oauth_app' | 'personal_token'
+export type IntegrationAuthMode =
+  | 'github_app'
+  | 'oauth_app'
+  | 'personal_token'
+  | 'local_path'
 
 export type IntegrationStatus = 'active' | 'inactive' | 'error'
 
@@ -235,6 +291,35 @@ export interface GitLabAuthorizeRequest {
 
 export interface GitLabAuthorizeResponse {
   authorize_url: string
+}
+
+export interface CreateLocalGitIntegrationRequest {
+  repository_path: string
+  display_name?: string
+}
+
+export interface CreateLocalGitIntegrationResponse {
+  integration: Integration
+  repository: IntegrationRepository
+}
+
+export interface LocalGitDirectoryEntry {
+  name: string
+  path: string
+  is_git_repository: boolean
+}
+
+export interface LocalGitPathSuggestion {
+  label: string
+  path: string
+}
+
+export interface BrowseLocalGitDirectoriesResponse {
+  current_path: string
+  current_is_git_repository: boolean
+  parent_path?: string
+  directories: Array<LocalGitDirectoryEntry>
+  suggestions: Array<LocalGitPathSuggestion>
 }
 
 export interface ListIntegrationsResponse {
@@ -438,9 +523,73 @@ export interface UpdateArtifactStorageSettingsRequest {
 }
 
 export type KeyStorageMode = 'keychain' | 'file'
+export type RuntimeMode = 'local' | 'remote'
+export type RemoteAuthMode = 'oidc' | 'trusted_proxy'
+
+export interface ExternalAccessPreflightCheck {
+  id: string
+  label: string
+  ok: boolean
+  message: string
+  failure_code?: string
+}
+
+export interface ExternalAccessPreflightResponse {
+  ready: boolean
+  checks: Array<ExternalAccessPreflightCheck>
+}
+
+export type ExternalAccessNetworkSource = 'database' | 'environment' | 'default'
+
+export interface ExternalAccessNetworkSettings {
+  public_url?: string
+  allowed_origins: Array<string>
+  source: ExternalAccessNetworkSource
+  updated_at?: number
+}
+
+export interface ExternalAccessNetworkSettingsResponse {
+  settings: ExternalAccessNetworkSettings
+}
+
+export interface UpdateExternalAccessNetworkSettingsRequest {
+  public_url?: string
+  allowed_origins: Array<string>
+}
+
+export interface ConfigureExternalAccessOidcRequest {
+  issuer_url: string
+  client_id: string
+  client_secret?: string
+}
+
+export interface ConfigureExternalAccessOidcResponse {
+  discovered_issuer: string
+  has_client_secret: boolean
+  configured_at: number
+}
+
+export interface TrustedProxySettingsPublic {
+  user_email_header: string
+  trusted_proxy_cidrs: Array<string>
+  has_shared_secret: boolean
+  updated_at?: number
+}
+
+export interface TrustedProxySettingsResponse {
+  settings: TrustedProxySettingsPublic
+}
+
+export interface UpdateTrustedProxySettingsRequest {
+  user_email_header?: string
+  trusted_proxy_cidrs: Array<string>
+  shared_secret?: string
+}
 
 export interface InstancePreferences {
   key_storage_mode: KeyStorageMode
+  runtime_mode: RuntimeMode
+  remote_auth_mode: RemoteAuthMode
   restart_required: boolean
   updated_at?: number
 }
@@ -451,6 +600,8 @@ export interface InstancePreferencesResponse {
 
 export interface UpdateInstancePreferencesRequest {
   key_storage_mode: KeyStorageMode
+  runtime_mode?: RuntimeMode
+  remote_auth_mode?: RemoteAuthMode
 }
 
 // ── Project domain types ────────────────────────────────────────
@@ -471,6 +622,7 @@ export interface CreateProjectRequest {
   name: string
   description?: string
   repository_id?: string
+  local_repository_path?: string
   default_branch?: string
 }
 

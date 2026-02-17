@@ -59,3 +59,4 @@ metrics-exporter-prometheus = "0.16"
 
 # OpenAPI documentation
 utoipa = { version = "5", features = ["axum_extras"] }
+ipnet = "2.10"

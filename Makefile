@@ -1,6 +1,7 @@
 .PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
 	       test-web lint-web fix-web \
 	       test-docs lint-docs fix-docs test-rust \
+	       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 	       cargo-check run-daemon run-daemon-debug run-daemon-release \
 	       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 	       docs-check ui-init install-local validate gen-openapi \
@@ -38,13 +39,13 @@ build-web:
 	bun run build:web
 
 deploy-web: build-web
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB) $(PAGES_BRANCH_FLAG)
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB) $(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 build-demo:
 	cd apps/web && VITE_DEMO_MODE=true bun run build
 
 deploy-demo: build-demo
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO) $(PAGES_BRANCH_FLAG)
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO) $(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 test-web:
 	cd apps/web && bun run test
@@ -69,10 +70,10 @@ build-site:
 	bun run build:site
 
 deploy-site: build-site
-	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE) $(PAGES_BRANCH_FLAG)
+	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE) $(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 deploy-docs: build-docs
-	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS) $(PAGES_BRANCH_FLAG)
+	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS) $(PAGES_BRANCH_FLAG) --commit-dirty=true
 
 test-docs:
 	cd apps/docs-site && bun run test
@@ -121,6 +122,19 @@ install-local:
 test-rust:
 	cargo test -p oored --features test-support
 
+# ── Rust: Lint/Fmt/Clippy/Test ───────────────────────────────────
+fmt-rust:
+	cargo fmt
+
+fmt-rust-check:
+	cargo fmt --check
+
+clippy-rust:
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+test-rust-workspace:
+	cargo test --workspace
+
 # Release automation now lives in Woodpecker (tag -> GitHub release).
 release-local:
 	@echo "Use Woodpecker tag pipeline to publish releases."
@@ -148,4 +162,8 @@ build: build-web build-docs build-site cargo-check
 
 check: lint-web cargo-check
 
-validate: docs-check build-web build-docs build-site cargo-check
+lint: lint-web lint-docs fmt-rust-check
+
+test: test-web test-docs test-rust-workspace
+
+validate: docs-check lint test clippy-rust build-web build-docs build-site cargo-check

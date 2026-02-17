@@ -18,12 +18,12 @@ fn login_command_exits_with_workaround_message() {
 }
 
 #[test]
-fn status_command_exits_with_workaround_message() {
-    let output = run(&["status"]);
-    assert_eq!(output.status.code(), Some(2));
+fn status_command_errors_when_daemon_unreachable() {
+    let output = run(&["status", "--daemon-url", "http://127.0.0.1:1"]);
+    assert_eq!(output.status.code(), Some(1));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Not implemented in this release:"));
+    assert!(stderr.contains("failed to reach daemon"));
     assert!(stderr.contains("/v1/public/setup-status"));
 }
 
