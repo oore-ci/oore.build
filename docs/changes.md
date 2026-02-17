@@ -1,7 +1,7 @@
 ## 2026-02-17
 - OOR-66: Fix branding across the repo: use “Oore CI” / “Oore” for user-facing product naming while keeping `oore.build` for domains and repo identifiers.
   - https://linear.app/oorebuild/issue/OOR-66/p0-fix-branding-across-the-repo
-- OOR-65: Fix Woodpecker CI duplication/inefficiency: split pipelines to stop clone-only runs, avoid rebuilding web in release deploy, pin Node wrangler for reliable Pages deploys, and generate correct release compare links.
+- OOR-65: Fix Woodpecker CI duplication/inefficiency: avoid clone-only runs, avoid rebuilding web in release deploy, pin wrangler for reliable Pages deploys (ensure CI PATH includes Homebrew node), and generate correct release compare links.
 # Change Ledger (Internal Docs Pointer)
 
 This file is the only required in-repo internal documentation artifact.
