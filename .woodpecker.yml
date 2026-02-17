@@ -1,15 +1,26 @@
 # Woodpecker CI
 #
-# Split into multiple pipelines to avoid "clone-only" builds from push events
-# on non-release branches. Each document below has its own top-level `when`.
+# IMPORTANT:
+# Use a global `when.evaluate` to avoid creating no-op ("clone-only") pipelines on
+# pushes to feature branches. Woodpecker otherwise triggers on every push event.
 
----
 when:
-  event:
-    - pull_request
+  evaluate: |
+    CI_PIPELINE_EVENT == "pull_request" ||
+    CI_PIPELINE_EVENT == "tag" ||
+    (CI_PIPELINE_EVENT == "push" && (
+      CI_COMMIT_BRANCH == "master" ||
+      CI_COMMIT_BRANCH == "stable" ||
+      CI_COMMIT_BRANCH == "alpha" ||
+      CI_COMMIT_BRANCH == "beta"
+    ))
+
 steps:
   - name: validate-pr
     image: bash
+    when:
+      event:
+        - pull_request
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -21,35 +32,16 @@ steps:
       - bun install --frozen-lockfile
       - make validate
 
----
-when:
-  event:
-    - push
-  branch:
-    - master
-steps:
   - name: validate-push
     image: bash
-    environment:
-      HOME: /Users/arya
-      CARGO_HOME: /Users/arya/.cargo
-      RUSTUP_HOME: /Users/arya/.rustup
-      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
-    commands:
-      - set -euo pipefail
-      - ulimit -n 8192
-      - bun install --frozen-lockfile
-      - make validate
-
----
-when:
-  event:
-    - push
-  branch:
-    - stable
-steps:
-  - name: validate-push
-    image: bash
+    when:
+      event:
+        - push
+      branch:
+        - alpha
+        - beta
+        - stable
+        - master
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -64,6 +56,11 @@ steps:
   # ----- Autotag: Production (stable -> vX.Y.Z) -----
   - name: autotag-prod-checkout
     image: bash
+    when:
+      event:
+        - push
+      branch:
+        - stable
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -80,6 +77,11 @@ steps:
 
   - name: autotag-prod-bump-tag
     image: bash
+    when:
+      event:
+        - push
+      branch:
+        - stable
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -169,29 +171,14 @@ steps:
         git tag -a "$tag" -m "Release $tag"
         git push origin "$tag"
 
----
-when:
-  event:
-    - push
-  branch:
-    - alpha
-steps:
-  - name: validate-push
-    image: bash
-    environment:
-      HOME: /Users/arya
-      CARGO_HOME: /Users/arya/.cargo
-      RUSTUP_HOME: /Users/arya/.rustup
-      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
-    commands:
-      - set -euo pipefail
-      - ulimit -n 8192
-      - bun install --frozen-lockfile
-      - make validate
-
   # ----- Autotag: Alpha (alpha -> vX.Y.Z-alpha.N) -----
   - name: autotag-alpha-checkout
     image: bash
+    when:
+      event:
+        - push
+      branch:
+        - alpha
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -207,6 +194,11 @@ steps:
 
   - name: autotag-alpha-tag
     image: bash
+    when:
+      event:
+        - push
+      branch:
+        - alpha
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -297,29 +289,14 @@ steps:
         git tag -a "$tag" -m "Alpha $tag"
         git push origin "$tag"
 
----
-when:
-  event:
-    - push
-  branch:
-    - beta
-steps:
-  - name: validate-push
-    image: bash
-    environment:
-      HOME: /Users/arya
-      CARGO_HOME: /Users/arya/.cargo
-      RUSTUP_HOME: /Users/arya/.rustup
-      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
-    commands:
-      - set -euo pipefail
-      - ulimit -n 8192
-      - bun install --frozen-lockfile
-      - make validate
-
   # ----- Autotag: Beta (beta -> vX.Y.Z-beta.N) -----
   - name: autotag-beta-checkout
     image: bash
+    when:
+      event:
+        - push
+      branch:
+        - beta
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -335,6 +312,11 @@ steps:
 
   - name: autotag-beta-tag
     image: bash
+    when:
+      event:
+        - push
+      branch:
+        - beta
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -425,14 +407,12 @@ steps:
         git tag -a "$tag" -m "Beta $tag"
         git push origin "$tag"
 
----
-when:
-  event:
-    - tag
-steps:
   # ----- Release: Tag -> Pages Deploy + GitHub Release -----
   - name: release-checkout
     image: bash
+    when:
+      event:
+        - tag
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
@@ -451,6 +431,9 @@ steps:
 
   - name: release-build-assets
     image: bash
+    when:
+      event:
+        - tag
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -502,6 +485,9 @@ steps:
 
   - name: release-deploy-pages
     image: bash
+    when:
+      event:
+        - tag
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -513,7 +499,6 @@ steps:
     commands:
       - set -euo pipefail
       - node --version
-      - bun install --frozen-lockfile
       - ./node_modules/.bin/wrangler --version
       - |
         tag="$(printenv CI_COMMIT_TAG || true)"
@@ -555,6 +540,9 @@ steps:
 
   - name: release-generate-notes
     image: bash
+    when:
+      event:
+        - tag
     commands:
       - set -euo pipefail
       - |
@@ -615,6 +603,9 @@ steps:
 
   - name: release-github
     image: bash
+    when:
+      event:
+        - tag
     environment:
       GITHUB_TOKEN:
         from_secret: GITHUB_TOKEN
