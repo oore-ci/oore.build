@@ -15,6 +15,10 @@
 # Static assets without hashes — cache short, revalidate
 /logo.svg
   Cache-Control: public, max-age=3600, must-revalidate
+/fonts/*
+  Cache-Control: public, max-age=3600, must-revalidate
+/product/*
+  Cache-Control: public, max-age=3600, must-revalidate
 /og-image.svg
   Cache-Control: public, max-age=3600, must-revalidate
 /robots.txt
