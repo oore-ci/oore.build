@@ -8,6 +8,10 @@
 
 <p align="center">
   <a href="https://docs.oore.build">Documentation</a>
+  ·
+  <a href="https://demo.oore.build">Live Demo</a>
+  ·
+  <a href="https://ci.oore.build">Hosted UI</a>
 </p>
 
 <p align="center">
@@ -15,6 +19,8 @@
 </p>
 
 > **Alpha** — Oore CI is under active development. APIs, config formats, and CLI flags will change without notice. Use at your own risk.
+
+> Want a quick product tour before installing? Open the live demo: [demo.oore.build](https://demo.oore.build)
 
 ## What is this?
 
@@ -24,6 +30,14 @@ Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and mac
 - An **operator CLI** (`oore`) for setup, admin, and runner management
 - A **web UI** for managing builds, apps, and team access
 - **OIDC authentication for non-loopback access** — no local passwords (loopback-only local login supported for local-first onboarding)
+
+## Screenshots
+
+| Dashboard | Builds |
+| --- | --- |
+| ![Oore CI demo dashboard screenshot](apps/site/public/product/demo-dashboard.png) | ![Oore CI demo builds list screenshot](apps/site/public/product/demo-builds.png) |
+
+Try the live demo first: [demo.oore.build](https://demo.oore.build)
 
 ## Prerequisites
 
@@ -41,7 +55,8 @@ curl -fsSL https://oore.build/install | bash
 
 Public alpha onboarding guide (common first-time blockers + fastest paths):
 
-- https://docs.oore.build/getting-started/public-alpha
+- [Public alpha onboarding guide](https://docs.oore.build/getting-started/public-alpha)
+- [Live demo (no install)](https://demo.oore.build)
 
 Install prerelease channels:
 
@@ -62,13 +77,13 @@ oore update
 
 Then complete setup using one of these paths:
 
-- Hosted UI: open `https://ci.oore.build` and add an **HTTPS-reachable** backend URL
+- Hosted UI: open [ci.oore.build](https://ci.oore.build) and add an **HTTPS-reachable** backend URL
 - Local-only backend:
   - run `oore setup` from CLI, or
   - run bundled local frontend `oore-web --backend-url http://127.0.0.1:8787`, or
   - expose backend through a tunnel and continue in hosted UI
 
-Detailed setup docs: `https://docs.oore.build`
+Detailed setup docs: [docs.oore.build](https://docs.oore.build)
 
 ## Development (from source)
 
