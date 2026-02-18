@@ -29,3 +29,4 @@ dist/releases
 # local agent metadata
 .claude/
 .codex/
+.codex-output/
