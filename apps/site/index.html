@@ -1,397 +1,1183 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Oore CI | Open-Source Flutter CI for macOS</title>
-    <meta
-      name="description"
-      content="An open-source build server that runs on your Mac hardware. Receive webhooks from GitHub/GitLab, build Flutter apps, manage signing, distribute artifacts."
-    />
-    <meta name="theme-color" content="#0a0a0a" />
-    <meta name="author" content="Aryakumar Jha" />
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-    <link rel="canonical" href="https://oore.build/" />
-    <!-- Open Graph -->
-    <meta property="og:title" content="Oore CI | Open-Source Flutter CI for macOS" />
-    <meta property="og:description" content="An open-source build server that runs on your Mac hardware. Receive webhooks from GitHub/GitLab, build Flutter apps, manage signing, distribute artifacts." />
-    <meta property="og:image" content="https://oore.build/og-image.png" />
-    <meta property="og:image:type" content="image/png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:logo" content="https://oore.build/logo.svg" />
-    <meta property="og:url" content="https://oore.build/" />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Oore CI" />
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Oore CI | Open-Source Flutter CI for macOS" />
-    <meta name="twitter:description" content="An open-source build server that runs on your Mac hardware. Receive webhooks from GitHub/GitLab, build Flutter apps, manage signing, distribute artifacts." />
-    <meta name="twitter:image" content="https://oore.build/og-image.png" />
-    <!-- Structured Data -->
-    <script type="application/ld+json">
+<html lang="en" class="dark">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oore CI | Flutter CI on macOS</title>
+  <meta name="description"
+    content="Open-source, self-hosted Flutter CI that runs on your macOS hardware. Receive GitHub/GitLab webhooks, build, sign iOS via Keychain, and store artifacts locally." />
+  <meta name="robots" content="index,follow,max-image-preview:large" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+  <link rel="canonical" href="https://oore.build/" />
+  <link rel="alternate" href="https://oore.build/" hreflang="en" />
+  <link rel="alternate" href="https://oore.build/" hreflang="x-default" />
+  <!-- Open Graph -->
+  <meta property="og:title" content="Oore CI | Flutter CI on macOS" />
+  <meta property="og:description"
+    content="Open-source, self-hosted Flutter CI that runs on your macOS hardware. Receive GitHub/GitLab webhooks, build, sign iOS via Keychain, and store artifacts locally." />
+  <meta property="og:image" content="https://oore.build/og-image.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Oore CI dashboard preview" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:logo" content="https://oore.build/logo.svg" />
+  <meta property="og:url" content="https://oore.build/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Oore CI" />
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Oore CI | Flutter CI on macOS" />
+  <meta name="twitter:description"
+    content="Open-source, self-hosted Flutter CI that runs on your macOS hardware. Receive GitHub/GitLab webhooks, build, sign iOS via Keychain, and store artifacts locally." />
+  <meta name="twitter:image" content="https://oore.build/og-image.png" />
+  <meta name="twitter:image:alt" content="Oore CI dashboard preview" />
+  <!-- Structured Data -->
+  <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Oore CI",
         "url": "https://oore.build",
+        "image": "https://oore.build/og-image.png",
+        "applicationSubCategory": "Continuous Integration",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS",
-        "description": "An open-source build server that runs on your Mac hardware. Receive webhooks from GitHub/GitLab, build Flutter apps, manage signing, distribute artifacts.",
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        },
+        "description": "Open-source, self-hosted Flutter CI that runs on your macOS hardware. Receive GitHub/GitLab webhooks, build, sign iOS via Keychain, and store artifacts locally.",
+        "sameAs": [
+          "https://github.com/devaryakjha/oore.build",
+          "https://docs.oore.build"
+        ],
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "license": "https://opensource.org/licenses/MIT",
-        "author": {
-          "@type": "Person",
-          "name": "Aryakumar Jha",
-          "url": "https://aryak.dev",
-          "sameAs": "https://github.com/devaryakjha"
-        }
+        "author": { "@type": "Organization", "name": "Oore CI" }
       }
     </script>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #0a0a0a;
-        --surface: #171717;
-        --border: #262626;
-        --text: #fafafa;
-        --text-soft: #d4d4d4;
-        --text-muted: #737373;
-        /* Keep "dim" copy accessible on --bg (Lighthouse contrast). */
-        --text-dim: #8a8a8a;
-        --amber: #f59e0b;
-        --warning-bg: rgba(234, 179, 8, 0.1);
-        --warning-border: rgba(234, 179, 8, 0.2);
+  <script type="module">
+    ; (() => {
+      const token = import.meta.env.VITE_CF_WEB_ANALYTICS_TOKEN
+      if (!token) return
+      if (navigator.doNotTrack === '1') return
+
+      const script = document.createElement('script')
+      script.defer = true
+      script.src = 'https://static.cloudflareinsights.com/beacon.min.js'
+      script.dataset.cfBeacon = JSON.stringify({ token })
+      document.head.appendChild(script)
+    })()
+  </script>
+  <style>
+    @font-face {
+      font-family: 'Google Sans Flex';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/google-sans-flex-latin-ext.woff2') format('woff2');
+      unicode-range:
+        U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+        U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+        U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+
+    @font-face {
+      font-family: 'Google Sans Flex';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/google-sans-flex-latin.woff2') format('woff2');
+      unicode-range:
+        U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+        U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+        U+2215, U+FEFF, U+FFFD;
+    }
+
+    :root {
+      color-scheme: dark;
+      --background: oklch(0.13 0 0);
+      --foreground: oklch(0.985 0 0);
+      --card: oklch(0.17 0 0);
+      --card-foreground: oklch(0.985 0 0);
+      --muted: oklch(0.22 0 0);
+      --muted-foreground: oklch(0.76 0 0);
+      --copy: oklch(0.84 0 0);
+      --accent: oklch(0.25 0 0);
+      --accent-foreground: oklch(0.985 0 0);
+      --border: oklch(1 0 0 / 12%);
+      --input: oklch(1 0 0 / 15%);
+      --ring: oklch(0.556 0 0);
+      --primary: oklch(0.77 0.16 70);
+      --primary-foreground: oklch(0.28 0.07 46);
+      --surface: oklch(0.15 0 0);
+      --radius: 0;
+      --px: clamp(16px, 3.2vw, 44px);
+      --container: 72rem;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Google Sans Flex', ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      isolation: isolate;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background:
+        radial-gradient(900px 520px at 22% -12%,
+          color-mix(in oklab, var(--primary) 18%, transparent),
+          transparent 60%),
+        radial-gradient(800px 520px at 85% 8%,
+          color-mix(in oklab, white 7%, transparent),
+          transparent 60%),
+        repeating-linear-gradient(90deg,
+          color-mix(in oklab, white 1.6%, transparent) 0 1px,
+          transparent 1px 56px),
+        repeating-linear-gradient(0deg,
+          color-mix(in oklab, white 1.4%, transparent) 0 1px,
+          transparent 1px 56px);
+      opacity: 0.7;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(1200px 900px at 50% 24%,
+          transparent 58%,
+          color-mix(in oklab, black 62%, transparent) 100%);
+    }
+
+    main {
+      position: relative;
+      z-index: 1;
+    }
+
+    a {
+      color: inherit;
+      text-decoration-color: color-mix(in oklab, var(--border) 60%, transparent);
+      text-underline-offset: 3px;
+    }
+
+    a:hover {
+      text-decoration-color: color-mix(in oklab, var(--border) 90%, transparent);
+    }
+
+    :focus-visible {
+      outline: 2px solid color-mix(in oklab, var(--primary) 50%, var(--ring));
+      outline-offset: 2px;
+    }
+
+    .skip {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      text-decoration: none;
+      transform: translateY(-160%);
+      transition: transform 160ms ease;
+      font-weight: 650;
+      font-size: 13px;
+      z-index: 10;
+    }
+
+    .skip:focus {
+      transform: translateY(0);
+    }
+
+    .container {
+      max-width: var(--container);
+      margin: 0 auto;
+      padding: 0 var(--px);
+    }
+
+    #install {
+      scroll-margin-top: 90px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in oklab, var(--background) 78%, transparent);
+      backdrop-filter: blur(10px);
+    }
+
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 0;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+    }
+
+    .brand-mark img {
+      width: 22px;
+      height: 22px;
+    }
+
+    .brand-word {
+      font-weight: 760;
+      letter-spacing: -0.02em;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .nav {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .nav a {
+      font-size: 13px;
+      color: var(--copy);
+      text-decoration: none;
+    }
+
+    .nav a:hover {
+      color: var(--foreground);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 11px 14px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--foreground);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 14px;
+      border-radius: var(--radius);
+      transition:
+        border-color 160ms ease,
+        background 160ms ease,
+        transform 120ms ease;
+    }
+
+    .btn:hover {
+      border-color: color-mix(in oklab, var(--primary) 40%, var(--border));
+      background: color-mix(in oklab, var(--primary) 10%, var(--card));
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn.primary {
+      background: var(--primary);
+      color: var(--primary-foreground);
+      border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
+    }
+
+    .btn.primary:hover {
+      background: color-mix(in oklab, var(--primary) 86%, white);
+    }
+
+    .btn.sm {
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+
+    .hero {
+      padding: clamp(34px, 6vw, 70px) 0 26px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.06fr 0.94fr;
+      grid-template-areas: 'copy preview';
+      column-gap: clamp(18px, 3vw, 34px);
+      row-gap: 16px;
+      align-items: stretch;
+    }
+
+    .hero-copy {
+      grid-area: copy;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    .hero-preview {
+      grid-area: preview;
+      transition:
+        border-color 180ms ease,
+        transform 180ms ease,
+        box-shadow 180ms ease;
+    }
+
+    .hero-preview:hover,
+    .hero-preview:focus-within {
+      border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+      box-shadow:
+        0 1px 0 color-mix(in oklab, white 6%, transparent) inset,
+        0 18px 40px color-mix(in oklab, black 60%, transparent);
+    }
+
+    .meta {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 10px;
+      color: var(--copy);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .meta .dot {
+      width: 4px;
+      height: 4px;
+      background: color-mix(in oklab, white 34%, transparent);
+      display: inline-block;
+      transform: translateY(-1px);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(34px, 4.4vw, 50px);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      font-weight: 820;
+    }
+
+    .lead {
+      margin-top: 12px;
+      color: var(--copy);
+      font-size: 16px;
+      line-height: 1.5;
+      max-width: 54ch;
+    }
+
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .alpha-line {
+        margin-top: 14px;
+        max-width: 62ch;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--copy);
+        line-height: 1.45;
+      }
+
+      .alpha-mark {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        border: 1px solid color-mix(in oklab, var(--primary) 55%, var(--border));
+        background: color-mix(in oklab, var(--primary) 22%, transparent);
+        transform: translateY(-1px);
+      }
+
+      .alpha-line strong {
+        color: var(--foreground);
+        font-weight: 780;
+      }
+
+      .alpha-line a {
+        font-weight: 750;
+        text-decoration: none;
+        border-bottom: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+        padding-bottom: 1px;
+      }
+
+      .alpha-line a:hover {
+        border-bottom-color: color-mix(in oklab, var(--primary) 50%, var(--border));
+      }
+
+      .truth {
+        margin: 0;
+        font-size: 13px;
+        color: var(--copy);
+      margin-top: 12px;
+    }
+
+    .truth strong {
+      color: var(--foreground);
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: 0 1px 0 color-mix(in oklab, white 5%, transparent) inset;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-label {
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--copy);
+      font-weight: 650;
+    }
+
+    .seg {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      background: color-mix(in oklab, var(--background) 40%, var(--card));
+    }
+
+    .seg button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--copy);
+      opacity: 0.78;
+      font-weight: 650;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border-left: 1px solid var(--border);
+      user-select: none;
+    }
+
+    .seg button:first-of-type {
+      border-left: 0;
+    }
+
+    .seg button:hover {
+      color: var(--foreground);
+      opacity: 1;
+    }
+
+    .seg button[aria-selected='true'] {
+      color: var(--foreground);
+      opacity: 1;
+      background: color-mix(in oklab, var(--primary) 10%, var(--card));
+    }
+
+    .seg button:focus-visible {
+      outline: 2px solid color-mix(in oklab, var(--primary) 50%, var(--ring));
+      outline-offset: -1px;
+    }
+
+    .shot-wrap {
+      padding: 14px;
+      position: relative;
+    }
+
+    .demo-shot-link {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .shot-stage {
+      position: relative;
+      aspect-ratio: 16 / 10;
+      border: 1px solid var(--border);
+      background: color-mix(in oklab, var(--background) 70%, var(--card));
+      overflow: hidden;
+      box-shadow:
+        0 1px 0 color-mix(in oklab, white 6%, transparent) inset,
+        0 16px 40px color-mix(in oklab, black 55%, transparent);
+    }
+
+    .shot {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition:
+        opacity 180ms ease,
+        transform 240ms ease;
+      pointer-events: none;
+    }
+
+    .shot-stage[data-active='dashboard'] .shot[data-shot='dashboard'] {
+      opacity: 1;
+    }
+
+    .shot-stage[data-active='builds'] .shot[data-shot='builds'] {
+      opacity: 1;
+    }
+
+    .demo-shot-link:hover .shot,
+    .demo-shot-link:focus-visible .shot {
+      transform: scale(1.01);
+    }
+
+    .shot-open {
+      position: absolute;
+      right: 22px;
+      bottom: 22px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: var(--foreground);
+      border: 1px solid color-mix(in oklab, var(--primary) 40%, var(--border));
+      background: color-mix(in oklab, var(--background) 72%, var(--card));
+      padding: 6px 9px;
+      opacity: 0;
+      transform: translateY(4px);
+      transition:
+        opacity 180ms ease,
+        transform 180ms ease,
+        border-color 180ms ease;
+      pointer-events: none;
+    }
+
+    .demo-shot-link:hover .shot-open,
+    .demo-shot-link:focus-visible .shot-open {
+      opacity: 1;
+      transform: translateY(0);
+      border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: 0 1px 0 color-mix(in oklab, white 5%, transparent) inset;
+    }
+
+    .card-head {
+      padding: 14px 14px 0;
+    }
+
+    .card-body {
+      padding: 12px 14px 14px;
+    }
+
+    .codebox {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--input);
+      background: color-mix(in oklab, var(--background) 70%, var(--card));
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+        'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      color: color-mix(in oklab, var(--foreground) 88%, var(--muted-foreground));
+      overflow: hidden;
+    }
+
+    .code-scroll {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 6px 0;
+    }
+
+    .code-scroll code {
+      display: block;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .copy {
+      flex: 0 0 auto;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--foreground);
+      font-weight: 650;
+      font-size: 12px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border-radius: var(--radius);
+      transition:
+        border-color 160ms ease,
+        background 160ms ease;
+    }
+
+    .copy:disabled {
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    .copy:hover {
+      border-color: color-mix(in oklab, var(--primary) 40%, var(--border));
+      background: color-mix(in oklab, var(--primary) 10%, var(--card));
+    }
+
+    .copy.copied {
+      border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+      background: color-mix(in oklab, var(--primary) 14%, var(--card));
+    }
+
+    .install-note {
+      margin-top: 10px;
+      color: var(--copy);
+      font-size: 13px;
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding-left: 16px;
+      color: var(--copy);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    section.block {
+      padding: 26px 0 0;
+    }
+
+    .hero-below {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      padding-top: 16px;
+    }
+
+    .hero-below .card {
+      height: 100%;
+    }
+
+    .small-list {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--copy);
+      font-size: 13px;
+      line-height: 1.5;
+      display: grid;
+      gap: 8px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 0 0 12px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--copy);
+      font-weight: 750;
+    }
+
+    .grid3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .tile {
+      border: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: 0 1px 0 color-mix(in oklab, white 5%, transparent) inset;
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .tile strong {
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+
+    .tile-copy {
+      margin: 0;
+      color: var(--copy);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .tile code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+        'Courier New', monospace;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      background: color-mix(in oklab, var(--background) 72%, var(--card));
+      padding: 8px 10px;
+      display: inline-block;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+
+    footer {
+      margin-top: 40px;
+      padding: 18px 0 30px;
+      border-top: 1px solid var(--border);
+      color: var(--copy);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    .footer-brand {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: -0.01em;
+      color: var(--foreground);
+    }
+
+    .footer-copy {
+      margin: 6px 0 0;
+      color: var(--copy);
+      max-width: 44ch;
+    }
+
+    .footer-col-title {
+      margin: 0 0 8px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--copy);
+      font-weight: 700;
+    }
+
+    .footlinks {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-start;
+    }
+
+    .footer-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted-foreground);
+      font-size: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 920px) {
+      .hero-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          'copy'
+          'preview';
+        row-gap: 12px;
+      }
+
+      .hero-below {
+        grid-template-columns: 1fr;
+        padding-top: 12px;
+      }
+
+      .grid3 {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .topbar-inner {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .nav {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto !important;
       }
 
       * {
-        box-sizing: border-box;
+        transition: none !important;
+        animation: none !important;
       }
+    }
+  </style>
+</head>
 
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-      }
+<body>
+  <a class="skip" href="#content">Skip to content</a>
 
-      body {
-        background: var(--bg);
-        color: var(--text);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        -webkit-font-smoothing: antialiased;
-        text-rendering: optimizeLegibility;
-      }
-
-      .warning {
-        position: sticky;
-        top: 0;
-        z-index: 50;
-        border-bottom: 1px solid var(--warning-border);
-        background: var(--warning-bg);
-        padding: 8px 16px;
-        text-align: center;
-        font-size: 13px;
-      }
-
-      .warning strong {
-        color: #fde047;
-        font-weight: 600;
-      }
-
-      .warning span {
-        color: rgba(254, 240, 138, 0.8);
-      }
-
-      main {
-        min-height: 100vh;
-        padding: 80px 24px 96px;
-      }
-
-      .container {
-        margin: 0 auto;
-        max-width: 36rem;
-      }
-
-      .fade-in,
-      .slide-up {
-        opacity: 1;
-        transform: none;
-      }
-
-      .delay-100,
-      .delay-200,
-      .delay-300,
-      .delay-400 {
-        animation-delay: 0s;
-      }
-
-      header {
-        margin-bottom: 72px;
-      }
-
-      .brand-row {
-        margin-bottom: 36px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-      }
-
-      .logo {
-        height: 44px;
-        width: 44px;
-        flex: 0 0 auto;
-      }
-
-      .brand-title {
-        margin: 0;
-        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-          monospace;
-        font-size: 20px;
-        letter-spacing: -0.02em;
-      }
-
-      .brand-subtitle {
-        margin: 0;
-        font-size: 13px;
-        color: var(--text-dim);
-      }
-
-      .lead {
-        margin: 0;
-        font-size: 17px;
-        line-height: 1.62;
-        color: var(--text-soft);
-      }
-
-      .support {
-        margin: 18px 0 0;
-        font-size: 15px;
-        color: var(--text-dim);
-        line-height: 1.6;
-      }
-
-      .status {
-        margin-bottom: 56px;
-        font-size: 14px;
-        color: var(--text-dim);
-      }
-
-      .status .alpha {
-        color: var(--amber);
-      }
-
-      section {
-        margin-bottom: 56px;
-      }
-
-      h2 {
-        margin: 0 0 20px;
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--amber);
-      }
-
-      ul {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-
-      ul li {
-        position: relative;
-        margin: 8px 0;
-        padding-left: 14px;
-        font-size: 16px;
-        color: #a3a3a3;
-      }
-
-      ul li::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 0.64em;
-        height: 4px;
-        width: 4px;
-        border-radius: 999px;
-        background: var(--text-dim);
-      }
-
-      p.small {
-        margin: 0 0 14px;
-        font-size: 13px;
-        color: var(--text-dim);
-      }
-
-      pre {
-        margin: 0;
-        overflow-x: auto;
-        border-radius: 8px;
-        background: rgba(23, 23, 23, 0.75);
-        border: 1px solid rgba(255, 255, 255, 0.04);
-        padding: 12px 16px;
-        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-          monospace;
-        font-size: 13px;
-        line-height: 1.55;
-        color: #a3a3a3;
-      }
-
-      .muted-line {
-        color: var(--text-dim);
-      }
-
-      .dot-green {
-        color: #10b981;
-      }
-
-      .links {
-        display: flex;
-        gap: 24px;
-        flex-wrap: wrap;
-      }
-
-      .links a {
-        color: #a3a3a3;
-        text-decoration: underline;
-        text-decoration-color: #404040;
-        text-underline-offset: 4px;
-      }
-
-      .links a:hover {
-        color: #fafafa;
-        text-decoration-color: #737373;
-      }
-
-      footer {
-        border-top: 1px solid rgba(38, 38, 38, 0.5);
-        padding-top: 24px;
-        font-size: 13px;
-        color: var(--text-dim);
-      }
-
-      footer a {
-        color: var(--text-dim);
-        text-decoration: none;
-      }
-
-      footer a:hover {
-        color: #fafafa;
-      }
-
-      @media (max-width: 768px) {
-        main {
-          padding: 56px 20px 72px;
-        }
-
-        header {
-          margin-bottom: 56px;
-        }
-
-        .status,
-        section {
-          margin-bottom: 48px;
-        }
-      }
-
-    </style>
-  </head>
-  <body>
-    <div class="warning">
-      <strong>Warning: Experimental</strong>
-      <span> — This project is in very early development. Most features don't work yet. Do not use for real projects.</span>
+  <header class="topbar">
+    <div class="container">
+      <div class="topbar-inner">
+        <a class="brand" href="/" aria-label="Oore CI home">
+          <span class="brand-mark"><img src="/logo.svg" alt="" /></span>
+          <span class="brand-word">Oore CI</span>
+        </a>
+        <nav class="nav" aria-label="Primary">
+          <a href="https://docs.oore.build" target="_blank" rel="noreferrer">Docs</a>
+          <a href="https://demo.oore.build" target="_blank" rel="noreferrer">Demo</a>
+          <a href="https://github.com/devaryakjha/oore.build" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://ci.oore.build" target="_blank" rel="noreferrer">Hosted UI</a>
+          <a class="btn sm" href="#install">Install</a>
+        </nav>
+      </div>
     </div>
+  </header>
 
-    <main>
-      <div class="container">
-        <header>
-          <div class="brand-row fade-in">
-            <svg aria-hidden="true" class="logo" viewBox="0 0 32 32" fill="none">
-              <defs>
-                <clipPath id="logo-left">
-                  <rect x="0" y="0" width="15" height="32"></rect>
-                </clipPath>
-                <clipPath id="logo-right">
-                  <rect x="17" y="0" width="15" height="32"></rect>
-                </clipPath>
-              </defs>
-              <rect x="2" y="2" width="28" height="28" rx="6" fill="#f59e0b" clip-path="url(#logo-left)"></rect>
-              <rect x="2" y="2" width="28" height="28" rx="6" fill="#f59e0b" clip-path="url(#logo-right)"></rect>
-              <circle cx="16" cy="16" r="7" fill="#141414"></circle>
-            </svg>
-            <div>
-              <h1 class="brand-title">oore</h1>
-              <p class="brand-subtitle">Flutter CI for Mac</p>
+  <main id="content">
+    <div class="container">
+      <section class="hero" aria-label="Hero">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <div class="meta" aria-label="Metadata">
+              <span>Alpha</span><span class="dot" aria-hidden="true"></span><span>macOS</span><span class="dot"
+                aria-hidden="true"></span><span>MIT</span>
             </div>
+            <h1>Flutter CI on your own macOS hardware.</h1>
+            <p class="lead">
+              Self-hosted build server for Flutter apps: GitHub/GitLab webhooks, macOS builds, iOS
+              signing via Keychain, and local artifact storage.
+            </p>
+              <div class="ctas">
+                <a class="btn primary" href="#install">Install</a>
+                <a class="btn" href="https://docs.oore.build" target="_blank" rel="noreferrer">Read docs</a>
+              </div>
+              <p class="alpha-line" role="note" aria-label="Public alpha notice">
+                <span class="alpha-mark" aria-hidden="true"></span>
+                <span
+                  ><strong>Public alpha.</strong> Expect breaking changes in <code>v0.1.x</code>.
+                  <a
+                    href="https://docs.oore.build/getting-started/public-alpha"
+                    target="_blank"
+                    rel="noreferrer"
+                    >Alpha notes</a
+                  >.</span
+                >
+              </p>
+              <p class="truth">
+                <strong>Hosted UI</strong> (ci.oore.build) is UI-only. Your daemon, signing keys, and
+                artifacts stay on your machine.
+              </p>
           </div>
 
-          <p class="lead slide-up delay-100">
-            A build server that runs on macOS. Point GitHub or GitLab webhooks at it,
-            and it builds your Flutter apps using Keychain for code signing.
-          </p>
-          <p class="support slide-up delay-200">
-            Building this for my own projects. Open source in case it's useful to others.
-          </p>
-        </header>
-
-        <div class="status slide-up delay-200">
-          <span class="alpha">Alpha</span> — builds, code signing, and artifacts work. Distribution is the next milestone.
+          <aside class="panel hero-preview" aria-label="Product preview">
+            <div class="panel-head">
+              <div class="panel-label">Demo UI</div>
+              <div class="seg" role="tablist" aria-label="Choose screenshot">
+                <button type="button" role="tab" id="tab-dashboard" aria-selected="true" aria-controls="shot-panel"
+                  tabindex="0" data-shot="dashboard">
+                  Dashboard
+                </button>
+                <button type="button" role="tab" id="tab-builds" aria-selected="false" aria-controls="shot-panel"
+                  tabindex="-1" data-shot="builds">
+                  Builds
+                </button>
+              </div>
+            </div>
+            <div class="shot-wrap">
+              <a class="demo-shot-link" href="https://demo.oore.build" target="_blank" rel="noreferrer"
+                aria-label="Open the demo instance">
+                <div class="shot-stage" id="shot-panel" role="tabpanel" aria-labelledby="tab-dashboard" tabindex="0"
+                  data-active="dashboard" aria-label="Oore CI UI screenshots">
+                  <img class="shot" src="/product/demo-dashboard.png" data-shot="dashboard"
+                    alt="Oore CI demo dashboard screenshot" decoding="async" />
+                  <img class="shot" src="/product/demo-builds.png" data-shot="builds"
+                    alt="Oore CI demo builds list screenshot" decoding="async" loading="lazy" />
+                </div>
+                <span class="shot-open" aria-hidden="true">Open demo</span>
+              </a>
+            </div>
+          </aside>
         </div>
 
-        <section class="slide-up delay-200">
-          <h2>What it does</h2>
-          <ul>
-            <li>Listens for webhooks from GitHub and GitLab</li>
-            <li>Runs Flutter builds (iOS, Android, macOS)</li>
-            <li>Signs iOS builds using macOS Keychain</li>
-            <li>Stores build artifacts locally</li>
-            <li>Optional launchd auto-start for local UI (oore-web)</li>
-            <li>CLI, REST API, and web dashboard</li>
-          </ul>
-        </section>
+        <div class="hero-below" aria-label="Quick start">
+          <section class="card" id="install" aria-label="Install">
+            <div class="card-head">
+              <div class="panel-label">Install</div>
+            </div>
+            <div class="card-body">
+              <div class="codebox" role="group" aria-label="Install command">
+                <div class="code-scroll">
+                  <code id="install-cmd">curl -fsSL https://oore.build/install | bash</code>
+                </div>
+                <button class="copy" type="button" data-copy-target="install-cmd" aria-label="Copy install command">
+                  Copy
+                </button>
+              </div>
+              <p class="install-note">
+                Installs <code>oore</code> (CLI) and <code>oored</code> (daemon) into <code>~/.oore</code>.
+              </p>
+            </div>
+          </section>
 
-        <section class="slide-up delay-300">
-          <h2>Install</h2>
-          <p class="small">Requires macOS.</p>
-          <pre>curl -fsSL https://oore.build/install | bash
-curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash</pre>
-        </section>
+          <section class="card" aria-label="What works today">
+            <div class="card-head">
+              <div class="panel-label">What works today</div>
+            </div>
+            <div class="card-body">
+              <ul class="small-list">
+                <li>GitHub/GitLab webhooks</li>
+                <li>Flutter builds (iOS/Android/macOS)</li>
+                <li>iOS signing (Keychain)</li>
+                <li>Artifacts (local)</li>
+              </ul>
+              <p class="install-note" style="margin-bottom: 0">
+                Signal path: GitHub/GitLab -&gt; oored (macOS) -&gt; artifacts -&gt; Hosted UI.
+              </p>
+            </div>
+          </section>
+        </div>
+      </section>
 
-        <section class="slide-up delay-300">
-          <h2>Usage</h2>
-          <pre><span class="muted-line"># Start daemon</span>
-oored run --listen 127.0.0.1:8787
-
-<span class="muted-line"># Open setup window token</span>
-oore setup token --ttl 15m
-
-<span class="muted-line"># Check health</span>
-curl http://127.0.0.1:8787/healthz
-
-<span class="muted-line"># Daemon status (example)</span>
-<span class="dot-green">●</span> running</pre>
-        </section>
-
-        <section class="slide-up delay-400">
-          <h2>Links</h2>
-          <div class="links">
-            <a href="https://github.com/devaryakjha/oore.build">GitHub</a>
-            <a href="https://ci.oore.build">Hosted UI</a>
-            <a href="https://demo.oore.build">Demo</a>
-            <a href="https://docs.oore.build">Docs</a>
+      <section class="block" aria-label="How to run">
+        <div class="section-head">
+          <h2 class="section-title">How to run</h2>
+          <a href="https://docs.oore.build" target="_blank" rel="noreferrer">Open docs</a>
+        </div>
+        <div class="grid3">
+          <div class="tile">
+            <strong>1. Start daemon</strong>
+            <code>oored run --listen 127.0.0.1:8787</code>
           </div>
-        </section>
+          <div class="tile">
+            <strong>2. Get setup token</strong>
+            <code>oore setup token --ttl 15m</code>
+          </div>
+          <div class="tile">
+            <strong>3. Connect and build</strong>
+            <p class="tile-copy">
+              Open Hosted UI, paste the token, add a webhook, push a commit, then pull artifacts.
+            </p>
+          </div>
+        </div>
+      </section>
 
-        <footer class="slide-up delay-400">
-          Made by <a href="https://github.com/devaryakjha">devaryakjha</a>. MIT License.
-        </footer>
-      </div>
-    </main>
-  </body>
+      <section class="block" aria-label="Capabilities">
+        <div class="section-head">
+          <h2 class="section-title">Capabilities</h2>
+        </div>
+        <div class="grid3">
+          <div class="tile"><strong>GitHub/GitLab webhooks</strong></div>
+          <div class="tile"><strong>Flutter builds</strong></div>
+          <div class="tile"><strong>Keychain signing</strong></div>
+          <div class="tile"><strong>Artifact storage</strong></div>
+          <div class="tile"><strong>REST API + CLI</strong></div>
+          <div class="tile"><strong>Hosted UI (UI-only)</strong></div>
+        </div>
+      </section>
+
+      <footer aria-label="Footer">
+        <div class="footer-grid">
+          <div>
+            <p class="footer-brand">Oore CI</p>
+            <p class="footer-copy">Open-source Flutter CI that runs on your own macOS hardware.</p>
+            <p class="footer-copy">Public alpha: interfaces can change across <code>v0.1.x</code>.</p>
+          </div>
+          <div>
+            <p class="footer-col-title">Get started</p>
+            <div class="footlinks">
+              <a href="#install">Install</a>
+              <a href="https://docs.oore.build/getting-started/public-alpha" target="_blank" rel="noreferrer"
+                >Alpha notes</a
+              >
+              <a href="https://docs.oore.build" target="_blank" rel="noreferrer">Documentation</a>
+            </div>
+          </div>
+          <div>
+            <p class="footer-col-title">Product</p>
+            <div class="footlinks">
+              <a href="https://demo.oore.build" target="_blank" rel="noreferrer">Demo instance</a>
+              <a href="https://ci.oore.build" target="_blank" rel="noreferrer">Hosted UI</a>
+              <a href="https://github.com/devaryakjha/oore.build" target="_blank" rel="noreferrer">GitHub</a>
+            </div>
+          </div>
+        </div>
+        <div class="footer-meta">
+          <span>MIT License</span>
+          <span>•</span>
+          <span>Self-hosted by design</span>
+        </div>
+      </footer>
+    </div>
+  </main>
+
+  <script>
+      ; (() => {
+        const initShotSwitcher = () => {
+          const stage = document.getElementById('shot-panel')
+          const tabs = Array.from(document.querySelectorAll(".seg [role='tab'][data-shot]"))
+          if (!stage || tabs.length === 0) return
+
+          const setActive = (shot, { focus } = { focus: false }) => {
+            stage.dataset.active = shot
+            for (const el of tabs) {
+              const selected = el.dataset.shot === shot
+              el.setAttribute('aria-selected', selected ? 'true' : 'false')
+              el.tabIndex = selected ? 0 : -1
+            }
+
+            const activeTab = tabs.find((t) => t.dataset.shot === shot)
+            if (activeTab?.id) stage.setAttribute('aria-labelledby', activeTab.id)
+            if (focus) activeTab?.focus?.()
+          }
+
+          for (const el of tabs) {
+            el.addEventListener('click', () => setActive(el.dataset.shot || 'dashboard'))
+            el.addEventListener('keydown', (e) => {
+              const key = e.key
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) return
+              e.preventDefault()
+
+              const idx = tabs.indexOf(el)
+              let nextIdx = idx
+              if (key === 'ArrowLeft') nextIdx = (idx - 1 + tabs.length) % tabs.length
+              if (key === 'ArrowRight') nextIdx = (idx + 1) % tabs.length
+              if (key === 'Home') nextIdx = 0
+              if (key === 'End') nextIdx = tabs.length - 1
+
+              const next = tabs[nextIdx]
+              setActive(next?.dataset?.shot || 'dashboard', { focus: true })
+            })
+          }
+
+          const initial =
+            tabs.find((t) => t.getAttribute('aria-selected') === 'true')?.dataset.shot || 'dashboard'
+          setActive(initial)
+        }
+
+        const getCopyText = (targetId) => {
+          const el = document.getElementById(targetId)
+          if (!el) return ''
+          return (el.textContent || '').trim()
+        }
+
+        const copyToClipboard = async (text) => {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text)
+            return
+          }
+
+          const ta = document.createElement('textarea')
+          ta.value = text
+          ta.setAttribute('readonly', '')
+          ta.style.position = 'fixed'
+          ta.style.top = '-1000px'
+          ta.style.left = '-1000px'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+        }
+
+        document.addEventListener('click', (e) => {
+          const btn = e.target.closest?.('[data-copy-target]')
+          if (!btn) return
+
+          const targetId = btn.getAttribute('data-copy-target')
+          if (!targetId) return
+
+          const text = getCopyText(targetId)
+          if (!text) return
+
+          const original = btn.textContent
+          btn.disabled = true
+
+          copyToClipboard(text)
+            .then(() => {
+              btn.textContent = 'Copied'
+              btn.classList.add('copied')
+              window.setTimeout(() => {
+                btn.textContent = original
+                btn.classList.remove('copied')
+                btn.disabled = false
+              }, 1500)
+            })
+            .catch(() => {
+              btn.textContent = 'Copy failed'
+              window.setTimeout(() => {
+                btn.textContent = original
+                btn.disabled = false
+              }, 1500)
+            })
+        })
+
+        initShotSwitcher()
+      })()
+  </script>
+</body>
+
 </html>

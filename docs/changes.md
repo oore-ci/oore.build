@@ -1,7 +1,3 @@
-## 2026-02-17
-- OOR-66: Fix branding across the repo: use “Oore CI” / “Oore” for user-facing product naming while keeping `oore.build` for domains and repo identifiers.
-  - https://linear.app/oorebuild/issue/OOR-66/p0-fix-branding-across-the-repo
-- OOR-65: Fix Woodpecker CI duplication/inefficiency: avoid clone-only runs, avoid rebuilding web in release deploy, pin wrangler for reliable Pages deploys (ensure CI PATH includes Homebrew node; pass `--branch=stable` on prod tag deploys to avoid detached HEAD), and generate correct release compare links.
 # Change Ledger (Internal Docs Pointer)
 
 This file is the only required in-repo internal documentation artifact.
@@ -87,5 +83,12 @@ Rules:
   - OOR-63: https://linear.app/oorebuild/issue/OOR-63/p0-fix-requests-not-going-to-mock-service-worker-for-non-initial-pages
 - Public alpha release docs: added a first-time onboarding “Public Alpha (v0.1.x)” page and updated docs homepage wording to reflect remote-vs-loopback auth reality.
   - OOR-62: https://linear.app/oorebuild/issue/OOR-62/public-alpha-release-messaging-onboarding-checklist-docs
+- OOR-65: Fix Woodpecker CI duplication/inefficiency: avoid clone-only runs, avoid rebuilding web in release deploy, pin wrangler for reliable Pages deploys (ensure CI PATH includes Homebrew node; pass `--branch=stable` on prod tag deploys to avoid detached HEAD), and generate correct release compare links.
+  - https://linear.app/oorebuild/issue/OOR-65/p0-build-pipelines-are-a-lot-flaky
+- OOR-66: Fix branding across the repo: use “Oore CI” / “Oore” for user-facing product naming while keeping `oore.build` for domains and repo identifiers.
+  - https://linear.app/oorebuild/issue/OOR-66/p0-fix-branding-across-the-repo
 - Site: improved landing page contrast for secondary text and added a Demo link.
   - OOR-67: https://linear.app/oorebuild/issue/OOR-67/p0-improve-landing-page
+- OOR-68: Site: redesign landing page (product-forward hero w/ demo UI screenshots) and add optional Cloudflare Web Analytics (page views only).
+  - https://linear.app/oorebuild/issue/OOR-68/p0-improve-landing-page
+  - Feature doc: https://linear.app/oorebuild/document/feature-landing-page-mission-brief-cloudflare-wa-c6f5c4bb91e4
