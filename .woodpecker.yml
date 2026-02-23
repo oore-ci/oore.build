@@ -19,6 +19,9 @@ steps:
   - name: validate
     image: bash
     when:
+      event:
+        - pull_request
+        - push
       evaluate: |
         CI_PIPELINE_EVENT == "pull_request" ||
         (CI_PIPELINE_EVENT == "push" && (
