@@ -13,6 +13,10 @@
   <link rel="canonical" href="https://oore.build/" />
   <link rel="alternate" href="https://oore.build/" hreflang="en" />
   <link rel="alternate" href="https://oore.build/" hreflang="x-default" />
+  <link rel="preload" href="/fonts/google-sans-flex-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" as="image" href="/product/demo-dashboard-1200.webp"
+    imagesrcset="/product/demo-dashboard-720.webp 720w, /product/demo-dashboard-1200.webp 1200w"
+    imagesizes="(max-width: 900px) calc(100vw - 64px), 609px" fetchpriority="high" />
   <!-- Open Graph -->
   <meta property="og:title" content="Oore CI | Flutter CI on macOS" />
   <meta property="og:description"
@@ -55,17 +59,32 @@
         "author": { "@type": "Organization", "name": "Oore CI" }
       }
     </script>
-  <script type="module">
+  <script>
     ; (() => {
-      const token = import.meta.env.VITE_CF_WEB_ANALYTICS_TOKEN
+      const token = '%VITE_CF_WEB_ANALYTICS_TOKEN%'
       if (!token) return
+      if (token.includes('VITE_CF_WEB_ANALYTICS_TOKEN')) return
       if (navigator.doNotTrack === '1') return
 
-      const script = document.createElement('script')
-      script.defer = true
-      script.src = 'https://static.cloudflareinsights.com/beacon.min.js'
-      script.dataset.cfBeacon = JSON.stringify({ token })
-      document.head.appendChild(script)
+      const loadAnalytics = () => {
+        const script = document.createElement('script')
+        script.defer = true
+        script.src = 'https://static.cloudflareinsights.com/beacon.min.js'
+        script.dataset.cfBeacon = JSON.stringify({ token })
+        document.head.appendChild(script)
+      }
+
+      window.addEventListener(
+        'load',
+        () => {
+          if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(loadAnalytics, { timeout: 3000 })
+            return
+          }
+          window.setTimeout(loadAnalytics, 1200)
+        },
+        { once: true },
+      )
     })()
   </script>
   <style>
@@ -137,6 +156,7 @@
       -webkit-font-smoothing: antialiased;
       text-rendering: optimizeLegibility;
       isolation: isolate;
+      overflow-x: clip;
     }
 
     body::before {
@@ -625,6 +645,8 @@
       line-height: 1.35;
       color: color-mix(in oklab, var(--foreground) 88%, var(--muted-foreground));
       overflow: hidden;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .code-scroll {
@@ -638,7 +660,13 @@
       line-height: 1.2;
       white-space: nowrap;
       overflow-x: auto;
-      scrollbar-width: thin;
+      scrollbar-width: none;
+      max-width: 100%;
+      -ms-overflow-style: none;
+    }
+
+    .code-scroll code::-webkit-scrollbar {
+      display: none;
     }
 
     .copy {
@@ -680,6 +708,8 @@
       margin-top: 10px;
       color: var(--copy);
       font-size: 13px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .list {
@@ -701,10 +731,16 @@
       grid-template-columns: 1fr 1fr;
       gap: 14px;
       padding-top: 16px;
+      min-width: 0;
     }
 
     .hero-below .card {
       height: 100%;
+      min-width: 0;
+    }
+
+    .hero-below .card-body {
+      min-width: 0;
     }
 
     .small-list {
@@ -715,6 +751,12 @@
       line-height: 1.5;
       display: grid;
       gap: 8px;
+      min-width: 0;
+    }
+
+    .small-list li {
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .section-head {
@@ -842,6 +884,7 @@
       .hero-below {
         grid-template-columns: 1fr;
         padding-top: 12px;
+        overflow-x: clip;
       }
 
       .grid3 {
@@ -954,8 +997,12 @@
                 <div class="shot-stage" id="shot-panel" role="tabpanel" aria-labelledby="tab-dashboard" tabindex="0"
                   data-active="dashboard" aria-label="Oore CI UI screenshots">
                   <img class="shot" src="/product/demo-dashboard.png" data-shot="dashboard"
-                    alt="Oore CI demo dashboard screenshot" decoding="async" />
+                    srcset="/product/demo-dashboard-720.webp 720w, /product/demo-dashboard-1200.webp 1200w"
+                    sizes="(max-width: 900px) calc(100vw - 64px), 609px" width="1440" height="900"
+                    alt="Oore CI demo dashboard screenshot" loading="eager" fetchpriority="high" decoding="async" />
                   <img class="shot" src="/product/demo-builds.png" data-shot="builds"
+                    srcset="/product/demo-builds-720.webp 720w, /product/demo-builds-1200.webp 1200w"
+                    sizes="(max-width: 900px) calc(100vw - 64px), 609px" width="1440" height="900"
                     alt="Oore CI demo builds list screenshot" decoding="async" loading="lazy" />
                 </div>
                 <span class="shot-open" aria-hidden="true">Open demo</span>

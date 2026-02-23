@@ -40,3 +40,7 @@ Follow these pages in order to get your first instance running:
 4. [**Set Up Your Instance**](/getting-started/first-instance) — run the setup wizard and connect your identity provider
 
 If you’re new, start with: [**Public Alpha (v0.1.x)**](/getting-started/public-alpha) (common blockers + fastest paths).
+
+Before production-like usage, review: [**Known Alpha Limitations**](/getting-started/known-limitations).
+
+When you hit friction during alpha, file reports with this checklist: [**Alpha Feedback Playbook**](/getting-started/alpha-feedback-playbook).

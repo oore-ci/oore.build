@@ -1,36 +1,57 @@
 ---
-status: placeholder
-description: "CLI reference for oore status to check daemon and runner health."
+status: implemented
+description: "CLI reference for oore status (setup summary + authenticated queue/build/runner details)."
 ---
 
 # oore status
 
-::: warning Not yet implemented
-This command is defined in the platform contract but has not been implemented yet. The interface described below reflects the planned behavior.
-:::
+Show instance state.  
+With a valid session token, also includes queue/build/runner operational details.
 
-Show the current state of the Oore CI instance.
-
-## Planned synopsis
+## Synopsis
 
 ```bash
-oore status [--instance <url>]
+oore status [--daemon-url <url>] [--token <session_token>] [--json]
 ```
 
-## Planned behavior
+## Flags
 
-Queries the daemon and displays instance health, setup state, connected integrations, and runner status.
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--daemon-url` | `OORE_DAEMON_URL` | Daemon URL (defaults to config file, then `http://127.0.0.1:8787`) |
+| `--token` | `OORE_SESSION_TOKEN` | Session token for authenticated details (falls back to config file) |
+| `--json` | — | Emit machine-readable summary |
 
-| Flag | Description |
-|------|-------------|
-| `--instance` | Daemon URL to query (default: `http://127.0.0.1:8787`) |
+## Output modes
 
-## Current workaround
+### Unauthenticated (no token)
 
-Until `oore status` is implemented, query the public status endpoint directly:
+Always includes setup summary:
+
+- daemon URL
+- instance id
+- setup state
+- runtime mode
+- setup in-progress/complete
+
+### Authenticated (valid token)
+
+Adds:
+
+- queue depth (`status=queued`)
+- active build count (`queued + running`)
+- recent builds (latest 5)
+- runner inventory
+
+## Examples
 
 ```bash
-curl http://127.0.0.1:8787/v1/public/setup-status
-```
+# setup-only summary
+oore status
 
-This returns the current setup state (`uninitialized`, `bootstrap_pending`, `idp_configured`, `owner_created`, or `ready`).
+# authenticated details
+oore status --token <session_token>
+
+# JSON output for automation
+oore status --json
+```

@@ -1,35 +1,52 @@
 ---
-status: placeholder
-description: "CLI reference for oore login to authenticate with an Oore CI instance."
+status: implemented
+description: "CLI reference for oore login in alpha mode (token import + local login)."
 ---
 
 # oore login
 
-::: warning Not yet implemented
-This command is defined in the platform contract but has not been implemented yet. The interface described below reflects the planned behavior.
-:::
+Authenticate the CLI and persist credentials for later commands such as `oore status`.
 
-Authenticate the CLI with a running Oore CI instance.
-
-## Planned synopsis
+## Synopsis
 
 ```bash
-oore login [--instance <url>]
+# Local-mode login (loopback-only endpoint rules are enforced by daemon)
+oore login [--daemon-url <url>] [--email <email>]
+
+# Import and validate an existing session token
+oore login --token <session_token> [--daemon-url <url>]
+
+# JSON output
+oore login --json ...
 ```
 
-## Planned behavior
+## Flags
 
-Opens the OIDC login flow in the default browser and stores the session token locally for subsequent CLI commands.
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--daemon-url` | `OORE_DAEMON_URL` | Daemon URL (defaults to config file, then `http://127.0.0.1:8787`) |
+| `--token` | — | Import an existing session token and validate via `/v1/users/me` |
+| `--email` | — | Optional local-login email override (`owner@local` by default server-side) |
+| `--json` | — | Print machine-readable output |
 
-| Flag | Description |
-|------|-------------|
-| `--instance` | Daemon URL to authenticate against (default: `http://127.0.0.1:8787`) |
+## Behavior
 
-## Current workaround
+- If `--token` is provided, `oore` validates the token against `/v1/users/me`.
+- If `--token` is not provided, `oore` uses local login (`POST /v1/auth/local/login`).
+- On success, `oore` stores:
+  - `daemon_url`
+  - `session_token`
+  in `~/.oore/config.json` (or `OORE_CONFIG_FILE` override).
 
-Until `oore login` is implemented, authenticate via the web UI and use the session token from your browser for API calls:
+## Examples
 
 ```bash
-curl -H "Authorization: Bearer <session_token_from_browser>" \
-  http://127.0.0.1:8787/v1/projects
+oore login --daemon-url http://127.0.0.1:8787
+oore login --token <session_token_from_web_ui>
+oore login --json
 ```
+
+## Notes
+
+- Full terminal OIDC browser flow is intentionally deferred in this alpha tranche.
+- Local login succeeds/fails based on daemon loopback/auth mode policy.

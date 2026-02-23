@@ -49,3 +49,6 @@ Open an issue on GitHub. Include:
 - What you expected vs what happened
 - Steps to reproduce
 - OS and toolchain versions (`rustc --version`, `bun --version`)
+
+For help channels and non-bug paths, see [SUPPORT.md](SUPPORT.md).
+Please also follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

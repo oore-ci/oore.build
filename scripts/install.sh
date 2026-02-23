@@ -191,9 +191,9 @@ validate_channel() {
 
 infer_channel_from_tag() {
   local tag="${1:-}"
-  if echo "$tag" | grep -q -- '-alpha\\.'; then
+  if echo "$tag" | grep -q -- '-alpha\.'; then
     printf 'alpha'
-  elif echo "$tag" | grep -q -- '-beta\\.'; then
+  elif echo "$tag" | grep -q -- '-beta\.'; then
     printf 'beta'
   else
     printf 'stable'
@@ -206,8 +206,8 @@ resolve_latest_channel_tag_from_list() {
   local want_re=""
 
   case "$channel" in
-    alpha) want_re='-alpha\\.' ;;
-    beta) want_re='-beta\\.' ;;
+    alpha) want_re='-alpha\.' ;;
+    beta) want_re='-beta\.' ;;
     *) die "resolve_latest_channel_tag_from_list: unsupported channel: $channel" ;;
   esac
 
@@ -222,14 +222,14 @@ resolve_latest_channel_tag_from_list() {
       tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
     fi
     if [[ -z "$draft" ]]; then
-      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$line" | head -n1)"
+      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
     fi
     if [[ -z "$prerelease" ]]; then
-      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$line" | head -n1)"
+      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
     fi
 
     if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
-      if [[ "$draft" == "false" && "$prerelease" == "true" ]] && echo "$tag" | grep -qE "$want_re"; then
+      if [[ "$draft" == "false" && "$prerelease" == "true" ]] && echo "$tag" | grep -qE -- "$want_re"; then
         printf '%s' "$tag"
         return 0
       fi
@@ -256,10 +256,10 @@ resolve_latest_stable_tag_from_list() {
       tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
     fi
     if [[ -z "$draft" ]]; then
-      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$line" | head -n1)"
+      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
     fi
     if [[ -z "$prerelease" ]]; then
-      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' <<<"$line" | head -n1)"
+      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
     fi
 
     if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then

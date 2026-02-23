@@ -12,6 +12,8 @@ Oore CI is in **public alpha**.
 
 If you’re evaluating Oore CI, this page is the shortest path to your first green build.
 
+Before broader rollout, review: [Known Alpha Limitations](/getting-started/known-limitations).
+
 ## The two supported onboarding paths
 
 ### Path A: Local-first (no HTTPS required)
@@ -83,6 +85,5 @@ If you want a remote-first path without configuring OIDC immediately, see the de
 
 ## How to report issues and security findings
 
-- Bugs/UX issues: GitHub issues
+- Bugs/UX issues: GitHub issues (use the [Alpha Feedback Playbook](/getting-started/alpha-feedback-playbook))
 - Security reports: follow [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md) (private disclosure)
-

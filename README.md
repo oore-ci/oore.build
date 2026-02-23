@@ -8,6 +8,10 @@
 
 <p align="center">
   <a href="https://docs.oore.build">Documentation</a>
+  ·
+  <a href="https://demo.oore.build">Live Demo</a>
+  ·
+  <a href="https://ci.oore.build">Hosted UI</a>
 </p>
 
 <p align="center">
@@ -15,6 +19,8 @@
 </p>
 
 > **Alpha** — Oore CI is under active development. APIs, config formats, and CLI flags will change without notice. Use at your own risk.
+
+> Want a quick product tour before installing? Open the live demo: [demo.oore.build](https://demo.oore.build)
 
 ## What is this?
 
@@ -24,6 +30,14 @@ Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and mac
 - An **operator CLI** (`oore`) for setup, admin, and runner management
 - A **web UI** for managing builds, apps, and team access
 - **OIDC authentication for non-loopback access** — no local passwords (loopback-only local login supported for local-first onboarding)
+
+## Screenshots
+
+| Dashboard | Builds |
+| --- | --- |
+| ![Oore CI demo dashboard screenshot](apps/site/public/product/demo-dashboard.png) | ![Oore CI demo builds list screenshot](apps/site/public/product/demo-builds.png) |
+
+Try the live demo first: [demo.oore.build](https://demo.oore.build)
 
 ## Prerequisites
 
@@ -41,7 +55,9 @@ curl -fsSL https://oore.build/install | bash
 
 Public alpha onboarding guide (common first-time blockers + fastest paths):
 
-- https://docs.oore.build/getting-started/public-alpha
+- [Public alpha onboarding guide](https://docs.oore.build/getting-started/public-alpha)
+- [Known alpha limitations (v0.1.x)](https://docs.oore.build/getting-started/known-limitations)
+- [Live demo (no install)](https://demo.oore.build)
 
 Install prerelease channels:
 
@@ -62,13 +78,13 @@ oore update
 
 Then complete setup using one of these paths:
 
-- Hosted UI: open `https://ci.oore.build` and add an **HTTPS-reachable** backend URL
+- Hosted UI: open [ci.oore.build](https://ci.oore.build) and add an **HTTPS-reachable** backend URL
 - Local-only backend:
   - run `oore setup` from CLI, or
   - run bundled local frontend `oore-web --backend-url http://127.0.0.1:8787`, or
   - expose backend through a tunnel and continue in hosted UI
 
-Detailed setup docs: `https://docs.oore.build`
+Detailed setup docs: [docs.oore.build](https://docs.oore.build)
 
 ## Development (from source)
 
@@ -83,13 +99,15 @@ make dev-web          # Local web UI (http://localhost:3000)
 make clean-dev-state  # Remove isolated dev daemon data (~/.oore/dev.noindex)
 ```
 
-`make dev-fresh-setup` starts a Cloudflare quick tunnel by default and prints the assigned public URL.  
-Disable it with `OORE_DEV_ENABLE_TUNNEL=0 make dev-fresh-setup`.
-It runs token-only setup by default for hosted UI E2E.  
-Use `OORE_DEV_SETUP_MODE=cli make dev-fresh-setup` only when you explicitly want CLI-driven OIDC setup.
-Dev state uses a `.noindex` directory and writes `.metadata_never_index` to reduce Spotlight indexing load on macOS.
-`make clean-dev-state` also stops the matching dev daemon and Cloudflare tunnel for the configured dev URL/port before deleting state.
-`make run-daemon*` targets use an isolated dev data root (`~/.oore/dev.noindex`) so local source runs do not collide with production daemon data.
+Notes:
+
+- `make dev-fresh-setup` starts a Cloudflare quick tunnel by default and prints the assigned public URL.
+- Disable the tunnel with `OORE_DEV_ENABLE_TUNNEL=0 make dev-fresh-setup`.
+- `make dev-fresh-setup` runs token-only setup by default for hosted UI E2E.
+- Use `OORE_DEV_SETUP_MODE=cli make dev-fresh-setup` only when you explicitly want CLI-driven OIDC setup.
+- Dev state uses a `.noindex` directory and writes `.metadata_never_index` to reduce Spotlight indexing load on macOS.
+- `make clean-dev-state` also stops the matching dev daemon and Cloudflare tunnel for the configured dev URL/port before deleting state.
+- `make run-daemon*` targets use an isolated dev data root (`~/.oore/dev.noindex`) so local source runs do not collide with production daemon data.
 
 ## Project Structure
 
@@ -130,16 +148,17 @@ Releases are published from a dedicated macOS host (for example, a Mac mini) usi
 
 High-level flow:
 
+- PR/push validation -> CI runs `make validate-ci` (full checks in parallel lanes + Woodpecker config lint)
 - Merge to `alpha` -> CI cuts `vX.Y.Z-alpha.N` tags (prerelease)
 - Merge to `beta` -> CI cuts `vX.Y.Z-beta.N` tags (prerelease)
 - Merge to `stable` -> CI cuts `vX.Y.Z` tags (stable), auto-incrementing patch when needed
-- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages sites, and publishes a GitHub Release with attached artifacts
+- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages targets (`oore`, `oore-docs`, `oore-ci`, `oore-demo`) with strict branch+commit verification, and publishes a GitHub Release with attached artifacts
 
 Major/minor bumps are done by updating `Cargo.toml` `workspace.package.version` (for example `0.2.0`), then continuing the alpha -> beta -> stable promotion flow.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SUPPORT.md](SUPPORT.md).
 
 ## License
 
