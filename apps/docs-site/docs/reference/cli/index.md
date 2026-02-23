@@ -48,21 +48,18 @@ The operator CLI handles setup, authentication, and administration.
 |---|---|---|
 | [`oore setup`](/reference/cli/oore-setup) | Interactive 4-step instance setup | Implemented |
 | [`oore setup token`](/reference/cli/oore-setup#setup-token) | Generate a bootstrap token | Implemented |
-| `oore login` | Authenticate via OIDC | Planned |
-| `oore status` | Show instance status | Planned |
+| [`oore login`](/reference/cli/oore-login) | Authenticate in local mode or import a token | Implemented |
+| [`oore status`](/reference/cli/oore-status) | Show setup status and authenticated operational summary | Implemented |
 | `oore runner register` | Register an external build runner | Implemented |
 | `oore runner start` | Start external runner process | Implemented |
-| `oore config set <key> <value>` | Set a configuration value | Planned |
-| `oore config get <key>` | Get a configuration value | Planned |
-| `oore doctor` | Run diagnostic checks | Implemented |
-
-::: info
-Commands marked as "Planned" are defined in the CLI structure but not yet fully implemented.
-:::
+| [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values | Implemented |
+| [`oore config get <key>`](/reference/cli/oore-config) | Get CLI configuration values | Implemented |
+| [`oore doctor`](/reference/cli/oore-doctor) | Run environment/signing diagnostics | Implemented |
 
 ### Global behavior
 
 - All commands that communicate with the daemon accept `--daemon-url` (default: `http://127.0.0.1:8787`, env: `OORE_DAEMON_URL`)
+- The CLI stores local defaults in `~/.oore/config.json` (override path via `OORE_CONFIG_FILE`)
 - State database path can be overridden with `--state-file` or `OORE_SETUP_STATE_FILE`
 - Default database location: `~/Library/Application Support/oore/oore.db`
 

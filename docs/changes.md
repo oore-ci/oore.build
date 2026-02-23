@@ -10,6 +10,19 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-02-23
+
+- CI throughput hardening: consolidated duplicate `validate-pr`/`validate-push` into a single policy-equivalent `validate` step and switched CI execution to `make validate-ci` (parallel frontend/docs and rust lanes) while keeping `make validate` as the canonical local pre-handoff command.
+  - OOR-65: https://linear.app/oorebuild/issue/OOR-65
+- Added Woodpecker workflow lint gating with pinned `woodpecker-cli` (`v3.13.0` default) before CI validation lanes.
+  - Feature doc: https://linear.app/oorebuild/document/feature-post-alpha-reliability-tranche-2026-02-22-db79675a84e3
+- Reduced release pipeline critical path by moving tag release flow to an explicit DAG (`depends_on`), running release-note generation in parallel with build/deploy, and gating GitHub release publication on build + deploy + notes completion.
+  - OOR-65: https://linear.app/oorebuild/issue/OOR-65
+- Removed autotag script duplication in `.woodpecker.yml` by extracting shared semver/tag logic into `tools/autotag.sh` and retaining channel-specific entry steps only.
+  - OOR-65: https://linear.app/oorebuild/issue/OOR-65
+- Optimized Pages deploy/verify runtime while keeping strict correctness: deployed independent targets in parallel and rewrote `tools/verify-pages-deploy.sh` to support parallel polling with hard-fail semantics and tunable controls (`PAGES_VERIFY_MODE`, `PAGES_VERIFY_ATTEMPTS`, `PAGES_VERIFY_SLEEP_SECONDS`).
+  - OOR-65: https://linear.app/oorebuild/issue/OOR-65
+
 ## 2026-02-15
 
 - Migrated internal docs/ADRs/feature docs from repo `docs/` into Linear project “oore.build Docs”.
@@ -108,3 +121,19 @@ Rules:
   - OOR-69: https://linear.app/oorebuild/issue/OOR-69/initial-release-checklist-public-alpha
 - Installer prerelease-channel fix: corrected portable pattern matching in `scripts/install.sh` so `OORE_CHANNEL=beta` and `OORE_CHANNEL=alpha` resolve latest prerelease tags correctly on macOS shells (`sed`/`grep` portability).
   - OOR-69: https://linear.app/oorebuild/issue/OOR-69/initial-release-checklist-public-alpha
+
+## 2026-02-22
+
+- OOR-5 runner checkout reliability hardening: branch-based and commit-SHA checkout flows now guarantee recursive submodule sync/update (`git submodule sync --recursive` + `git submodule update --init --recursive`), and submodule failures are surfaced as explicit checkout-step hard failures.
+  - OOR-5: https://linear.app/oorebuild/issue/OOR-5
+- Added runner coverage for nested submodule checkout behavior and explicit failure-marker behavior using local fixture repositories.
+  - OOR-5: https://linear.app/oorebuild/issue/OOR-5
+- OOR-65 release reliability hardening: Pages deploy commands now pass commit metadata (`--commit-hash`, `--commit-message`), tag release pipeline now verifies all four Pages targets (`oore`, `oore-docs`, `oore-ci`, `oore-demo`) reached the expected branch/commit before success, and a deterministic local smoke gate (`make release-smoke`) was added.
+  - OOR-65: https://linear.app/oorebuild/issue/OOR-65
+  - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+- Expanded `oore` operator CLI alpha contract: implemented `oore login` (token import/validation + local-mode login), implemented `oore config set/get` with strict key whitelist (`daemon_url`, `session_token`) and exit code `2` for unsupported keys, expanded authenticated `oore status` summary, and expanded `oore doctor` with signing diagnostics plus JSON output.
+  - V1 roadmap: https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+- Updated user-facing docs for new CLI behavior, release verification flow, and alpha feedback intake (including a strict issue-report checklist page).
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+- Added a consolidated Linear feature doc for this post-alpha reliability tranche.
+  - Feature doc: https://linear.app/oorebuild/document/feature-post-alpha-reliability-tranche-2026-02-22-db79675a84e3

@@ -85,5 +85,5 @@ If you want a remote-first path without configuring OIDC immediately, see the de
 
 ## How to report issues and security findings
 
-- Bugs/UX issues: GitHub issues
+- Bugs/UX issues: GitHub issues (use the [Alpha Feedback Playbook](/getting-started/alpha-feedback-playbook))
 - Security reports: follow [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md) (private disclosure)

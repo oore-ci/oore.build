@@ -4,7 +4,7 @@
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-		       docs-check ui-init install-local validate gen-openapi \
+		       docs-check lint-woodpecker ui-init install-local validate validate-ci gen-openapi release-smoke \
 		       release-local release-cut
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
@@ -27,11 +27,15 @@ PAGES_PROJECT_DEMO ?= oore-demo
 PAGES_PROJECT_SITE ?= oore
 PAGES_PROJECT_DOCS ?= oore-docs
 PAGES_BRANCH ?=
+PAGES_COMMIT_HASH ?=
+PAGES_COMMIT_MESSAGE ?=
 
 # If PAGES_BRANCH is set (e.g. alpha/beta), deploy to a Pages preview branch.
 # Important: avoid leaving behind extra whitespace in the shell command when unset.
 # `$(if ...)` preserves the leading space in the "then" clause, while plain `:=` assignments do not.
 PAGES_BRANCH_FLAG :=$(if $(strip $(PAGES_BRANCH)), --branch=$(PAGES_BRANCH),)
+PAGES_COMMIT_HASH_FLAG :=$(if $(strip $(PAGES_COMMIT_HASH)), --commit-hash=$(PAGES_COMMIT_HASH),)
+PAGES_COMMIT_MESSAGE_FLAG :=$(if $(strip $(PAGES_COMMIT_MESSAGE)), --commit-message=$(PAGES_COMMIT_MESSAGE),)
 
 # ── Frontend: Web App ─────────────────────────────────────────────
 dev-web:
@@ -41,19 +45,19 @@ build-web:
 	bun run build:web
 
 deploy-web: build-web
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 deploy-web-only:
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 build-demo:
 	cd apps/web && VITE_DEMO_MODE=true bun run build
 
 deploy-demo: build-demo
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 deploy-demo-only:
-	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_DEMO)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 test-web:
 	cd apps/web && bun run test
@@ -78,16 +82,16 @@ build-site:
 	bun run build:site
 
 deploy-site: build-site
-	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 deploy-site-only:
-	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/site/dist --project-name=$(PAGES_PROJECT_SITE)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 deploy-docs: build-docs
-	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 deploy-docs-only:
-	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG) --commit-dirty=true
+	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
 test-docs:
 	cd apps/docs-site && bun run test
@@ -168,6 +172,9 @@ gen-openapi:
 docs-check:
 	bun run docs:check
 
+lint-woodpecker:
+	bash tools/lint-woodpecker.sh .woodpecker.yml
+
 ui-init:
 	bun run ui:init
 
@@ -181,3 +188,9 @@ lint: lint-web lint-docs fmt-rust-check
 test: test-web test-docs test-rust-workspace
 
 validate: docs-check lint test clippy-rust build-web build-docs build-site cargo-check
+
+validate-ci:
+	bash tools/validate-ci.sh
+
+release-smoke:
+	bash tools/release-smoke.sh

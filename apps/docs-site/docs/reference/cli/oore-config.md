@@ -1,43 +1,39 @@
 ---
-status: placeholder
-description: "CLI reference for oore config to manage daemon configuration."
+status: implemented
+description: "CLI reference for oore config key/value management."
 ---
 
 # oore config
 
-::: warning Not yet implemented
-This command is defined in the platform contract but has not been implemented yet. The interface described below reflects the planned behavior.
-:::
+Manage local CLI defaults used by commands like `oore login` and `oore status`.
 
-Get and set CLI configuration values.
-
-## Planned synopsis
+## Synopsis
 
 ```bash
 oore config set <key> <value>
 oore config get <key>
 ```
 
-## Planned subcommands
+## Supported keys (alpha tranche)
 
-| Subcommand | Description |
-|------------|-------------|
-| `set` | Store a configuration value |
-| `get` | Retrieve a configuration value |
+| Key | Meaning |
+|-----|---------|
+| `daemon_url` | Default daemon URL |
+| `session_token` | Default session token for authenticated CLI commands |
 
-## Planned configuration keys
+Unsupported keys fail with exit code `2`.
 
-| Key | Description |
-|-----|-------------|
-| `instance.url` | Default daemon URL |
-| `instance.name` | Human-readable instance label |
+## Storage
 
-## Current workaround
+- Default path: `~/.oore/config.json`
+- Override path: `OORE_CONFIG_FILE`
 
-Until `oore config` is implemented, configure the daemon URL via environment variables:
+## Examples
 
 ```bash
-export OORED_LISTEN_ADDR=127.0.0.1:8787
-```
+oore config set daemon_url http://127.0.0.1:8787
+oore config set session_token <token>
 
-See [Environment Variables](/reference/config/environment-variables) for all available variables.
+oore config get daemon_url
+oore config get session_token
+```

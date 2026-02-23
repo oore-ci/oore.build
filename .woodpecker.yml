@@ -16,32 +16,20 @@ when:
     ))
 
 steps:
-  - name: validate-pr
+  - name: validate
     image: bash
     when:
       event:
         - pull_request
-    environment:
-      HOME: /Users/arya
-      CARGO_HOME: /Users/arya/.cargo
-      RUSTUP_HOME: /Users/arya/.rustup
-      PATH: /Users/arya/opt/bin:/Users/arya/.cargo/bin:/Users/arya/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-    commands:
-      - set -euo pipefail
-      - ulimit -n 8192
-      - bun install --frozen-lockfile
-      - make validate
-
-  - name: validate-push
-    image: bash
-    when:
-      event:
         - push
-      branch:
-        - alpha
-        - beta
-        - stable
-        - master
+      evaluate: |
+        CI_PIPELINE_EVENT == "pull_request" ||
+        (CI_PIPELINE_EVENT == "push" && (
+          CI_COMMIT_BRANCH == "master" ||
+          CI_COMMIT_BRANCH == "stable" ||
+          CI_COMMIT_BRANCH == "alpha" ||
+          CI_COMMIT_BRANCH == "beta"
+        ))
     environment:
       HOME: /Users/arya
       CARGO_HOME: /Users/arya/.cargo
@@ -51,11 +39,13 @@ steps:
       - set -euo pipefail
       - ulimit -n 8192
       - bun install --frozen-lockfile
-      - make validate
+      - make validate-ci
 
   # ----- Autotag: Production (stable -> vX.Y.Z) -----
-  - name: autotag-prod-checkout
+  - name: autotag-prod
     image: bash
+    depends_on:
+      - validate
     when:
       event:
         - push
@@ -66,114 +56,13 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - |
-        token="$(printenv GITHUB_TOKEN || true)"
-        if [ -n "$token" ]; then
-          # Avoid embedding tokens in the remote URL.
-          git config url."https://x-access-token:$token@github.com/".insteadOf "https://github.com/"
-        fi
-      - git fetch origin "+refs/heads/stable:refs/remotes/origin/stable" "+refs/tags/*:refs/tags/*"
-      - git checkout -B stable "origin/stable"
-
-  - name: autotag-prod-bump-tag
-    image: bash
-    when:
-      event:
-        - push
-      branch:
-        - stable
-    environment:
-      GITHUB_TOKEN:
-        from_secret: GITHUB_TOKEN
-    commands:
-      - set -euo pipefail
-      - msg="$(git log -1 --pretty=%B)"
-      - |
-        if echo "$msg" | grep -q "\\[CI SKIP\\]"; then
-          echo "Skipping (already CI-generated commit)."
-          exit 0
-        fi
-      - |
-        if echo "$msg" | grep -q "^chore(release): bump version to "; then
-          echo "Skipping (already a release bump commit)."
-          exit 0
-        fi
-      - |
-        semver_gt() {
-          # return 0 if $1 > $2, else 1
-          local v1="$1"
-          local v2="$2"
-          [ -n "$v1" ] || v1="0.0.0"
-          [ -n "$v2" ] || v2="0.0.0"
-
-          local a b c x y z
-          IFS=. read -r a b c <<<"$v1"
-          IFS=. read -r x y z <<<"$v2"
-
-          [ -n "$a" ] || a=0
-          [ -n "$b" ] || b=0
-          [ -n "$c" ] || c=0
-          [ -n "$x" ] || x=0
-          [ -n "$y" ] || y=0
-          [ -n "$z" ] || z=0
-          if (( a > x )); then return 0; fi
-          if (( a < x )); then return 1; fi
-          if (( b > y )); then return 0; fi
-          if (( b < y )); then return 1; fi
-          if (( c > z )); then return 0; fi
-          return 1
-        }
-
-        bump_patch() {
-          local v="$1"
-          [ -n "$v" ] || v="0.0.0"
-
-          local a b c
-          IFS=. read -r a b c <<<"$v"
-          [ -n "$a" ] || a=0
-          [ -n "$b" ] || b=0
-          [ -n "$c" ] || c=0
-          printf '%s.%s.%s\n' "$a" "$b" "$((c+1))"
-        }
-
-        cargo_ver="$(
-          awk -F'\"' '
-            /^\\[workspace\\.package\\]/ { in_section=1; next }
-            in_section && /^[[:space:]]*version[[:space:]]*=/ { print $2; exit }
-            in_section && /^\\[/ { in_section=0 }
-          ' Cargo.toml
-        )"
-        if [ -z "$cargo_ver" ]; then
-          echo "Failed to read workspace.package.version from Cargo.toml" >&2
-          exit 1
-        fi
-
-        latest_prod_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n1 || true)"
-        latest_prod_ver="$(echo "$latest_prod_tag" | sed 's/^v//')"
-        if [ -z "$latest_prod_tag" ]; then
-          latest_prod_ver="0.0.0"
-        fi
-
-        base="$latest_prod_ver"
-        if semver_gt "$cargo_ver" "$latest_prod_ver"; then
-          base="$cargo_ver"
-        else
-          base="$(bump_patch "$latest_prod_ver")"
-        fi
-
-        next="$base"
-        while git show-ref --tags --quiet "refs/tags/v$next"; do
-          next="$(bump_patch "$next")"
-        done
-        tag="v$next"
-
-        echo "Prod tag: $tag"
-        git tag -a "$tag" -m "Release $tag"
-        git push origin "$tag"
+      - AUTOTAG_CHANNEL=stable AUTOTAG_BRANCH=stable bash tools/autotag.sh
 
   # ----- Autotag: Alpha (alpha -> vX.Y.Z-alpha.N) -----
-  - name: autotag-alpha-checkout
+  - name: autotag-alpha
     image: bash
+    depends_on:
+      - validate
     when:
       event:
         - push
@@ -184,114 +73,13 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - |
-        token="$(printenv GITHUB_TOKEN || true)"
-        if [ -n "$token" ]; then
-          git config url."https://x-access-token:$token@github.com/".insteadOf "https://github.com/"
-        fi
-      - git fetch origin "+refs/heads/alpha:refs/remotes/origin/alpha" "+refs/tags/*:refs/tags/*"
-      - git checkout -B alpha "origin/alpha"
-
-  - name: autotag-alpha-tag
-    image: bash
-    when:
-      event:
-        - push
-      branch:
-        - alpha
-    environment:
-      GITHUB_TOKEN:
-        from_secret: GITHUB_TOKEN
-    commands:
-      - set -euo pipefail
-      - msg="$(git log -1 --pretty=%B)"
-      - |
-        if echo "$msg" | grep -q "\\[CI SKIP\\]"; then
-          echo "Skipping (already CI-generated commit)."
-          exit 0
-        fi
-      - |
-        cargo_ver="$(
-          awk -F'\"' '
-            /^\\[workspace\\.package\\]/ { in_section=1; next }
-            in_section && /^[[:space:]]*version[[:space:]]*=/ { print $2; exit }
-            in_section && /^\\[/ { in_section=0 }
-          ' Cargo.toml
-        )"
-        if [ -z "$cargo_ver" ]; then
-          echo "Failed to read workspace.package.version from Cargo.toml" >&2
-          exit 1
-        fi
-
-        latest_prod_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n1 || true)"
-        latest_prod_ver="$(echo "$latest_prod_tag" | sed 's/^v//')"
-        if [ -z "$latest_prod_tag" ]; then
-          latest_prod_ver="0.0.0"
-        fi
-
-        semver_gt() {
-          # return 0 if $1 > $2, else 1
-          local v1="$1"
-          local v2="$2"
-          [ -n "$v1" ] || v1="0.0.0"
-          [ -n "$v2" ] || v2="0.0.0"
-
-          local a b c x y z
-          IFS=. read -r a b c <<<"$v1"
-          IFS=. read -r x y z <<<"$v2"
-
-          [ -n "$a" ] || a=0
-          [ -n "$b" ] || b=0
-          [ -n "$c" ] || c=0
-          [ -n "$x" ] || x=0
-          [ -n "$y" ] || y=0
-          [ -n "$z" ] || z=0
-          if (( a > x )); then return 0; fi
-          if (( a < x )); then return 1; fi
-          if (( b > y )); then return 0; fi
-          if (( b < y )); then return 1; fi
-          if (( c > z )); then return 0; fi
-          return 1
-        }
-
-        bump_patch() {
-          local v="$1"
-          [ -n "$v" ] || v="0.0.0"
-
-          local a b c
-          IFS=. read -r a b c <<<"$v"
-          [ -n "$a" ] || a=0
-          [ -n "$b" ] || b=0
-          [ -n "$c" ] || c=0
-          printf '%s.%s.%s\n' "$a" "$b" "$((c+1))"
-        }
-
-        base="$latest_prod_ver"
-        if semver_gt "$cargo_ver" "$latest_prod_ver"; then
-          base="$cargo_ver"
-        else
-          base="$(bump_patch "$latest_prod_ver")"
-        fi
-
-        prev="$(git tag -l "v$base-alpha.*" --sort=-v:refname | head -n1 || true)"
-        if [ -n "$prev" ]; then
-          n="$(echo "$prev" | awk -F. '{print $NF}')"
-          case "$n" in
-            ''|*[!0-9]*) n=0 ;;
-          esac
-          next_n="$((n+1))"
-        else
-          next_n="1"
-        fi
-        tag="$(printf 'v%s-alpha.%s' "$base" "$next_n")"
-        echo "Alpha tag: $tag"
-
-        git tag -a "$tag" -m "Alpha $tag"
-        git push origin "$tag"
+      - AUTOTAG_CHANNEL=alpha AUTOTAG_BRANCH=alpha bash tools/autotag.sh
 
   # ----- Autotag: Beta (beta -> vX.Y.Z-beta.N) -----
-  - name: autotag-beta-checkout
+  - name: autotag-beta
     image: bash
+    depends_on:
+      - validate
     when:
       event:
         - push
@@ -302,110 +90,7 @@ steps:
         from_secret: GITHUB_TOKEN
     commands:
       - set -euo pipefail
-      - |
-        token="$(printenv GITHUB_TOKEN || true)"
-        if [ -n "$token" ]; then
-          git config url."https://x-access-token:$token@github.com/".insteadOf "https://github.com/"
-        fi
-      - git fetch origin "+refs/heads/beta:refs/remotes/origin/beta" "+refs/tags/*:refs/tags/*"
-      - git checkout -B beta "origin/beta"
-
-  - name: autotag-beta-tag
-    image: bash
-    when:
-      event:
-        - push
-      branch:
-        - beta
-    environment:
-      GITHUB_TOKEN:
-        from_secret: GITHUB_TOKEN
-    commands:
-      - set -euo pipefail
-      - msg="$(git log -1 --pretty=%B)"
-      - |
-        if echo "$msg" | grep -q "\\[CI SKIP\\]"; then
-          echo "Skipping (already CI-generated commit)."
-          exit 0
-        fi
-      - |
-        cargo_ver="$(
-          awk -F'\"' '
-            /^\\[workspace\\.package\\]/ { in_section=1; next }
-            in_section && /^[[:space:]]*version[[:space:]]*=/ { print $2; exit }
-            in_section && /^\\[/ { in_section=0 }
-          ' Cargo.toml
-        )"
-        if [ -z "$cargo_ver" ]; then
-          echo "Failed to read workspace.package.version from Cargo.toml" >&2
-          exit 1
-        fi
-
-        latest_prod_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n1 || true)"
-        latest_prod_ver="$(echo "$latest_prod_tag" | sed 's/^v//')"
-        if [ -z "$latest_prod_tag" ]; then
-          latest_prod_ver="0.0.0"
-        fi
-
-        semver_gt() {
-          # return 0 if $1 > $2, else 1
-          local v1="$1"
-          local v2="$2"
-          [ -n "$v1" ] || v1="0.0.0"
-          [ -n "$v2" ] || v2="0.0.0"
-
-          local a b c x y z
-          IFS=. read -r a b c <<<"$v1"
-          IFS=. read -r x y z <<<"$v2"
-
-          [ -n "$a" ] || a=0
-          [ -n "$b" ] || b=0
-          [ -n "$c" ] || c=0
-          [ -n "$x" ] || x=0
-          [ -n "$y" ] || y=0
-          [ -n "$z" ] || z=0
-          if (( a > x )); then return 0; fi
-          if (( a < x )); then return 1; fi
-          if (( b > y )); then return 0; fi
-          if (( b < y )); then return 1; fi
-          if (( c > z )); then return 0; fi
-          return 1
-        }
-
-        bump_patch() {
-          local v="$1"
-          [ -n "$v" ] || v="0.0.0"
-
-          local a b c
-          IFS=. read -r a b c <<<"$v"
-          [ -n "$a" ] || a=0
-          [ -n "$b" ] || b=0
-          [ -n "$c" ] || c=0
-          printf '%s.%s.%s\n' "$a" "$b" "$((c+1))"
-        }
-
-        base="$latest_prod_ver"
-        if semver_gt "$cargo_ver" "$latest_prod_ver"; then
-          base="$cargo_ver"
-        else
-          base="$(bump_patch "$latest_prod_ver")"
-        fi
-
-        prev="$(git tag -l "v$base-beta.*" --sort=-v:refname | head -n1 || true)"
-        if [ -n "$prev" ]; then
-          n="$(echo "$prev" | awk -F. '{print $NF}')"
-          case "$n" in
-            ''|*[!0-9]*) n=0 ;;
-          esac
-          next_n="$((n+1))"
-        else
-          next_n="1"
-        fi
-        tag="$(printf 'v%s-beta.%s' "$base" "$next_n")"
-        echo "Beta tag: $tag"
-
-        git tag -a "$tag" -m "Beta $tag"
-        git push origin "$tag"
+      - AUTOTAG_CHANNEL=beta AUTOTAG_BRANCH=beta bash tools/autotag.sh
 
   # ----- Release: Tag -> Pages Deploy + GitHub Release -----
   - name: release-checkout
@@ -431,6 +116,8 @@ steps:
 
   - name: release-build-assets
     image: bash
+    depends_on:
+      - release-checkout
     when:
       event:
         - tag
@@ -485,6 +172,8 @@ steps:
 
   - name: release-deploy-pages
     image: bash
+    depends_on:
+      - release-build-assets
     when:
       event:
         - tag
@@ -521,6 +210,13 @@ steps:
         export PAGES_PROJECT_WEB="oore-ci"
         export PAGES_PROJECT_DEMO="oore-demo"
         export PAGES_BRANCH="$pages_branch"
+        export PAGES_COMMIT_HASH="$(git rev-list -n 1 "$tag")"
+        export PAGES_COMMIT_MESSAGE="$tag"
+        export WRANGLER="./node_modules/.bin/wrangler"
+
+        export PAGES_VERIFY_MODE="${PAGES_VERIFY_MODE:-parallel}"
+        export PAGES_VERIFY_ATTEMPTS="${PAGES_VERIFY_ATTEMPTS:-24}"
+        export PAGES_VERIFY_SLEEP_SECONDS="${PAGES_VERIFY_SLEEP_SECONDS:-5}"
 
         echo "Deploy channel=$channel branch=$PAGES_BRANCH site=$PAGES_PROJECT_SITE docs=$PAGES_PROJECT_DOCS web=$PAGES_PROJECT_WEB"
       - ulimit -n 8192
@@ -536,13 +232,35 @@ steps:
       - ./node_modules/.bin/wrangler whoami
       # Avoid rebuilding web twice; build-assets already produced apps/web/dist.
       - make build-site build-docs
-      - make deploy-site-only deploy-docs-only deploy-web-only
+      - |
+        status=0
+
+        make deploy-site-only &
+        pid_site=$!
+
+        make deploy-docs-only &
+        pid_docs=$!
+
+        make deploy-web-only &
+        pid_web=$!
+
+        wait "$pid_site" || status=$?
+        wait "$pid_docs" || status=$?
+        wait "$pid_web" || status=$?
+
+        if [ "$status" -ne 0 ]; then
+          echo "One or more Pages deploy commands failed." >&2
+          exit "$status"
+        fi
       # Demo build intentionally overwrites apps/web/dist.
       - make build-demo
       - make deploy-demo-only
+      - bash tools/verify-pages-deploy.sh
 
   - name: release-generate-notes
     image: bash
+    depends_on:
+      - release-checkout
     when:
       event:
         - tag
@@ -606,6 +324,10 @@ steps:
 
   - name: release-github
     image: bash
+    depends_on:
+      - release-build-assets
+      - release-deploy-pages
+      - release-generate-notes
     when:
       event:
         - tag

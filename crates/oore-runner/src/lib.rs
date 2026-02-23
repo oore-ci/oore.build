@@ -1705,6 +1705,77 @@ async fn poll_cancellation(
     }
 }
 
+#[derive(Debug, Clone)]
+struct CheckoutInvocation {
+    preview_command: String,
+    shell_script: String,
+    env: Vec<(String, String)>,
+}
+
+fn build_checkout_invocation(
+    repo_url: &str,
+    commit_sha: Option<&str>,
+    branch: Option<&str>,
+) -> anyhow::Result<CheckoutInvocation> {
+    if let Some(sha) = commit_sha {
+        return Ok(CheckoutInvocation {
+            preview_command: format!(
+                "git fetch --depth 1 <repo> {sha} && git checkout FETCH_HEAD && \
+                 git submodule sync --recursive && git submodule update --init --recursive"
+            ),
+            shell_script: r#"set -eu
+git init
+git fetch --depth 1 "$OORE_REPO" "$OORE_SHA"
+git checkout FETCH_HEAD
+echo "[oore-checkout] syncing submodules (recursive)"
+if ! git submodule sync --recursive; then
+  echo "[oore-checkout] submodule sync failed" >&2
+  exit 91
+fi
+echo "[oore-checkout] updating submodules (init + recursive)"
+if ! git submodule update --init --recursive; then
+  echo "[oore-checkout] submodule update failed" >&2
+  exit 92
+fi
+"#
+            .to_string(),
+            env: vec![
+                ("OORE_REPO".to_string(), repo_url.to_string()),
+                ("OORE_SHA".to_string(), sha.to_string()),
+            ],
+        });
+    }
+
+    if let Some(branch) = branch {
+        return Ok(CheckoutInvocation {
+            preview_command: format!(
+                "git clone --depth 1 --branch {branch} <repo> . && \
+                 git submodule sync --recursive && git submodule update --init --recursive"
+            ),
+            shell_script: r#"set -eu
+git clone --depth 1 --branch "$OORE_BRANCH" "$OORE_REPO" .
+echo "[oore-checkout] syncing submodules (recursive)"
+if ! git submodule sync --recursive; then
+  echo "[oore-checkout] submodule sync failed" >&2
+  exit 91
+fi
+echo "[oore-checkout] updating submodules (init + recursive)"
+if ! git submodule update --init --recursive; then
+  echo "[oore-checkout] submodule update failed" >&2
+  exit 92
+fi
+"#
+            .to_string(),
+            env: vec![
+                ("OORE_REPO".to_string(), repo_url.to_string()),
+                ("OORE_BRANCH".to_string(), branch.to_string()),
+            ],
+        });
+    }
+
+    anyhow::bail!("Build has neither commit_sha nor branch — cannot checkout source")
+}
+
 async fn execute_build(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -1748,81 +1819,51 @@ async fn execute_build(
         );
     }
 
-    if job.commit_sha.is_none() && job.branch.is_none() {
-        return (
-            steps,
-            Err(anyhow::anyhow!(
-                "Build has neither commit_sha nor branch — cannot checkout source"
-            )),
-        );
+    let start = now_unix();
+    let checkout =
+        match build_checkout_invocation(repo_url, job.commit_sha.as_deref(), job.branch.as_deref())
+        {
+            Ok(checkout) => checkout,
+            Err(e) => return (steps, Err(e)),
+        };
+
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &mut log_seq,
+        "stdout",
+        &step_start_marker("checkout", &checkout.preview_command),
+    )
+    .await;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &mut log_seq,
+        "stdout",
+        &format!("$ {}", checkout.preview_command),
+    )
+    .await;
+
+    let mut checkout_child = tokio::process::Command::new("sh");
+    checkout_child
+        .arg("-c")
+        .arg(&checkout.shell_script)
+        .current_dir(&workspace)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    for (key, value) in &checkout.env {
+        checkout_child.env(key, value);
     }
 
-    let start = now_unix();
-
-    let checkout_command = if let Some(sha) = &job.commit_sha {
-        format!("git fetch --depth 1 <repo> {sha} && git checkout FETCH_HEAD")
-    } else if let Some(branch) = &job.branch {
-        format!("git clone --depth 1 --branch {branch} <repo>")
-    } else {
-        unreachable!()
-    };
-
-    let _ = append_runner_log_line(
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        &mut log_seq,
-        "stdout",
-        &step_start_marker("checkout", &checkout_command),
-    )
-    .await;
-    let _ = append_runner_log_line(
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        &mut log_seq,
-        "stdout",
-        &format!("$ {checkout_command}"),
-    )
-    .await;
-
-    let child = if let Some(sha) = &job.commit_sha {
-        match tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg("git init && git fetch --depth 1 \"$OORE_REPO\" \"$OORE_SHA\" && git checkout FETCH_HEAD")
-            .env("OORE_REPO", repo_url)
-            .env("OORE_SHA", sha)
-            .current_dir(&workspace)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => return (steps, Err(e.into())),
-        }
-    } else if let Some(branch) = &job.branch {
-        match tokio::process::Command::new("git")
-            .arg("clone")
-            .arg("--depth")
-            .arg("1")
-            .arg("--branch")
-            .arg(branch)
-            .arg(repo_url)
-            .arg(".")
-            .current_dir(&workspace)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => return (steps, Err(e.into())),
-        }
-    } else {
-        unreachable!()
+    let child = match checkout_child.spawn() {
+        Ok(c) => c,
+        Err(e) => return (steps, Err(e.into())),
     };
 
     let clone_status = run_and_stream(
@@ -2930,20 +2971,304 @@ async fn run_and_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Debug, Clone)]
+    struct NestedSubmoduleFixture {
+        root_repo: PathBuf,
+        child_repo: PathBuf,
+        default_branch: String,
+        head_sha: String,
+    }
 
     fn temp_workspace() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("oore-runner-test-{}-{nanos}", std::process::id()));
+        let sequence = TEMP_WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "oore-runner-test-{}-{nanos}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
     }
 
     fn cleanup_workspace(path: &Path) {
         let _ = fs::remove_dir_all(path);
+    }
+
+    fn run_git(
+        cwd: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> anyhow::Result<std::process::Output> {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(cwd).args(args);
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+        let output = cmd.output().map_err(|e| {
+            anyhow::anyhow!("failed to run git {:?} in {}: {e}", args, cwd.display())
+        })?;
+        Ok(output)
+    }
+
+    fn git_expect_success(cwd: &Path, args: &[&str], extra_env: &[(&str, &str)]) {
+        let output = run_git(cwd, args, extra_env).expect("git command should run");
+        if output.status.success() {
+            return;
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!(
+            "git command failed in {}: git {:?}\n{}",
+            cwd.display(),
+            args,
+            stderr
+        );
+    }
+
+    fn git_stdout(cwd: &Path, args: &[&str]) -> String {
+        let output = run_git(cwd, args, &[]).expect("git command should run");
+        assert!(output.status.success(), "git {:?} failed", args);
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn init_repo(path: &Path) {
+        fs::create_dir_all(path).expect("create repo directory");
+        git_expect_success(path, &["init", "--quiet"], &[]);
+        git_expect_success(
+            path,
+            &["config", "user.email", "runner-tests@example.com"],
+            &[],
+        );
+        git_expect_success(path, &["config", "user.name", "oore-runner-tests"], &[]);
+    }
+
+    fn add_commit(path: &Path, file_rel: &str, content: &str, message: &str) {
+        let file_path = path.join(file_rel);
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).expect("create parent dir");
+        }
+        fs::write(&file_path, content).expect("write file");
+        git_expect_success(path, &["add", "."], &[]);
+        git_expect_success(path, &["commit", "--quiet", "-m", message], &[]);
+    }
+
+    fn create_nested_submodule_fixture(base: &Path) -> NestedSubmoduleFixture {
+        let grandchild_repo = base.join("grandchild-repo");
+        init_repo(&grandchild_repo);
+        add_commit(
+            &grandchild_repo,
+            "README.md",
+            "nested-submodule-grandchild\n",
+            "init grandchild",
+        );
+
+        let child_repo = base.join("child-repo");
+        init_repo(&child_repo);
+        add_commit(&child_repo, "README.md", "child\n", "init child");
+        let grandchild_path = grandchild_repo
+            .to_str()
+            .expect("grandchild path must be UTF-8")
+            .to_string();
+        git_expect_success(
+            &child_repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &grandchild_path,
+                "deps/grandchild",
+            ],
+            &[],
+        );
+        git_expect_success(
+            &child_repo,
+            &["commit", "--quiet", "-am", "add nested submodule"],
+            &[],
+        );
+
+        let root_repo = base.join("root-repo");
+        init_repo(&root_repo);
+        add_commit(&root_repo, "README.md", "root\n", "init root");
+        let child_path = child_repo
+            .to_str()
+            .expect("child path must be UTF-8")
+            .to_string();
+        git_expect_success(
+            &root_repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &child_path,
+                "deps/child",
+            ],
+            &[],
+        );
+        git_expect_success(
+            &root_repo,
+            &["commit", "--quiet", "-am", "add child submodule"],
+            &[],
+        );
+
+        let default_branch = git_stdout(&root_repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let head_sha = git_stdout(&root_repo, &["rev-parse", "HEAD"]);
+
+        NestedSubmoduleFixture {
+            root_repo,
+            child_repo,
+            default_branch,
+            head_sha,
+        }
+    }
+
+    fn run_checkout_for_test(
+        checkout: &CheckoutInvocation,
+        workspace: &Path,
+    ) -> std::process::Output {
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg(&checkout.shell_script)
+            .current_dir(workspace)
+            // Local fixture repos use file:// transport for submodule resolution.
+            .env("GIT_ALLOW_PROTOCOL", "file:git:http:https:ssh");
+        for (key, value) in &checkout.env {
+            command.env(key, value);
+        }
+        command.output().expect("checkout command should run")
+    }
+
+    #[test]
+    fn checkout_invocation_includes_recursive_submodule_commands() {
+        let commit =
+            build_checkout_invocation("https://example.com/repo.git", Some("abc123"), None)
+                .expect("commit checkout invocation");
+        assert!(
+            commit
+                .preview_command
+                .contains("git submodule sync --recursive")
+        );
+        assert!(
+            commit
+                .preview_command
+                .contains("git submodule update --init --recursive")
+        );
+        assert!(
+            commit
+                .shell_script
+                .contains("[oore-checkout] updating submodules (init + recursive)")
+        );
+
+        let branch = build_checkout_invocation("https://example.com/repo.git", None, Some("main"))
+            .expect("branch checkout invocation");
+        assert!(
+            branch
+                .preview_command
+                .contains("git clone --depth 1 --branch main")
+        );
+        assert!(
+            branch
+                .preview_command
+                .contains("git submodule update --init --recursive")
+        );
+    }
+
+    #[test]
+    fn checkout_branch_materializes_nested_submodules() {
+        let fixture_root = temp_workspace();
+        let fixture = create_nested_submodule_fixture(&fixture_root);
+        let workspace = fixture_root.join("checkout-branch");
+        fs::create_dir_all(&workspace).expect("create checkout workspace");
+
+        let checkout = build_checkout_invocation(
+            fixture.root_repo.to_str().expect("root path"),
+            None,
+            Some(&fixture.default_branch),
+        )
+        .expect("build checkout invocation");
+        let output = run_checkout_for_test(&checkout, &workspace);
+        assert!(
+            output.status.success(),
+            "checkout failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(workspace.join("deps/child/README.md").exists());
+        assert!(
+            workspace
+                .join("deps/child/deps/grandchild/README.md")
+                .exists()
+        );
+        cleanup_workspace(&fixture_root);
+    }
+
+    #[test]
+    fn checkout_sha_materializes_nested_submodules() {
+        let fixture_root = temp_workspace();
+        let fixture = create_nested_submodule_fixture(&fixture_root);
+        let workspace = fixture_root.join("checkout-sha");
+        fs::create_dir_all(&workspace).expect("create checkout workspace");
+
+        let checkout = build_checkout_invocation(
+            fixture.root_repo.to_str().expect("root path"),
+            Some(&fixture.head_sha),
+            None,
+        )
+        .expect("build checkout invocation");
+        let output = run_checkout_for_test(&checkout, &workspace);
+        assert!(
+            output.status.success(),
+            "checkout failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(workspace.join("deps/child/README.md").exists());
+        assert!(
+            workspace
+                .join("deps/child/deps/grandchild/README.md")
+                .exists()
+        );
+        cleanup_workspace(&fixture_root);
+    }
+
+    #[test]
+    fn checkout_surfaces_explicit_marker_when_submodule_update_fails() {
+        let fixture_root = temp_workspace();
+        let fixture = create_nested_submodule_fixture(&fixture_root);
+        let broken_url = "/tmp/definitely-missing-oore-submodule";
+        let gitmodules = fixture.root_repo.join(".gitmodules");
+        let original_gitmodules = fs::read_to_string(&gitmodules).expect("read .gitmodules");
+        let updated_gitmodules = original_gitmodules
+            .replace(fixture.child_repo.to_str().expect("child path"), broken_url);
+        fs::write(&gitmodules, updated_gitmodules).expect("write .gitmodules");
+        git_expect_success(&fixture.root_repo, &["add", ".gitmodules"], &[]);
+        git_expect_success(
+            &fixture.root_repo,
+            &["commit", "--quiet", "-m", "break submodule url"],
+            &[],
+        );
+
+        let workspace = fixture_root.join("checkout-broken-submodule");
+        fs::create_dir_all(&workspace).expect("create checkout workspace");
+        let checkout = build_checkout_invocation(
+            fixture.root_repo.to_str().expect("root path"),
+            None,
+            Some(&fixture.default_branch),
+        )
+        .expect("build checkout invocation");
+        let output = run_checkout_for_test(&checkout, &workspace);
+        assert!(!output.status.success(), "checkout unexpectedly succeeded");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("[oore-checkout] submodule update failed"));
+        cleanup_workspace(&fixture_root);
     }
 
     fn signing_env_from_pairs(pairs: &[(&str, &str)]) -> AndroidSigningEnv {

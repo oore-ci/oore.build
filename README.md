@@ -148,10 +148,11 @@ Releases are published from a dedicated macOS host (for example, a Mac mini) usi
 
 High-level flow:
 
+- PR/push validation -> CI runs `make validate-ci` (full checks in parallel lanes + Woodpecker config lint)
 - Merge to `alpha` -> CI cuts `vX.Y.Z-alpha.N` tags (prerelease)
 - Merge to `beta` -> CI cuts `vX.Y.Z-beta.N` tags (prerelease)
 - Merge to `stable` -> CI cuts `vX.Y.Z` tags (stable), auto-incrementing patch when needed
-- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages sites, and publishes a GitHub Release with attached artifacts
+- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages targets (`oore`, `oore-docs`, `oore-ci`, `oore-demo`) with strict branch+commit verification, and publishes a GitHub Release with attached artifacts
 
 Major/minor bumps are done by updating `Cargo.toml` `workspace.package.version` (for example `0.2.0`), then continuing the alpha -> beta -> stable promotion flow.
 

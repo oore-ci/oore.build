@@ -1,59 +1,67 @@
 ---
 status: implemented
-description: "CLI reference for oore doctor, the diagnostic tool for Oore CI installations."
+description: "CLI reference for oore doctor environment and signing diagnostics."
 ---
 
 # oore doctor
 
-Verify that all required development tools are installed.
+Run environment diagnostics for build/signing readiness.
 
 ## Synopsis
 
 ```bash
-oore doctor
+oore doctor [--json]
 ```
 
-## Description
+## Flags
 
-Checks for the presence and version of every tool required to build Flutter projects with Oore CI. Returns exit code `0` if all tools are found, or `1` if any are missing.
+| Flag | Description |
+|------|-------------|
+| `--json` | Print machine-readable diagnostic report |
 
 ## Checks
 
-| Tool | Check command | Install hint |
-|------|---------------|--------------|
-| `git` | `git --version` | `brew install git` |
-| `rustc` | `rustc --version` | `curl https://sh.rustup.rs -sSf \| sh` |
-| `cargo` | `cargo --version` | `curl https://sh.rustup.rs -sSf \| sh` |
-| `bun` | `bun --version` | `curl -fsSL https://bun.sh/install \| bash` |
-| `fvm` | `fvm --version` | `brew tap leoafarias/fvm && brew install fvm` |
-| `flutter` | `flutter --version` | `fvm install <version> && fvm use <version>` |
-| `xcodebuild` | `xcodebuild -version` | `xcode-select --install` |
+`oore doctor` reports status for:
 
-## Example output
-
-```
-Checking development environment...
-
-  [ok]      git 2.44.0
-  [ok]      rustc 1.82.0
-  [ok]      cargo 1.82.0
-  [ok]      bun 1.1.38
-  [ok]      fvm 3.2.1
-  [ok]      flutter 3.24.5
-  [missing] xcodebuild — install with: xcode-select --install
-
-1 issue found.
-```
+- Core tooling: `git`, `rustc`, `cargo`, `bun`, `fvm`, `flutter`
+- Xcode CLI readiness:
+  - `xcodebuild -version`
+  - `xcode-select -p`
+- Code signing identities:
+  - `security find-identity -v -p codesigning`
+- Notarization tooling:
+  - `xcrun notarytool --version`
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| `0` | All tools found |
-| `1` | One or more tools missing |
+| `0` | All required checks passed |
+| `1` | One or more required checks missing |
 
-## When to run
+## Example output
 
-- After a fresh macOS install, before setting up the daemon
-- When builds fail with "command not found" errors
-- As part of the [prerequisites check](/getting-started/prerequisites) during initial setup
+```text
+oore doctor -- environment checks
+  [ok] git                git version 2.49.0
+  [ok] rustc              rustc 1.86.0
+  [ok] xcode_cli          xcodebuild + xcode-select configured
+  [missing] codesign_identity install: import a Developer/Application certificate into Keychain Access
+1 issue(s) found.
+```
+
+## JSON output example
+
+```json
+{
+  "checks": [
+    {
+      "name": "git",
+      "status": "ok",
+      "detail": "git version 2.49.0",
+      "install_hint": null
+    }
+  ],
+  "missing_count": 0
+}
+```

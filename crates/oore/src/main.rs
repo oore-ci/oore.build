@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -8,9 +9,10 @@ use chrono::{Local, TimeZone};
 use clap::{Args, Parser, Subcommand};
 use oore_contract::{
     ApiError, BootstrapTokenRecord, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse,
+    ListBuildsResponse, ListRunnersResponse, LocalLoginRequest, LocalLoginResponse,
     OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, SetupCompleteResponse,
     SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
-    SetupState, SetupStateFile, SetupStatus,
+    SetupState, SetupStateFile, SetupStatus, UserProfileResponse,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -20,6 +22,40 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPGRlZnM+CiAgICA8Y2lyY2xlIGlkPSJjdXQiIGN4PSIxNiIgY3k9IjE2IiByPSI3IiAvPgogICAgPG1hc2sgaWQ9ImhvbGUiPgogICAgICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IndoaXRlIiAvPgogICAgICA8dXNlIGhyZWY9IiNjdXQiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogICAgPGNsaXBQYXRoIGlkPSJsZWZ0Ij4KICAgICAgPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICAgIDxjbGlwUGF0aCBpZD0icmlnaHQiPgogICAgICA8cmVjdCB4PSIxNyIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICA8L2RlZnM+CiAgPHJlY3QKICAgIHg9IjIiCiAgICB5PSIyIgogICAgd2lkdGg9IjI4IgogICAgaGVpZ2h0PSIyOCIKICAgIHJ4PSI2IgogICAgZmlsbD0iI2Y0OWYxZSIKICAgIGNsaXAtcGF0aD0idXJsKCNsZWZ0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBmaWxsPSIjZjQ5ZjFlIgogICAgY2xpcC1wYXRoPSJ1cmwoI3JpZ2h0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KPC9zdmc+Cg==";
+const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8787";
+const CONFIG_KEY_DAEMON_URL: &str = "daemon_url";
+const CONFIG_KEY_SESSION_TOKEN: &str = "session_token";
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct CliConfigFile {
+    daemon_url: Option<String>,
+    session_token: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatusSummary {
+    daemon_url: String,
+    setup_status: SetupStatus,
+    authenticated: bool,
+    queue_depth: Option<i64>,
+    active_builds: Option<i64>,
+    recent_builds: Option<Vec<oore_contract::Build>>,
+    runners: Option<Vec<oore_contract::Runner>>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DoctorCheckResult {
+    name: String,
+    status: String,
+    detail: Option<String>,
+    install_hint: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DoctorReport {
+    checks: Vec<DoctorCheckResult>,
+    missing_count: usize,
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "oore")]
@@ -32,11 +68,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Setup(SetupArgs),
-    Login,
+    Login(LoginArgs),
     Status(StatusArgs),
     Runner(RunnerArgs),
     Config(ConfigArgs),
-    Doctor,
+    Doctor(DoctorArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
@@ -100,8 +136,30 @@ struct SetupTokenArgs {
 
 #[derive(Debug, Args)]
 struct StatusArgs {
-    #[arg(long, env = "OORE_DAEMON_URL", default_value = "http://127.0.0.1:8787")]
-    daemon_url: String,
+    #[arg(long, env = "OORE_DAEMON_URL")]
+    daemon_url: Option<String>,
+
+    /// Session token for authenticated status details.
+    /// If omitted, falls back to OORE_SESSION_TOKEN or stored CLI config.
+    #[arg(long, env = "OORE_SESSION_TOKEN")]
+    token: Option<String>,
+
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct LoginArgs {
+    #[arg(long, env = "OORE_DAEMON_URL")]
+    daemon_url: Option<String>,
+
+    /// Import an existing session token and validate it against /v1/users/me.
+    #[arg(long)]
+    token: Option<String>,
+
+    /// Optional local-login email (local mode). Defaults to owner@local server-side.
+    #[arg(long)]
+    email: Option<String>,
 
     #[arg(long, default_value = "false")]
     json: bool,
@@ -175,6 +233,12 @@ struct ConfigGetArgs {
     key: String,
 }
 
+#[derive(Debug, Args)]
+struct DoctorArgs {
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
 fn parse_ttl(raw: &str) -> anyhow::Result<Duration> {
     humantime::parse_duration(raw).with_context(|| format!("invalid ttl value: {raw}"))
 }
@@ -211,6 +275,122 @@ fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
     }
 
     Ok(resolve_data_dir()?.join("oore.db"))
+}
+
+fn read_env_trimmed(key: &str) -> Option<String> {
+    std::env::var(key).ok().and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn resolve_cli_config_path() -> anyhow::Result<PathBuf> {
+    if let Some(path) = read_env_trimmed("OORE_CONFIG_FILE") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(resolve_install_root()?.join("config.json"))
+}
+
+fn load_cli_config() -> anyhow::Result<CliConfigFile> {
+    let path = resolve_cli_config_path()?;
+    if !path.exists() {
+        return Ok(CliConfigFile::default());
+    }
+
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read CLI config {}", path.display()))?;
+    let cfg = serde_json::from_str::<CliConfigFile>(&raw)
+        .with_context(|| format!("failed to parse CLI config {}", path.display()))?;
+    Ok(cfg)
+}
+
+fn save_cli_config(cfg: &CliConfigFile) -> anyhow::Result<PathBuf> {
+    let path = resolve_cli_config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create CLI config directory {}", parent.display())
+        })?;
+    }
+
+    let data = serde_json::to_vec_pretty(cfg).context("failed to serialize CLI config")?;
+    let mut file =
+        fs::File::create(&path).with_context(|| format!("failed to write {}", path.display()))?;
+    file.write_all(&data)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    file.write_all(b"\n")
+        .with_context(|| format!("failed to finalize {}", path.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&path, perms)
+            .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+    }
+
+    Ok(path)
+}
+
+fn resolve_daemon_url(cli_value: Option<&str>) -> anyhow::Result<String> {
+    if let Some(v) = cli_value.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) {
+        return Ok(v);
+    }
+
+    if let Some(v) = read_env_trimmed("OORE_DAEMON_URL") {
+        return Ok(v);
+    }
+
+    let cfg = load_cli_config()?;
+    if let Some(v) = cfg.daemon_url.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) {
+        return Ok(v);
+    }
+
+    Ok(DEFAULT_DAEMON_URL.to_string())
+}
+
+fn resolve_session_token(cli_value: Option<&str>) -> anyhow::Result<Option<String>> {
+    if let Some(v) = cli_value.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }) {
+        return Ok(Some(v));
+    }
+
+    if let Some(v) = read_env_trimmed("OORE_SESSION_TOKEN") {
+        return Ok(Some(v));
+    }
+
+    let cfg = load_cli_config()?;
+    Ok(cfg.session_token.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }))
 }
 
 // ── SQLite state helpers ────────────────────────────────────────
@@ -722,9 +902,12 @@ async fn extract_error_message(resp: reqwest::Response) -> String {
     match resp.text().await {
         Ok(body) => {
             if let Ok(api_err) = serde_json::from_str::<ApiError>(&body) {
-                let mut msg = api_err.error;
+                let mut msg = format!("{} [{}]", api_err.error, api_err.code);
                 if let Some(details) = api_err.details {
-                    msg = format!("{}: {}", msg, details);
+                    let details = details.trim();
+                    if !details.is_empty() {
+                        msg = format!("{msg}: {details}");
+                    }
                 }
                 msg
             } else if body.is_empty() {
@@ -762,6 +945,104 @@ async fn fetch_setup_status(
     let msg = extract_error_message(response).await;
     anyhow::bail!(
         "daemon status check failed at {daemon_url} (HTTP {}): {}",
+        status.as_u16(),
+        msg
+    )
+}
+
+async fn fetch_user_profile(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    token: &str,
+) -> anyhow::Result<UserProfileResponse> {
+    let url = format!("{}/v1/users/me", daemon_url.trim_end_matches('/'));
+    let response = client
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if response.status().is_success() {
+        return response
+            .json()
+            .await
+            .context("failed to parse /v1/users/me response");
+    }
+
+    let status = response.status();
+    let msg = extract_error_message(response).await;
+    anyhow::bail!(
+        "token validation failed at {daemon_url} (HTTP {}): {}",
+        status.as_u16(),
+        msg
+    )
+}
+
+async fn fetch_build_list(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    token: &str,
+    status_filter: Option<&str>,
+    limit: Option<i64>,
+) -> anyhow::Result<ListBuildsResponse> {
+    let url = format!("{}/v1/builds", daemon_url.trim_end_matches('/'));
+    let mut query: Vec<(&str, String)> = Vec::new();
+    if let Some(status) = status_filter {
+        query.push(("status", status.to_string()));
+    }
+    if let Some(limit) = limit {
+        query.push(("limit", limit.to_string()));
+    }
+
+    let response = client
+        .get(&url)
+        .bearer_auth(token)
+        .query(&query)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if response.status().is_success() {
+        return response
+            .json()
+            .await
+            .context("failed to parse /v1/builds response");
+    }
+
+    let status = response.status();
+    let msg = extract_error_message(response).await;
+    anyhow::bail!(
+        "failed to fetch builds at {daemon_url} (HTTP {}): {}",
+        status.as_u16(),
+        msg
+    )
+}
+
+async fn fetch_runner_list(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    token: &str,
+) -> anyhow::Result<ListRunnersResponse> {
+    let url = format!("{}/v1/runners", daemon_url.trim_end_matches('/'));
+    let response = client
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if response.status().is_success() {
+        return response
+            .json()
+            .await
+            .context("failed to parse /v1/runners response");
+    }
+
+    let status = response.status();
+    let msg = extract_error_message(response).await;
+    anyhow::bail!(
+        "failed to fetch runners at {daemon_url} (HTTP {}): {}",
         status.as_u16(),
         msg
     )
@@ -1182,29 +1463,186 @@ async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_status(args: StatusArgs) -> anyhow::Result<()> {
+async fn handle_login(args: LoginArgs) -> anyhow::Result<()> {
+    let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
     let client = reqwest::Client::new();
-    let status = fetch_setup_status(&client, &args.daemon_url).await?;
+
+    if let Some(token) = args.token.as_deref() {
+        let profile = fetch_user_profile(&client, &daemon_url, token).await.map_err(|e| {
+            anyhow::anyhow!(
+                "{e}\nToken was rejected. Re-authenticate in web UI or run `oore login` without --token in local mode."
+            )
+        })?;
+        let mut cfg = load_cli_config()?;
+        cfg.daemon_url = Some(daemon_url.clone());
+        cfg.session_token = Some(token.to_string());
+        let config_path = save_cli_config(&cfg)?;
+
+        if args.json {
+            let output = serde_json::json!({
+                "ok": true,
+                "auth_mode": "token_import",
+                "daemon_url": daemon_url,
+                "config_path": config_path,
+                "user": profile.user,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
+
+        println!("Token validated and stored.");
+        println!("Daemon: {}", daemon_url);
+        println!("User:   {}", profile.user.email);
+        println!("Config: {}", config_path.display());
+        return Ok(());
+    }
+
+    let login_url = format!("{}/v1/auth/local/login", daemon_url.trim_end_matches('/'));
+    let response = client
+        .post(&login_url)
+        .json(&LocalLoginRequest { email: args.email })
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let msg = extract_error_message(response).await;
+        anyhow::bail!(
+            "local login failed at {daemon_url} (HTTP {}): {}",
+            status.as_u16(),
+            msg
+        );
+    }
+
+    let login_body: LocalLoginResponse = response
+        .json()
+        .await
+        .context("failed to parse local login response")?;
+    let mut cfg = load_cli_config()?;
+    cfg.daemon_url = Some(daemon_url.clone());
+    cfg.session_token = Some(login_body.session_token.clone());
+    let config_path = save_cli_config(&cfg)?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&status)?);
+        let output = serde_json::json!({
+            "ok": true,
+            "auth_mode": "local_login",
+            "daemon_url": daemon_url,
+            "config_path": config_path,
+            "expires_at": login_body.expires_at,
+            "user": login_body.user,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    println!("Login succeeded (local mode).");
+    println!("Daemon:  {}", daemon_url);
+    println!("User:    {}", login_body.user.email);
+    println!("Expires: {}", format_epoch_local(login_body.expires_at));
+    println!("Config:  {}", config_path.display());
+    Ok(())
+}
+
+async fn handle_status(args: StatusArgs) -> anyhow::Result<()> {
+    let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
+    let client = reqwest::Client::new();
+    let mut summary = StatusSummary {
+        daemon_url: daemon_url.clone(),
+        setup_status: fetch_setup_status(&client, &daemon_url).await?,
+        authenticated: false,
+        queue_depth: None,
+        active_builds: None,
+        recent_builds: None,
+        runners: None,
+    };
+
+    let session_token = resolve_session_token(args.token.as_deref())?;
+    if let Some(token) = session_token.as_deref() {
+        match fetch_user_profile(&client, &daemon_url, token).await {
+            Ok(_) => {
+                summary.authenticated = true;
+                let queued =
+                    fetch_build_list(&client, &daemon_url, token, Some("queued"), Some(1)).await?;
+                let running =
+                    fetch_build_list(&client, &daemon_url, token, Some("running"), Some(1)).await?;
+                let recent = fetch_build_list(&client, &daemon_url, token, None, Some(5)).await?;
+                let runners = fetch_runner_list(&client, &daemon_url, token).await?;
+                summary.queue_depth = Some(queued.total);
+                summary.active_builds = Some(queued.total + running.total);
+                summary.recent_builds = Some(recent.builds);
+                summary.runners = Some(runners.runners);
+            }
+            Err(err) => {
+                if args.token.is_some() {
+                    return Err(err);
+                }
+                eprintln!("Warning: stored token is invalid or expired ({err})");
+            }
+        }
+    }
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
         return Ok(());
     }
 
     println!("oore status");
     println!();
-    println!("Daemon:   {}", args.daemon_url);
-    println!("Instance: {}", status.instance_id);
-    println!("State:    {}", status.state);
-    println!("Mode:     {}", status.runtime_mode);
+    println!("Daemon:   {}", summary.daemon_url);
+    println!("Instance: {}", summary.setup_status.instance_id);
+    println!("State:    {}", summary.setup_status.state);
+    println!("Mode:     {}", summary.setup_status.runtime_mode);
     println!(
         "Setup:    {}",
-        if status.setup_mode {
+        if summary.setup_status.setup_mode {
             "in_progress"
         } else {
             "complete"
         }
     );
+
+    if summary.authenticated {
+        println!();
+        println!("Authenticated: yes");
+        if let Some(queue_depth) = summary.queue_depth {
+            println!("Queue depth:   {}", queue_depth);
+        }
+        if let Some(active_builds) = summary.active_builds {
+            println!("Active builds: {}", active_builds);
+        }
+        if let Some(runners) = &summary.runners {
+            let online = runners
+                .iter()
+                .filter(|runner| runner.status == "online" || runner.status == "busy")
+                .count();
+            println!(
+                "Runners:       {} total ({} online/busy)",
+                runners.len(),
+                online
+            );
+        }
+        if let Some(recent) = &summary.recent_builds {
+            if recent.is_empty() {
+                println!("Recent builds: none");
+            } else {
+                println!("Recent builds:");
+                for build in recent {
+                    println!(
+                        "  - #{} {} ({})",
+                        build.build_number, build.status, build.trigger_type
+                    );
+                }
+            }
+        }
+    } else {
+        println!();
+        println!("Authenticated: no");
+        println!(
+            "Tip: run `oore login` (or `oore login --token <session_token>`) for queue/build/runner details."
+        );
+    }
 
     Ok(())
 }
@@ -1341,11 +1779,62 @@ async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
     oore_runner::run_runner_forever(shared_cfg, Some(daemon_url)).await
 }
 
+fn config_key_supported(key: &str) -> bool {
+    matches!(key, CONFIG_KEY_DAEMON_URL | CONFIG_KEY_SESSION_TOKEN)
+}
+
+fn handle_config_set(args: ConfigSetArgs) -> anyhow::Result<()> {
+    let mut cfg = load_cli_config()?;
+    match args.key.as_str() {
+        CONFIG_KEY_DAEMON_URL => {
+            let value = args.value.trim();
+            if value.is_empty() {
+                anyhow::bail!("{CONFIG_KEY_DAEMON_URL} cannot be empty");
+            }
+            cfg.daemon_url = Some(value.to_string());
+        }
+        CONFIG_KEY_SESSION_TOKEN => {
+            let value = args.value.trim();
+            if value.is_empty() {
+                anyhow::bail!("{CONFIG_KEY_SESSION_TOKEN} cannot be empty");
+            }
+            cfg.session_token = Some(value.to_string());
+        }
+        _ => anyhow::bail!("unsupported config key"),
+    }
+
+    let path = save_cli_config(&cfg)?;
+    println!("Saved {} to {}", args.key, path.display());
+    Ok(())
+}
+
+fn handle_config_get(args: ConfigGetArgs) -> anyhow::Result<()> {
+    let cfg = load_cli_config()?;
+    match args.key.as_str() {
+        CONFIG_KEY_DAEMON_URL => match cfg.daemon_url {
+            Some(value) if !value.trim().is_empty() => {
+                println!("{}", value);
+                Ok(())
+            }
+            _ => anyhow::bail!("{CONFIG_KEY_DAEMON_URL} is not set"),
+        },
+        CONFIG_KEY_SESSION_TOKEN => match cfg.session_token {
+            Some(value) if !value.trim().is_empty() => {
+                println!("{}", value);
+                Ok(())
+            }
+            _ => anyhow::bail!("{CONFIG_KEY_SESSION_TOKEN} is not set"),
+        },
+        _ => anyhow::bail!("unsupported config key"),
+    }
+}
+
+fn command_output(cmd: &str, args: &[&str]) -> Option<std::process::Output> {
+    std::process::Command::new(cmd).args(args).output().ok()
+}
+
 fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
-    std::process::Command::new(cmd)
-        .args(args)
-        .output()
-        .ok()
+    command_output(cmd, args)
         .and_then(|out| {
             if out.status.success() {
                 String::from_utf8(out.stdout).ok()
@@ -1356,8 +1845,10 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
         .and_then(|s| s.lines().next().map(|line| line.trim().to_string()))
 }
 
-fn run_doctor_checks() -> anyhow::Result<()> {
-    let checks: [(&str, &[&str], &str); 7] = [
+fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
+    let mut checks: Vec<DoctorCheckResult> = Vec::new();
+
+    let base_checks: [(&str, &[&str], &str); 6] = [
         ("git", &["--version"], "brew install git"),
         (
             "rustc",
@@ -1384,29 +1875,151 @@ fn run_doctor_checks() -> anyhow::Result<()> {
             &["--version"],
             "fvm install <version> && fvm use <version>",
         ),
-        ("xcodebuild", &["-version"], "xcode-select --install"),
     ];
 
-    println!("oore doctor -- environment checks");
-    let mut missing = Vec::new();
-
-    for (cmd, args, install_hint) in checks {
-        match command_version(cmd, args) {
-            Some(version) => {
-                println!("  [ok] {:<10} {}", cmd, version);
-            }
-            None => {
-                println!("  [missing] {:<10} install: {}", cmd, install_hint);
-                missing.push(cmd);
-            }
+    for (name, command_args, install_hint) in base_checks {
+        if let Some(version) = command_version(name, command_args) {
+            checks.push(DoctorCheckResult {
+                name: name.to_string(),
+                status: "ok".to_string(),
+                detail: Some(version),
+                install_hint: None,
+            });
+        } else {
+            checks.push(DoctorCheckResult {
+                name: name.to_string(),
+                status: "missing".to_string(),
+                detail: None,
+                install_hint: Some(install_hint.to_string()),
+            });
         }
     }
 
-    if missing.is_empty() {
-        println!("All required tools are installed.");
+    let xcode_ready = command_version("xcodebuild", &["-version"]).is_some()
+        && command_version("xcode-select", &["-p"]).is_some();
+    checks.push(if xcode_ready {
+        DoctorCheckResult {
+            name: "xcode_cli".to_string(),
+            status: "ok".to_string(),
+            detail: Some("xcodebuild + xcode-select configured".to_string()),
+            install_hint: None,
+        }
+    } else {
+        DoctorCheckResult {
+            name: "xcode_cli".to_string(),
+            status: "missing".to_string(),
+            detail: None,
+            install_hint: Some(
+                "install/configure Xcode CLI tools: xcode-select --install".to_string(),
+            ),
+        }
+    });
+
+    let codesign_check = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
+    match codesign_check {
+        Some(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let merged = format!("{stdout}\n{stderr}");
+            if merged.contains("0 valid identities found") {
+                checks.push(DoctorCheckResult {
+                    name: "codesign_identity".to_string(),
+                    status: "missing".to_string(),
+                    detail: Some("0 valid identities found".to_string()),
+                    install_hint: Some(
+                        "import a Developer/Application certificate into Keychain Access"
+                            .to_string(),
+                    ),
+                });
+            } else {
+                let identity_count = merged
+                    .lines()
+                    .filter(|line| line.contains('"') && line.contains(") "))
+                    .count();
+                checks.push(DoctorCheckResult {
+                    name: "codesign_identity".to_string(),
+                    status: "ok".to_string(),
+                    detail: Some(format!("{identity_count} identity entries available")),
+                    install_hint: None,
+                });
+            }
+        }
+        _ => {
+            checks.push(DoctorCheckResult {
+                name: "codesign_identity".to_string(),
+                status: "missing".to_string(),
+                detail: None,
+                install_hint: Some(
+                    "run `security find-identity -v -p codesigning` and import required certificates"
+                        .to_string(),
+                ),
+            });
+        }
+    }
+
+    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
+        checks.push(DoctorCheckResult {
+            name: "notarytool".to_string(),
+            status: "ok".to_string(),
+            detail: Some(version),
+            install_hint: None,
+        });
+    } else {
+        checks.push(DoctorCheckResult {
+            name: "notarytool".to_string(),
+            status: "missing".to_string(),
+            detail: None,
+            install_hint: Some(
+                "install/update Xcode CLT and verify with `xcrun notarytool --version`".to_string(),
+            ),
+        });
+    }
+
+    let missing_count = checks
+        .iter()
+        .filter(|check| check.status == "missing")
+        .count();
+    let report = DoctorReport {
+        checks,
+        missing_count,
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("oore doctor -- environment checks");
+        for check in &report.checks {
+            if check.status == "ok" {
+                println!(
+                    "  [ok] {:<18} {}",
+                    check.name,
+                    check.detail.as_deref().unwrap_or("")
+                );
+            } else {
+                println!(
+                    "  [missing] {:<18} install: {}",
+                    check.name,
+                    check.install_hint.as_deref().unwrap_or("")
+                );
+            }
+        }
+        if report.missing_count == 0 {
+            println!("All required tools are installed.");
+        } else {
+            println!("{} issue(s) found.", report.missing_count);
+        }
+    }
+
+    if report.missing_count == 0 {
         Ok(())
     } else {
-        anyhow::bail!("missing required tools: {}", missing.join(", "))
+        let missing_names: Vec<String> = report
+            .checks
+            .iter()
+            .filter(|check| check.status == "missing")
+            .map(|check| check.name.clone())
+            .collect();
+        anyhow::bail!("missing required tools: {}", missing_names.join(", "))
     }
 }
 
@@ -1980,12 +2593,10 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(handle_setup_interactive(&setup.daemon_url))?;
             }
         },
-        Commands::Login => {
-            eprintln!(
-                "Not implemented in this release: `oore login`.\n\
-                 Workaround: authenticate in the web UI, then use the API with your session token."
-            );
-            std::process::exit(2);
+        Commands::Login(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(handle_login(args))?;
         }
         Commands::Status(args) => {
             let runtime =
@@ -2006,25 +2617,28 @@ fn main() -> anyhow::Result<()> {
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
-                eprintln!(
-                    "Not implemented in this release: `oore config set {}`.\n\
-                     Workaround: configure daemon behavior via environment variables and docs.",
-                    args.key
-                );
-                let _ = args.value;
-                std::process::exit(2);
+                if !config_key_supported(&args.key) {
+                    eprintln!(
+                        "Unsupported config key '{}'. Supported keys: {}, {}",
+                        args.key, CONFIG_KEY_DAEMON_URL, CONFIG_KEY_SESSION_TOKEN
+                    );
+                    std::process::exit(2);
+                }
+                handle_config_set(args)?;
             }
             ConfigSubcommand::Get(args) => {
-                eprintln!(
-                    "Not implemented in this release: `oore config get {}`.\n\
-                     Workaround: inspect current settings through the web UI and daemon env vars.",
-                    args.key
-                );
-                std::process::exit(2);
+                if !config_key_supported(&args.key) {
+                    eprintln!(
+                        "Unsupported config key '{}'. Supported keys: {}, {}",
+                        args.key, CONFIG_KEY_DAEMON_URL, CONFIG_KEY_SESSION_TOKEN
+                    );
+                    std::process::exit(2);
+                }
+                handle_config_get(args)?;
             }
         },
-        Commands::Doctor => {
-            run_doctor_checks()?;
+        Commands::Doctor(args) => {
+            run_doctor_checks(args)?;
         }
         Commands::Version => {
             let install_root = resolve_install_root()?;
