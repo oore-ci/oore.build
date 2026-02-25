@@ -35,7 +35,7 @@ Use this flow with a dedicated macOS host (for example, a Mac mini) that runs Wo
     - `x86_64-apple-darwin`
   - CI builds the web UI (`apps/web/dist`) and compiles `oore-web` for both macOS architectures.
   - CI deploys Pages sites (site + docs + web in parallel, then demo) using `wrangler pages deploy`.
-  - CI verifies post-deploy state for all Pages targets using branch + commit-hash matching (strict hard-fail; parallel polling by default).
+  - CI verifies post-deploy state for all Pages targets using branch + commit-hash matching first, with a bounded fresh-deployment fallback when Cloudflare omits metadata (strict hard-fail; parallel polling by default).
   - CI creates/updates a GitHub Release and uploads artifacts + checksums + release notes.
 
 ## Required Woodpecker Secrets
@@ -65,3 +65,5 @@ Release verification tuning knobs (optional):
 - `PAGES_VERIFY_ENVIRONMENT` (`auto` default; `production`, `preview`, or `all` override)
 - `PAGES_VERIFY_ATTEMPTS` (default `24`)
 - `PAGES_VERIFY_SLEEP_SECONDS` (default `5`)
+- `PAGES_VERIFY_FRESH_FALLBACK` (`1` default; set `0` to disable freshness fallback)
+- `PAGES_VERIFY_FRESH_WINDOW_SECONDS` (default `1800`; only deployments inside this age window can satisfy fallback)
