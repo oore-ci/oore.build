@@ -15,6 +15,7 @@ Rules:
 - OOR-65 follow-up: fixed Pages post-deploy verification false negatives in tag releases when deployment metadata/environment shape differs from strict assumptions (for example short commit hashes and/or preview-vs-production listing differences).
   - `tools/verify-pages-deploy.sh` now supports robust commit metadata matching (`commit_hash`, `commitHash`, `commit_sha`, `sha`, `commit`) plus commit-message fallback, and uses environment fallback order in `auto` mode (`production -> preview -> all` for `stable`, `preview -> production -> all` otherwise).
   - Added `PAGES_VERIFY_ENVIRONMENT` control (`auto|production|preview|all`) and expanded summary output with matched environment/branch/commit for faster diagnosis.
+  - Added bounded fresh-deployment fallback controls (`PAGES_VERIFY_FRESH_FALLBACK`, `PAGES_VERIFY_FRESH_WINDOW_SECONDS`) so verification still succeeds when Cloudflare deploy list omits branch/commit metadata; summaries now include `matched_by=metadata|fresh_fallback`.
   - OOR-65: https://linear.app/oorebuild/issue/OOR-65
 
 ## 2026-02-23
