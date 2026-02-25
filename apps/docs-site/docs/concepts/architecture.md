@@ -14,7 +14,7 @@ Oore CI consists of three components that communicate over HTTP:
 ```
 ┌─────────────┐     HTTPS/API     ┌──────────────┐
 │   Web UI    │ ◄───────────────► │    oored     │
-│  (React)    │                   │   (daemon)   │
+│  (SolidJS)  │                   │   (daemon)   │
 └─────────────┘                   └──────┬───────┘
                                          │
                                          │ SQLite
@@ -55,7 +55,7 @@ The CLI shares the same SQLite database as the daemon for bootstrap token operat
 
 ### Web UI
 
-The React-based web UI connects to the daemon's API. It provides:
+The SolidJS-based web UI connects to the daemon's API. It provides:
 
 - Setup wizard (alternative to CLI setup)
 - Project and pipeline management
@@ -119,7 +119,7 @@ The daemon also supports loopback-only local login (no OIDC) for local-first onb
 | Backend language | Rust | Performance, memory safety, single binary deployment |
 | Web framework | Axum | Async, tower middleware ecosystem, type-safe extractors |
 | Database | SQLite | Zero-config, single-file backup, sufficient for single-host |
-| Frontend | React 19 + TanStack Router | File-based routing, type-safe, modern React patterns |
+| Frontend | SolidJS + TanStack Router | File-based routing, type-safe, fine-grained rendering |
 | Server state | TanStack Query | Cache management, background refetch, optimistic updates |
 | Package manager | Bun | Fast installs, native bundler support |
 | Flutter management | FVM | Per-project Flutter version pinning |

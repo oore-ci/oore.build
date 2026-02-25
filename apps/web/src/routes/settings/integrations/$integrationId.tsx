@@ -1,6 +1,5 @@
-import { useEffect } from 'react'
-import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Match, Switch, createEffect, Show } from 'solid-js'
+import { Link, createFileRoute, useNavigate } from '@tanstack/solid-router'
 import {
   Delete02Icon,
   InformationCircleIcon,
@@ -8,7 +7,6 @@ import {
   Refresh01Icon,
   Setting07Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
 
 import {
   getActiveInstanceOrRedirect,
@@ -26,22 +24,11 @@ import {
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import PageHeader from '@/components/page-header'
-import PageLayout from '@/components/page-layout'
+import { PageHeader } from '@/components/page-header'
+import { PageLayout } from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -51,15 +38,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { HugeIcon } from '@/components/huge-icon'
+import { toast } from '@/components/ui/sonner'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: { breadcrumbLabel: 'Details' },
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { installed?: string; gitlab?: string } => ({
-    installed: (search.installed as string) || undefined,
-    gitlab: (search.gitlab as string) || undefined,
-  }),
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -68,379 +51,326 @@ export const Route = createFileRoute('/settings/integrations/$integrationId')({
 })
 
 function IntegrationDetailPage() {
-  const { integrationId } = Route.useParams()
-  const search = useSearch({ from: '/settings/integrations/$integrationId' })
+  const params = Route.useParams()
   const navigate = useNavigate()
+  const integrationId = () => params().integrationId
 
-  const { data: detail, isLoading, error } = useIntegration(integrationId)
-  const { data: installationsData } = useInstallations(integrationId)
-  const { data: reposData } = useIntegrationRepos(integrationId)
+  const detailQuery = useIntegration(integrationId())
+  const installationsQuery = useInstallations(integrationId())
+  const reposQuery = useIntegrationRepos(integrationId())
   const syncMutation = useSyncInstallations()
   const deleteMutation = useDeleteIntegration()
   const gitlabAuthorizeMutation = useGitLabAuthorize()
 
-  const setLabel = useBreadcrumbStore((s) => s.setLabel)
+  const setLabel = useBreadcrumbStore((state) => state.setLabel)
 
-  const label =
-    detail?.integration.display_name ??
-    detail?.integration.provider ??
+  const label = () =>
+    detailQuery.data?.integration.display_name ??
+    detailQuery.data?.integration.provider ??
     'Source Details'
 
-  useEffect(() => {
-    if (detail?.integration) {
-      setLabel(
-        '/settings/integrations/$integrationId',
-        detail.integration.display_name ?? detail.integration.provider,
-      )
-    }
-  }, [detail?.integration.display_name, detail?.integration.provider, setLabel])
+  createEffect(() => {
+    const integration = detailQuery.data?.integration
+    if (!integration) return
+    setLabel()(
+      '/settings/integrations/$integrationId',
+      integration.display_name ?? integration.provider,
+    )
+  })
 
-  useEffect(() => {
-    if (search.installed === 'true') {
+  createEffect(() => {
+    if (typeof window === 'undefined') return
+    const search = new URLSearchParams(window.location.search)
+    let changed = false
+    if (search.get('installed') === 'true') {
       toast.success('GitHub App installed successfully')
-      window.history.replaceState(
-        {},
-        '',
-        `/settings/integrations/${integrationId}`,
-      )
+      search.delete('installed')
+      changed = true
     }
-    if (search.gitlab === 'success') {
+    if (search.get('gitlab') === 'success') {
       toast.success('GitLab OAuth authorization completed')
+      search.delete('gitlab')
+      changed = true
+    }
+    if (changed) {
+      const next = search.toString()
       window.history.replaceState(
         {},
         '',
-        `/settings/integrations/${integrationId}`,
+        next
+          ? `/settings/integrations/${integrationId()}?${next}`
+          : `/settings/integrations/${integrationId()}`,
       )
     }
-  }, [search.installed, search.gitlab, integrationId])
+  })
 
-  function handleSync() {
-    syncMutation.mutate(integrationId, {
-      onSuccess: () => {
-        toast.success('Installations synced')
-      },
-      onError: (err) => {
-        toast.error(`Sync failed: ${err.message}`)
-      },
+  const handleSync = () => {
+    syncMutation.mutate(integrationId(), {
+      onSuccess: () => toast.success('Installations synced'),
+      onError: (error) =>
+        toast.error(error instanceof Error ? error.message : 'Sync failed'),
     })
   }
 
-  function handleDisconnect() {
-    const name =
-      detail?.integration.display_name ??
-      detail?.integration.provider ??
-      'source'
-    deleteMutation.mutate(integrationId, {
+  const handleDisconnect = () => {
+    const integration = detailQuery.data?.integration
+    const name = integration?.display_name ?? integration?.provider ?? 'source'
+    const confirmed = window.confirm(`Disconnect source "${name}"?`)
+    if (!confirmed) return
+
+    deleteMutation.mutate(integrationId(), {
       onSuccess: () => {
         toast.success(`Disconnected source: ${name}`)
         void navigate({ to: '/settings/integrations' })
       },
-      onError: (err) => {
-        toast.error(`Failed to disconnect: ${err.message}`)
-      },
+      onError: (error) =>
+        toast.error(
+          error instanceof Error ? error.message : 'Failed to disconnect',
+        ),
     })
   }
 
-  if (isLoading) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-56 w-full" />
-      </PageLayout>
-    )
+  const integration = () => detailQuery.data?.integration
+  const installations = () => installationsQuery.data?.installations ?? []
+  const repositories = () => reposQuery.data?.repositories ?? []
+  const canSyncInstallations = () => {
+    const provider = integration()?.provider
+    return provider === 'github' || provider === 'gitlab'
   }
-
-  if (error) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load source: {error.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
-  }
-
-  if (!detail) return null
-
-  const { integration } = detail
-  const installations = installationsData?.installations ?? []
-  const repositories = reposData?.repositories ?? []
-  const canSyncInstallations =
-    integration.provider === 'github' || integration.provider === 'gitlab'
 
   return (
-    <PageLayout width="wide">
-      <PageMeta title={label} noindex />
-      <PageHeader
-        title={integration.display_name ?? integration.provider}
-        back={{ to: '/settings/integrations', label: 'Sources' }}
-        description="Installation and repository link state for this source connection."
-        meta={
-          <>
-            <Badge variant={getIntegrationStatusVariant(integration.status)}>
-              {integration.status}
-            </Badge>
-            <Badge variant="outline">{integration.provider}</Badge>
-            <span className="font-mono">{integration.id.slice(0, 8)}</span>
-          </>
-        }
-      />
+    <PageLayout class="space-y-4">
+      <PageMeta title={label()} noindex />
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Installations</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
-              {installations.length}
-            </p>
-            <p className="text-xs text-muted-foreground">Connected accounts</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Repositories</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
-              {repositories.length}
-            </p>
-            <p className="text-xs text-muted-foreground">Synced repositories</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Auth mode</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm font-medium">{integration.auth_mode}</p>
-            <p className="text-xs text-muted-foreground">
-              Host: {integration.host_url}
-            </p>
-          </CardContent>
-        </Card>
-      </section>
+      <Switch>
+        <Match when={detailQuery.isLoading}>
+          <Skeleton class="h-8 w-56" />
+          <Skeleton class="h-24 w-full" />
+          <Skeleton class="h-56 w-full" />
+        </Match>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Connection details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">
-                  Provider
-                </TableCell>
-                <TableCell>{integration.provider}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">
-                  Host URL
-                </TableCell>
-                <TableCell>{integration.host_url}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">
-                  Auth mode
-                </TableCell>
-                <TableCell>{integration.auth_mode}</TableCell>
-              </TableRow>
-              {integration.app_id ? (
-                <TableRow>
-                  <TableCell className="text-muted-foreground">
-                    App ID
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {integration.app_id}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-              <TableRow>
-                <TableCell className="text-muted-foreground">Created</TableCell>
-                <TableCell>
-                  {new Date(integration.created_at * 1000).toLocaleString()}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+        <Match when={detailQuery.error}>
+          <Alert variant="destructive">
+            <HugeIcon icon={InformationCircleIcon} size={16} />
+            <AlertDescription>
+              Failed to load source: {detailQuery.error?.message}
+            </AlertDescription>
+          </Alert>
+        </Match>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Actions</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          {integration.provider === 'gitlab' &&
-          integration.auth_mode === 'oauth_app' &&
-          integration.status === 'inactive' ? (
-            <Button
-              variant="outline"
-              onClick={() =>
-                gitlabAuthorizeMutation.mutate({
-                  integration_id: integrationId,
-                  redirect_url: window.location.href,
-                })
-              }
-              disabled={gitlabAuthorizeMutation.isPending}
-            >
-              <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-              {gitlabAuthorizeMutation.isPending
-                ? 'Redirecting...'
-                : 'Authorize on GitLab'}
-            </Button>
-          ) : null}
+        <Match when>
+          <PageHeader
+            title={integration()?.display_name ?? integration()?.provider ?? 'Source'}
+            description="Installation and repository link state for this source connection."
+            actions={
+              <div class="flex items-center gap-2">
+                <Badge
+                  variant={getIntegrationStatusVariant(integration()?.status ?? '')}
+                >
+                  {integration()?.status}
+                </Badge>
+                <Badge variant="outline">{integration()?.provider}</Badge>
+              </div>
+            }
+          />
 
-          {integration.provider === 'github' && integration.app_slug ? (
-            <Button
-              variant="outline"
-              render={
+          <div>
+            <Link to="/settings/integrations">
+              <Button variant="outline" size="sm">
+                Back to Sources
+              </Button>
+            </Link>
+          </div>
+
+          <section class="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle class="text-sm font-medium">Installations</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p class="text-2xl font-semibold tracking-tight">
+                  {installations().length}
+                </p>
+                <p class="text-xs text-muted-foreground">Connected accounts</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle class="text-sm font-medium">Repositories</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p class="text-2xl font-semibold tracking-tight">
+                  {repositories().length}
+                </p>
+                <p class="text-xs text-muted-foreground">Synced repositories</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle class="text-sm font-medium">Auth mode</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p class="text-sm font-medium">{integration()?.auth_mode}</p>
+                <p class="text-xs text-muted-foreground">
+                  Host: {integration()?.host_url}
+                </p>
+              </CardContent>
+            </Card>
+          </section>
+
+          <Card>
+            <CardHeader>
+              <CardTitle class="text-base">Actions</CardTitle>
+            </CardHeader>
+            <CardContent class="flex flex-wrap gap-2">
+              <Show
+                when={
+                  integration()?.provider === 'gitlab' &&
+                  integration()?.auth_mode === 'oauth_app' &&
+                  integration()?.status === 'inactive'
+                }
+              >
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    gitlabAuthorizeMutation.mutate({
+                      integration_id: integrationId(),
+                      redirect_url: window.location.href,
+                    })
+                  }
+                  disabled={gitlabAuthorizeMutation.isPending}
+                >
+                  <HugeIcon icon={LinkSquare02Icon} size={16} />
+                  {gitlabAuthorizeMutation.isPending
+                    ? 'Redirecting...'
+                    : 'Authorize on GitLab'}
+                </Button>
+              </Show>
+
+              <Show when={integration()?.provider === 'github' && integration()?.app_slug}>
                 <a
                   href={
-                    installations.length > 0
-                      ? `https://github.com/apps/${integration.app_slug}/installations/select_target`
-                      : `https://github.com/apps/${integration.app_slug}/installations/new`
+                    installations().length > 0
+                      ? `https://github.com/apps/${integration()?.app_slug}/installations/select_target`
+                      : `https://github.com/apps/${integration()?.app_slug}/installations/new`
                   }
                   target="_blank"
                   rel="noopener noreferrer"
-                />
-              }
-              nativeButton={false}
-            >
-              <HugeiconsIcon icon={Setting07Icon} size={16} />
-              {installations.length > 0
-                ? 'Manage on GitHub'
-                : 'Install on GitHub'}
-            </Button>
-          ) : null}
+                >
+                  <Button variant="outline">
+                    <HugeIcon icon={Setting07Icon} size={16} />
+                    {installations().length > 0
+                      ? 'Manage on GitHub'
+                      : 'Install on GitHub'}
+                  </Button>
+                </a>
+              </Show>
 
-          {canSyncInstallations ? (
-            <Button
-              variant="outline"
-              onClick={handleSync}
-              disabled={syncMutation.isPending}
-            >
-              <HugeiconsIcon icon={Refresh01Icon} size={16} />
-              {syncMutation.isPending ? 'Syncing...' : 'Sync Installations'}
-            </Button>
-          ) : null}
-
-          <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button variant="destructive">
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
-                  Disconnect
+              <Show when={canSyncInstallations()}>
+                <Button
+                  variant="outline"
+                  onClick={handleSync}
+                  disabled={syncMutation.isPending}
+                >
+                  <HugeIcon icon={Refresh01Icon} size={16} />
+                  {syncMutation.isPending ? 'Syncing...' : 'Sync Installations'}
                 </Button>
-              }
-            />
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This removes credentials, installations, repository links, and
-                  webhook behavior.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDisconnect}>
-                  Disconnect
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </CardContent>
-      </Card>
+              </Show>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Installations ({installations.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {installations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No installations yet
-              {integration.provider === 'github' && integration.app_slug
-                ? ' - install your GitHub App to get started.'
-                : '.'}
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>External ID</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {installations.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell>{inst.account_name}</TableCell>
-                    <TableCell>{inst.account_type ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {inst.external_id}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+              <Button
+                variant="destructive"
+                disabled={deleteMutation.isPending}
+                onClick={handleDisconnect}
+              >
+                <HugeIcon icon={Delete02Icon} size={16} />
+                Disconnect
+              </Button>
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            Repositories ({repositories.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {repositories.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No repositories synced yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Repository</TableHead>
-                  <TableHead>Default branch</TableHead>
-                  <TableHead>Visibility</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {repositories.map((repo) => (
-                  <TableRow key={repo.id}>
-                    <TableCell>{repo.full_name}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {repo.default_branch ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={repo.is_private ? 'secondary' : 'outline'}
-                      >
-                        {repo.is_private ? 'private' : 'public'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle class="text-base">
+                Installations ({installations().length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Show
+                when={installations().length > 0}
+                fallback={
+                  <p class="text-sm text-muted-foreground">
+                    No installations yet.
+                  </p>
+                }
+              >
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>External ID</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {installations().map((installation) => (
+                      <TableRow>
+                        <TableCell>{installation.account_name}</TableCell>
+                        <TableCell>{installation.account_type ?? '—'}</TableCell>
+                        <TableCell class="font-mono text-xs text-muted-foreground">
+                          {installation.external_id}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Show>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle class="text-base">
+                Repositories ({repositories().length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Show
+                when={repositories().length > 0}
+                fallback={
+                  <p class="text-sm text-muted-foreground">
+                    No repositories synced yet.
+                  </p>
+                }
+              >
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Repository</TableHead>
+                      <TableHead>Default branch</TableHead>
+                      <TableHead>Visibility</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {repositories().map((repo) => (
+                      <TableRow>
+                        <TableCell>{repo.full_name}</TableCell>
+                        <TableCell class="font-mono text-xs text-muted-foreground">
+                          {repo.default_branch ?? '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={repo.is_private ? 'secondary' : 'outline'}>
+                            {repo.is_private ? 'private' : 'public'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Show>
+            </CardContent>
+          </Card>
+        </Match>
+      </Switch>
     </PageLayout>
   )
 }

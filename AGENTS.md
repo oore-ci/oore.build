@@ -26,9 +26,10 @@ Treat those as the source of truth.
 - Use TanStack Router file-based routing.
 - Do not introduce Next.js for V1.
 - Use Bun as package manager/runtime for frontend toolchain.
-- Use TanStack Query for server state and Zustand for UI-local state.
-- Use shadcn with Base UI primitives (not Radix).
-- Keep `apps/web` and `apps/docs-site` aligned on shared shadcn constraints:
+- Use TanStack Query for server state and Solid signals/store primitives for UI-local state.
+- Use SolidJS + TanStack Solid Router for `apps/web` (client-side SPA).
+- Use `shadcn-solid` component generation and token-compatible styling patterns.
+- Keep frontend apps aligned on shared shadcn constraints:
 - `style: base-vega`
 - `iconLibrary: hugeicons`
 - `theme: amber`
@@ -45,7 +46,7 @@ Treat those as the source of truth.
 - Follow the shadcn-first component selection rule: check registry -> install -> use.
 - Never create custom dialogs, dropdowns, drawers, or tables when shadcn has equivalents.
 - Use Hugeicons for all icons. No inline SVG icons.
-- Use shadcn Form component with react-hook-form + zod for all forms.
+- Use `@tanstack/solid-form` + zod with shared shadcn-solid field wrappers for all forms.
 - Use Skeleton/Spinner for loading states, Toast for transient feedback, Alert for persistent feedback.
 - All colors must use the token system from `styles.css`. No hard-coded Tailwind color classes.
 - Support dark mode using token-based styling only.

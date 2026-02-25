@@ -368,7 +368,7 @@ export interface RootRouteChildren {
   ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 
-declare module '@tanstack/react-router' {
+declare module '@tanstack/solid-router' {
   interface FileRoutesByPath {
     '/setup': {
       id: '/setup'

@@ -1,13 +1,13 @@
+import { createEffect, For, Show } from 'solid-js'
 import {
   Outlet,
   createFileRoute,
   isRedirect,
   redirect,
   useNavigate,
-} from '@tanstack/react-router'
-import { useEffect } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+} from '@tanstack/solid-router'
 import { Tick02Icon } from '@hugeicons/core-free-icons'
+import { HugeIcon } from '@/components/huge-icon'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,24 +34,20 @@ function maybeAutoAddBackendInstance() {
   const backendUrl = params.get('backend')
   if (!backendUrl) return
 
-  // Validate URL
   try {
     new URL(backendUrl)
   } catch {
     return
   }
 
-  // Only auto-add if instance store is empty (prevents phishing via crafted links)
   const store = useInstanceStore.getState()
   if (Object.keys(store.instances).length > 0) return
 
-  // Auto-add the instance
   const parsed = new URL(backendUrl)
   const label = isLoopbackHost(parsed.hostname) ? 'Local' : parsed.hostname
   const id = store.addInstance(label, backendUrl.replace(/\/+$/, ''))
   store.setActiveInstance(id)
 
-  // Scrub the query parameter from the URL
   const url = new URL(window.location.href)
   url.searchParams.delete('backend')
   window.history.replaceState({}, '', url.pathname + url.search)
@@ -59,7 +55,6 @@ function maybeAutoAddBackendInstance() {
 
 export const Route = createFileRoute('/setup')({
   beforeLoad: async () => {
-    // Handle ?backend= query param before instance guards
     maybeAutoAddBackendInstance()
 
     const instance = getActiveInstanceOrRedirect()
@@ -72,109 +67,89 @@ export const Route = createFileRoute('/setup')({
       if (status.is_configured) {
         throw redirect({ to: '/' })
       }
-    } catch (e) {
-      if (isRedirect(e)) throw e
-      throw e
+    } catch (value) {
+      if (isRedirect(value)) throw value
+      throw value
     }
   },
   component: SetupLayout,
   errorComponent: SetupError,
 })
 
-function StepIndicator({
-  currentStep,
-  steps,
-}: {
-  currentStep: number
-  steps: Array<string>
-}) {
-  return (
-    <div className="flex items-center justify-center gap-1">
-      {steps.map((label, index) => {
-        const isActive = index === currentStep
-        const isCompleted = index < currentStep
-
-        return (
-          <div key={label} className="flex items-center gap-1">
-            {index > 0 ? (
-              <div
-                className={`h-px w-8 ${isCompleted ? 'bg-primary' : 'bg-border'}`}
-              />
-            ) : null}
-            <Badge
-              variant={
-                isActive ? 'default' : isCompleted ? 'secondary' : 'outline'
-              }
-              className="text-xs"
-            >
-              {isCompleted ? (
-                <>
-                  <HugeiconsIcon
-                    icon={Tick02Icon}
-                    size={12}
-                    className="mr-0.5"
-                  />
-                  {label}
-                </>
-              ) : (
-                label
-              )}
-            </Badge>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 function SetupLayout() {
-  const currentStep = useSetupStore((s) => s.currentStep)
-  const { data: status } = useSetupStatus()
+  const currentStep = useSetupStore((state) => state.currentStep)
+  const status = useSetupStatus()
   const { formatted, isWarning, isExpired } = useSessionCountdown()
   const navigate = useNavigate()
-  const steps =
-    status?.runtime_mode === 'local'
-      ? ['Token', 'Mode', 'Owner', 'Complete']
-      : status?.remote_auth_mode === 'trusted_proxy'
-        ? ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
-        : ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
 
-  useEffect(() => {
-    if (isExpired) {
+  const steps = () => {
+    if (status.data?.runtime_mode === 'local') {
+      return ['Token', 'Mode', 'Owner', 'Complete']
+    }
+
+    if (status.data?.remote_auth_mode === 'trusted_proxy') {
+      return ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
+    }
+
+    return ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
+  }
+
+  createEffect(() => {
+    if (isExpired()) {
       useSetupStore.getState().reset()
       void navigate({ to: '/setup' })
     }
-  }, [isExpired, navigate])
+  })
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-6">
+    <div class="flex min-h-screen flex-col items-center justify-center p-6">
       <PageMeta title="Setup" />
-      <div className="w-full max-w-lg space-y-8">
-        <div className="text-center space-y-4">
-          <div className="mx-auto flex size-14 items-center justify-center">
-            <img src="/logo.svg" alt="Oore logo" className="size-full" />
+      <div class="w-full max-w-lg space-y-6">
+        <div class="space-y-2 text-center">
+          <div class="mx-auto flex size-14 items-center justify-center">
+            <img src="/logo.svg" alt="Oore logo" class="size-full" />
           </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight">
-              Instance Setup
-            </h1>
-            <p className="text-muted-foreground text-sm">
-              Configure your self-hosted CI instance
-            </p>
-          </div>
+          <h1 class="text-3xl font-bold tracking-tight">Instance Setup</h1>
+          <p class="text-sm text-muted-foreground">
+            Configure your self-hosted CI instance.
+          </p>
         </div>
 
-        <StepIndicator currentStep={currentStep} steps={steps} />
+        <div class="flex items-center justify-center gap-1">
+          <For each={steps()}>
+            {(label, index) => {
+              const isActive = () => index() === currentStep()
+              const isCompleted = () => index() < currentStep()
 
-        {formatted && !isExpired ? (
-          <div className="text-center">
-            <p
-              className={`text-xs font-mono ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
-            >
-              Session expires in {formatted}
-            </p>
-          </div>
-        ) : null}
+              return (
+                <div class="flex items-center gap-1">
+                  <Show when={index() > 0}>
+                    <div class={`h-px w-8 ${isCompleted() ? 'bg-primary' : 'bg-border'}`} />
+                  </Show>
+                  <Badge
+                    variant={isActive() ? 'default' : isCompleted() ? 'secondary' : 'outline'}
+                    class="text-xs"
+                  >
+                    <Show when={isCompleted()} fallback={label}>
+                      <HugeIcon icon={Tick02Icon} size={12} class="mr-0.5" />
+                      {label}
+                    </Show>
+                  </Badge>
+                </div>
+              )
+            }}
+          </For>
+        </div>
+
+        <Show when={formatted() && !isExpired()}>
+          <p
+            class={`text-center text-xs font-mono ${
+              isWarning() ? 'font-semibold text-destructive' : 'text-muted-foreground'
+            }`}
+          >
+            Session expires in {formatted()}
+          </p>
+        </Show>
 
         <Card>
           <CardContent>
@@ -186,86 +161,79 @@ function SetupLayout() {
   )
 }
 
-function SetupError({ error }: { error: Error }) {
+function SetupError(props: { error: Error }) {
   const navigate = useNavigate()
-  const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
-  const instances = useInstanceStore((s) => s.instances)
-  const instance = activeInstanceId ? instances[activeInstanceId] : null
-  const backendUrl = instance?.url ?? ''
-  const frontendOrigin = window.location.origin
-  const issue =
-    backendUrl.length > 0
-      ? getConnectivityIssue(backendUrl, error, frontendOrigin)
-      : null
-  const hostedUi = isHostedUiOrigin(frontendOrigin)
+  const activeInstanceId = useInstanceStore((state) => state.activeInstanceId)
+  const instances = useInstanceStore((state) => state.instances)
 
-  if (!issue) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-xl space-y-4">
-          <Alert variant="destructive">
-            <AlertTitle>Something went wrong</AlertTitle>
-            <AlertDescription>{error.message}</AlertDescription>
-          </Alert>
-          <Button onClick={() => void navigate({ to: '/setup' })}>
-            Retry Setup
-          </Button>
-        </div>
-      </div>
-    )
+  const backendUrl = () => {
+    const id = activeInstanceId()
+    if (!id) return ''
+    return instances()[id]?.url ?? ''
   }
 
+  const frontendOrigin = window.location.origin
+  const issue = () => {
+    const url = backendUrl()
+    if (!url) return null
+    return getConnectivityIssue(url, props.error, frontendOrigin)
+  }
+  const hostedUi = isHostedUiOrigin(frontendOrigin)
+
   return (
-    <div className="flex-1 flex items-center justify-center p-6">
-      <div className="w-full max-w-xl space-y-4">
-        <Alert variant="destructive">
-          <AlertTitle>{issue.title}</AlertTitle>
-          <AlertDescription>{issue.description}</AlertDescription>
-        </Alert>
+    <div class="flex min-h-screen items-center justify-center p-6">
+      <div class="w-full max-w-xl space-y-4">
+        <Show
+          when={issue()}
+          fallback={
+            <Alert variant="destructive">
+              <AlertTitle>Something went wrong</AlertTitle>
+              <AlertDescription>{props.error.message}</AlertDescription>
+            </Alert>
+          }
+        >
+          <Alert variant="destructive">
+            <AlertTitle>{issue()?.title}</AlertTitle>
+            <AlertDescription>{issue()?.description}</AlertDescription>
+          </Alert>
 
-        <Card>
-          <CardContent className="space-y-4">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Use CLI setup</p>
-              <p className="text-sm text-muted-foreground">
-                Complete first-run setup directly on the backend host:
-              </p>
-              <code className="block bg-muted px-2 py-1 text-xs">
-                oore setup
-              </code>
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Expose backend over HTTPS</p>
-              <p className="text-sm text-muted-foreground">
-                Use a tunnel and reconnect with the assigned HTTPS URL:
-              </p>
-              <code className="block bg-muted px-2 py-1 text-xs">
-                cloudflared tunnel --url {backendUrl}
-              </code>
-            </div>
-
-            {hostedUi ? (
-              <div className="space-y-1">
-                <p className="text-sm font-medium">
-                  Use local/self-hosted web UI
+          <Card>
+            <CardContent class="space-y-4 py-5">
+              <div class="space-y-1">
+                <p class="text-sm font-medium">Use CLI setup</p>
+                <p class="text-sm text-muted-foreground">
+                  Complete first-run setup directly on the backend host:
                 </p>
-                <p className="text-sm text-muted-foreground">
-                  If backend stays local-only, run the bundled local web
-                  launcher:
+                <code class="block bg-muted px-2 py-1 text-xs">oore setup</code>
+              </div>
+
+              <div class="space-y-1">
+                <p class="text-sm font-medium">Expose backend over HTTPS</p>
+                <p class="text-sm text-muted-foreground">
+                  Use a tunnel and reconnect with the assigned HTTPS URL:
                 </p>
-                <code className="block bg-muted px-2 py-1 text-xs">
-                  oore-web --backend-url {backendUrl}
+                <code class="block bg-muted px-2 py-1 text-xs">
+                  cloudflared tunnel --url {backendUrl()}
                 </code>
               </div>
-            ) : null}
-          </CardContent>
-        </Card>
 
-        <div className="flex gap-2">
-          <Button onClick={() => void navigate({ to: '/setup' })}>
-            Retry Setup
-          </Button>
+              <Show when={hostedUi}>
+                <div class="space-y-1">
+                  <p class="text-sm font-medium">Use local/self-hosted web UI</p>
+                  <p class="text-sm text-muted-foreground">
+                    If backend stays local-only, run the bundled local web launcher:
+                  </p>
+                  <code class="block bg-muted px-2 py-1 text-xs">
+                    oore-web --backend-url {backendUrl()}
+                  </code>
+                </div>
+              </Show>
+            </CardContent>
+          </Card>
+        </Show>
+
+        <div class="flex gap-2">
+          <Button onClick={() => void navigate({ to: '/setup' })}>Retry Setup</Button>
           <Button
             variant="outline"
             onClick={() => window.open('https://docs.oore.build', '_blank')}

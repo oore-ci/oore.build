@@ -1,10 +1,10 @@
-.PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
+.PHONY: dev-web dev-web-react-legacy dev-docs dev-site build-web build-web-react-legacy build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
 		       test-web lint-web fix-web \
 		       test-docs lint-docs fix-docs test-rust \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-		       docs-check lint-woodpecker ui-init install-local validate validate-ci gen-openapi release-smoke \
+		       docs-check lint-woodpecker ui-init install-local validate validate-ci gen-openapi release-smoke check-web-bundle-budget \
 		       release-local release-cut
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
@@ -36,13 +36,20 @@ PAGES_COMMIT_MESSAGE ?=
 PAGES_BRANCH_FLAG :=$(if $(strip $(PAGES_BRANCH)), --branch=$(PAGES_BRANCH),)
 PAGES_COMMIT_HASH_FLAG :=$(if $(strip $(PAGES_COMMIT_HASH)), --commit-hash=$(PAGES_COMMIT_HASH),)
 PAGES_COMMIT_MESSAGE_FLAG :=$(if $(strip $(PAGES_COMMIT_MESSAGE)), --commit-message=$(PAGES_COMMIT_MESSAGE),)
+WEB_BUNDLE_APP_DIR ?= apps/web
 
 # ── Frontend: Web App ─────────────────────────────────────────────
 dev-web:
 	bun run dev:web
 
+dev-web-react-legacy:
+	bun run dev:web-react-legacy
+
 build-web:
 	bun run build:web
+
+build-web-react-legacy:
+	bun run build:web-react-legacy
 
 deploy-web: build-web
 	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
@@ -177,6 +184,9 @@ lint-woodpecker:
 
 ui-init:
 	bun run ui:init
+
+check-web-bundle-budget:
+	bash tools/check-web-bundle-budget.sh $(WEB_BUNDLE_APP_DIR)
 
 # ── Aggregate Targets ─────────────────────────────────────────────
 build: build-web build-docs build-site cargo-check

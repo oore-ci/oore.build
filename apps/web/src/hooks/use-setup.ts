@@ -1,5 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Instance, OidcConfigureRequest } from '@/lib/types'
+import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query'
+import type {
+  OidcConfigureRequest,
+  SetupPreferencesRequest,
+  SetupTrustedProxyConfigureRequest,
+} from '@/lib/types'
 import {
   completeSetup,
   configureOidc,
@@ -13,225 +17,195 @@ import {
   setupTrustedProxyConfigure,
   verifyBootstrapToken,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
+import { useBaseUrl, useInstanceQueryPrefix } from '@/hooks/query-context'
 import { useSetupStore } from '@/stores/setup-store'
 
-function requireInstance(instance: Instance | null): string {
-  if (!instance)
-    throw new Error('No active instance. Select or add an instance first.')
-  return instance.url
-}
-
-function useSetupStatusKey() {
-  const instance = useActiveInstance()
-  return [instance?.id ?? '__none__', 'setup-status'] as const
-}
-
 export function useSetupStatus() {
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const baseUrl = useBaseUrl()
+  const prefix = useInstanceQueryPrefix()
 
-  return useQuery({
-    queryKey,
-    queryFn: () => getSetupStatus(requireInstance(instance)),
-    refetchInterval: 3000,
-    enabled: !!instance,
-  })
+  return createQuery(() => ({
+    queryKey: [prefix(), 'setup-status'],
+    queryFn: () => getSetupStatus(baseUrl()!),
+    enabled: !!baseUrl(),
+    staleTime: 1_000,
+    retry: 1,
+  }))
 }
 
 export function useVerifyBootstrapToken() {
+  const baseUrl = useBaseUrl()
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (token: string) =>
-      verifyBootstrapToken(requireInstance(instance), token),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey })
+  return createMutation(() => ({
+    mutationFn: async (token: string) => {
+      if (!baseUrl()) throw new Error('Missing instance URL')
+      const response = await verifyBootstrapToken(baseUrl()!, token)
+      useSetupStore.getState().setSessionToken(response.session_token)
+      useSetupStore.getState().setSessionExpiresAt(response.expires_at)
+      return response
     },
-  })
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [prefix(), 'setup-status'],
+      })
+    },
+  }))
 }
 
 export function useConfigureOidc() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
 
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      data,
-    }: {
-      sessionToken: string
-      data: OidcConfigureRequest
-    }) => configureOidc(requireInstance(instance), sessionToken, data),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
+  return createMutation(() => ({
+    mutationFn: async (data: OidcConfigureRequest) => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      const response = await configureOidc(baseUrl()!, sessionToken()!, data)
+      if (response.session_expires_at != null) {
+        useSetupStore.getState().setSessionExpiresAt(response.session_expires_at)
       }
-      void queryClient.invalidateQueries({ queryKey })
+      return response
     },
-  })
-}
-
-export function useSetupOidcStart() {
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      redirectUri,
-    }: {
-      sessionToken: string
-      redirectUri: string
-    }) => setupOidcStart(requireInstance(instance), sessionToken, redirectUri),
-  })
-}
-
-export function useSetupOidcVerify() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
-
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      code,
-      state,
-    }: {
-      sessionToken: string
-      code: string
-      state: string
-    }) => setupOidcVerify(requireInstance(instance), sessionToken, code, state),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
-      }
-      void queryClient.invalidateQueries({ queryKey })
-    },
-  })
-}
-
-export function useSetupLocalOwnerCreate() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
-
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      email,
-    }: {
-      sessionToken: string
-      email: string
-    }) => setupLocalOwnerCreate(requireInstance(instance), sessionToken, email),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
-      }
-      void queryClient.invalidateQueries({ queryKey })
-    },
-  })
+  }))
 }
 
 export function useSetupPreferences() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
 
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      runtimeMode,
-      remoteAuthMode,
-    }: {
-      sessionToken: string
-      runtimeMode: 'local' | 'remote'
-      remoteAuthMode?: 'oidc' | 'trusted_proxy'
-    }) =>
-      setupPreferences(requireInstance(instance), sessionToken, {
-        runtime_mode: runtimeMode,
-        remote_auth_mode: remoteAuthMode,
-      }),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
+  return createMutation(() => ({
+    mutationFn: async (data: SetupPreferencesRequest) => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      const response = await setupPreferences(baseUrl()!, sessionToken()!, data)
+      if (response.session_expires_at != null) {
+        useSetupStore.getState().setSessionExpiresAt(response.session_expires_at)
       }
-      void queryClient.invalidateQueries({ queryKey })
+      return response
     },
-  })
+  }))
+}
+
+export function useSetupOidcStart() {
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
+
+  return createMutation(() => ({
+    mutationFn: async (redirectUri: string) => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      return setupOidcStart(baseUrl()!, sessionToken()!, redirectUri)
+    },
+  }))
+}
+
+export function useSetupOidcVerify() {
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
+
+  return createMutation(() => ({
+    mutationFn: async ({ code, state }: { code: string; state: string }) => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      const response = await setupOidcVerify(
+        baseUrl()!,
+        sessionToken()!,
+        code,
+        state,
+      )
+      if (response.session_expires_at != null) {
+        useSetupStore.getState().setSessionExpiresAt(response.session_expires_at)
+      }
+      return response
+    },
+  }))
+}
+
+export function useSetupLocalOwnerCreate() {
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
+
+  return createMutation(() => ({
+    mutationFn: async (email: string) => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      const response = await setupLocalOwnerCreate(
+        baseUrl()!,
+        sessionToken()!,
+        email,
+      )
+      if (response.session_expires_at != null) {
+        useSetupStore.getState().setSessionExpiresAt(response.session_expires_at)
+      }
+      return response
+    },
+  }))
 }
 
 export function useSetupTrustedProxyConfigure() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
 
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      userEmailHeader,
-      trustedProxyCidrs,
-      sharedSecret,
-    }: {
-      sessionToken: string
-      userEmailHeader?: string
-      trustedProxyCidrs: Array<string>
-      sharedSecret?: string
-    }) =>
-      setupTrustedProxyConfigure(requireInstance(instance), sessionToken, {
-        user_email_header: userEmailHeader,
-        trusted_proxy_cidrs: trustedProxyCidrs,
-        shared_secret: sharedSecret,
-      }),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
+  return createMutation(() => ({
+    mutationFn: async (data: SetupTrustedProxyConfigureRequest) => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      const response = await setupTrustedProxyConfigure(
+        baseUrl()!,
+        sessionToken()!,
+        data,
+      )
+      if (response.session_expires_at != null) {
+        useSetupStore.getState().setSessionExpiresAt(response.session_expires_at)
       }
-      void queryClient.invalidateQueries({ queryKey })
+      return response
     },
-  })
+  }))
 }
 
 export function useSetupTrustedProxyClaimOwner() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
 
-  return useMutation({
-    mutationFn: ({ sessionToken }: { sessionToken: string }) =>
-      setupTrustedProxyClaimOwner(requireInstance(instance), sessionToken),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
+  return createMutation(() => ({
+    mutationFn: async () => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      const response = await setupTrustedProxyClaimOwner(
+        baseUrl()!,
+        sessionToken()!,
+      )
+      if (response.session_expires_at != null) {
+        useSetupStore.getState().setSessionExpiresAt(response.session_expires_at)
       }
-      void queryClient.invalidateQueries({ queryKey })
+      return response
     },
-  })
+  }))
 }
 
 export function useSetupSummary() {
-  const instance = useActiveInstance()
-  const sessionToken = useSetupStore((s) => s.sessionToken)
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
+  const prefix = useInstanceQueryPrefix()
 
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'setup-summary'] as const,
-    queryFn: () => getSetupSummary(requireInstance(instance), sessionToken!),
-    enabled: !!instance && !!sessionToken,
-  })
+  return createQuery(() => ({
+    queryKey: [prefix(), 'setup-summary'],
+    queryFn: () => getSetupSummary(baseUrl()!, sessionToken()!),
+    enabled: !!baseUrl() && !!sessionToken(),
+  }))
 }
 
 export function useCompleteSetup() {
+  const baseUrl = useBaseUrl()
+  const sessionToken = useSetupStore((state) => state.sessionToken)
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (sessionToken: string) =>
-      completeSetup(requireInstance(instance), sessionToken),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey })
+  return createMutation(() => ({
+    mutationFn: async () => {
+      if (!baseUrl() || !sessionToken()) throw new Error('Missing setup session')
+      return completeSetup(baseUrl()!, sessionToken()!)
     },
-  })
+    onSuccess: () => {
+      useSetupStore.getState().reset()
+      void queryClient.invalidateQueries({
+        queryKey: [prefix(), 'setup-status'],
+      })
+    },
+  }))
 }

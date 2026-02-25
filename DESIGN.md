@@ -1,10 +1,10 @@
 # DESIGN.md
 
-Design system governance for `apps/web`. Read this before any frontend UI work.
+Design system governance for `apps/web` (SolidJS). Read this before any frontend UI work.
 
 ## Scope
 
-This document governs **`apps/web`** only. `apps/docs-site` (VitePress) follows its own conventions.
+This document governs **`apps/web`** and frontend migration workstreams. `apps/docs-site` (VitePress) follows its own conventions.
 
 ## Design Philosophy
 
@@ -129,10 +129,10 @@ When you need a UI component, follow this decision tree:
 
 ```
 Need a component
-  -> Check shadcn registry (npx shadcn@latest add <name>)
+  -> Check shadcn-solid registry (bunx shadcn-solid add <name>)
      -> Exists? Install it and use it.
-     -> Doesn't exist? Build custom using Base UI primitives.
-        -> No Base UI primitive? Build with plain HTML + Tailwind, document the pattern here.
+     -> Doesn't exist? Build custom with Solid primitives + tokenized styles.
+        -> No viable primitive? Build with plain HTML + Tailwind, document the pattern here.
 ```
 
 **Never** build a custom dialog, dropdown, drawer, select, table, form, or toast when shadcn has an equivalent.
@@ -170,13 +170,13 @@ Used on login, setup, and welcome (no-instance) pages for strong brand presence:
 
 ## Icons
 
-**Hugeicons only.** Import from `@hugeicons/react` with icon data from `@hugeicons/core-free-icons`.
+**Hugeicons only.** Import icon data from `@hugeicons/core-free-icons` and render via the shared Solid `HugeIcon` adapter.
 
 ```tsx
-import { HugeiconsIcon } from '@hugeicons/react'
+import { HugeIcon } from '@/components/huge-icon'
 import { Menu02Icon } from '@hugeicons/core-free-icons'
 
-<HugeiconsIcon icon={Menu02Icon} size={20} />
+<HugeIcon icon={Menu02Icon} size={20} />
 ```
 
 **Anti-pattern:** Never use inline `<svg>` elements for icons. Never import icons from other libraries.
@@ -344,10 +344,10 @@ import {
 For interactive data tables with sorting, filtering, or row selection, use `DataTable` (built on TanStack Table) with the shadcn `Table` primitives:
 
 ```tsx
-import { getCoreRowModel, getSortedRowModel, getFilteredRowModel, useReactTable } from '@tanstack/react-table'
+import { createSolidTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel } from '@tanstack/solid-table'
 import { DataTable } from '@/components/ui/data-table'
 
-const table = useReactTable({
+const table = createSolidTable({
   data,
   columns,
   getCoreRowModel: getCoreRowModel(),
@@ -370,7 +370,7 @@ export function getColumns(options: ColumnOptions): Array<ColumnDef<MyType>> { .
 
 **Key patterns:**
 - **Sortable headers:** `Button variant="ghost"` with `ArrowUpDownIcon` that calls `column.toggleSorting()`
-- **Row selection:** `Checkbox` with `indeterminate` prop (Base UI uses a separate boolean prop, not `"indeterminate"` string)
+- **Row selection:** `Checkbox` with explicit `indeterminate` boolean handling
 - **Row actions:** `DropdownMenu` with ellipsis trigger (`MoreHorizontalCircle01Icon`)
 - **Toolbar:** Separate component with filter `Input` bound to `column.setFilterValue()` and bulk action buttons
 - **Non-selectable rows:** `enableRowSelection: (row) => boolean` on the table instance
@@ -379,47 +379,48 @@ Reference implementation: `routes/settings/users.tsx` with `-users-columns.tsx` 
 
 ### Form
 
-All forms use react-hook-form + zod + shadcn Form component:
+All forms use `@tanstack/solid-form` + zod + shared shadcn-solid field wrappers:
 
 ```tsx
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { createForm } from '@tanstack/solid-form'
 import { z } from 'zod'
-import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 
 const schema = z.object({ name: z.string().min(1) })
 
 function MyForm() {
-  const form = useForm({ resolver: zodResolver(schema) })
+  const form = createForm(() => ({
+    defaultValues: { name: '' },
+    validators: { onChange: schema },
+    onSubmit: ({ value }) => onSubmit(value),
+  }))
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)}>
-        <FormField control={form.control} name="name" render={({ field }) => (
-          <FormItem>
-            <FormLabel>Name</FormLabel>
-            <FormControl><Input {...field} /></FormControl>
-            <FormMessage />
-          </FormItem>
-        )} />
-      </form>
-    </Form>
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        void form.handleSubmit()
+      }}
+    >
+      <form.Field name="name">
+        {(field) => (
+          <Input
+            value={field().state.value}
+            onInput={(event) => field().handleChange(event.currentTarget.value)}
+          />
+        )}
+      </form.Field>
+    </form>
   )
 }
 ```
 
-## Base UI Specifics
+## Solid Component Specifics
 
-shadcn with `style: base-vega` uses Base UI primitives, not Radix. Key differences:
+shadcn-solid components should remain token-driven and framework-native:
 
-- Use `render` prop, not `asChild`, for custom element rendering
-- Use `multiple` prop, not `type="multiple"`, on accordion/toggle groups
-- On Base UI components with button semantics (for example `Trigger`, `Close`, `Button`), if `render` is not a native `<button>`, set `nativeButton={false}` explicitly
-
-```tsx
-<Button render={<Link to="/projects" />} nativeButton={false}>
-  Projects
-</Button>
-```
+- Prefer generated shadcn-solid components over custom controls.
+- Keep route links on TanStack `Link`/`createLink`.
+- Avoid framework-specific compatibility shims that reintroduce React runtime patterns.
 
 ## Loading States
 
@@ -546,13 +547,13 @@ Initials are derived from the email prefix (split on `.`, `_`, `-`). The OIDC `p
 
 ### Nav Link Integration
 
-Sidebar nav items use `SidebarMenuButton` with TanStack Router `Link` via the `render` prop:
+Sidebar nav items use TanStack Router `Link` directly:
 
 ```tsx
-<SidebarMenuButton isActive={isActive} render={<Link to="/path" />}>
-  <HugeiconsIcon icon={SomeIcon} size={18} />
+<Link to="/path" class={isActive ? 'text-primary' : 'text-muted-foreground'}>
+  <HugeIcon icon={SomeIcon} size={18} />
   <span>Label</span>
-</SidebarMenuButton>
+</Link>
 ```
 
 ## Review Checklist
@@ -565,7 +566,7 @@ Before submitting frontend changes, verify:
 - [ ] All colors use token-based classes (no hard-coded Tailwind colors)
 - [ ] Loading states use Spinner or Skeleton
 - [ ] Feedback uses toast (transient) or Alert (persistent)
-- [ ] Forms use react-hook-form + zod
+- [ ] Forms use @tanstack/solid-form + zod
 - [ ] Dark mode works with all new UI
 - [ ] All interactive elements are keyboard-accessible
 - [ ] Card titles use uppercase label style (`text-sm font-medium uppercase tracking-wider text-muted-foreground`)

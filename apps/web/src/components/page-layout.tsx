@@ -1,3 +1,4 @@
+import type { JSX } from 'solid-js'
 import { cn } from '@/lib/utils'
 
 const WIDTH_CLASSES = {
@@ -7,24 +8,27 @@ const WIDTH_CLASSES = {
   full: '',
 } as const
 
-interface PageLayoutProps {
-  children: React.ReactNode
+interface PageLayoutProps extends JSX.HTMLAttributes<HTMLDivElement> {
   width?: keyof typeof WIDTH_CLASSES
-  className?: string
+  class?: string
 }
 
-export default function PageLayout({
-  children,
-  width = 'default',
-  className,
-}: PageLayoutProps) {
+export function PageLayout(props: PageLayoutProps) {
+  const {
+    class: className,
+    width = 'default',
+    children,
+    ...rest
+  } = props
+
   return (
     <div
-      className={cn(
+      class={cn(
         WIDTH_CLASSES[width],
         'mx-auto w-full space-y-6 px-6 py-8 lg:px-10 lg:py-10',
         className,
       )}
+      {...rest}
     >
       {children}
     </div>

@@ -1,114 +1,129 @@
-import * as React from 'react'
-
+import type { JSX } from 'solid-js'
 import { cn } from '@/lib/utils'
 
-function Table({ className, ...props }: React.ComponentProps<'table'>) {
+interface TableProps extends JSX.HTMLAttributes<HTMLTableElement> {
+  class?: string
+  children?: JSX.Element
+}
+
+export function Table(props: TableProps) {
+  const { class: className, ...rest } = props
   return (
-    <div
-      data-slot="table-container"
-      className="relative w-full overflow-x-auto"
-    >
+    <div data-slot="table-container" class="relative w-full overflow-x-auto">
       <table
         data-slot="table"
-        className={cn('w-full caption-bottom text-sm', className)}
-        {...props}
+        class={cn('w-full caption-bottom text-sm', className)}
+        {...rest}
       />
     </div>
   )
 }
 
-function TableHeader({ className, ...props }: React.ComponentProps<'thead'>) {
+interface TableSectionProps extends JSX.HTMLAttributes<HTMLTableSectionElement> {
+  class?: string
+  children?: JSX.Element
+}
+
+export function TableHeader(props: TableSectionProps) {
+  const { class: className, ...rest } = props
   return (
     <thead
       data-slot="table-header"
-      className={cn('[&_tr]:border-b', className)}
-      {...props}
+      class={cn('[&_tr]:border-b', className)}
+      {...rest}
     />
   )
 }
 
-function TableBody({ className, ...props }: React.ComponentProps<'tbody'>) {
+export function TableBody(props: TableSectionProps) {
+  const { class: className, ...rest } = props
   return (
     <tbody
       data-slot="table-body"
-      className={cn('[&_tr:last-child]:border-0', className)}
-      {...props}
+      class={cn('[&_tr:last-child]:border-0', className)}
+      {...rest}
     />
   )
 }
 
-function TableFooter({ className, ...props }: React.ComponentProps<'tfoot'>) {
+export function TableFooter(props: TableSectionProps) {
+  const { class: className, ...rest } = props
   return (
     <tfoot
       data-slot="table-footer"
-      className={cn(
+      class={cn(
         'bg-muted/50 border-t font-medium [&>tr]:last:border-b-0',
         className,
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-function TableRow({ className, ...props }: React.ComponentProps<'tr'>) {
+interface RowProps extends JSX.HTMLAttributes<HTMLTableRowElement> {
+  class?: string
+  children?: JSX.Element
+}
+
+export function TableRow(props: RowProps) {
+  const { class: className, ...rest } = props
   return (
     <tr
       data-slot="table-row"
-      className={cn(
+      class={cn(
         'hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors',
         className,
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-function TableHead({ className, ...props }: React.ComponentProps<'th'>) {
+interface CellProps extends JSX.HTMLAttributes<HTMLTableCellElement> {
+  class?: string
+  children?: JSX.Element
+}
+
+export function TableHead(props: CellProps) {
+  const { class: className, ...rest } = props
   return (
     <th
       data-slot="table-head"
-      className={cn(
+      class={cn(
         'text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0',
         className,
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-function TableCell({ className, ...props }: React.ComponentProps<'td'>) {
+export function TableCell(props: CellProps) {
+  const { class: className, ...rest } = props
   return (
     <td
       data-slot="table-cell"
-      className={cn(
+      class={cn(
         'p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0',
         className,
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-function TableCaption({
-  className,
-  ...props
-}: React.ComponentProps<'caption'>) {
+interface TableCaptionProps extends JSX.HTMLAttributes<HTMLTableCaptionElement> {
+  class?: string
+  children?: JSX.Element
+}
+
+export function TableCaption(props: TableCaptionProps) {
+  const { class: className, ...rest } = props
   return (
     <caption
       data-slot="table-caption"
-      className={cn('text-muted-foreground mt-4 text-sm', className)}
-      {...props}
+      class={cn('text-muted-foreground mt-4 text-sm', className)}
+      {...rest}
     />
   )
-}
-
-export {
-  Table,
-  TableHeader,
-  TableBody,
-  TableFooter,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableCaption,
 }

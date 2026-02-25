@@ -1,41 +1,22 @@
-import { useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { toast } from 'sonner'
+import { createMemo, createSignal } from 'solid-js'
+import { createFileRoute, useNavigate } from '@tanstack/solid-router'
+import type { BuildPlatform } from '@/lib/types'
 
-import type {
-  ConcurrencyPolicy,
-  CreatePipelineRequest,
-  TriggerConfig,
-  UpdatePipelineAndroidSigningRequest,
-  UpdatePipelineIosSigningRequest,
-} from '@/lib/types'
-import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { FormError, FormField } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+import { PageHeader } from '@/components/page-header'
+import { PageLayout } from '@/components/page-layout'
+import { PageMeta } from '@/lib/seo'
+import { Textarea } from '@/components/ui/textarea'
+import { useCreatePipeline } from '@/hooks/use-pipelines'
+import { toast } from '@/components/ui/sonner'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import {
-  useCreatePipeline,
-  useUpdatePipelineAndroidSigning,
-  useUpdatePipelineIosSigning,
-  useValidatePipeline,
-} from '@/hooks/use-pipelines'
-import { useRepositoryProvider } from '@/hooks/use-integrations'
-import { useProject } from '@/hooks/use-projects'
-import {
-  defaultArtifactPatterns,
-  fileToBase64,
-  fileToUtf8,
-  parseBundleIdsInput,
-  parseCsv,
-  parseEnvVars,
-  parseMultiline,
-  selectedPlatforms,
-  trimToUndefined,
-} from '@/lib/pipeline-form-utils'
-import PageLayout from '@/components/page-layout'
-import PageHeader from '@/components/page-header'
-import PipelineForm from '@/components/pipeline-form'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   staticData: { breadcrumbLabel: 'New Pipeline' },
@@ -46,443 +27,281 @@ export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   component: NewPipelinePage,
 })
 
-const emptyDefaults: PipelineFormValues = {
-  name: '',
-  config_mode: 'auto',
-  config_path: '.oore.yaml',
-  platform_android: true,
-  platform_ios: false,
-  platform_macos: false,
-  android_signing_release_enabled: false,
-  android_signing_release_store_password: '',
-  android_signing_release_key_alias: '',
-  android_signing_release_key_password: '',
-  android_signing_debug_enabled: false,
-  android_signing_debug_store_password: '',
-  android_signing_debug_key_alias: '',
-  android_signing_debug_key_password: '',
-  ios_signing_enabled: false,
-  ios_signing_mode: 'manual',
-  ios_signing_team_id: '',
-  ios_signing_bundle_ids: '',
-  ios_signing_p12_password: '',
-  ios_signing_api_key_id: '',
-  ios_signing_api_issuer_id: '',
-  flutter_version: '',
-  enable_customization: false,
-  pre_build_commands: '',
-  build_commands: '',
-  post_build_commands: '',
-  android_build_args: '',
-  ios_build_args: '',
-  macos_build_args: '',
-  android_command_override: '',
-  ios_command_override: '',
-  macos_command_override: '',
-  env_vars: '',
-  artifact_patterns: '*.apk',
-  branches: '',
-  max_concurrent: undefined,
-}
-
 function NewPipelinePage() {
-  const { projectId } = Route.useParams()
+  const params = Route.useParams()
   const navigate = useNavigate()
-  const { data: projectData } = useProject(projectId)
-  const repoProviderQuery = useRepositoryProvider(
-    projectData?.project.repository_id,
-  )
-  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
-  const createMutation = useCreatePipeline()
-  const validateMutation = useValidatePipeline()
-  const updateSigningMutation = useUpdatePipelineAndroidSigning()
-  const updateIosSigningMutation = useUpdatePipelineIosSigning()
-  const [validationErrors, setValidationErrors] = useState<Array<string>>([])
+  const createPipeline = useCreatePipeline(params().projectId)
 
-  async function handleSubmit(
-    data: PipelineFormValues,
-    events: Array<string>,
-    cancelPrevious: boolean,
-    releaseKeystoreFile: File | null,
-    debugKeystoreFile: File | null,
-    iosSigningFiles: {
-      p12File: File | null
-      apiKeyFile: File | null
-      profileFiles: Record<string, File | null>
-    },
-  ) {
-    const platforms = selectedPlatforms(data)
-    if (platforms.length === 0) {
-      setValidationErrors(['Pick at least one platform to build'])
+  const [error, setError] = createSignal<string | null>(null)
+
+  const [name, setName] = createSignal('Release')
+  const [configMode, setConfigMode] = createSignal<'auto' | 'explicit'>('auto')
+  const [configPath, setConfigPath] = createSignal('.oore/pipeline.huml')
+  const [platformAndroid, setPlatformAndroid] = createSignal(true)
+  const [platformIos, setPlatformIos] = createSignal(false)
+  const [platformMacos, setPlatformMacos] = createSignal(false)
+  const [flutterVersion, setFlutterVersion] = createSignal('3.24.0')
+  const [triggerEvents, setTriggerEvents] = createSignal('manual')
+  const [branches, setBranches] = createSignal('main')
+  const [description, setDescription] = createSignal('')
+
+  const platforms = createMemo<Array<BuildPlatform>>(() => {
+    const next: Array<BuildPlatform> = []
+    if (platformAndroid()) next.push('android')
+    if (platformIos()) next.push('ios')
+    if (platformMacos()) next.push('macos')
+    return next
+  })
+
+  const canSubmit = () => {
+    if (!name().trim()) return false
+    if (platforms().length === 0) return false
+    if (configMode() === 'explicit' && !configPath().trim()) return false
+    return true
+  }
+
+  const handleCreate = async () => {
+    if (!canSubmit()) {
+      setError('Please complete required fields before creating the pipeline.')
       return
     }
 
-    const trigger_config: TriggerConfig = manualOnlyTriggers
-      ? { events: [], branches: [] }
-      : {
-          events,
-          branches: parseCsv(data.branches),
-        }
-
-    const concurrency: ConcurrencyPolicy = {
-      cancel_previous: cancelPrevious,
-      max_concurrent: data.max_concurrent
-        ? Number(data.max_concurrent)
-        : undefined,
-    }
-
-    const commands = data.enable_customization
-      ? {
-          pre_build: parseMultiline(data.pre_build_commands),
-          build: parseMultiline(data.build_commands),
-          post_build: parseMultiline(data.post_build_commands),
-        }
-      : { pre_build: [], build: [], post_build: [] }
-
-    const customPatterns = data.enable_customization
-      ? parseMultiline(data.artifact_patterns)
-      : []
-
-    const payload: CreatePipelineRequest = {
-      name: data.name.trim(),
-      config_path:
-        data.config_mode === 'explicit'
-          ? data.config_path?.trim()
-          : '.oore.yaml',
-      config_path_explicit: data.config_mode === 'explicit',
-      execution_config: {
-        platforms,
-        flutter_version: data.flutter_version?.trim() || undefined,
-        commands,
-        platform_build_args: data.enable_customization
-          ? {
-              android: parseMultiline(data.android_build_args),
-              ios: parseMultiline(data.ios_build_args),
-              macos: parseMultiline(data.macos_build_args),
-            }
-          : { android: [], ios: [], macos: [] },
-        platform_commands: data.enable_customization
-          ? {
-              android: data.android_command_override?.trim() || undefined,
-              ios: data.ios_command_override?.trim() || undefined,
-              macos: data.macos_command_override?.trim() || undefined,
-            }
-          : {},
-        env: data.enable_customization ? parseEnvVars(data.env_vars) : [],
-        artifact_patterns:
-          customPatterns.length > 0
-            ? customPatterns
-            : defaultArtifactPatterns(platforms),
-      },
-      trigger_config,
-      concurrency,
-    }
+    setError(null)
 
     try {
-      const result = await validateMutation.mutateAsync(payload)
-      if (!result.valid && result.errors?.length) {
-        setValidationErrors(result.errors)
-        return
-      }
-    } catch {
-      // Validation endpoint is best-effort.
-    }
-
-    setValidationErrors([])
-
-    const signingPayload = await buildAndroidSigningPayload(
-      data,
-      releaseKeystoreFile,
-      debugKeystoreFile,
-    )
-    const iosSigningPayload = await buildIosSigningPayload(
-      data,
-      iosSigningFiles,
-    )
-    if (
-      (data.android_signing_release_enabled ||
-        data.android_signing_debug_enabled) &&
-      !signingPayload
-    ) {
-      return
-    }
-    if (data.platform_ios && data.ios_signing_enabled && !iosSigningPayload) {
-      return
-    }
-
-    try {
-      const created = await createMutation.mutateAsync({
-        projectId,
-        data: payload,
+      await createPipeline.mutateAsync({
+        name: name().trim(),
+        config_path:
+          configMode() === 'explicit'
+            ? configPath().trim()
+            : '.oore/pipeline.huml',
+        config_path_explicit: configMode() === 'explicit',
+        trigger_config: {
+          events: triggerEvents()
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean),
+          branches: branches()
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean),
+        },
+        concurrency: {
+          cancel_previous: false,
+          max_concurrent: 1,
+        },
+        execution_config: {
+          platforms: platforms(),
+          flutter_version: flutterVersion().trim() || undefined,
+          commands: {
+            pre_build: [],
+            build: [],
+            post_build: [],
+          },
+          artifact_patterns: [],
+          env: description().trim()
+            ? [
+                {
+                  key: 'PIPELINE_DESCRIPTION',
+                  value: description().trim(),
+                },
+              ]
+            : [],
+        },
       })
-      if (signingPayload) {
-        await updateSigningMutation.mutateAsync({
-          pipelineId: created.pipeline.id,
-          data: signingPayload,
-        })
-      }
-      if (iosSigningPayload) {
-        await updateIosSigningMutation.mutateAsync({
-          pipelineId: created.pipeline.id,
-          data: iosSigningPayload,
-        })
-      }
-      toast.success('Pipeline created')
-      void navigate({ to: '/projects/$projectId', params: { projectId } })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      toast.error(`Failed to create pipeline: ${message}`)
+
+      void navigate({
+        to: '/projects/$projectId',
+        params: { projectId: params().projectId },
+      })
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : 'Pipeline creation failed',
+      )
     }
   }
 
-  async function buildAndroidSigningPayload(
-    data: PipelineFormValues,
-    releaseKeystoreFile: File | null,
-    debugKeystoreFile: File | null,
-  ): Promise<UpdatePipelineAndroidSigningRequest | null> {
-    const releaseEnabled = data.android_signing_release_enabled
-    const debugEnabled = data.android_signing_debug_enabled
-    const releaseAlias = trimToUndefined(data.android_signing_release_key_alias)
-    const releaseStorePassword = trimToUndefined(
-      data.android_signing_release_store_password,
-    )
-    const releaseKeyPassword = trimToUndefined(
-      data.android_signing_release_key_password,
-    )
-    const debugAlias = trimToUndefined(data.android_signing_debug_key_alias)
-    const debugStorePassword = trimToUndefined(
-      data.android_signing_debug_store_password,
-    )
-    const debugKeyPassword = trimToUndefined(
-      data.android_signing_debug_key_password,
-    )
-
-    const anySigningInput =
-      releaseEnabled ||
-      debugEnabled ||
-      !!releaseKeystoreFile ||
-      !!debugKeystoreFile ||
-      !!releaseAlias ||
-      !!releaseStorePassword ||
-      !!releaseKeyPassword ||
-      !!debugAlias ||
-      !!debugStorePassword ||
-      !!debugKeyPassword
-
-    if (!data.platform_android) return null
-    if (!anySigningInput) return null
-
-    const profileErrors: Array<string> = []
-    if (releaseEnabled) {
-      if (!releaseKeystoreFile)
-        profileErrors.push(
-          'Release signing is enabled but no release keystore file is selected',
-        )
-      if (!releaseAlias)
-        profileErrors.push('Release signing key alias is required')
-      if (!releaseStorePassword)
-        profileErrors.push('Release store password is required')
-      if (!releaseKeyPassword)
-        profileErrors.push('Release key password is required')
-    }
-    if (debugEnabled) {
-      if (!debugKeystoreFile)
-        profileErrors.push(
-          'Debug signing is enabled but no debug keystore file is selected',
-        )
-      if (!debugAlias) profileErrors.push('Debug signing key alias is required')
-      if (!debugStorePassword)
-        profileErrors.push('Debug store password is required')
-      if (!debugKeyPassword)
-        profileErrors.push('Debug key password is required')
-    }
-    if (profileErrors.length > 0) {
-      setValidationErrors(profileErrors)
-      return null
+  const handleValidate = () => {
+    if (!canSubmit()) {
+      setError('Form has validation issues. Please review required fields.')
+      return
     }
 
-    const release =
-      releaseEnabled ||
-      releaseKeystoreFile ||
-      releaseAlias ||
-      releaseStorePassword ||
-      releaseKeyPassword
-        ? {
-            enabled: releaseEnabled,
-            keystore_filename: releaseKeystoreFile?.name,
-            keystore_base64: releaseKeystoreFile
-              ? await fileToBase64(releaseKeystoreFile)
-              : undefined,
-            store_password: releaseStorePassword,
-            key_alias: releaseAlias,
-            key_password: releaseKeyPassword,
-          }
-        : undefined
-
-    const debug =
-      debugEnabled ||
-      debugKeystoreFile ||
-      debugAlias ||
-      debugStorePassword ||
-      debugKeyPassword
-        ? {
-            enabled: debugEnabled,
-            keystore_filename: debugKeystoreFile?.name,
-            keystore_base64: debugKeystoreFile
-              ? await fileToBase64(debugKeystoreFile)
-              : undefined,
-            store_password: debugStorePassword,
-            key_alias: debugAlias,
-            key_password: debugKeyPassword,
-          }
-        : undefined
-
-    return { debug, release }
-  }
-
-  async function buildIosSigningPayload(
-    data: PipelineFormValues,
-    iosSigningFiles: {
-      p12File: File | null
-      apiKeyFile: File | null
-      profileFiles: Record<string, File | null>
-    },
-  ): Promise<UpdatePipelineIosSigningRequest | null> {
-    const bundleIds = parseBundleIdsInput(data.ios_signing_bundle_ids)
-    const teamId = trimToUndefined(data.ios_signing_team_id)
-    const p12Password = trimToUndefined(data.ios_signing_p12_password)
-    const apiKeyId = trimToUndefined(data.ios_signing_api_key_id)
-    const apiIssuerId = trimToUndefined(data.ios_signing_api_issuer_id)
-
-    const anyIosInput =
-      data.ios_signing_enabled ||
-      bundleIds.length > 0 ||
-      !!teamId ||
-      !!iosSigningFiles.p12File ||
-      !!p12Password ||
-      !!apiKeyId ||
-      !!apiIssuerId ||
-      !!iosSigningFiles.apiKeyFile ||
-      Object.values(iosSigningFiles.profileFiles).some(Boolean)
-
-    if (!data.platform_ios) return null
-    if (!anyIosInput) return null
-
-    const errors: Array<string> = []
-    if (data.ios_signing_enabled) {
-      if (!teamId) errors.push('iOS signing requires Team ID')
-      if (bundleIds.length === 0)
-        errors.push('iOS signing requires at least one bundle identifier')
-    }
-
-    if (
-      data.ios_signing_enabled &&
-      (data.ios_signing_mode === 'manual' || data.ios_signing_mode === 'hybrid')
-    ) {
-      if (!iosSigningFiles.p12File)
-        errors.push(
-          'Manual/Hybrid iOS signing requires a .p12 certificate file',
-        )
-      if (!p12Password)
-        errors.push('Manual/Hybrid iOS signing requires p12 password')
-      if (
-        bundleIds.some((bundleId) => !iosSigningFiles.profileFiles[bundleId])
-      ) {
-        errors.push(
-          'Manual/Hybrid iOS signing requires provisioning profile files for all bundle IDs',
-        )
-      }
-    }
-
-    if (
-      data.ios_signing_enabled &&
-      (data.ios_signing_mode === 'api' || data.ios_signing_mode === 'hybrid')
-    ) {
-      if (!apiKeyId) errors.push('API/Hybrid iOS signing requires API key ID')
-      if (!apiIssuerId)
-        errors.push('API/Hybrid iOS signing requires API issuer ID')
-      if (!iosSigningFiles.apiKeyFile)
-        errors.push('API/Hybrid iOS signing requires .p8 private key file')
-    }
-
-    if (errors.length > 0) {
-      setValidationErrors(errors)
-      return null
-    }
-
-    const provisioningProfiles: Array<{
-      bundle_id: string
-      profile_filename?: string
-      profile_base64?: string
-    }> = []
-    for (const bundleId of bundleIds) {
-      const profileFile = iosSigningFiles.profileFiles[bundleId]
-      if (!profileFile) continue
-      provisioningProfiles.push({
-        bundle_id: bundleId,
-        profile_filename: profileFile.name,
-        profile_base64: await fileToBase64(profileFile),
-      })
-    }
-
-    const apiPrivateKey = iosSigningFiles.apiKeyFile
-      ? await fileToUtf8(iosSigningFiles.apiKeyFile)
-      : undefined
-
-    return {
-      enabled: data.ios_signing_enabled,
-      mode: data.ios_signing_mode,
-      team_id: teamId,
-      bundle_ids: bundleIds,
-      certificate:
-        iosSigningFiles.p12File || p12Password
-          ? {
-              p12_filename: iosSigningFiles.p12File?.name,
-              p12_base64: iosSigningFiles.p12File
-                ? await fileToBase64(iosSigningFiles.p12File)
-                : undefined,
-              p12_password: p12Password,
-            }
-          : undefined,
-      provisioning_profiles: provisioningProfiles,
-      api_credentials:
-        apiKeyId || apiIssuerId || apiPrivateKey
-          ? {
-              key_id: apiKeyId,
-              issuer_id: apiIssuerId,
-              private_key_base64: apiPrivateKey
-                ? btoa(apiPrivateKey)
-                : undefined,
-            }
-          : undefined,
-    }
+    setError(null)
+    toast.success('Validation passed')
   }
 
   return (
-    <PageLayout width="wide">
+    <PageLayout width="wide" class="space-y-4 pb-20">
+      <PageMeta title="New Pipeline" noindex />
       <PageHeader
         title="New Pipeline"
-        back={{ to: `/projects/${projectId}`, label: 'Project' }}
+        back={{ to: `/projects/${params().projectId}`, label: 'Project' }}
         description="Configure a new build pipeline for this project."
       />
-      <div className="mx-auto max-w-4xl">
-        <PipelineForm
-          initialValues={emptyDefaults}
-          initialEvents={manualOnlyTriggers ? [] : ['push']}
-          initialCancelPrevious={true}
-          manualOnlyTriggers={manualOnlyTriggers}
-          onSubmit={handleSubmit}
-          onCancel={() =>
-            void navigate({ to: '/projects/$projectId', params: { projectId } })
-          }
-          submitLabel="Create"
-          isPending={
-            createMutation.isPending ||
-            updateSigningMutation.isPending ||
-            updateIosSigningMutation.isPending
-          }
-          validationErrors={validationErrors}
-        />
+
+      {error() ? (
+        <Alert variant="destructive">
+          <AlertTitle>Unable to create pipeline</AlertTitle>
+          <AlertDescription>{error()}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Card>
+        <CardContent>
+          <FormField label="Pipeline name">
+            <Input
+              value={name()}
+              onInput={(event) => setName(event.currentTarget.value)}
+              placeholder="Release"
+            />
+          </FormField>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Configuration</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <FormField label="Config source">
+            <select
+              class="h-9 w-full border border-input bg-background px-2.5 text-sm"
+              value={configMode()}
+              onChange={(event) =>
+                setConfigMode(event.currentTarget.value as 'auto' | 'explicit')
+              }
+            >
+              <option value="auto">Use repo config if found (.oore.yaml, .oore.yml)</option>
+              <option value="explicit">Use a specific config file path</option>
+            </select>
+          </FormField>
+
+          {configMode() === 'explicit' ? (
+            <FormField label="Config path">
+              <Input
+                value={configPath()}
+                onInput={(event) => setConfigPath(event.currentTarget.value)}
+                placeholder=".oore/android-release.yaml"
+              />
+            </FormField>
+          ) : null}
+
+          <div class="space-y-2">
+            <p class="text-xs font-medium text-muted-foreground">Build for platforms</p>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label class="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={platformAndroid()}
+                  onChange={(event) => setPlatformAndroid(event.currentTarget.checked)}
+                />
+                Android
+              </label>
+              <label class="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={platformIos()}
+                  onChange={(event) => setPlatformIos(event.currentTarget.checked)}
+                />
+                iOS
+              </label>
+              <label class="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={platformMacos()}
+                  onChange={(event) => setPlatformMacos(event.currentTarget.checked)}
+                />
+                macOS
+              </label>
+            </div>
+          </div>
+
+          <FormField label="Flutter version (optional)">
+            <Input
+              value={flutterVersion()}
+              onInput={(event) => setFlutterVersion(event.currentTarget.value)}
+              placeholder="3.24.0 (or stable)"
+            />
+          </FormField>
+
+          <div class="rounded border bg-muted/30 p-3">
+            <p class="mb-1 text-xs font-medium text-muted-foreground">Default build commands</p>
+            <p class="font-mono text-xs">• flutter build apk --release</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <details class="border bg-card" open>
+        <summary class="cursor-pointer px-4 py-3 text-sm font-medium">Triggers</summary>
+        <div class="space-y-4 border-t px-4 py-3">
+          <FormField label="Trigger events (comma-separated)">
+            <Input
+              value={triggerEvents()}
+              onInput={(event) => setTriggerEvents(event.currentTarget.value)}
+              placeholder="manual, webhook"
+            />
+          </FormField>
+          <FormField label="Branches (comma-separated)">
+            <Input
+              value={branches()}
+              onInput={(event) => setBranches(event.currentTarget.value)}
+              placeholder="main, release/*"
+            />
+          </FormField>
+        </div>
+      </details>
+
+      <details class="border bg-card" open>
+        <summary class="cursor-pointer px-4 py-3 text-sm font-medium">Metadata</summary>
+        <div class="space-y-4 border-t px-4 py-3">
+          <FormField label="Description (optional)">
+            <Textarea
+              value={description()}
+              onInput={(event) => setDescription(event.currentTarget.value)}
+              placeholder="Optional description"
+            />
+          </FormField>
+        </div>
+      </details>
+
+      {!canSubmit() ? (
+        <FormError>
+          Provide a pipeline name and at least one platform before creating.
+        </FormError>
+      ) : null}
+
+      <div class="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-6 py-3 backdrop-blur">
+        <div class="mx-auto flex w-full max-w-6xl items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              void navigate({
+                to: '/projects/$projectId',
+                params: { projectId: params().projectId },
+              })
+            }
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleValidate}
+          >
+            Validate
+          </Button>
+          <Button
+            type="button"
+            onClick={handleCreate}
+            disabled={createPipeline.isPending || !canSubmit()}
+          >
+            {createPipeline.isPending ? 'Creating...' : 'Create'}
+          </Button>
+        </div>
       </div>
     </PageLayout>
   )

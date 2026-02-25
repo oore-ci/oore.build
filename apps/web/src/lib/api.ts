@@ -102,25 +102,56 @@ export class ApiClientError extends Error {
 
 // ── Fetch wrapper ───────────────────────────────────────────────
 
+interface RequestOptions extends RequestInit {
+  timeoutMs?: number
+}
+
 async function request<T>(
   baseUrl: string,
   path: string,
-  options: RequestInit = {},
+  options: RequestOptions = {},
 ): Promise<T> {
-  const method = (options.method ?? 'GET').toUpperCase()
+  const { timeoutMs, ...fetchOptions } = options
+  const method = (fetchOptions.method ?? 'GET').toUpperCase()
   // Only set Content-Type on requests with a body. GET/HEAD without it
   // avoids triggering CORS preflight (important for tunneled backends).
   const headers: Record<string, string> = {
     ...(method !== 'GET' && method !== 'HEAD'
       ? { 'Content-Type': 'application/json' }
       : {}),
-    ...(options.headers as Record<string, string>),
+    ...(fetchOptions.headers as Record<string, string>),
   }
 
-  const res = await fetch(`${baseUrl}${path}`, {
-    ...options,
-    headers,
-  })
+  const abortController =
+    timeoutMs != null && timeoutMs > 0 && !fetchOptions.signal
+      ? new AbortController()
+      : null
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  let res: Response
+  try {
+    const fetchPromise = fetch(`${baseUrl}${path}`, {
+      ...fetchOptions,
+      headers,
+      signal: abortController?.signal ?? fetchOptions.signal,
+    })
+
+    if (timeoutMs != null && timeoutMs > 0) {
+      const timeoutPromise = new Promise<Response>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          abortController?.abort()
+          reject(new Error(`Request timeout after ${timeoutMs}ms`))
+        }, timeoutMs)
+      })
+      res = await Promise.race([fetchPromise, timeoutPromise])
+    } else {
+      res = await fetchPromise
+    }
+  } catch (error) {
+    throw error
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId)
+  }
 
   if (!res.ok) {
     let body: ApiError
@@ -160,7 +191,9 @@ export function getApiErrorMessage(
 // ── API functions ───────────────────────────────────────────────
 
 export function getSetupStatus(baseUrl: string): Promise<SetupStatus> {
-  return request<SetupStatus>(baseUrl, '/v1/public/setup-status')
+  return request<SetupStatus>(baseUrl, '/v1/public/setup-status', {
+    timeoutMs: 4_000,
+  })
 }
 
 export function verifyBootstrapToken(
@@ -201,6 +234,7 @@ export function setupOidcStart(
       method: 'POST',
       headers: authHeaders(sessionToken),
       body: JSON.stringify({ redirect_uri: redirectUri }),
+      timeoutMs: 8_000,
     },
   )
 }
@@ -218,6 +252,7 @@ export function setupOidcVerify(
       method: 'POST',
       headers: authHeaders(sessionToken),
       body: JSON.stringify({ code, state }),
+      timeoutMs: 8_000,
     },
   )
 }
@@ -383,6 +418,7 @@ export function localLogin(
   return request<LocalLoginResponse>(baseUrl, '/v1/auth/local/login', {
     method: 'POST',
     body: JSON.stringify(data),
+    timeoutMs: 6_000,
   })
 }
 
@@ -391,6 +427,7 @@ export function trustedProxyLogin(
 ): Promise<LocalLoginResponse> {
   return request<LocalLoginResponse>(baseUrl, '/v1/auth/trusted-proxy/login', {
     method: 'POST',
+    timeoutMs: 6_000,
   })
 }
 

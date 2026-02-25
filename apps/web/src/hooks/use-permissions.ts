@@ -1,9 +1,5 @@
 import { useAuthStore } from '@/stores/auth-store'
 
-/**
- * Client-side RBAC matrix mirroring crates/oored/rbac_policy.csv.
- * Used for UI gating only — the backend enforces the real policy.
- */
 const RBAC_MATRIX: Record<string, Set<string>> = {
   owner: new Set([
     'instance_settings:read',
@@ -82,7 +78,9 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
 }
 
 export function useHasPermission(resource: string, action: string): boolean {
-  const role = useAuthStore((s) => s.user?.role)
-  if (!role) return false
-  return RBAC_MATRIX[role].has(`${resource}:${action}`)
+  const role = useAuthStore((state) => state.user?.role)
+  const key = `${resource}:${action}`
+  const currentRole = role()
+  if (!currentRole) return false
+  return RBAC_MATRIX[currentRole]?.has(key) === true
 }

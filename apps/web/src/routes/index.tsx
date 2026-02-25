@@ -1,6 +1,5 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from 'solid-js'
+import { Link, createFileRoute, useNavigate } from '@tanstack/solid-router'
 import {
   Add01Icon,
   ArrowRight01Icon,
@@ -12,7 +11,9 @@ import type { RuntimeMode } from '@/lib/types'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import { HugeIcon } from '@/components/huge-icon'
+import { PageHeader } from '@/components/page-header'
+import { PageLayout } from '@/components/page-layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,8 +27,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import PageHeader from '@/components/page-header'
-import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
 import { useBuilds } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
@@ -35,8 +34,8 @@ import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus, localLogin } from '@/lib/api'
-import { getStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
+import { getStatusVariant } from '@/lib/status-variants'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 
@@ -104,26 +103,29 @@ async function detectReachableLocalDaemonUrl(): Promise<string | null> {
 }
 
 function IndexPage() {
-  const instance = useActiveInstance()
-  const { data: status, isLoading, error } = useSetupStatus()
   const navigate = useNavigate()
-  const [showAddInstance, setShowAddInstance] = useState(false)
-  const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
-    useState(false)
-  const [isAutoLocalSigningIn, setIsAutoLocalSigningIn] = useState(false)
-  const autoDetectAttemptedRef = useRef(false)
-  const autoLocalLoginInstanceRef = useRef<string | null>(null)
-  const authToken = useAuthStore((s) => s.token)
-  const authExpiresAt = useAuthStore((s) => s.expiresAt)
-  const authUser = useAuthStore((s) => s.user)
-  const clearAuth = useAuthStore((s) => s.clearAuth)
-  const setAuth = useAuthStore((s) => s.setAuth)
+  const instance = useActiveInstance()
+  const setupStatus = useSetupStatus()
 
-  useEffect(() => {
-    if (instance || autoDetectAttemptedRef.current) return
+  const token = useAuthStore((state) => state.token)
+  const expiresAt = useAuthStore((state) => state.expiresAt)
+  const authUser = useAuthStore((state) => state.user)
+  const clearAuth = useAuthStore((state) => state.clearAuth)
+  const setAuth = useAuthStore((state) => state.setAuth)
+
+  const [showAddInstance, setShowAddInstance] = createSignal(false)
+  const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
+    createSignal(false)
+  const [isAutoLocalSigningIn, setIsAutoLocalSigningIn] = createSignal(false)
+  const [autoDetectAttempted, setAutoDetectAttempted] = createSignal(false)
+  const [autoLocalLoginInstanceId, setAutoLocalLoginInstanceId] =
+    createSignal<string | null>(null)
+
+  createEffect(() => {
+    if (instance() || autoDetectAttempted()) return
     if (!isLoopbackHostname(window.location.hostname)) return
 
-    autoDetectAttemptedRef.current = true
+    setAutoDetectAttempted(true)
     setIsDetectingLocalInstance(true)
 
     void detectReachableLocalDaemonUrl()
@@ -138,16 +140,15 @@ function IndexPage() {
           existingInstance?.id ?? store.addInstance('Local', detectedUrl)
         store.setActiveInstance(instanceId)
       })
-      .catch(() => {
-        // No reachable local daemon; keep manual add-instance path.
-      })
       .finally(() => {
         setIsDetectingLocalInstance(false)
       })
-  }, [instance])
+  })
 
-  useEffect(() => {
-    if (!status || !instance) return
+  createEffect(() => {
+    const status = setupStatus.data
+    const activeInstance = instance()
+    if (!status || !activeInstance) return
 
     if (status.setup_mode && status.runtime_mode !== 'local') {
       void navigate({ to: '/setup' })
@@ -156,34 +157,36 @@ function IndexPage() {
 
     const now = Math.floor(Date.now() / 1000)
     const hasValidToken =
-      !!authToken && authExpiresAt != null && authExpiresAt > now
+      !!token() && expiresAt() != null && (expiresAt() as number) > now
 
     if (status.runtime_mode === 'local') {
       const uiIsLoopback = isLoopbackHostname(window.location.hostname)
       const backendIsLoopback = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
+        resolveBackendHostname(activeInstance.url),
       )
 
       if (!uiIsLoopback || !backendIsLoopback) {
         if (!hasValidToken) {
-          clearAuth()
+          clearAuth()()
           void navigate({ to: '/login' })
         }
         return
       }
 
       if (hasValidToken) return
-      if (autoLocalLoginInstanceRef.current === instance.id) return
+      if (autoLocalLoginInstanceId() === activeInstance.id) return
 
-      autoLocalLoginInstanceRef.current = instance.id
+      setAutoLocalLoginInstanceId(activeInstance.id)
       setIsAutoLocalSigningIn(true)
-      clearAuth()
-      void localLogin(instance.url, {})
+      clearAuth()()
+
+      void localLogin(activeInstance.url, {})
         .then((response) => {
           if (!response.user.user_id || !response.user.role) {
             throw new Error('Incomplete user profile received from server')
           }
-          setAuth(
+
+          setAuth()(
             response.session_token,
             response.expires_at,
             {
@@ -197,8 +200,8 @@ function IndexPage() {
           )
         })
         .catch(() => {
-          autoLocalLoginInstanceRef.current = null
-          clearAuth()
+          setAutoLocalLoginInstanceId(null)
+          clearAuth()()
           void navigate({ to: '/login' })
         })
         .finally(() => {
@@ -208,429 +211,397 @@ function IndexPage() {
     }
 
     if (status.is_configured && !hasValidToken) {
-      clearAuth()
+      clearAuth()()
       void navigate({ to: '/login' })
     }
-  }, [status, instance, authToken, authExpiresAt, clearAuth, setAuth, navigate])
-
-  if (!instance && isDetectingLocalInstance) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <PageMeta />
-        <div className="flex items-center gap-3">
-          <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Detecting local daemon...
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  if (isAutoLocalSigningIn) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <PageMeta />
-        <div className="flex items-center gap-3">
-          <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">Signing in locally...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!instance) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center p-6">
-        <PageMeta />
-        <div className="w-full max-w-md space-y-8">
-          <div className="space-y-3 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center">
-              <img
-                src="/logo.svg"
-                alt="Oore CI logo"
-                className="size-full"
-              />
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
-            <p className="text-sm text-muted-foreground">
-              Self-hosted mobile CI and app distribution platform.
-              <br />
-              Connect a backend instance to begin.
-            </p>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Instance Registry
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Add a backend instance to start setup or connect to an
-                already-configured daemon.
-              </p>
-              <Button
-                onClick={() => setShowAddInstance(true)}
-                className="w-full"
-              >
-                <HugeiconsIcon icon={Add01Icon} size={16} />
-                Add Instance
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        <AddInstanceDialog
-          open={showAddInstance}
-          onOpenChange={setShowAddInstance}
-        />
-      </div>
-    )
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <PageMeta />
-        <div className="flex items-center gap-3">
-          <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Connecting to backend...
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-6">
-        <PageMeta />
-        <div className="w-full max-w-md">
-          <Alert variant="destructive">
-            <AlertTitle>Connection failed</AlertTitle>
-            <AlertDescription>
-              Unable to reach the oore daemon. Make sure{' '}
-              <code className="bg-muted px-1 py-0.5 text-xs">oored</code> is
-              running.
-            </AlertDescription>
-          </Alert>
-        </div>
-      </div>
-    )
-  }
-
-  if (status?.is_configured) {
-    return (
-      <>
-        <PageMeta />
-        <ConfiguredDashboard
-          userName={authUser?.email}
-          runtimeMode={status.runtime_mode}
-        />
-      </>
-    )
-  }
+  })
 
   return (
-    <div className="flex flex-1 items-center justify-center">
-      <PageMeta />
-      <div className="flex items-center gap-3">
-        <Spinner className="size-5" />
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
-    </div>
+    <Switch>
+      <Match when={!instance() && isDetectingLocalInstance()}>
+        <div class="flex flex-1 items-center justify-center">
+          <PageMeta />
+          <div class="flex items-center gap-3">
+            <Spinner class="size-5" />
+            <p class="text-sm text-muted-foreground">Detecting local daemon...</p>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={isAutoLocalSigningIn()}>
+        <div class="flex flex-1 items-center justify-center">
+          <PageMeta />
+          <div class="flex items-center gap-3">
+            <Spinner class="size-5" />
+            <p class="text-sm text-muted-foreground">Signing in locally...</p>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={!instance()}>
+        <div class="flex flex-1 flex-col items-center justify-center p-6">
+          <PageMeta />
+          <div class="w-full max-w-md space-y-8">
+            <div class="space-y-3 text-center">
+              <div class="mx-auto flex size-14 items-center justify-center">
+                <img src="/logo.svg" alt="Oore CI logo" class="size-full" />
+              </div>
+              <h1 class="text-3xl font-bold tracking-tight">Oore CI</h1>
+              <p class="text-sm text-muted-foreground">
+                Self-hosted mobile CI and app distribution platform.
+                <br />
+                Connect a backend instance to begin.
+              </p>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle class="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                  Instance Registry
+                </CardTitle>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <p class="text-sm text-muted-foreground">
+                  Add a backend instance to start setup or connect to an
+                  already-configured daemon.
+                </p>
+                <Button
+                  onClick={() => setShowAddInstance(true)}
+                  class="w-full"
+                >
+                  <HugeIcon icon={Add01Icon} size={16} />
+                  Add Instance
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          <AddInstanceDialog
+            open={showAddInstance()}
+            onOpenChange={setShowAddInstance}
+          />
+        </div>
+      </Match>
+
+      <Match when={!!instance() && setupStatus.isLoading}>
+        <div class="flex flex-1 items-center justify-center">
+          <PageMeta />
+          <div class="flex items-center gap-3">
+            <Spinner class="size-5" />
+            <p class="text-sm text-muted-foreground">Connecting to backend...</p>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={!!instance() && !!setupStatus.error}>
+        <div class="flex flex-1 items-center justify-center p-6">
+          <PageMeta />
+          <div class="w-full max-w-md">
+            <Alert variant="destructive">
+              <AlertTitle>Connection failed</AlertTitle>
+              <AlertDescription>
+                Unable to reach the oore daemon. Make sure{' '}
+                <code class="bg-muted px-1 py-0.5 text-xs">oored</code> is
+                running.
+              </AlertDescription>
+            </Alert>
+          </div>
+        </div>
+      </Match>
+
+      <Match when={!!setupStatus.data?.is_configured}>
+        <>
+          <PageMeta />
+          <ConfiguredDashboard
+            userName={authUser()?.email}
+            runtimeMode={setupStatus.data?.runtime_mode ?? 'local'}
+          />
+        </>
+      </Match>
+
+      <Match when>
+        <div class="flex flex-1 items-center justify-center">
+          <PageMeta />
+          <div class="flex items-center gap-3">
+            <Spinner class="size-5" />
+            <p class="text-sm text-muted-foreground">Loading...</p>
+          </div>
+        </div>
+      </Match>
+    </Switch>
   )
 }
 
-function ConfiguredDashboard({
-  userName,
-  runtimeMode,
-}: {
+function ConfiguredDashboard(props: {
   userName?: string
   runtimeMode: RuntimeMode
 }) {
   const navigate = useNavigate()
-  const [triggerOpen, setTriggerOpen] = useState(false)
-  const [triggerProjectId, setTriggerProjectId] = useState<string | undefined>()
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteBuilds = useHasPermission('builds', 'write')
 
   const projectsQuery = useProjects({ limit: 50 })
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
   const integrationsQuery = useIntegrations()
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
-
   const activeBuildsQuery = useBuilds({ limit: 10 })
-  const activeBuilds = useMemo(() => {
-    const all = activeBuildsQuery.data?.builds ?? []
-    return all.filter((b) => b.status === 'queued' || b.status === 'running')
-  }, [activeBuildsQuery.data?.builds])
-
   const recentBuildsQuery = useBuilds({ limit: 50 })
-  const recentBuilds = useMemo(
-    () => recentBuildsQuery.data?.builds ?? [],
-    [recentBuildsQuery.data?.builds],
-  )
-  const hasProjects = projects.length > 0
-  const integrationsResolved =
-    !integrationsQuery.isLoading && !integrationsQuery.error
-  const noConnectedSources =
-    runtimeMode === 'remote' &&
-    integrationsResolved &&
-    activeIntegrationsCount === 0
-  const integrationConnectTo = '/settings/integrations'
-  const canShowRunBuild = canWriteBuilds && hasProjects
 
-  // Derive last build status per project from recent builds
-  const lastBuildByProject = useMemo(() => {
+  const projects = createMemo(() => projectsQuery.data?.projects ?? [])
+  const integrations = createMemo(
+    () => integrationsQuery.data?.integrations ?? [],
+  )
+  const activeBuilds = createMemo(() => {
+    const all = activeBuildsQuery.data?.builds ?? []
+    return all.filter((build) => build.status === 'queued' || build.status === 'running')
+  })
+  const recentBuilds = createMemo(() => recentBuildsQuery.data?.builds ?? [])
+
+  const activeIntegrationsCount = createMemo(
+    () => integrations().filter((integration) => integration.status === 'active').length,
+  )
+
+  const hasProjects = createMemo(() => projects().length > 0)
+  const integrationsResolved = createMemo(
+    () => !integrationsQuery.isLoading && !integrationsQuery.error,
+  )
+  const noConnectedSources = createMemo(
+    () =>
+      props.runtimeMode === 'remote' &&
+      integrationsResolved() &&
+      activeIntegrationsCount() === 0,
+  )
+
+  const canShowRunBuild = createMemo(() => canWriteBuilds && hasProjects())
+
+  const lastBuildByProject = createMemo(() => {
     const map = new Map<string, string>()
-    for (const build of recentBuilds) {
+    for (const build of recentBuilds()) {
       if (!map.has(build.project_id)) {
         map.set(build.project_id, build.status)
       }
     }
     return map
-  }, [recentBuilds])
+  })
 
-  function handleTriggerForProject(projectId: string) {
-    setTriggerProjectId(projectId)
-    setTriggerOpen(true)
+  function handleTriggerForProject(_projectId: string) {
+    void navigate({ to: '/builds' })
   }
 
   function handleGlobalTrigger() {
-    setTriggerProjectId(undefined)
-    setTriggerOpen(true)
+    void navigate({ to: '/builds' })
   }
 
   return (
     <PageLayout width="wide">
       <PageHeader
-        title={userName ? `Welcome, ${userName.split('@')[0]}` : 'Dashboard'}
+        title={
+          props.userName
+            ? `Welcome, ${props.userName.split('@')[0]}`
+            : 'Dashboard'
+        }
         description="Project overview and build activity."
         actions={
-          canShowRunBuild ? (
+          canShowRunBuild() ? (
             <Button onClick={handleGlobalTrigger}>
-              <HugeiconsIcon icon={PlayIcon} size={16} />
+              <HugeIcon icon={PlayIcon} size={16} />
               Run Build
             </Button>
           ) : undefined
         }
       />
 
-      {/* Active Builds */}
-      {activeBuilds.length > 0 ? (
-        <section className="space-y-2">
-          <div className="flex items-center gap-2">
-            <HugeiconsIcon
+      <Show when={activeBuilds().length > 0}>
+        <section class="space-y-2">
+          <div class="flex items-center gap-2">
+            <HugeIcon
               icon={Loading03Icon}
               size={14}
-              className="animate-spin text-info"
+              class="animate-spin text-info"
             />
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <h2 class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Active Builds
             </h2>
-            <Badge variant="info">{activeBuilds.length}</Badge>
+            <Badge variant="info">{activeBuilds().length}</Badge>
           </div>
-          <div className="space-y-1">
-            {activeBuilds.map((build) => (
-              <ActiveBuildBanner key={build.id} build={build} />
-            ))}
+
+          <div class="space-y-1">
+            <For each={activeBuilds()}>
+              {(build) => <ActiveBuildBanner build={build} />}
+            </For>
           </div>
         </section>
-      ) : null}
+      </Show>
 
-      {/* Projects Grid */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <section class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Projects
           </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            render={<Link to="/projects" />}
-            nativeButton={false}
-          >
-            View all
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
-          </Button>
+          <Link to="/projects">
+            <Button variant="ghost" size="sm">
+              View all
+              <HugeIcon icon={ArrowRight01Icon} size={14} />
+            </Button>
+          </Link>
         </div>
 
-        {projectsQuery.isLoading ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Skeleton className="h-32" />
-            <Skeleton className="h-32" />
-            <Skeleton className="h-32" />
-          </div>
-        ) : projects.length === 0 ? (
-          <Card>
-            <CardContent className="space-y-3 py-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                {noConnectedSources
-                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
-                  : 'No projects yet.'}
-              </p>
-              <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
-                {canWriteProjects ? (
-                  <Button
-                    render={
-                      <Link to="/projects" search={{ openCreate: '1' }} />
-                    }
-                    nativeButton={false}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} size={14} />
-                    Create Project
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Owner/Admin/Developer required to create projects.
+        <Show
+          when={!projectsQuery.isLoading}
+          fallback={
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Skeleton class="h-32" />
+              <Skeleton class="h-32" />
+              <Skeleton class="h-32" />
+            </div>
+          }
+        >
+          <Show
+            when={projects().length > 0}
+            fallback={
+              <Card>
+                <CardContent class="space-y-3 py-8 text-center">
+                  <p class="text-sm text-muted-foreground">
+                    {noConnectedSources()
+                      ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
+                      : 'No projects yet.'}
                   </p>
-                )}
-
-                {noConnectedSources ? (
-                  canWriteIntegrations ? (
-                    <Button
-                      variant="outline"
-                      render={<Link to={integrationConnectTo} />}
-                      nativeButton={false}
-                    >
-                      Connect Source
-                    </Button>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Owner/Admin required to connect a source.
-                    </p>
-                  )
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                lastBuildStatus={lastBuildByProject.get(project.id)}
-                onTriggerBuild={handleTriggerForProject}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Recent Builds */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Recent Builds
-          </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            render={<Link to="/builds" />}
-            nativeButton={false}
-          >
-            View all
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
-          </Button>
-        </div>
-
-        {recentBuildsQuery.isLoading ? (
-          <Card>
-            <CardContent className="space-y-3">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </CardContent>
-          </Card>
-        ) : recentBuilds.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">No builds yet.</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Build</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Branch</TableHead>
-                    <TableHead>Commit</TableHead>
-                    <TableHead>When</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recentBuilds.map((build) => (
-                    <TableRow
-                      key={build.id}
-                      className="group cursor-pointer"
-                      onClick={() =>
-                        void navigate({
-                          to: '/builds/$buildId',
-                          params: { buildId: build.id },
-                        })
+                  <div class="flex flex-col items-center justify-center gap-2 sm:flex-row">
+                    <Show
+                      when={canWriteProjects}
+                      fallback={
+                        <p class="text-xs text-muted-foreground">
+                          Owner/Admin/Developer required to create projects.
+                        </p>
                       }
                     >
-                      <TableCell className="font-mono text-sm group-hover:underline">
-                        #{build.build_number}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusVariant(build.status)}>
-                          {build.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.branch ?? 'n/a'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.commit_sha
-                          ? build.commit_sha.slice(0, 8)
-                          : 'n/a'}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {relativeTime(build.created_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+                      <Link to="/projects" search={{ openCreate: '1' }}>
+                        <Button>
+                          <HugeIcon icon={Add01Icon} size={14} />
+                          Create Project
+                        </Button>
+                      </Link>
+                    </Show>
+
+                    <Show when={noConnectedSources()}>
+                      <Show
+                        when={canWriteIntegrations}
+                        fallback={
+                          <p class="text-xs text-muted-foreground">
+                            Owner/Admin required to connect a source.
+                          </p>
+                        }
+                      >
+                        <Link to="/settings/integrations">
+                          <Button variant="outline">Connect Source</Button>
+                        </Link>
+                      </Show>
+                    </Show>
+                  </div>
+                </CardContent>
+              </Card>
+            }
+          >
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <For each={projects()}>
+                {(project) => (
+                  <ProjectCard
+                    project={project}
+                    lastBuildStatus={lastBuildByProject().get(project.id)}
+                    onTriggerBuild={handleTriggerForProject}
+                  />
+                )}
+              </For>
+            </div>
+          </Show>
+        </Show>
       </section>
 
-      <TriggerBuildDialog
-        open={triggerOpen}
-        onOpenChange={setTriggerOpen}
-        fixedProjectId={triggerProjectId}
-        description="Choose a project and pipeline to run a manual build."
-        onBuildCreated={(buildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId },
-          })
-        }}
-      />
+      <section class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Recent Builds
+          </h2>
+          <Link to="/builds">
+            <Button variant="ghost" size="sm">
+              View all
+              <HugeIcon icon={ArrowRight01Icon} size={14} />
+            </Button>
+          </Link>
+        </div>
+
+        <Show
+          when={!recentBuildsQuery.isLoading}
+          fallback={
+            <Card>
+              <CardContent class="space-y-3">
+                <Skeleton class="h-8 w-full" />
+                <Skeleton class="h-8 w-full" />
+                <Skeleton class="h-8 w-full" />
+              </CardContent>
+            </Card>
+          }
+        >
+          <Show
+            when={recentBuilds().length > 0}
+            fallback={
+              <Card>
+                <CardContent class="py-8 text-center">
+                  <p class="text-sm text-muted-foreground">No builds yet.</p>
+                </CardContent>
+              </Card>
+            }
+          >
+            <Card>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Build</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Branch</TableHead>
+                      <TableHead>Commit</TableHead>
+                      <TableHead>When</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <For each={recentBuilds()}>
+                      {(build) => (
+                        <TableRow>
+                          <TableCell class="font-mono text-sm">
+                            <Link
+                              to="/builds/$buildId"
+                              params={{ buildId: build.id }}
+                              class="hover:underline"
+                            >
+                              #{build.build_number}
+                            </Link>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusVariant(build.status)}>
+                              {build.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell class="font-mono text-xs text-muted-foreground">
+                            {build.branch ?? 'n/a'}
+                          </TableCell>
+                          <TableCell class="font-mono text-xs text-muted-foreground">
+                            {build.commit_sha
+                              ? build.commit_sha.slice(0, 8)
+                              : 'n/a'}
+                          </TableCell>
+                          <TableCell class="text-xs text-muted-foreground">
+                            {relativeTime(build.created_at)}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </For>
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </Show>
+        </Show>
+      </section>
     </PageLayout>
   )
 }

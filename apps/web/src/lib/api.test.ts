@@ -114,9 +114,12 @@ describe('getSetupStatus', () => {
 
     const result = await getSetupStatus('')
 
-    expect(mockFetch).toHaveBeenCalledWith('/v1/public/setup-status', {
-      headers: {},
-    })
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/v1/public/setup-status',
+      expect.objectContaining({
+        headers: {},
+      }),
+    )
     expect(result).toEqual(payload)
   })
 
@@ -134,7 +137,7 @@ describe('getSetupStatus', () => {
 
     expect(mockFetch).toHaveBeenCalledWith(
       'https://ci.example.com/v1/public/setup-status',
-      { headers: {} },
+      expect.objectContaining({ headers: {} }),
     )
   })
 })

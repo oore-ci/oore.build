@@ -1,49 +1,47 @@
-import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import type { JSX } from 'solid-js'
+import { Link } from '@tanstack/solid-router'
 import { ArrowLeft02Icon } from '@hugeicons/core-free-icons'
+import { HugeIcon } from '@/components/huge-icon'
+import { cn } from '@/lib/utils'
 
 interface PageHeaderProps {
   title: string
   description?: string
-  actions?: React.ReactNode
+  actions?: JSX.Element
   back?: { to: string; label: string }
-  meta?: React.ReactNode
+  meta?: JSX.Element
+  class?: string
 }
 
-export default function PageHeader({
-  title,
-  description,
-  actions,
-  back,
-  meta,
-}: PageHeaderProps) {
+export function PageHeader(props: PageHeaderProps) {
   return (
-    <header className="space-y-3 pb-6">
-      {back && (
+    <header class={cn('space-y-3 pb-6', props.class)}>
+      {props.back ? (
         <Link
-          to={back.to}
-          className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+          to={props.back.to as never}
+          class="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
         >
-          <HugeiconsIcon icon={ArrowLeft02Icon} size={14} />
-          {back.label}
+          <HugeIcon icon={ArrowLeft02Icon} size={14} />
+          {props.back.label}
         </Link>
-      )}
+      ) : null}
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0 space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
-          {description ? (
-            <p className="text-sm text-muted-foreground">{description}</p>
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div class="min-w-0 space-y-1">
+          <h1 class="text-3xl font-bold tracking-tight">{props.title}</h1>
+          {props.description ? (
+            <p class="text-sm text-muted-foreground">{props.description}</p>
           ) : null}
         </div>
-        {actions ? (
-          <div className="flex flex-wrap items-center gap-2">{actions}</div>
+
+        {props.actions ? (
+          <div class="flex flex-wrap items-center gap-2">{props.actions}</div>
         ) : null}
       </div>
 
-      {meta ? (
-        <div className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
-          {meta}
+      {props.meta ? (
+        <div class="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
+          {props.meta}
         </div>
       ) : null}
     </header>

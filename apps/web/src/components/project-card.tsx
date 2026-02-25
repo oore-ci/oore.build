@@ -1,12 +1,11 @@
-import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Link } from '@tanstack/solid-router'
 import { PlayIcon, Setting07Icon } from '@hugeicons/core-free-icons'
-
 import type { Project } from '@/lib/types'
-import { getStatusVariant } from '@/lib/status-variants'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { HugeIcon } from '@/components/huge-icon'
+import { getStatusVariant } from '@/lib/status-variants'
 
 interface ProjectCardProps {
   project: Project
@@ -15,71 +14,63 @@ interface ProjectCardProps {
   onTriggerBuild: (projectId: string) => void
 }
 
-export default function ProjectCard({
-  project,
-  pipelineCount,
-  lastBuildStatus,
-  onTriggerBuild,
-}: ProjectCardProps) {
+export default function ProjectCard(props: ProjectCardProps) {
   return (
-    <Card className="group relative">
-      <CardContent className="space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+    <Card class="group relative">
+      <CardContent class="space-y-3">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
             <Link
               to="/projects/$projectId"
-              params={{ projectId: project.id }}
-              className="text-sm font-semibold hover:underline"
+              params={{ projectId: props.project.id }}
+              class="text-sm font-semibold hover:underline"
             >
-              {project.name}
+              {props.project.name}
             </Link>
-            {project.description ? (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {project.description}
+            {props.project.description ? (
+              <p class="mt-0.5 truncate text-xs text-muted-foreground">
+                {props.project.description}
               </p>
             ) : null}
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            render={
-              <Link
-                to="/projects/$projectId"
-                params={{ projectId: project.id }}
-              />
-            }
-            nativeButton={false}
+
+          <Link
+            to="/projects/$projectId"
+            params={{ projectId: props.project.id }}
+            class="inline-flex size-7 shrink-0 items-center justify-center border border-transparent hover:border-border hover:bg-muted"
+            aria-label={`Open ${props.project.name}`}
           >
-            <HugeiconsIcon icon={Setting07Icon} size={14} />
-          </Button>
+            <HugeIcon icon={Setting07Icon} size={14} />
+          </Link>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          {pipelineCount != null ? (
+        <div class="flex items-center gap-2 text-xs text-muted-foreground">
+          {props.pipelineCount != null ? (
             <span>
-              {pipelineCount} pipeline{pipelineCount !== 1 ? 's' : ''}
+              {props.pipelineCount} pipeline
+              {props.pipelineCount !== 1 ? 's' : ''}
             </span>
           ) : null}
-          {lastBuildStatus ? (
+
+          {props.lastBuildStatus ? (
             <Badge
-              variant={getStatusVariant(lastBuildStatus)}
-              className="text-[10px]"
+              variant={getStatusVariant(props.lastBuildStatus)}
+              class="text-[10px]"
             >
-              {lastBuildStatus}
+              {props.lastBuildStatus}
             </Badge>
           ) : (
-            <span className="italic">No builds</span>
+            <span class="italic">No builds</span>
           )}
         </div>
 
         <Button
           size="sm"
           variant="outline"
-          className="w-full"
-          onClick={() => onTriggerBuild(project.id)}
+          class="w-full"
+          onClick={() => props.onTriggerBuild(props.project.id)}
         >
-          <HugeiconsIcon icon={PlayIcon} size={14} />
+          <HugeIcon icon={PlayIcon} size={14} />
           Run
         </Button>
       </CardContent>

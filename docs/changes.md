@@ -12,6 +12,22 @@ Rules:
 
 ## 2026-02-25
 
+- SolidJS frontend migration (parallel app) and governance realignment for `apps/web`:
+  - Added `apps/web-solid` with SolidJS + TanStack Solid Router + Solid Query, file-based routes, preserved backend/API contracts, and CSR-optimized router defaults.
+  - Performed cutover swap: `apps/web` (React) moved to `apps/web-react-legacy`; `apps/web-solid` promoted to `apps/web`.
+  - Replaced prior placeholder routes in the Solid app with working implementations for settings/integrations/users/runners and pipeline edit flow, plus migration hooks for integrations/runners/artifact settings/auth user management.
+  - Migrated route forms to `@tanstack/solid-form` + `zod` with shared form field wrappers (`login`, `setup/*`, project/pipeline create+edit, users invite, preferences, and GitLab integration), replacing ad hoc signal-driven form state for those flows.
+  - Fixed dashboard/auth loader hangs against unreachable instances by adding API request timeouts for setup/login/OIDC callback flows, adding an explicit dashboard "connecting" state while setup status loads, ensuring callback exchange fails closed with timeout errors instead of spinning indefinitely, and clearing the static `index.html` bootstrap loader (`.app-loading`) at app boot so it cannot persist over mounted UI.
+  - Added bundle budget enforcement tooling (`tools/check-web-bundle-budget.sh`) and Make targets (`dev-web-react-legacy`, `build-web-react-legacy`, `check-web-bundle-budget`).
+  - Feature dossier: https://linear.app/oorebuild/document/feature-solidjs-tanstack-router-capability-dossier-csr-rewrite-2026-02-b24e07aa1954
+  - ADR-0011: https://linear.app/oorebuild/document/adr-0011-adopt-solidjs-tanstack-router-for-web-frontend-rewrite-bef060bf35e2
+  - Platform Contract amendment: https://linear.app/oorebuild/document/platform-contract-amendment-solid-frontend-stack-for-v1-web-ui-15c5049cc65e
+  - Strict Guidelines amendment: https://linear.app/oorebuild/document/strict-guidelines-amendment-solidjs-web-frontend-architecture-16cbe8268a68
+- Solid web UI parity hardening against legacy React UI screenshots:
+  - Updated `apps/web` shell/header/sidebar styling and breadcrumb behavior to align with legacy visual contracts (including instance header treatment, nav active states, and top-bar breadcrumb rendering).
+  - Restored project and pipeline detail action rows (`Disable/Enable`, `Permalink`, right-aligned `Details`) and corrected projects table relative-time display via shared formatter logic.
+  - Aligned pipeline create/edit page affordances with legacy behavior (`Validate` action, `Save` label parity, route breadcrumb labels).
+  - Feature dossier: https://linear.app/oorebuild/document/feature-solidjs-tanstack-router-capability-dossier-csr-rewrite-2026-02-b24e07aa1954
 - OOR-65 follow-up: fixed Pages post-deploy verification false negatives in tag releases when deployment metadata/environment shape differs from strict assumptions (for example short commit hashes and/or preview-vs-production listing differences).
   - `tools/verify-pages-deploy.sh` now supports robust commit metadata matching (`commit_hash`, `commitHash`, `commit_sha`, `sha`, `commit`) plus commit-message fallback, and uses environment fallback order in `auto` mode (`production -> preview -> all` for `stable`, `preview -> production -> all` otherwise).
   - Added `PAGES_VERIFY_ENVIRONMENT` control (`auto|production|preview|all`) and expanded summary output with matched environment/branch/commit for faster diagnosis.

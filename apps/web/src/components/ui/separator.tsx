@@ -1,23 +1,25 @@
-import { Separator as SeparatorPrimitive } from '@base-ui/react/separator'
-
+import type { JSX } from 'solid-js'
 import { cn } from '@/lib/utils'
 
-function Separator({
-  className,
-  orientation = 'horizontal',
-  ...props
-}: SeparatorPrimitive.Props) {
+interface SeparatorProps extends JSX.HTMLAttributes<HTMLDivElement> {
+  class?: string
+  orientation?: 'horizontal' | 'vertical'
+}
+
+export function Separator(props: SeparatorProps) {
+  const orientation = () => props.orientation ?? 'horizontal'
+  const { class: className, orientation: _orientation, ...rest } = props
+
   return (
-    <SeparatorPrimitive
-      data-slot="separator"
-      orientation={orientation}
-      className={cn(
-        'bg-border shrink-0 data-horizontal:h-px data-horizontal:w-full data-vertical:w-px data-vertical:self-stretch',
+    <div
+      role="separator"
+      aria-orientation={orientation()}
+      class={cn(
+        'shrink-0 bg-border',
+        orientation() === 'horizontal' ? 'h-px w-full' : 'h-full w-px',
         className,
       )}
-      {...props}
+      {...rest}
     />
   )
 }
-
-export { Separator }

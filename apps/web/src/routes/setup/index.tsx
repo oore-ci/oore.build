@@ -1,177 +1,122 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { createSignal } from 'solid-js'
+import { createForm } from '@tanstack/solid-form'
+import { createFileRoute, useNavigate } from '@tanstack/solid-router'
 import z from 'zod'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { ApiClientError } from '@/lib/api'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { useSetupStatus, useVerifyBootstrapToken } from '@/hooks/use-setup'
+import { Button } from '@/components/ui/button'
+import { FormField } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
+import { useVerifyBootstrapToken } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
-import { getApiErrorMessage } from '@/lib/api'
-import { PageMeta } from '@/lib/seo'
-
-const bootstrapTokenSchema = z.object({
-  token: z.string().min(1, 'Bootstrap token is required'),
-})
-
-type BootstrapTokenForm = z.infer<typeof bootstrapTokenSchema>
 
 export const Route = createFileRoute('/setup/')({
-  beforeLoad: () => {
-    // Instance guard is handled by the parent /setup route.
-    // No session token required for the bootstrap step.
-  },
-  component: BootstrapTokenStep,
-  errorComponent: BootstrapTokenError,
+  component: SetupTokenPage,
 })
 
-function BootstrapTokenError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
-
-/** Map backend state to the wizard step index. */
-function stateToStep(
-  state: string,
-  runtimeMode: 'local' | 'remote' | undefined,
-): number {
-  if (state === 'bootstrap_pending' || state === 'uninitialized') {
-    return 1 // Mode selection
-  }
-
-  if (runtimeMode === 'local') {
-    switch (state) {
-      case 'idp_configured':
-        return 2
-      case 'owner_created':
-        return 3
-      default:
-        return 0
-    }
-  }
-
-  if (state === 'idp_configured') {
-    return 3
-  }
-  if (state === 'owner_created') {
-    return 4
-  }
-  return 0
-}
-
-function BootstrapTokenStep() {
+function SetupTokenPage() {
   const navigate = useNavigate()
-  const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setSessionToken = useSetupStore((s) => s.setSessionToken)
-  const setSessionExpiresAt = useSetupStore((s) => s.setSessionExpiresAt)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
-  const verifyMutation = useVerifyBootstrapToken()
-  const { data: status } = useSetupStatus()
+  const verifyToken = useVerifyBootstrapToken()
+  const [error, setError] = createSignal<string | null>(null)
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<BootstrapTokenForm>({
-    resolver: zodResolver(bootstrapTokenSchema),
-    defaultValues: { token: '' },
-  })
+  const tokenSchema = z.string().trim().min(1, 'Bootstrap token is required.')
 
-  // Set step to 0 unless backend state + session indicate we should skip ahead
-  useEffect(() => {
-    if (!status || !sessionToken) {
-      setCurrentStep(0)
-      return
-    }
+  const form = createForm(() => ({
+    defaultValues: {
+      token: '',
+    },
+    validators: {
+      onSubmit: ({ value }) => {
+        const parsed = z
+          .object({
+            token: tokenSchema,
+          })
+          .safeParse(value)
 
-    const backendStep = stateToStep(status.state, status.runtime_mode)
-    if (backendStep >= 1) {
-      setCurrentStep(backendStep)
-      if (
-        status.state === 'bootstrap_pending' ||
-        status.state === 'uninitialized'
-      ) {
-        void navigate({ to: '/setup/mode' })
-      } else if (status.state === 'idp_configured') {
-        void navigate({ to: '/setup/owner' })
-      } else if (status.state === 'owner_created') {
-        void navigate({ to: '/setup/complete' })
-      }
-    } else {
-      setCurrentStep(0)
-    }
-  }, [status, sessionToken, navigate, setCurrentStep])
+        if (parsed.success) return undefined
 
-  const errorMessage = verifyMutation.error
-    ? getApiErrorMessage(verifyMutation.error, {
-        token_expired:
-          'Bootstrap token has expired. Generate a new one with the CLI.',
-        token_consumed:
-          'Bootstrap token has already been used. Generate a new one with the CLI.',
-        invalid_token:
-          'Invalid bootstrap token. Check the value and try again.',
-      })
-    : null
-
-  function onSubmit(data: BootstrapTokenForm) {
-    verifyMutation.mutate(data.token.trim(), {
-      onSuccess: (res) => {
-        setSessionToken(res.session_token)
-        setSessionExpiresAt(res.expires_at)
-        setCurrentStep(1)
-        void navigate({ to: '/setup/mode' })
+        return {
+          fields: {
+            token:
+              parsed.error.flatten().fieldErrors.token?.[0] ??
+              'Bootstrap token is required.',
+          },
+        }
       },
-    })
+    },
+    onSubmit: async ({ value }) => {
+      setError(null)
+
+      try {
+        await verifyToken.mutateAsync(value.token.trim())
+        useSetupStore.getState().setCurrentStep(1)
+        void navigate({ to: '/setup/mode' })
+      } catch (submitError) {
+        if (submitError instanceof ApiClientError) {
+          setError(submitError.message)
+        } else {
+          setError(
+            submitError instanceof Error
+              ? submitError.message
+              : 'Token verification failed',
+          )
+        }
+      }
+    },
+  }))
+
+  const submissionAttempts = form.useStore((state) => state.submissionAttempts)
+
+  const handleSubmit = (event: SubmitEvent) => {
+    event.preventDefault()
+    void form.handleSubmit()
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <PageMeta title="Setup Token" />
-      <div className="space-y-1">
-        <h2 className="text-lg font-medium">Bootstrap Token</h2>
-        <p className="text-sm text-muted-foreground">
-          Enter the bootstrap token generated by the{' '}
-          <code className="bg-muted px-1 py-0.5 text-xs">oore setup token</code>{' '}
-          CLI command.
+    <form class="space-y-4" onSubmit={handleSubmit}>
+      <div>
+        <h2 class="text-lg font-semibold">Bootstrap Token</h2>
+        <p class="text-sm text-muted-foreground">
+          Paste the setup bootstrap token from the backend host.
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="bootstrap-token">Token</Label>
-        <Input
-          id="bootstrap-token"
-          type="password"
-          placeholder="Paste your bootstrap token"
-          {...register('token')}
-          disabled={verifyMutation.isPending}
-          autoFocus
-        />
-        {errors.token ? (
-          <p className="text-sm text-destructive">{errors.token.message}</p>
-        ) : null}
-      </div>
-
-      {errorMessage ? (
+      {error() ? (
         <Alert variant="destructive">
           <AlertTitle>Verification failed</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
+          <AlertDescription>{error()}</AlertDescription>
         </Alert>
       ) : null}
 
-      <Button
-        type="submit"
-        disabled={verifyMutation.isPending}
-        className="w-full"
-      >
-        {verifyMutation.isPending ? 'Verifying...' : 'Verify Token'}
+      <form.Field name="token">
+        {(field) => {
+          const fieldError = () => {
+            if (
+              !field().state.meta.isTouched &&
+              submissionAttempts() === 0
+            ) {
+              return null
+            }
+            return (field().state.meta.errors[0] as string | undefined) ?? null
+          }
+
+          return (
+            <FormField error={fieldError()}>
+              <Input
+                value={field().state.value}
+                onInput={(event) => field().handleChange(event.currentTarget.value)}
+                onBlur={field().handleBlur}
+                placeholder="oot_xxx"
+              />
+            </FormField>
+          )
+        }}
+      </form.Field>
+
+      <Button type="submit" disabled={verifyToken.isPending}>
+        {verifyToken.isPending ? <Spinner class="size-4" /> : null}
+        Verify Token
       </Button>
     </form>
   )

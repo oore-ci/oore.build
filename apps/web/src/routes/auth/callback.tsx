@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { createEffect, createSignal, Show } from 'solid-js'
+import { createFileRoute, useNavigate } from '@tanstack/solid-router'
 import type { OidcCallbackResponse } from '@/lib/types'
 import { setupOidcVerify } from '@/lib/api'
 import { precheckOidcCallback } from '@/lib/oidc-callback'
@@ -25,26 +25,179 @@ function cleanupOidcSessionStorage() {
   }
 }
 
+async function fetchOidcCallbackWithTimeout(
+  url: string,
+  body: { code: string; state: string },
+  timeoutMs: number,
+): Promise<OidcCallbackResponse> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string
+      }
+      throw new Error(payload.error ?? `Authentication failed (${response.status})`)
+    }
+
+    return (await response.json()) as OidcCallbackResponse
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Authentication callback timed out after ${timeoutMs}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 function AuthCallbackPage() {
   const navigate = useNavigate()
-  const setAuth = useAuthStore((s) => s.setAuth)
-  const [error, setError] = useState<string | null>(null)
-  const [errorHint, setErrorHint] = useState<string | null>(null)
-  const [errorTarget, setErrorTarget] = useState<'/login' | '/setup/owner'>(
+  const setAuth = useAuthStore((state) => state.setAuth)
+
+  const [error, setError] = createSignal<string | null>(null)
+  const [errorHint, setErrorHint] = createSignal<string | null>(null)
+  const [errorTarget, setErrorTarget] = createSignal<'/login' | '/setup/owner'>(
     '/login',
   )
-  const exchangeStartedRef = useRef(false)
+  const [exchangeStarted, setExchangeStarted] = createSignal(false)
 
-  useEffect(() => {
-    // Guard against React StrictMode double-execution.
-    if (exchangeStartedRef.current) return
-    exchangeStartedRef.current = true
+  const failAuth = (message: string, flow: string | null, hint: string) => {
+    cleanupOidcSessionStorage()
+    setError(message)
+    setErrorHint(hint)
+    setErrorTarget(flow === 'setup_owner' ? '/setup/owner' : '/login')
+  }
 
-    // Retrieve stored OIDC context
+  const handleSetupOwnerFlow = (
+    code: string | undefined,
+    state: string | undefined,
+    setupSessionToken: string | null,
+  ) => {
+    if (!code || !state) {
+      failAuth(
+        'Missing callback parameters. Restart setup authentication.',
+        'setup_owner',
+        'missing_setup_callback_params',
+      )
+      return
+    }
+
+    if (!setupSessionToken) {
+      failAuth(
+        'Missing setup session token. Restart setup from the token step.',
+        'setup_owner',
+        'missing_setup_session_token',
+      )
+      return
+    }
+
+    const activeId = useInstanceStore.getState().activeInstanceId
+    const instances = useInstanceStore.getState().instances
+    const instance = activeId ? instances[activeId] : undefined
+
+    if (!instance) {
+      failAuth(
+        'Could not find the active instance. Restart setup from the token step.',
+        'setup_owner',
+        'missing_active_instance',
+      )
+      return
+    }
+
+    void setupOidcVerify(instance.url, setupSessionToken, code, state)
+      .then(() => {
+        cleanupOidcSessionStorage()
+        void navigate({ to: '/setup/complete' })
+      })
+      .catch((value: unknown) => {
+        failAuth(
+          value instanceof Error ? value.message : 'Setup owner verification failed',
+          'setup_owner',
+          'setup_owner_verify_failed',
+        )
+      })
+  }
+
+  const handleAuthFlow = (
+    code: string | undefined,
+    state: string | undefined,
+    instanceId: string | null,
+  ) => {
+    if (!code || !state) {
+      failAuth(
+        'Missing callback parameters. Restart sign-in.',
+        'auth',
+        'missing_auth_callback_params',
+      )
+      return
+    }
+
+    const instances = useInstanceStore.getState().instances
+    const instance = instanceId ? instances[instanceId] : undefined
+
+    if (!instance) {
+      failAuth(
+        'Could not find the instance you were logging into.',
+        'auth',
+        'missing_auth_instance',
+      )
+      return
+    }
+
+    useAuthStore.getState().setInstanceContext(instance.id)
+
+    void fetchOidcCallbackWithTimeout(
+      `${instance.url}/v1/auth/oidc/callback`,
+      { code, state },
+      8_000,
+    )
+      .then((data) => {
+        if (!data.user.user_id || !data.user.role) {
+          throw new Error('Incomplete user profile received from server')
+        }
+
+        setAuth()(
+          data.session_token,
+          data.expires_at,
+          {
+            email: data.user.email,
+            oidc_subject: data.user.oidc_subject,
+            user_id: data.user.user_id,
+            role: data.user.role,
+            avatar_url: data.user.avatar_url,
+          },
+        )
+
+        cleanupOidcSessionStorage()
+        void navigate({ to: '/' })
+      })
+      .catch((value: unknown) => {
+        failAuth(
+          value instanceof Error ? value.message : 'Authentication failed',
+          'auth',
+          'auth_callback_exchange_failed',
+        )
+      })
+  }
+
+  createEffect(() => {
+    if (exchangeStarted()) return
+    setExchangeStarted(true)
+
     let storedState: string | null = null
     let instanceId: string | null = null
     let flow: string | null = null
     let setupSessionToken: string | null = null
+
     try {
       storedState = sessionStorage.getItem('oore_oidc_state')
       instanceId = sessionStorage.getItem('oore_oidc_instance')
@@ -72,183 +225,43 @@ function AuthCallbackPage() {
       return
     }
 
-    // Route based on flow type
     if (precheck.flow === 'setup_owner') {
       handleSetupOwnerFlow(precheck.code, precheck.state, setupSessionToken)
     } else {
       handleAuthFlow(precheck.code, precheck.state, instanceId)
     }
-  }, [navigate, setAuth])
-
-  function failAuth(message: string, flow: string | null, hint: string) {
-    cleanupOidcSessionStorage()
-    setError(message)
-    setErrorHint(hint)
-    setErrorTarget(flow === 'setup_owner' ? '/setup/owner' : '/login')
-  }
-
-  function handleSetupOwnerFlow(
-    code: string | undefined,
-    state: string | undefined,
-    setupSessionToken: string | null,
-  ) {
-    if (!code || !state) {
-      failAuth(
-        'Missing callback parameters. Restart setup authentication.',
-        'setup_owner',
-        'missing_setup_callback_params',
-      )
-      return
-    }
-
-    if (!setupSessionToken) {
-      failAuth(
-        'Missing setup session token. Restart setup from the token step.',
-        'setup_owner',
-        'missing_setup_session_token',
-      )
-      return
-    }
-
-    // Get the active instance URL for the API call
-    const activeId = useInstanceStore.getState().activeInstanceId
-    const instances = useInstanceStore.getState().instances
-    const instance = activeId ? instances[activeId] : undefined
-
-    if (!instance) {
-      failAuth(
-        'Could not find the active instance. Restart setup from the token step.',
-        'setup_owner',
-        'missing_active_instance',
-      )
-      return
-    }
-
-    // POST to verify-oidc with the setup session token
-    setupOidcVerify(instance.url, setupSessionToken, code, state)
-      .then(() => {
-        cleanupOidcSessionStorage()
-        void navigate({ to: '/setup/complete' })
-      })
-      .catch((e: unknown) => {
-        failAuth(
-          e instanceof Error ? e.message : 'Setup owner verification failed',
-          'setup_owner',
-          'setup_owner_verify_failed',
-        )
-      })
-  }
-
-  function handleAuthFlow(
-    code: string | undefined,
-    state: string | undefined,
-    instanceId: string | null,
-  ) {
-    if (!code || !state) {
-      failAuth(
-        'Missing callback parameters. Restart sign-in.',
-        'auth',
-        'missing_auth_callback_params',
-      )
-      return
-    }
-
-    const instances = useInstanceStore.getState().instances
-    const instance = instanceId ? instances[instanceId] : undefined
-
-    if (!instance) {
-      failAuth(
-        'Could not find the instance you were logging into.',
-        'auth',
-        'missing_auth_instance',
-      )
-      return
-    }
-
-    // Sync auth store context
-    useAuthStore.getState().setInstanceContext(instance.id)
-
-    // Exchange code for token via POST
-    const callbackUrl = `${instance.url}/v1/auth/oidc/callback`
-
-    fetch(callbackUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, state }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as {
-            error?: string
-          }
-          throw new Error(body.error ?? `Authentication failed (${res.status})`)
-        }
-        return res.json() as Promise<OidcCallbackResponse>
-      })
-      .then((data) => {
-        if (!data.user.user_id || !data.user.role) {
-          throw new Error('Incomplete user profile received from server')
-        }
-
-        setAuth(data.session_token, data.expires_at, {
-          email: data.user.email,
-          oidc_subject: data.user.oidc_subject,
-          user_id: data.user.user_id,
-          role: data.user.role,
-          avatar_url: data.user.avatar_url,
-        })
-
-        cleanupOidcSessionStorage()
-        void navigate({ to: '/' })
-      })
-      .catch((e: unknown) => {
-        failAuth(
-          e instanceof Error ? e.message : 'Authentication failed',
-          'auth',
-          'auth_callback_exchange_failed',
-        )
-      })
-  }
-
-  if (error) {
-    const actionLabel =
-      errorTarget === '/setup/owner' ? 'Back to Setup Owner' : 'Back to Login'
-    const title =
-      errorTarget === '/setup/owner'
-        ? 'Setup Authentication Failed'
-        : 'Authentication Failed'
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6">
-        <PageMeta title="Signing In" />
-        <div className="w-full max-w-md space-y-4">
-          <Alert variant="destructive">
-            <AlertTitle>{title}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-          {errorHint ? (
-            <p className="text-xs text-muted-foreground">
-              Diagnostic hint: <code>{errorHint}</code>
-            </p>
-          ) : null}
-          <div className="text-center">
-            <Button
-              variant="link"
-              onClick={() => void navigate({ to: errorTarget })}
-            >
-              {actionLabel}
-            </Button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  })
 
   return (
-    <div className="flex-1 flex items-center justify-center">
+    <div class="flex min-h-[60vh] items-center justify-center p-6">
       <PageMeta title="Signing In" />
-      <div className="flex items-center gap-3">
-        <Spinner className="size-5" />
-        <p className="text-muted-foreground text-sm">Completing sign-in...</p>
+      <div class="w-full max-w-md space-y-4">
+        <Show
+          when={error()}
+          fallback={
+            <div class="flex items-center justify-center gap-3">
+              <Spinner class="size-5" />
+              <p class="text-sm text-muted-foreground">Completing sign-in...</p>
+            </div>
+          }
+        >
+          <Alert variant="destructive">
+            <AlertTitle>
+              {errorTarget() === '/setup/owner'
+                ? 'Setup Authentication Failed'
+                : 'Authentication Failed'}
+            </AlertTitle>
+            <AlertDescription>{error()}</AlertDescription>
+          </Alert>
+          <Show when={errorHint()}>
+            <p class="text-xs text-muted-foreground">
+              Diagnostic hint: <code>{errorHint()}</code>
+            </p>
+          </Show>
+          <Button variant="outline" onClick={() => void navigate({ to: errorTarget() })}>
+            {errorTarget() === '/setup/owner' ? 'Back to Setup Owner' : 'Back to Login'}
+          </Button>
+        </Show>
       </div>
     </div>
   )

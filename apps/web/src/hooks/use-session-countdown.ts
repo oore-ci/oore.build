@@ -1,47 +1,44 @@
-import { useEffect, useState } from 'react'
+import { createMemo, createSignal, onCleanup } from 'solid-js'
 import { useSetupStore } from '@/stores/setup-store'
 
-interface SessionCountdown {
-  remainingSeconds: number | null
-  isExpired: boolean
-  isWarning: boolean
-  formatted: string | null
-}
+export function useSessionCountdown() {
+  const expiresAt = useSetupStore((state) => state.sessionExpiresAt)
+  const [now, setNow] = createSignal(Date.now())
 
-export function useSessionCountdown(): SessionCountdown {
-  const sessionExpiresAt = useSetupStore((s) => s.sessionExpiresAt)
-  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
+  const interval = setInterval(() => {
+    setNow(Date.now())
+  }, 1_000)
+  onCleanup(() => clearInterval(interval))
 
-  useEffect(() => {
-    if (sessionExpiresAt == null) {
-      setRemainingSeconds(null)
-      return
-    }
+  const remainingSeconds = createMemo(() => {
+    const expiry = expiresAt()
+    if (expiry == null) return null
+    return Math.floor(expiry - now() / 1000)
+  })
 
-    function tick() {
-      const now = Math.floor(Date.now() / 1000)
-      setRemainingSeconds(Math.max(0, sessionExpiresAt! - now))
-    }
+  const isExpired = createMemo(() => {
+    const remaining = remainingSeconds()
+    return remaining != null && remaining <= 0
+  })
 
-    tick()
-    const id = setInterval(tick, 1000)
-    return () => clearInterval(id)
-  }, [sessionExpiresAt])
+  const isWarning = createMemo(() => {
+    const remaining = remainingSeconds()
+    return remaining != null && remaining <= 5 * 60
+  })
 
-  if (remainingSeconds == null) {
-    return {
-      remainingSeconds: null,
-      isExpired: false,
-      isWarning: false,
-      formatted: null,
-    }
+  const formatted = createMemo(() => {
+    const remaining = remainingSeconds()
+    if (remaining == null || remaining <= 0) return null
+    const minutes = Math.floor(remaining / 60)
+    const seconds = remaining % 60
+    return `${minutes.toString().padStart(2, '0')}:${seconds
+      .toString()
+      .padStart(2, '0')}`
+  })
+
+  return {
+    formatted,
+    isExpired,
+    isWarning,
   }
-
-  const isExpired = remainingSeconds <= 0
-  const isWarning = remainingSeconds > 0 && remainingSeconds < 5 * 60
-  const minutes = Math.floor(remainingSeconds / 60)
-  const seconds = remainingSeconds % 60
-  const formatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-
-  return { remainingSeconds, isExpired, isWarning, formatted }
 }

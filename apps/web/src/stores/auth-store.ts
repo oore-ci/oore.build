@@ -1,5 +1,5 @@
-import { create } from 'zustand'
 import type { UserRole } from '@/lib/types'
+import { createSelectorStore } from '@/stores/store-utils'
 
 interface AuthUser {
   email: string
@@ -63,8 +63,8 @@ function loadToken(instanceId: string | null): string | null {
 
 function loadExpiresAt(instanceId: string | null): number | null {
   try {
-    const val = localStorage.getItem(expiresKey(instanceId))
-    return val ? Number(val) : null
+    const value = localStorage.getItem(expiresKey(instanceId))
+    return value ? Number(value) : null
   } catch {
     return null
   }
@@ -72,9 +72,9 @@ function loadExpiresAt(instanceId: string | null): number | null {
 
 function loadUser(instanceId: string | null): AuthUser | null {
   try {
-    const val = localStorage.getItem(userKey(instanceId))
-    if (!val) return null
-    return JSON.parse(val) as AuthUser
+    const value = localStorage.getItem(userKey(instanceId))
+    if (!value) return null
+    return JSON.parse(value) as AuthUser
   } catch {
     return null
   }
@@ -92,11 +92,13 @@ function saveAuth(
     } else {
       localStorage.removeItem(tokenKey(instanceId))
     }
+
     if (expiresAt != null) {
       localStorage.setItem(expiresKey(instanceId), String(expiresAt))
     } else {
       localStorage.removeItem(expiresKey(instanceId))
     }
+
     if (user) {
       localStorage.setItem(userKey(instanceId), JSON.stringify(user))
     } else {
@@ -134,6 +136,7 @@ export function getLastAuthMetaForInstance(
   instanceId: string | null,
 ): LastAuthMeta | null {
   if (!instanceId) return null
+
   try {
     const method = localStorage.getItem(lastMethodKey(instanceId))
     const atRaw = localStorage.getItem(lastAtKey(instanceId))
@@ -142,22 +145,22 @@ export function getLastAuthMetaForInstance(
       !atRaw
     )
       return null
+
     const at = Number(atRaw)
     if (!Number.isFinite(at) || at <= 0) return null
-    return { method: method as LastAuthMethod, at }
+    return { method, at }
   } catch {
     return null
   }
 }
 
-/** Returns true only when we have a non-expired token. */
 export function isAuthenticated(): boolean {
   const { token, expiresAt } = useAuthStore.getState()
   if (!token || expiresAt == null) return false
   return expiresAt > Math.floor(Date.now() / 1000)
 }
 
-export const useAuthStore = create<AuthStoreState>((set, get) => ({
+export const useAuthStore = createSelectorStore<AuthStoreState>((set, get) => ({
   instanceId: null,
   token: loadToken(null),
   expiresAt: loadExpiresAt(null),

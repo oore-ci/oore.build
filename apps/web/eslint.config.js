@@ -1,15 +1,12 @@
-//  @ts-check
-
-import { tanstackConfig } from '@tanstack/eslint-config'
-
 export default [
-  ...tanstackConfig,
   {
     ignores: [
+      'dist/**',
+      'coverage/**',
       'eslint.config.js',
       'prettier.config.js',
       'public/mockServiceWorker.js',
-      'tools/oore-web.js',
+      'src/routeTree.gen.ts',
     ],
   },
 ]

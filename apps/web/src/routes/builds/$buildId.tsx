@@ -1,23 +1,18 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { For, Match, Show, Switch } from 'solid-js'
+import { createFileRoute } from '@tanstack/solid-router'
 import {
   Download04Icon,
   File01Icon,
   GitBranchIcon,
   GitCommitIcon,
-  InformationCircleIcon,
-  Refresh01Icon,
   TimeQuarterPassIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
 
-import type { Artifact, BuildLogChunk } from '@/lib/types'
+import type { Artifact } from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import {
   isTerminalStatus,
   useArtifactDownloadLink,
@@ -26,18 +21,18 @@ import {
   useBuildLogs,
   useCancelBuild,
 } from '@/hooks/use-builds'
-import { useLogStream } from '@/hooks/use-log-stream'
+import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { HugeIcon } from '@/components/huge-icon'
+import { PageHeader } from '@/components/page-header'
+import { PageLayout } from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import PageLayout from '@/components/page-layout'
-import PageHeader from '@/components/page-header'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
-import { PageMeta } from '@/lib/seo'
+import { toast } from '@/components/ui/sonner'
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -92,236 +87,142 @@ function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
 }
 
 function BuildDetailPage() {
-  const { buildId } = Route.useParams()
-  const navigate = useNavigate()
-  const [knownTerminal, setKnownTerminal] = useState(false)
-  const [rerunOpen, setRerunOpen] = useState(false)
-  const buildQuery = useBuild(buildId, {
-    refetchInterval: knownTerminal ? false : 3000,
-  })
-  const { data, isLoading, error, refetch: refetchBuild } = buildQuery
-  const artifactsQuery = useArtifacts(buildId, {
-    refetchInterval: knownTerminal ? false : 3000,
-  })
-  const { refetch: refetchArtifacts } = artifactsQuery
+  const params = Route.useParams()
+  const buildId = () => params().buildId
+  const buildQuery = useBuild(buildId())
+  const artifactsQuery = useArtifacts(buildId())
+  const logsQuery = useBuildLogs(buildId())
   const cancelMutation = useCancelBuild()
 
-  const buildStatus = data?.build.status
-  const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
+  const build = () => buildQuery.data?.build
+  const events = () => buildQuery.data?.events ?? []
+  const isTerminal = () => !!build()?.status && isTerminalStatus(build()!.status)
+  const label = () =>
+    build()?.build_number ? `Build #${build()!.build_number}` : 'Build Details'
 
-  useEffect(() => {
-    if (isTerminal) setKnownTerminal(true)
-  }, [isTerminal])
-
-  const setLabel = useBreadcrumbStore((s) => s.setLabel)
-
-  const label = data?.build.build_number
-    ? `Build #${data.build.build_number}`
-    : 'Build Details'
-
-  useEffect(() => {
-    if (data?.build.build_number) {
-      setLabel('/builds/$buildId', `Build #${data.build.build_number}`)
-    }
-  }, [data?.build.build_number, setLabel])
-
-  // ── Log stream / fetch ───────────────────────────────────
-
-  const streamEnabled = !isTerminal
-  const {
-    logs: streamLogs,
-    isStreaming,
-    error: streamError,
-  } = useLogStream(buildId, streamEnabled, {
-    onDone: useCallback(() => {
-      void refetchBuild()
-      void refetchArtifacts()
-    }, [refetchBuild, refetchArtifacts]),
-  })
-  const { data: fullLogsData } = useBuildLogs(buildId)
-
-  const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
-    if (streamEnabled && streamLogs.length > 0) return streamLogs
-    if (isTerminal && fullLogsData?.logs) return fullLogsData.logs
-    if (streamLogs.length > 0) return streamLogs
-    return fullLogsData?.logs ?? []
-  }, [streamEnabled, streamLogs, isTerminal, fullLogsData?.logs])
-
-  // ── Handlers ─────────────────────────────────────────────
-
-  function handleCancel() {
-    cancelMutation.mutate(buildId, {
+  const handleCancel = () => {
+    cancelMutation.mutate(buildId(), {
       onSuccess: () => {
         toast.success('Build canceled')
       },
-      onError: (err) => {
-        toast.error(`Failed to cancel: ${err.message}`)
+      onError: (error) => {
+        toast.error(error instanceof Error ? error.message : 'Failed to cancel build')
       },
     })
   }
 
-  // ── Loading / error states ───────────────────────────────
-
-  if (isLoading) {
-    return (
-      <PageLayout width="full">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </PageLayout>
-    )
+  const duration = () => {
+    if (!build()?.started_at) return null
+    return (build()?.finished_at ?? Math.floor(Date.now() / 1000)) - build()!.started_at!
   }
-
-  if (error) {
-    return (
-      <PageLayout width="full">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load build: {error.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
-  }
-
-  if (!data) return null
-
-  const { build, events } = data
-  const canCancel = !isTerminal
-  const duration = build.started_at
-    ? (build.finished_at ?? Math.floor(Date.now() / 1000)) - build.started_at
-    : null
 
   return (
     <PageLayout width="full">
-      <PageMeta title={label} noindex />
-      <PageHeader
-        title={`Build #${build.build_number}`}
-        back={{ to: '/builds', label: 'Builds' }}
-        meta={
-          <>
-            <Badge variant={getStatusVariant(build.status)}>
-              {build.status}
-            </Badge>
-            <Badge variant="outline">{build.trigger_type}</Badge>
-            {build.branch ? (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-                <HugeiconsIcon icon={GitBranchIcon} size={12} />
-                {build.branch}
-              </span>
-            ) : null}
-            {build.commit_sha ? (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-                <HugeiconsIcon icon={GitCommitIcon} size={12} />
-                {build.commit_sha.slice(0, 7)}
-              </span>
-            ) : null}
-            {duration != null ? (
-              <span className="inline-flex items-center gap-1">
-                <HugeiconsIcon icon={TimeQuarterPassIcon} size={12} />
-                {formatDuration(duration)}
-              </span>
-            ) : null}
-            <span className="text-[oklch(0.5_0_0)]">|</span>
-            <span>
-              Queued {relativeTime(build.queued_at)}
-              {build.started_at
-                ? ` \u2192 Started ${relativeTime(build.started_at)}`
-                : ''}
-              {build.finished_at
-                ? ` \u2192 Finished ${relativeTime(build.finished_at)}`
-                : ''}
-            </span>
-          </>
-        }
-        actions={
-          <div className="flex items-center gap-2">
-            {isTerminal ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRerunOpen(true)}
-              >
-                <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                Re-run
-              </Button>
-            ) : null}
-            {canCancel ? (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleCancel}
-                disabled={cancelMutation.isPending}
-              >
-                {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
-              </Button>
-            ) : null}
+      <PageMeta title={label()} noindex />
+
+      <Switch>
+        <Match when={buildQuery.isLoading}>
+          <Skeleton class="h-8 w-56" />
+          <Skeleton class="h-24 w-full" />
+          <Skeleton class="h-64 w-full" />
+        </Match>
+
+        <Match when={!!buildQuery.error}>
+          <Alert variant="destructive">
+            <AlertDescription>
+              Failed to load build: {buildQuery.error?.message}
+            </AlertDescription>
+          </Alert>
+        </Match>
+
+        <Match when={!!build()}>
+          <PageHeader
+            title={`Build #${build()!.build_number}`}
+            back={{ to: '/builds', label: 'Builds' }}
+            meta={
+              <>
+                <Badge variant={getStatusVariant(build()!.status)}>{build()!.status}</Badge>
+                <Badge variant="outline">{build()!.trigger_type}</Badge>
+                {build()!.branch ? (
+                  <span class="inline-flex items-center gap-1 font-mono text-[11px]">
+                    <HugeIcon icon={GitBranchIcon} size={12} />
+                    {build()!.branch}
+                  </span>
+                ) : null}
+                {build()!.commit_sha ? (
+                  <span class="inline-flex items-center gap-1 font-mono text-[11px]">
+                    <HugeIcon icon={GitCommitIcon} size={12} />
+                    {build()!.commit_sha?.slice(0, 7)}
+                  </span>
+                ) : null}
+                {duration() != null ? (
+                  <span class="inline-flex items-center gap-1">
+                    <HugeIcon icon={TimeQuarterPassIcon} size={12} />
+                    {formatDuration(duration() as number)}
+                  </span>
+                ) : null}
+                <span class="text-[oklch(0.5_0_0)]">|</span>
+                <span>
+                  Queued {relativeTime(build()!.queued_at)}
+                  {build()!.started_at
+                    ? ` → Started ${relativeTime(build()!.started_at as number)}`
+                    : ''}
+                  {build()!.finished_at
+                    ? ` → Finished ${relativeTime(build()!.finished_at as number)}`
+                    : ''}
+                </span>
+              </>
+            }
+            actions={
+              !isTerminal() ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleCancel}
+                  disabled={cancelMutation.isPending}
+                >
+                  {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
+                </Button>
+              ) : undefined
+            }
+          />
+
+          <div class="grid gap-6 xl:grid-cols-[1fr_340px]">
+            <div class="min-w-0">
+              <TerminalLogViewer lines={logsQuery.data?.logs ?? []} />
+            </div>
+
+            <aside class="space-y-4 xl:sticky xl:top-16 xl:max-h-[calc(100vh-5rem)] xl:overflow-y-auto">
+              <ArtifactsPanel
+                artifacts={artifactsQuery.data?.artifacts ?? []}
+                isLoading={artifactsQuery.isLoading}
+              />
+              <EventTimeline events={events()} />
+            </aside>
           </div>
-        }
-      />
-
-      {/* Two-column layout: logs + sidebar */}
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-        {/* Main: Terminal log viewer */}
-        <div className="min-w-0">
-          <TerminalLogViewer
-            logs={mergedLogs}
-            stepResults={build.step_results ?? []}
-            isStreaming={isStreaming}
-            streamError={streamError ?? undefined}
-          />
-        </div>
-
-        {/* Sidebar: Artifacts + Event Timeline */}
-        <aside className="space-y-4 xl:sticky xl:top-16 xl:max-h-[calc(100vh-5rem)] xl:overflow-y-auto">
-          <ArtifactsPanel
-            artifacts={artifactsQuery.data?.artifacts ?? []}
-            isLoading={artifactsQuery.isLoading}
-          />
-
-          <EventTimeline events={events} />
-        </aside>
-      </div>
-
-      {/* Re-run dialog */}
-      <TriggerBuildDialog
-        open={rerunOpen}
-        onOpenChange={setRerunOpen}
-        fixedProjectId={build.project_id}
-        fixedPipelineId={build.pipeline_id}
-        defaultBranch={build.branch ?? undefined}
-        title="Re-run Build"
-        description={`Re-run build #${build.build_number} with the same pipeline and branch.`}
-        onBuildCreated={(newBuildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId: newBuildId },
-          })
-        }}
-      />
+        </Match>
+      </Switch>
     </PageLayout>
   )
 }
 
-function ArtifactsPanel({
-  artifacts,
-  isLoading,
-}: {
+function ArtifactsPanel(props: {
   artifacts: Array<Artifact>
   isLoading: boolean
 }) {
   const downloadMutation = useArtifactDownloadLink()
 
-  function handleDownload(artifactId: string, name: string) {
+  const handleDownload = (artifactId: string, name: string) => {
     downloadMutation.mutate(artifactId, {
-      onSuccess: (res) => {
-        window.open(res.download_url, '_blank', 'noopener,noreferrer')
+      onSuccess: (response) => {
+        window.open(response.download_url, '_blank', 'noopener,noreferrer')
       },
-      onError: (err) => {
-        toast.error(`Failed to get download link for ${name}: ${err.message}`)
+      onError: (error) => {
+        toast.error(
+          `Failed to get download link for ${name}: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }`,
+        )
       },
     })
   }
@@ -329,70 +230,72 @@ function ArtifactsPanel({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          <HugeiconsIcon icon={File01Icon} size={14} />
+        <CardTitle class="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <HugeIcon icon={File01Icon} size={14} />
           Artifacts
-          {artifacts.length > 0 ? (
-            <Badge variant="secondary" className="text-[10px]">
-              {artifacts.length}
+          {props.artifacts.length > 0 ? (
+            <Badge variant="secondary" class="text-[10px]">
+              {props.artifacts.length}
             </Badge>
           ) : null}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-          </div>
-        ) : !artifacts.length ? (
-          <p className="text-xs text-muted-foreground">No artifacts yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {artifacts.map((artifact) => (
-              <div
-                key={artifact.id}
-                className="flex items-center gap-2 rounded-md border p-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">
-                    {artifact.name}
-                  </p>
-                  <div className="mt-0.5 flex items-center gap-1.5">
-                    <Badge
-                      variant={artifactTypeBadgeVariant(artifact.artifact_type)}
-                      className="text-[10px]"
+        <Show
+          when={!props.isLoading}
+          fallback={
+            <div class="space-y-2">
+              <Skeleton class="h-8 w-full" />
+              <Skeleton class="h-8 w-full" />
+            </div>
+          }
+        >
+          <Show
+            when={props.artifacts.length > 0}
+            fallback={<p class="text-xs text-muted-foreground">No artifacts yet.</p>}
+          >
+            <div class="space-y-2">
+              <For each={props.artifacts}>
+                {(artifact) => (
+                  <div class="flex items-center gap-2 rounded-md border p-2">
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-xs font-medium">{artifact.name}</p>
+                      <div class="mt-0.5 flex items-center gap-1.5">
+                        <Badge
+                          variant={artifactTypeBadgeVariant(artifact.artifact_type)}
+                          class="text-[10px]"
+                        >
+                          {artifact.artifact_type}
+                        </Badge>
+                        <span class="text-[10px] text-muted-foreground">
+                          {artifact.file_size != null
+                            ? formatFileSize(artifact.file_size)
+                            : '—'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="size-7 shrink-0"
+                      onClick={() => handleDownload(artifact.id, artifact.name)}
+                      disabled={downloadMutation.isPending}
                     >
-                      {artifact.artifact_type}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground">
-                      {artifact.file_size != null
-                        ? formatFileSize(artifact.file_size)
-                        : '—'}
-                    </span>
+                      <HugeIcon icon={Download04Icon} size={14} />
+                    </Button>
                   </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0"
-                  onClick={() => handleDownload(artifact.id, artifact.name)}
-                  disabled={downloadMutation.isPending}
-                >
-                  <HugeiconsIcon icon={Download04Icon} size={14} />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
+                )}
+              </For>
+            </div>
+          </Show>
+        </Show>
       </CardContent>
     </Card>
   )
 }
 
-function EventTimeline({
-  events,
-}: {
+function EventTimeline(props: {
   events: Array<{
     id: string
     from_status?: string
@@ -405,54 +308,43 @@ function EventTimeline({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          Event Timeline
+        <CardTitle class="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          Event timeline
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {events.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No events yet.</p>
-        ) : (
-          <div className="relative space-y-0">
-            {events.map((event, i) => (
-              <div
-                key={event.id}
-                className="relative flex gap-3 pb-4 last:pb-0"
-              >
-                {/* Vertical line */}
-                {i < events.length - 1 ? (
-                  <div className="absolute left-[5px] top-3 bottom-0 w-px bg-border" />
-                ) : null}
-                {/* Dot */}
-                <div className="relative mt-1 size-[11px] shrink-0 rounded-full border-2 border-primary bg-background" />
-                {/* Content */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="text-xs font-medium">
-                      {event.from_status ? (
-                        <span className="text-muted-foreground">
-                          {event.from_status} →{' '}
-                        </span>
-                      ) : null}
+        <Show
+          when={props.events.length > 0}
+          fallback={<p class="text-xs text-muted-foreground">No events yet.</p>}
+        >
+          <div class="relative space-y-0">
+            <For each={props.events}>
+              {(event, index) => (
+                <div class="relative flex gap-3 pb-4 last:pb-0">
+                  <div class="mt-1.5 flex flex-col items-center">
+                    <span class="size-2 rounded-full bg-primary" />
+                    {index() < props.events.length - 1 ? (
+                      <span class="mt-1 block h-full w-px bg-border" />
+                    ) : null}
+                  </div>
+
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs font-medium">
+                      {event.from_status ? `${event.from_status} → ` : ''}
                       {event.to_status}
                     </p>
-                    <span
-                      className="shrink-0 text-[10px] text-muted-foreground"
-                      title={new Date(event.created_at * 1000).toLocaleString()}
-                    >
+                    {event.reason ? (
+                      <p class="mt-0.5 text-xs text-muted-foreground">{event.reason}</p>
+                    ) : null}
+                    <p class="mt-0.5 text-[11px] text-muted-foreground">
                       {relativeTime(event.created_at)}
-                    </span>
-                  </div>
-                  {event.reason ? (
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {event.reason}
                     </p>
-                  ) : null}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )}
+            </For>
           </div>
-        )}
+        </Show>
       </CardContent>
     </Card>
   )

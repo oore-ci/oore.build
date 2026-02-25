@@ -1,7 +1,13 @@
-import type { VariantProps } from 'class-variance-authority'
-import type { badgeVariants } from '@/components/ui/badge'
-
-type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>['variant']>
+export type BadgeVariant =
+  | 'default'
+  | 'secondary'
+  | 'outline'
+  | 'destructive'
+  | 'success'
+  | 'warning'
+  | 'info'
+  | 'ghost'
+  | 'link'
 
 const BUILD_STATUS_VARIANT: Record<string, BadgeVariant> = {
   succeeded: 'success',
@@ -22,7 +28,7 @@ export function getStatusVariant(status: string): BadgeVariant {
   return BUILD_STATUS_VARIANT[status] ?? 'outline'
 }
 
-export const INTEGRATION_STATUS_VARIANT: Record<string, BadgeVariant> = {
+const INTEGRATION_STATUS_VARIANT: Record<string, BadgeVariant> = {
   active: 'success',
   inactive: 'secondary',
   error: 'destructive',

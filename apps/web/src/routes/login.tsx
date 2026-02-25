@@ -1,57 +1,32 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
-import type { ConnectivityIssue } from '@/lib/connectivity'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { createEffect, createMemo, createSignal, For, Show } from 'solid-js'
+import { createForm } from '@tanstack/solid-form'
+import { createFileRoute, useNavigate } from '@tanstack/solid-router'
+import { Add01Icon, ArrowRight01Icon, Login02Icon } from '@hugeicons/core-free-icons'
+import z from 'zod'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
+import { HugeIcon } from '@/components/huge-icon'
+import InstanceSwitcher from '@/components/InstanceSwitcher'
+import { PageMeta } from '@/lib/seo'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { FormField } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
+import { Spinner } from '@/components/ui/spinner'
 import {
   ApiClientError,
   getSetupStatus,
   localLogin,
   trustedProxyLogin,
 } from '@/lib/api'
-import {
-  getConnectivityIssue,
-  isHostedUiOrigin,
-  isMixedContentBlocked,
-} from '@/lib/connectivity'
-import { Separator } from '@/components/ui/separator'
-import { Spinner } from '@/components/ui/spinner'
-import { getLastAuthMetaForInstance, useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
-import { PageMeta } from '@/lib/seo'
 import { resolveLoginFlow } from '@/lib/login-flow'
+import { useAuthStore } from '@/stores/auth-store'
+import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
 })
-
-function instanceHostname(url: string): string {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return url || 'local'
-  }
-}
-
-function formatLastAuthTime(epochSeconds: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(epochSeconds * 1000)
-}
-
-function formatAuthMethodLabel(
-  method: 'oidc' | 'local' | 'trusted_proxy',
-): string {
-  if (method === 'local') return 'Local Only'
-  if (method === 'trusted_proxy') return 'Trusted Proxy'
-  return 'OIDC'
-}
 
 function isLoopbackHostname(hostname: string): boolean {
   return (
@@ -73,138 +48,138 @@ function resolveBackendHostname(url: string): string {
 }
 
 function LoginPage() {
-  const instance = useActiveInstance()
-  const instances = useInstanceStore((s) => s.instances)
-  const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
-  const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
   const navigate = useNavigate()
-  const setAuth = useAuthStore((s) => s.setAuth)
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  const hasValidToken =
-    !!token && expiresAt != null && expiresAt > Math.floor(Date.now() / 1000)
-  const [showAddInstance, setShowAddInstance] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [runtimeMode, setRuntimeMode] = useState<'local' | 'remote' | null>(
+  const instance = useActiveInstance()
+
+  const instances = useInstanceStore((state) => state.instances)
+  const activeInstanceId = useInstanceStore((state) => state.activeInstanceId)
+  const setActiveInstance = useInstanceStore((state) => state.setActiveInstance)
+
+  const setAuth = useAuthStore((state) => state.setAuth)
+  const token = useAuthStore((state) => state.token)
+  const expiresAt = useAuthStore((state) => state.expiresAt)
+
+  const hasValidToken = createMemo(() => {
+    return (
+      !!token() &&
+      expiresAt() != null &&
+      (expiresAt() as number) > Math.floor(Date.now() / 1000)
+    )
+  })
+
+  const [showAddInstance, setShowAddInstance] = createSignal(false)
+  const [loading, setLoading] = createSignal(false)
+  const [runtimeMode, setRuntimeMode] = createSignal<'local' | 'remote' | null>(
     null,
   )
-  const [remoteAuthMode, setRemoteAuthMode] = useState<
+  const [remoteAuthMode, setRemoteAuthMode] = createSignal<
     'oidc' | 'trusted_proxy' | null
   >(null)
-  const [localEmail, setLocalEmail] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [connectivityIssue, setConnectivityIssue] =
-    useState<ConnectivityIssue | null>(null)
-  const hostedUi = isHostedUiOrigin(window.location.origin)
-  const instanceList = useMemo(
-    () =>
-      Object.values(instances).sort((a, b) => {
-        if (a.id === activeInstanceId) return -1
-        if (b.id === activeInstanceId) return 1
-        return b.addedAt - a.addedAt
-      }),
-    [instances, activeInstanceId],
-  )
-  const lastAuthMeta = instance ? getLastAuthMetaForInstance(instance.id) : null
-  const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-  const backendIsLoopback = instance
-    ? isLoopbackHostname(resolveBackendHostname(instance.url))
-    : false
-  const loopbackLocalPath = uiIsLoopback && backendIsLoopback
-  const localLoginAvailable = runtimeMode != null && loopbackLocalPath
-  const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
+  const [error, setError] = createSignal<string | null>(null)
 
-  useEffect(() => {
-    if (hasValidToken) {
+  const localEmailSchema = z
+    .string()
+    .trim()
+    .email('Local user email must be valid.')
+    .or(z.literal(''))
+
+  const loginForm = createForm(() => ({
+    defaultValues: {
+      localEmail: '',
+    },
+    validators: {
+      onSubmit: ({ value }) => {
+        const parsed = z
+          .object({
+            localEmail: localEmailSchema,
+          })
+          .safeParse(value)
+        if (parsed.success) return undefined
+        return {
+          fields: {
+            localEmail:
+              parsed.error.flatten().fieldErrors.localEmail?.[0] ??
+              'Local user email must be valid.',
+          },
+        }
+      },
+    },
+    onSubmit: ({ value }) => {
+      void handleLogin(value.localEmail)
+    },
+  }))
+
+  const loginSubmissionAttempts = loginForm.useStore(
+    (state) => state.submissionAttempts,
+  )
+
+  const instanceList = createMemo(() =>
+    Object.values(instances()).sort((left, right) => {
+      if (left.id === activeInstanceId()) return -1
+      if (right.id === activeInstanceId()) return 1
+      return right.addedAt - left.addedAt
+    }),
+  )
+
+  createEffect(() => {
+    if (hasValidToken()) {
       void navigate({ to: '/' })
     }
-  }, [hasValidToken, navigate])
+  })
 
-  useEffect(() => {
-    setError(null)
-    setConnectivityIssue(null)
-  }, [instance?.id])
-
-  useEffect(() => {
-    let canceled = false
-    if (!instance) {
+  createEffect(() => {
+    const activeInstance = instance()
+    if (!activeInstance) {
       setRuntimeMode(null)
-      return () => {
-        canceled = true
-      }
-    }
-
-    getSetupStatus(instance.url)
-      .then((status) => {
-        if (!canceled) {
-          setRuntimeMode(status.runtime_mode)
-          setRemoteAuthMode(status.remote_auth_mode)
-        }
-      })
-      .catch(() => {
-        if (!canceled) {
-          setRuntimeMode(null)
-          setRemoteAuthMode(null)
-        }
-      })
-
-    return () => {
-      canceled = true
-    }
-  }, [instance?.id, instance?.url])
-
-  const handleLogin = async () => {
-    if (!instance) return
-    setLoading(true)
-    setError(null)
-    setConnectivityIssue(null)
-
-    if (isMixedContentBlocked(window.location.origin, instance.url)) {
-      setConnectivityIssue(
-        getConnectivityIssue(
-          instance.url,
-          new Error('mixed_content_blocked'),
-          window.location.origin,
-        ),
-      )
-      setError('Browser blocked this request due to mixed-content policy.')
-      setLoading(false)
+      setRemoteAuthMode(null)
       return
     }
 
+    void getSetupStatus(activeInstance.url)
+      .then((status) => {
+        setRuntimeMode(status.runtime_mode)
+        setRemoteAuthMode(status.remote_auth_mode)
+      })
+      .catch(() => {
+        setRuntimeMode(null)
+        setRemoteAuthMode(null)
+      })
+  })
+
+  const handleLogin = async (localEmail: string) => {
+    const activeInstance = instance()
+    if (!activeInstance) return
+
+    setLoading(true)
+    setError(null)
+
     try {
-      const status = await getSetupStatus(instance.url)
+      const status = await getSetupStatus(activeInstance.url)
       if (status.setup_mode && status.runtime_mode !== 'local') {
         setError('Setup is not complete yet. Finish setup before signing in.')
         setLoading(false)
         return
       }
+
       setRuntimeMode(status.runtime_mode)
       setRemoteAuthMode(status.remote_auth_mode)
 
       const localUi = isLoopbackHostname(window.location.hostname)
       const localBackend = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
+        resolveBackendHostname(activeInstance.url),
       )
       const canUseLoopbackLocalLogin = localUi && localBackend
-      if (status.runtime_mode === 'local' && !canUseLoopbackLocalLogin) {
-        setError(
-          'Local Only sign-in is restricted to loopback access. Enable External Access on the host machine.',
-        )
-        setLoading(false)
-        return
-      }
-
       const loginFlow = resolveLoginFlow(status, canUseLoopbackLocalLogin)
 
       if (loginFlow === 'local') {
-        const response = await localLogin(instance.url, {
+        const response = await localLogin(activeInstance.url, {
           email: localEmail.trim() || undefined,
         })
         if (!response.user.user_id || !response.user.role) {
           throw new Error('Incomplete user profile received from server')
         }
-        setAuth(
+
+        setAuth()(
           response.session_token,
           response.expires_at,
           {
@@ -216,17 +191,19 @@ function LoginPage() {
           },
           'local',
         )
+
         setLoading(false)
         void navigate({ to: '/' })
         return
       }
 
       if (loginFlow === 'trusted_proxy') {
-        const response = await trustedProxyLogin(instance.url)
+        const response = await trustedProxyLogin(activeInstance.url)
         if (!response.user.user_id || !response.user.role) {
           throw new Error('Incomplete user profile received from server')
         }
-        setAuth(
+
+        setAuth()(
           response.session_token,
           response.expires_at,
           {
@@ -238,291 +215,166 @@ function LoginPage() {
           },
           'trusted_proxy',
         )
+
         setLoading(false)
         void navigate({ to: '/' })
         return
       }
 
       const callbackUrl = `${window.location.origin}/auth/callback`
-      const res = await fetch(
-        `${instance.url}/v1/auth/oidc/start?redirect_uri=${encodeURIComponent(callbackUrl)}`,
+      const response = await fetch(
+        `${activeInstance.url}/v1/auth/oidc/start?redirect_uri=${encodeURIComponent(callbackUrl)}`,
       )
 
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as {
           error?: string
         }
-        throw new Error(body.error ?? `Login failed (${res.status})`)
+        throw new Error(body.error ?? `Login failed (${response.status})`)
       }
 
-      const data = (await res.json()) as {
+      const data = (await response.json()) as {
         authorization_url: string
         state: string
       }
 
       try {
         sessionStorage.setItem('oore_oidc_state', data.state)
-        sessionStorage.setItem('oore_oidc_instance', instance.id)
+        sessionStorage.setItem('oore_oidc_instance', activeInstance.id)
         sessionStorage.setItem('oore_oidc_flow', 'auth')
       } catch {
         // sessionStorage unavailable
       }
 
       window.location.href = data.authorization_url
-    } catch (e) {
-      setConnectivityIssue(
-        getConnectivityIssue(instance.url, e, window.location.origin),
-      )
-      if (e instanceof ApiClientError) {
-        if (e.code === 'local_login_loopback_required') {
-          setError(
-            'Local Only sign-in is restricted to loopback access. Enable External Access on the host machine.',
-          )
-        } else if (e.code === 'mode_restricted') {
-          setError(
-            'Local sign-in is unavailable until setup is complete in Local Only mode.',
-          )
-        } else if (e.code === 'external_access_https_required') {
-          setError('External Access requires an HTTPS public URL.')
-        } else if (e.code === 'external_access_origin_not_allowed') {
-          setError(
-            'External Access Public URL origin is not included in allowed frontend origins.',
-          )
-        } else if (e.code === 'external_access_public_url_missing') {
-          setError(
-            'Set External Access Public URL in Preferences on the host machine before enabling External Access.',
-          )
-        } else if (e.code === 'external_access_preflight_failed') {
-          setError(
-            'External Access preflight checks are failing. Resolve setup and Preferences readiness checks first.',
-          )
-        } else if (e.code === 'trusted_proxy_peer_not_allowed') {
-          setError(
-            'Trusted proxy login request did not come from an allowlisted proxy peer.',
-          )
-        } else if (e.code === 'trusted_proxy_identity_missing') {
-          setError(
-            'Trusted proxy identity header is missing. Check Warpgate header forwarding.',
-          )
-        } else if (e.code === 'trusted_proxy_identity_invalid') {
-          setError(
-            'Trusted proxy identity header must contain an email address.',
-          )
-        } else {
-          setError(e.message)
-        }
+    } catch (value) {
+      if (value instanceof ApiClientError) {
+        setError(value.message)
       } else {
-        setError(e instanceof Error ? e.message : 'Login failed')
+        setError(value instanceof Error ? value.message : 'Login failed')
       }
       setLoading(false)
     }
   }
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-6">
+    <div class="mx-auto max-w-6xl p-6">
       <PageMeta title="Login" />
-      <div className="w-full max-w-sm space-y-8">
-        <div className="text-center space-y-4">
-          <div className="mx-auto flex size-14 items-center justify-center">
-            <img src="/logo.svg" alt="Oore logo" className="size-full" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-            <p className="text-muted-foreground text-sm">
-              Authenticate to the active instance to continue.
-            </p>
-          </div>
-        </div>
+      <div class="mb-6 text-center">
+        <h1 class="text-3xl font-semibold tracking-tight">Sign in to Oore CI</h1>
+        <p class="mt-2 text-sm text-muted-foreground">
+          Choose an instance and authenticate.
+        </p>
+      </div>
 
-        <Card>
-          <CardContent className="space-y-4">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Instance</span>
-              <Separator orientation="vertical" className="h-3!" />
-              <code className="bg-muted px-1.5 py-0.5 text-xs font-mono font-medium">
-                {instance?.label ?? 'none selected'}
-              </code>
-            </div>
-
-            <div className="border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Sign-in method
-              </p>
-              <p className="mt-1 text-sm font-medium">
-                {runtimeMode === 'local'
-                  ? 'Local Only'
-                  : localLoginAvailable
-                    ? 'Local (loopback)'
-                    : remoteAuthMode === 'trusted_proxy'
-                      ? 'Trusted Proxy'
-                      : 'OIDC'}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {lastAuthMeta
-                  ? `Last successful sign-in: ${formatLastAuthTime(lastAuthMeta.at)} via ${formatAuthMethodLabel(lastAuthMeta.method)}`
-                  : 'No previous successful sign-in stored on this device.'}
-              </p>
-            </div>
-
-            {runtimeMode === 'local' && localModeNetworkBlocked ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  Local Only sign-in is blocked for this network host. Enable
-                  External Access on the host machine, then sign in with OIDC.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-
-            {localLoginAvailable && !localModeNetworkBlocked ? (
-              <div className="space-y-2">
-                <Input
-                  placeholder="Email (optional for single-user instances)"
-                  value={localEmail}
-                  onChange={(event) => setLocalEmail(event.target.value)}
-                  disabled={loading}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Leave email blank to auto-sign-in when only one active user
-                  exists.
-                </p>
-                {runtimeMode === 'local' ? (
-                  <p className="text-xs text-muted-foreground">
-                    First sign-in on a new local instance will auto-initialize
-                    owner setup.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
-            {error ? (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            ) : null}
-
-            {connectivityIssue && instance ? (
-              <div className="space-y-3 border p-3">
-                <p className="text-sm font-medium">{connectivityIssue.title}</p>
-                <p className="text-xs text-muted-foreground">
-                  {connectivityIssue.description}
-                </p>
-
-                <div className="space-y-1">
-                  <p className="text-xs font-medium">CLI fallback</p>
-                  <code className="block bg-muted px-2 py-1 text-xs">
-                    oore setup
-                  </code>
-                </div>
-
-                <div className="space-y-1">
-                  <p className="text-xs font-medium">
-                    Expose backend with tunnel
-                  </p>
-                  <code className="block bg-muted px-2 py-1 text-xs">
-                    cloudflared tunnel --url {instance.url}
-                  </code>
-                </div>
-
-                {hostedUi ? (
-                  <p className="text-xs text-muted-foreground">
-                    For local-only backends, run the bundled local web launcher:{' '}
-                    <code>oore-web --backend-url {instance.url}</code>.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
-            <Button
-              onClick={() => void handleLogin()}
-              disabled={loading || !instance || localModeNetworkBlocked}
-              className="w-full"
-            >
-              {loading ? (
-                <>
-                  <Spinner className="size-4" />
-                  {localLoginAvailable ? 'Signing in...' : 'Redirecting...'}
-                </>
-              ) : localLoginAvailable ? (
-                localModeNetworkBlocked ? (
-                  'Enable External Access first'
-                ) : (
-                  'Sign in locally'
-                )
-              ) : remoteAuthMode === 'trusted_proxy' ? (
-                'Sign in via Trusted Proxy'
-              ) : (
-                'Sign in with OIDC'
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
+      <div class="grid gap-4 lg:grid-cols-[1fr_340px]">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Saved Instances
-            </CardTitle>
+            <CardTitle>Authentication</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {instanceList.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No saved instances yet. Add one to start signing in.
-              </p>
-            ) : (
-              instanceList.map((inst) => {
-                const isActive = inst.id === activeInstanceId
-                const meta = getLastAuthMetaForInstance(inst.id)
-                return (
-                  <button
-                    key={inst.id}
-                    type="button"
-                    onClick={() => setActiveInstance(inst.id)}
-                    className={`w-full border p-3 text-left transition-colors ${
-                      isActive
-                        ? 'border-primary/40 bg-primary/5'
-                        : 'border-border/60 bg-background hover:border-primary/30'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {inst.label}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {instanceHostname(inst.url)}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {meta
-                            ? `Last sign-in: ${formatLastAuthTime(meta.at)} via ${formatAuthMethodLabel(meta.method)}`
-                            : 'No successful sign-in stored for this instance'}
-                        </p>
-                      </div>
-                      {isActive ? (
-                        <span className="flex items-center gap-1 text-xs text-primary">
-                          <HugeiconsIcon icon={Tick02Icon} size={14} />
-                          Active
-                        </span>
-                      ) : null}
-                    </div>
-                  </button>
-                )
-              })
-            )}
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setShowAddInstance(true)}
+          <CardContent class="space-y-4">
+            <Show
+              when={instance()}
+              fallback={
+                <div class="space-y-3">
+                  <p class="text-sm text-muted-foreground">
+                    Add a backend instance first.
+                  </p>
+                  <Button onClick={() => setShowAddInstance(true)}>
+                    <HugeIcon icon={Add01Icon} />
+                    Add Instance
+                  </Button>
+                </div>
+              }
             >
-              <HugeiconsIcon icon={Add01Icon} size={16} />
-              Add Another Instance
-            </Button>
+              <div class="rounded border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Active instance: <strong>{instance()?.label}</strong> ({instance()?.url})
+              </div>
+
+              <Show when={runtimeMode() === 'local'}>
+                <loginForm.Field name="localEmail">
+                  {(field) => {
+                    const fieldError = () => {
+                      if (
+                        !field().state.meta.isTouched &&
+                        loginSubmissionAttempts() === 0
+                      ) {
+                        return null
+                      }
+                      return (field().state.meta.errors[0] as string | undefined) ?? null
+                    }
+
+                    return (
+                      <FormField
+                        label="Local user email (optional)"
+                        error={fieldError()}
+                      >
+                        <Input
+                          value={field().state.value}
+                          onInput={(event) =>
+                            field().handleChange(event.currentTarget.value)
+                          }
+                          onBlur={field().handleBlur}
+                          placeholder="owner@example.com"
+                        />
+                      </FormField>
+                    )
+                  }}
+                </loginForm.Field>
+              </Show>
+
+              <Show when={error()}>
+                <Alert variant="destructive">
+                  <AlertTitle>Sign in failed</AlertTitle>
+                  <AlertDescription>{error()}</AlertDescription>
+                </Alert>
+              </Show>
+
+              <Button onClick={() => void loginForm.handleSubmit()} disabled={loading()}>
+                <Show when={loading()} fallback={<HugeIcon icon={Login02Icon} />}>
+                  <Spinner class="size-4" />
+                </Show>
+                Continue
+                <HugeIcon icon={ArrowRight01Icon} size={14} />
+              </Button>
+
+              <div class="text-xs text-muted-foreground">
+                Flow: {runtimeMode() ?? 'unknown'} / {remoteAuthMode() ?? 'unknown'}
+              </div>
+            </Show>
+
+            <Separator />
+
+            <div class="space-y-2">
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Instance quick switch
+              </h3>
+              <div class="grid gap-2">
+                <For each={instanceList()}>
+                  {(item) => (
+                    <button
+                      type="button"
+                      onClick={() => setActiveInstance()(item.id)}
+                      class={`border px-3 py-2 text-left text-xs ${
+                        item.id === activeInstanceId()
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border hover:bg-accent'
+                      }`}
+                    >
+                      <div class="font-medium">{item.label}</div>
+                      <div class="text-muted-foreground">{item.url}</div>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
           </CardContent>
         </Card>
+
+        <InstanceSwitcher />
       </div>
-      <AddInstanceDialog
-        open={showAddInstance}
-        onOpenChange={setShowAddInstance}
-      />
+
+      <AddInstanceDialog open={showAddInstance()} onOpenChange={setShowAddInstance} />
     </div>
   )
 }

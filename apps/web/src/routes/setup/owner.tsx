@@ -1,346 +1,184 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { createSignal, Show } from 'solid-js'
+import { createForm } from '@tanstack/solid-form'
+import { createFileRoute, useNavigate } from '@tanstack/solid-router'
 import z from 'zod'
-import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Button } from '@/components/ui/button'
+import { FormField } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Spinner } from '@/components/ui/spinner'
 import {
   useSetupLocalOwnerCreate,
   useSetupOidcStart,
   useSetupStatus,
   useSetupTrustedProxyClaimOwner,
 } from '@/hooks/use-setup'
-import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { useSetupStore } from '@/stores/setup-store'
-import {
-  getActiveInstanceOrRedirect,
-  requireSetupSessionOrRedirect,
-} from '@/lib/instance-context'
-import { PageMeta } from '@/lib/seo'
-
-const localOwnerSchema = z.object({
-  email: z.string().email('Enter a valid email address'),
-})
-
-type LocalOwnerForm = z.infer<typeof localOwnerSchema>
 
 export const Route = createFileRoute('/setup/owner')({
-  beforeLoad: () => {
-    const instance = getActiveInstanceOrRedirect()
-    requireSetupSessionOrRedirect(instance.id)
-  },
-  component: OwnerStep,
-  errorComponent: OwnerStepError,
+  component: SetupOwnerPage,
 })
 
-function OwnerStepError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
-
-function getOidcErrorMessage(error: Error | null): string | null {
-  if (!error) return null
-  if (error instanceof ApiClientError) {
-    switch (error.code) {
-      case 'invalid_state':
-        return 'Owner has already been configured for this instance.'
-      case 'session_expired':
-        return 'Your setup session has expired. Please restart setup with a new bootstrap token.'
-      case 'invalid_session':
-        return 'Your session is no longer valid. Please restart setup.'
-      case 'auth_expired':
-        return 'The OIDC authorization request has expired. Please try again.'
-      case 'invalid_redirect_uri':
-        if (
-          error.message.includes('public redirect_uri must use https scheme') ||
-          error.message.includes(
-            'non-localhost redirect_uri must use https scheme',
-          )
-        ) {
-          return 'This frontend URL cannot be used for OIDC callback over HTTP. Use an HTTPS frontend URL or open setup from localhost/.local.'
-        }
-        if (
-          error.message.includes('origin is not in the allowed origins list')
-        ) {
-          return 'This frontend origin is not allowed by the backend. Update allowed frontend origins in Preferences and try again.'
-        }
-        return 'OIDC callback URL is invalid. Ensure the callback path is /auth/callback.'
-      default:
-        return error.message
-    }
-  }
-  return error.message
-}
-
-function OwnerStep() {
+function SetupOwnerPage() {
   const navigate = useNavigate()
-  const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
-  const startOidcMutation = useSetupOidcStart()
-  const localOwnerMutation = useSetupLocalOwnerCreate()
-  const trustedProxyClaimMutation = useSetupTrustedProxyClaimOwner()
-  const { data: status } = useSetupStatus()
+  const status = useSetupStatus()
+  const createLocalOwner = useSetupLocalOwnerCreate()
+  const startOidcOwnerFlow = useSetupOidcStart()
+  const claimTrustedProxyOwner = useSetupTrustedProxyClaimOwner()
 
-  const localOwnerForm = useForm<LocalOwnerForm>({
-    resolver: zodResolver(localOwnerSchema),
-    defaultValues: {
-      email: 'owner@local',
-    },
+  const [error, setError] = createSignal<string | null>(null)
+
+  const schema = z.object({
+    email: z
+      .string()
+      .trim()
+      .min(1, 'Owner email is required.')
+      .email('Owner email must be valid.'),
   })
 
-  const oidcErrorMessage = getOidcErrorMessage(startOidcMutation.error)
-  const localErrorMessage = localOwnerMutation.error
-    ? getApiErrorMessage(localOwnerMutation.error, {
-        invalid_input: 'Enter a valid email address.',
-        session_expired:
-          'Your setup session has expired. Restart setup with a new bootstrap token.',
-        invalid_session:
-          'Your session is no longer valid. Restart setup from the token step.',
-        mode_restricted:
-          'Local owner creation is only available in Local Only mode.',
-      })
-    : null
-  const trustedProxyErrorMessage = trustedProxyClaimMutation.error
-    ? getApiErrorMessage(trustedProxyClaimMutation.error, {
-        trusted_proxy_peer_not_allowed:
-          'This request did not come from a trusted proxy peer.',
-        trusted_proxy_identity_missing:
-          'Trusted proxy identity header is missing. Check Warpgate header forwarding.',
-        trusted_proxy_identity_invalid:
-          'Trusted proxy identity header must contain an email address.',
-        mode_restricted:
-          'Switch setup mode to Remote (Trusted Proxy) before claiming owner.',
-      })
-    : null
+  const form = createForm(() => ({
+    defaultValues: {
+      email: '',
+    },
+    validators: {
+      onSubmit: ({ value }) => {
+        const parsed = schema.safeParse(value)
+        if (parsed.success) return undefined
+        return {
+          fields: {
+            email:
+              parsed.error.flatten().fieldErrors.email?.[0] ??
+              'Owner email is required.',
+          },
+        }
+      },
+    },
+    onSubmit: async ({ value }) => {
+      setError(null)
+      try {
+        await createLocalOwner.mutateAsync(value.email.trim())
+        continueToComplete()
+      } catch (submitError) {
+        setError(
+          submitError instanceof Error
+            ? submitError.message
+            : 'Failed to create owner',
+        )
+      }
+    },
+  }))
 
-  useEffect(() => {
-    if (!status) return
-    setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-  }, [status, setCurrentStep])
+  const submissionAttempts = form.useStore((state) => state.submissionAttempts)
 
-  useEffect(() => {
-    if (!status) return
-    if (status.state === 'owner_created') {
-      setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
-      void navigate({ to: '/setup/complete' })
+  const continueToComplete = () => {
+    useSetupStore.getState().setCurrentStep(4)
+    void navigate({ to: '/setup/complete' })
+  }
+
+  const handleLocalOwnerSubmit = (event: SubmitEvent) => {
+    event.preventDefault()
+    void form.handleSubmit()
+  }
+
+  const handleOidcOwner = async () => {
+    setError(null)
+      try {
+        const redirectUri = `${window.location.origin}/auth/callback`
+        const response = await startOidcOwnerFlow.mutateAsync(redirectUri)
+      try {
+        const sessionToken = useSetupStore.getState().sessionToken
+        sessionStorage.setItem('oore_oidc_state', response.state)
+        sessionStorage.setItem('oore_oidc_flow', 'setup_owner')
+        if (sessionToken) {
+          sessionStorage.setItem('oore_setup_session_token', sessionToken)
+        }
+      } catch {
+        // ignore
+      }
+      window.location.href = response.authorization_url
+    } catch (value) {
+      setError(value instanceof Error ? value.message : 'Failed to start OIDC owner flow')
     }
-  }, [status, setCurrentStep, navigate])
-
-  if (!status) {
-    return (
-      <div className="flex justify-center py-8">
-        <Spinner className="size-5" />
-      </div>
-    )
   }
 
-  const isLocalMode = status.runtime_mode === 'local'
-  const isTrustedProxyMode =
-    status.runtime_mode === 'remote' &&
-    status.remote_auth_mode === 'trusted_proxy'
-
-  const handleStartOidc = useCallback(() => {
-    if (!sessionToken) return
-
-    const redirectUri = `${window.location.origin}/auth/callback`
-    startOidcMutation.mutate(
-      { sessionToken, redirectUri },
-      {
-        onSuccess: (data) => {
-          try {
-            sessionStorage.setItem('oore_oidc_state', data.state)
-            sessionStorage.setItem('oore_oidc_flow', 'setup_owner')
-            sessionStorage.setItem('oore_setup_session_token', sessionToken)
-          } catch {
-            // ignore
-          }
-          window.location.href = data.authorization_url
-        },
-      },
-    )
-  }, [sessionToken, startOidcMutation])
-
-  function handleCreateLocalOwner(data: LocalOwnerForm) {
-    if (!sessionToken) return
-    localOwnerMutation.mutate(
-      {
-        sessionToken,
-        email: data.email.trim().toLowerCase(),
-      },
-      {
-        onSuccess: () => {
-          setCurrentStep(3)
-          void navigate({ to: '/setup/complete' })
-        },
-      },
-    )
+  const handleTrustedProxyOwner = async () => {
+    setError(null)
+    try {
+      await claimTrustedProxyOwner.mutateAsync()
+      continueToComplete()
+    } catch (value) {
+      setError(value instanceof Error ? value.message : 'Failed to claim owner')
+    }
   }
-
-  const handleClaimTrustedProxyOwner = useCallback(() => {
-    if (!sessionToken) return
-    trustedProxyClaimMutation.mutate(
-      { sessionToken },
-      {
-        onSuccess: () => {
-          setCurrentStep(4)
-          void navigate({ to: '/setup/complete' })
-        },
-      },
-    )
-  }, [sessionToken, trustedProxyClaimMutation, setCurrentStep, navigate])
-
-  const handleRestartFromToken = useCallback(() => {
-    useSetupStore.getState().reset()
-    void navigate({ to: '/setup' })
-  }, [navigate])
 
   return (
-    <div className="space-y-4">
-      <PageMeta title="Setup Owner" />
-      <div className="space-y-1">
-        <h2 className="text-lg font-medium">Owner Account</h2>
-        <p className="text-sm text-muted-foreground">
-          {isLocalMode
-            ? 'Create a local owner account to finish setup without OIDC.'
-            : isTrustedProxyMode
-              ? 'Confirm owner identity from your trusted proxy (Warpgate).'
-              : "Authenticate with your OIDC provider to verify your identity. Your email and OIDC subject will be extracted from the provider's ID token."}
+    <form class="space-y-4" onSubmit={handleLocalOwnerSubmit}>
+      <div>
+        <h2 class="text-lg font-semibold">Create Owner</h2>
+        <p class="text-sm text-muted-foreground">
+          Finalize owner identity for this instance.
         </p>
       </div>
 
-      {isLocalMode ? (
-        <Form {...localOwnerForm}>
-          <form
-            onSubmit={localOwnerForm.handleSubmit(handleCreateLocalOwner)}
-            className="space-y-4"
+      {error() ? (
+        <Alert variant="destructive">
+          <AlertTitle>Owner setup failed</AlertTitle>
+          <AlertDescription>{error()}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Show
+        when={status.data?.runtime_mode === 'local'}
+        fallback={
+          <Show
+            when={status.data?.remote_auth_mode === 'trusted_proxy'}
+            fallback={
+              <Button
+                type="button"
+                onClick={handleOidcOwner}
+                disabled={startOidcOwnerFlow.isPending}
+              >
+                Continue with OIDC Owner Authentication
+              </Button>
+            }
           >
-            <FormField
-              control={localOwnerForm.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Owner email</FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      placeholder="owner@local"
-                      autoComplete="email"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {localErrorMessage ? (
-              <Alert variant="destructive">
-                <AlertTitle>Failed to create owner</AlertTitle>
-                <AlertDescription>{localErrorMessage}</AlertDescription>
-              </Alert>
-            ) : null}
-
             <Button
-              type="submit"
-              className="w-full"
-              disabled={localOwnerMutation.isPending}
+              type="button"
+              onClick={handleTrustedProxyOwner}
+              disabled={claimTrustedProxyOwner.isPending}
             >
-              {localOwnerMutation.isPending
-                ? 'Creating owner...'
-                : 'Create Local Owner'}
+              Claim Owner via Trusted Proxy
             </Button>
-          </form>
-        </Form>
-      ) : isTrustedProxyMode ? (
-        <>
-          {trustedProxyErrorMessage ? (
-            <Alert variant="destructive">
-              <AlertTitle>Failed to claim owner identity</AlertTitle>
-              <AlertDescription>{trustedProxyErrorMessage}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          <Button
-            onClick={handleClaimTrustedProxyOwner}
-            disabled={trustedProxyClaimMutation.isPending}
-            className="w-full"
-          >
-            {trustedProxyClaimMutation.isPending
-              ? 'Claiming owner...'
-              : 'Confirm Owner from Trusted Proxy'}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={() => void navigate({ to: '/setup/trusted-proxy' })}
-            className="w-full"
-          >
-            Back to Trusted Proxy Settings
-          </Button>
-        </>
-      ) : (
-        <>
-          <Alert>
-            <AlertTitle>Troubleshooting tip</AlertTitle>
-            <AlertDescription>
-              If your provider shows errors like <code>invalid_client</code> or
-              callback mismatch, go back to OIDC settings and update client ID,
-              secret, and allowed redirect URI. If the provider does not
-              redirect back, return here manually and retry after fixing OIDC
-              settings.
-            </AlertDescription>
-          </Alert>
-
-          {oidcErrorMessage ? (
-            <Alert variant="destructive">
-              <AlertTitle>Failed to start authentication</AlertTitle>
-              <AlertDescription>{oidcErrorMessage}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          <Button
-            onClick={handleStartOidc}
-            disabled={startOidcMutation.isPending}
-            className="w-full"
-          >
-            {startOidcMutation.isPending
-              ? 'Redirecting...'
-              : 'Authenticate with OIDC Provider'}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={() => void navigate({ to: '/setup/oidc' })}
-            className="w-full"
-          >
-            Back to OIDC Settings
-          </Button>
-        </>
-      )}
-
-      <Button
-        variant="outline"
-        onClick={handleRestartFromToken}
-        className="w-full"
+          </Show>
+        }
       >
-        Restart from Token Step
-      </Button>
-    </div>
+        <form.Field name="email">
+          {(field) => {
+            const fieldError = () => {
+              if (
+                !field().state.meta.isTouched &&
+                submissionAttempts() === 0
+              ) {
+                return null
+              }
+              return (field().state.meta.errors[0] as string | undefined) ?? null
+            }
+
+            return (
+              <FormField label="Owner email" error={fieldError()}>
+                <Input
+                  value={field().state.value}
+                  onInput={(event) => field().handleChange(event.currentTarget.value)}
+                  onBlur={field().handleBlur}
+                  placeholder="owner@example.com"
+                />
+              </FormField>
+            )
+          }}
+        </form.Field>
+        <Button type="submit" disabled={createLocalOwner.isPending}>
+          Create Owner
+        </Button>
+      </Show>
+    </form>
   )
 }

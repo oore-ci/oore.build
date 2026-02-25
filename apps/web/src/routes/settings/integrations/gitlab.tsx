@@ -1,8 +1,7 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { createSignal, Show } from 'solid-js'
+import { createForm } from '@tanstack/solid-form'
+import { createFileRoute, useNavigate } from '@tanstack/solid-router'
 import z from 'zod'
-import { toast } from 'sonner'
 
 import {
   getActiveInstanceOrRedirect,
@@ -12,63 +11,15 @@ import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useGitLabStart } from '@/hooks/use-integrations'
 import { PageMeta } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { FormField } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import PageHeader from '@/components/page-header'
-import PageLayout from '@/components/page-layout'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { PageHeader } from '@/components/page-header'
+import { PageLayout } from '@/components/page-layout'
+import { toast } from '@/components/ui/sonner'
 
-const gitLabSetupSchema = z
-  .object({
-    host_url: z.string().trim().min(1, 'Host URL is required'),
-    auth_mode: z.enum(['personal_token', 'oauth_app']),
-    webhook_secret: z.string().trim().min(1, 'Webhook secret is required'),
-    access_token: z.string().optional(),
-    client_id: z.string().optional(),
-    client_secret: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.auth_mode === 'personal_token' && !value.access_token?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Access token is required',
-        path: ['access_token'],
-      })
-    }
-
-    if (value.auth_mode === 'oauth_app' && !value.client_id?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Client ID is required',
-        path: ['client_id'],
-      })
-    }
-
-    if (value.auth_mode === 'oauth_app' && !value.client_secret?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Client secret is required',
-        path: ['client_secret'],
-      })
-    }
-  })
-
-type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
+type GitLabAuthMode = 'personal_token' | 'oauth_app'
 
 export const Route = createFileRoute('/settings/integrations/gitlab')({
   staticData: { breadcrumbLabel: 'GitLab' },
@@ -82,234 +33,331 @@ export const Route = createFileRoute('/settings/integrations/gitlab')({
 function GitLabSetupPage() {
   const navigate = useNavigate()
   const startMutation = useGitLabStart()
-  const { data: preferences } = useInstancePreferences()
-  const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
+  const preferences = useInstancePreferences()
+  const remoteEnabled = () => preferences.data?.preferences.runtime_mode === 'remote'
 
-  const form = useForm<GitLabSetupForm>({
-    resolver: zodResolver(gitLabSetupSchema),
-    mode: 'onBlur',
+  const [error, setError] = createSignal<string | null>(null)
+
+  const schema = z
+    .object({
+      hostUrl: z
+        .string()
+        .trim()
+        .min(1, 'Host URL is required.')
+        .url('Host URL must be a valid URL.'),
+      authMode: z.enum(['personal_token', 'oauth_app']),
+      webhookSecret: z.string().trim().min(1, 'Webhook secret is required.'),
+      accessToken: z.string().optional(),
+      clientId: z.string().optional(),
+      clientSecret: z.string().optional(),
+    })
+    .superRefine((value, context) => {
+      if (value.authMode === 'personal_token' && !value.accessToken?.trim()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Access token is required for Personal Access Token mode.',
+          path: ['accessToken'],
+        })
+      }
+
+      if (value.authMode === 'oauth_app' && !value.clientId?.trim()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Client ID is required for OAuth mode.',
+          path: ['clientId'],
+        })
+      }
+
+      if (value.authMode === 'oauth_app' && !value.clientSecret?.trim()) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Client secret is required for OAuth mode.',
+          path: ['clientSecret'],
+        })
+      }
+    })
+
+  const form = createForm(() => ({
     defaultValues: {
-      host_url: 'https://gitlab.com',
-      auth_mode: 'personal_token',
-      webhook_secret: '',
-      access_token: '',
-      client_id: '',
-      client_secret: '',
+      hostUrl: 'https://gitlab.com',
+      authMode: 'personal_token' as GitLabAuthMode,
+      webhookSecret: '',
+      accessToken: '',
+      clientId: '',
+      clientSecret: '',
     },
-  })
-
-  const authMode = form.watch('auth_mode')
-  const hostUrl = form.watch('host_url')
-
-  function handleSubmit(data: GitLabSetupForm) {
-    if (!remoteEnabled) return
-    startMutation.mutate(
-      {
-        host_url: data.host_url.trim(),
-        auth_mode: data.auth_mode,
-        webhook_secret: data.webhook_secret.trim(),
-        access_token:
-          data.auth_mode === 'personal_token'
-            ? data.access_token?.trim() || undefined
-            : undefined,
-        client_id:
-          data.auth_mode === 'oauth_app'
-            ? data.client_id?.trim() || undefined
-            : undefined,
-        client_secret:
-          data.auth_mode === 'oauth_app'
-            ? data.client_secret?.trim() || undefined
-            : undefined,
+    validators: {
+      onSubmit: ({ value }) => {
+        const parsed = schema.safeParse(value)
+        if (parsed.success) return undefined
+        const fields = parsed.error.flatten().fieldErrors
+        return {
+          fields: {
+            hostUrl: fields.hostUrl?.[0],
+            webhookSecret: fields.webhookSecret?.[0],
+            accessToken: fields.accessToken?.[0],
+            clientId: fields.clientId?.[0],
+            clientSecret: fields.clientSecret?.[0],
+          },
+        }
       },
-      {
-        onSuccess: (response) => {
-          if (response.integration.status === 'inactive') {
-            toast.message(
-              `Saved: ${response.integration.display_name ?? 'GitLab'} - authorize on GitLab to complete setup.`,
-            )
-            void navigate({
-              to: '/settings/integrations/$integrationId',
-              params: { integrationId: response.integration.id },
-            })
-          } else {
+    },
+    onSubmit: ({ value }) => {
+      if (!remoteEnabled()) return
+      setError(null)
+
+      startMutation.mutate(
+        {
+          host_url: value.hostUrl.trim(),
+          auth_mode: value.authMode,
+          webhook_secret: value.webhookSecret.trim(),
+          access_token:
+            value.authMode === 'personal_token'
+              ? value.accessToken.trim()
+              : undefined,
+          client_id:
+            value.authMode === 'oauth_app' ? value.clientId.trim() : undefined,
+          client_secret:
+            value.authMode === 'oauth_app'
+              ? value.clientSecret.trim()
+              : undefined,
+        },
+        {
+          onSuccess: (response) => {
+            if (response.integration.status === 'inactive') {
+              toast.message(
+                `Saved: ${response.integration.display_name ?? 'GitLab'} - authorize on GitLab to complete setup.`,
+              )
+              void navigate({
+                to: '/settings/integrations/$integrationId',
+                params: { integrationId: response.integration.id },
+              })
+              return
+            }
+
             toast.success(
               `Connected: ${response.integration.display_name ?? 'GitLab'}`,
             )
             void navigate({ to: '/settings/integrations' })
-          }
+          },
+          onError: (mutationError) => {
+            setError(
+              mutationError instanceof Error
+                ? mutationError.message
+                : 'Failed to connect GitLab',
+            )
+          },
         },
-        onError: (err) => {
-          toast.error(`Failed to connect GitLab: ${err.message}`)
-        },
-      },
-    )
+      )
+    },
+  }))
+
+  const submissionAttempts = form.useStore((state) => state.submissionAttempts)
+  const values = form.useStore((state) => state.values)
+
+  const handleSubmit = (event: SubmitEvent) => {
+    event.preventDefault()
+    void form.handleSubmit()
   }
 
   return (
-    <PageLayout width="wide">
+    <PageLayout class="space-y-4">
       <PageMeta title="Connect GitLab Source" noindex />
       <PageHeader
         title="Connect GitLab Source"
         description="Connect gitlab.com or a self-managed GitLab source for repositories and webhook events."
-        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">GitLab connection</CardTitle>
+          <CardTitle class="text-base">GitLab connection</CardTitle>
         </CardHeader>
-        <CardContent>
-          {!remoteEnabled ? (
+        <CardContent class="space-y-4">
+          <form class="space-y-4" onSubmit={handleSubmit}>
+          <Show when={!remoteEnabled()}>
             <Alert>
               <AlertDescription>
                 GitLab source connections are disabled in Local Only mode.
                 Enable External Access in Preferences to continue.
               </AlertDescription>
             </Alert>
-          ) : null}
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(handleSubmit)}
-              className="space-y-4"
-            >
-              <FormField
-                control={form.control}
-                name="host_url"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>GitLab host URL</FormLabel>
-                    <FormControl>
-                      <Input {...field} placeholder="https://gitlab.com" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          </Show>
 
-              <FormField
-                control={form.control}
-                name="auth_mode"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Authentication method</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={{
-                        personal_token: 'Personal Access Token',
-                        oauth_app: 'OAuth Application',
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="personal_token">
-                          Personal Access Token
-                        </SelectItem>
-                        <SelectItem value="oauth_app">
-                          OAuth Application
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          <Show when={error()}>
+            <Alert variant="destructive">
+              <AlertTitle>Invalid form</AlertTitle>
+              <AlertDescription>{error()}</AlertDescription>
+            </Alert>
+          </Show>
 
-              <FormField
-                control={form.control}
-                name="webhook_secret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Webhook secret</FormLabel>
-                    <FormControl>
+            <form.Field name="hostUrl">
+              {(field) => {
+                const fieldError = () => {
+                  if (
+                    !field().state.meta.isTouched &&
+                    submissionAttempts() === 0
+                  ) {
+                    return null
+                  }
+                  return (field().state.meta.errors[0] as string | undefined) ?? null
+                }
+
+                return (
+                  <FormField label="GitLab host URL" error={fieldError()}>
+                    <Input
+                      value={field().state.value}
+                      onInput={(event) =>
+                        field().handleChange(event.currentTarget.value)
+                      }
+                      onBlur={field().handleBlur}
+                      placeholder="https://gitlab.com"
+                    />
+                  </FormField>
+                )
+              }}
+            </form.Field>
+
+            <form.Field name="authMode">
+              {(field) => (
+                <FormField label="Authentication method">
+                  <select
+                    class="h-9 w-full border border-input bg-background px-3 text-sm"
+                    value={field().state.value}
+                    onChange={(event) =>
+                      field().handleChange(event.currentTarget.value as GitLabAuthMode)
+                    }
+                    onBlur={field().handleBlur}
+                  >
+                    <option value="personal_token">Personal Access Token</option>
+                    <option value="oauth_app">OAuth Application</option>
+                  </select>
+                </FormField>
+              )}
+            </form.Field>
+
+            <form.Field name="webhookSecret">
+              {(field) => {
+                const fieldError = () => {
+                  if (
+                    !field().state.meta.isTouched &&
+                    submissionAttempts() === 0
+                  ) {
+                    return null
+                  }
+                  return (field().state.meta.errors[0] as string | undefined) ?? null
+                }
+
+                return (
+                  <FormField
+                    label="Webhook secret"
+                    error={fieldError()}
+                    description="Use the same secret when creating the webhook in GitLab."
+                  >
+                    <Input
+                      type="password"
+                      value={field().state.value}
+                      onInput={(event) =>
+                        field().handleChange(event.currentTarget.value)
+                      }
+                      onBlur={field().handleBlur}
+                      placeholder="Shared secret for GitLab webhook settings"
+                    />
+                  </FormField>
+                )
+              }}
+            </form.Field>
+
+            <Show when={values().authMode === 'personal_token'}>
+              <form.Field name="accessToken">
+                {(field) => {
+                  const fieldError = () => {
+                    if (
+                      !field().state.meta.isTouched &&
+                      submissionAttempts() === 0
+                    ) {
+                      return null
+                    }
+                    return (field().state.meta.errors[0] as string | undefined) ?? null
+                  }
+
+                  return (
+                    <FormField label="Access token" error={fieldError()}>
                       <Input
                         type="password"
-                        {...field}
-                        placeholder="Shared secret for GitLab webhook settings"
+                        value={field().state.value}
+                        onInput={(event) =>
+                          field().handleChange(event.currentTarget.value)
+                        }
+                        onBlur={field().handleBlur}
+                        placeholder="glpat-..."
                       />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">
-                      Use the same secret when creating the webhook in GitLab.
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                    </FormField>
+                  )
+                }}
+              </form.Field>
+            </Show>
 
-              {authMode === 'personal_token' ? (
-                <FormField
-                  control={form.control}
-                  name="access_token"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Access token</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          {...field}
-                          placeholder="glpat-..."
-                        />
-                      </FormControl>
-                      <p className="text-xs text-muted-foreground">
-                        Create a token with api scope at{' '}
-                        {hostUrl || 'https://gitlab.com'}
-                        /-/user_settings/personal_access_tokens.
-                      </p>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="client_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Client ID</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Application ID" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="client_secret"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Client secret</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            {...field}
-                            placeholder="Application secret"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
+            <Show when={values().authMode === 'oauth_app'}>
+              <form.Field name="clientId">
+                {(field) => {
+                  const fieldError = () => {
+                    if (
+                      !field().state.meta.isTouched &&
+                      submissionAttempts() === 0
+                    ) {
+                      return null
+                    }
+                    return (field().state.meta.errors[0] as string | undefined) ?? null
+                  }
 
-              <Button
-                type="submit"
-                disabled={startMutation.isPending || !remoteEnabled}
-              >
-                {!remoteEnabled
-                  ? 'External Access Required'
-                  : startMutation.isPending
-                    ? 'Connecting...'
-                    : 'Connect GitLab'}
-              </Button>
-            </form>
-          </Form>
+                  return (
+                    <FormField label="OAuth Client ID" error={fieldError()}>
+                      <Input
+                        value={field().state.value}
+                        onInput={(event) =>
+                          field().handleChange(event.currentTarget.value)
+                        }
+                        onBlur={field().handleBlur}
+                        placeholder="GitLab OAuth client ID"
+                      />
+                    </FormField>
+                  )
+                }}
+              </form.Field>
+
+              <form.Field name="clientSecret">
+                {(field) => {
+                  const fieldError = () => {
+                    if (
+                      !field().state.meta.isTouched &&
+                      submissionAttempts() === 0
+                    ) {
+                      return null
+                    }
+                    return (field().state.meta.errors[0] as string | undefined) ?? null
+                  }
+
+                  return (
+                    <FormField label="OAuth Client Secret" error={fieldError()}>
+                      <Input
+                        type="password"
+                        value={field().state.value}
+                        onInput={(event) =>
+                          field().handleChange(event.currentTarget.value)
+                        }
+                        onBlur={field().handleBlur}
+                        placeholder="GitLab OAuth client secret"
+                      />
+                    </FormField>
+                  )
+                }}
+              </form.Field>
+            </Show>
+
+            <Button type="submit" disabled={startMutation.isPending || !remoteEnabled()}>
+              {startMutation.isPending ? 'Saving...' : 'Connect GitLab'}
+            </Button>
+          </form>
         </CardContent>
       </Card>
     </PageLayout>

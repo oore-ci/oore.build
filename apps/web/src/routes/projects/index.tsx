@@ -1,31 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  Link,
-  createFileRoute,
-  useNavigate,
-  useSearch,
-} from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  InformationCircleIcon,
-  Link04Icon,
-} from '@hugeicons/core-free-icons'
+import { For, Match, Show, Switch, createEffect, createSignal } from 'solid-js'
+import { Link, createFileRoute, useNavigate } from '@tanstack/solid-router'
+import { Add01Icon } from '@hugeicons/core-free-icons'
 
-import CreateProjectDialog from './-create-project-dialog'
-import {
-  getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
-} from '@/lib/instance-context'
-import { useIntegrations } from '@/hooks/use-integrations'
-import { useProjects } from '@/hooks/use-projects'
-import { useHasPermission } from '@/hooks/use-permissions'
-import { useSetupStatus } from '@/hooks/use-setup'
+import { HugeIcon } from '@/components/huge-icon'
+import { PageHeader } from '@/components/page-header'
+import { PageLayout } from '@/components/page-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import PageHeader from '@/components/page-header'
-import PageLayout from '@/components/page-layout'
+import { FormError, FormField } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -35,13 +19,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useIntegrations } from '@/hooks/use-integrations'
+import { useHasPermission } from '@/hooks/use-permissions'
+import { useCreateProject, useProjects } from '@/hooks/use-projects'
+import { useSetupStatus } from '@/hooks/use-setup'
+import { getActiveInstanceOrRedirect, requireAuthOrRedirect } from '@/lib/instance-context'
+import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { openCreate?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { openCreate?: string } => ({
     openCreate: (search.openCreate as string) || undefined,
   }),
   beforeLoad: () => {
@@ -51,70 +39,79 @@ export const Route = createFileRoute('/projects/')({
   component: ProjectsListPage,
 })
 
-function relativeTime(epochSecs: number): string {
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSecs
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
-
 function ProjectsListPage() {
-  const search = useSearch({ from: '/projects/' })
+  const search = Route.useSearch()
   const navigate = useNavigate()
-  const { data, isLoading, error } = useProjects({ limit: 100 })
+
+  const projectsQuery = useProjects({ limit: 100 })
   const integrationsQuery = useIntegrations()
   const setupStatusQuery = useSetupStatus()
+  const createProjectMutation = useCreateProject()
+
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteIntegrations = useHasPermission('integrations', 'write')
-  const [createOpen, setCreateOpen] = useState(false)
 
-  const projects = useMemo(() => data?.projects ?? [], [data?.projects])
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
-  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
-  const integrationConnectTo = '/settings/integrations'
-  const integrationsResolved =
+  const [showCreate, setShowCreate] = createSignal(false)
+  const [createName, setCreateName] = createSignal('')
+  const [createRepoPath, setCreateRepoPath] = createSignal('')
+  const [createError, setCreateError] = createSignal<string | null>(null)
+
+  createEffect(() => {
+    if (search().openCreate !== '1') return
+    setShowCreate(true)
+    void navigate({ to: '/projects', search: {}, replace: true })
+  })
+
+  const projects = () => projectsQuery.data?.projects ?? []
+  const integrations = () => integrationsQuery.data?.integrations ?? []
+  const runtimeMode = () => setupStatusQuery.data?.runtime_mode ?? 'local'
+
+  const activeIntegrationsCount = () =>
+    integrations().filter((integration) => integration.status === 'active').length
+
+  const integrationsResolved = () =>
     !integrationsQuery.isLoading && !integrationsQuery.error
-  const noConnectedSources =
-    runtimeMode === 'remote' &&
-    integrationsResolved &&
-    activeIntegrationsCount === 0
-  const projectsLoading = isLoading || integrationsQuery.isLoading
-  const projectsError = error ?? integrationsQuery.error
 
-  useEffect(() => {
-    if (search.openCreate !== '1') return
-    if (projectsLoading) return
+  const noConnectedSources = () =>
+    runtimeMode() === 'remote' &&
+    integrationsResolved() &&
+    activeIntegrationsCount() === 0
 
-    if (!projectsError && canWriteProjects) {
-      setCreateOpen(true)
+  const projectsLoading = () => projectsQuery.isLoading || integrationsQuery.isLoading
+  const projectsError = () => projectsQuery.error ?? integrationsQuery.error
+
+  const handleCreateProject = () => {
+    const name = createName().trim()
+    const localRepositoryPath = createRepoPath().trim()
+
+    if (!name) {
+      setCreateError('Project name is required.')
+      return
     }
 
-    void navigate({
-      to: '/projects',
-      search: {},
-      replace: true,
-    })
-  }, [
-    canWriteProjects,
-    navigate,
-    projectsError,
-    projectsLoading,
-    search.openCreate,
-  ])
+    if (!localRepositoryPath) {
+      setCreateError('Repository URL/path is required.')
+      return
+    }
+
+    setCreateError(null)
+    createProjectMutation.mutate(
+      {
+        name,
+        local_repository_path: localRepositoryPath,
+      },
+      {
+        onSuccess: () => {
+          setCreateName('')
+          setCreateRepoPath('')
+          setShowCreate(false)
+        },
+        onError: (error) => {
+          setCreateError(error instanceof Error ? error.message : 'Failed to create project')
+        },
+      },
+    )
+  }
 
   return (
     <PageLayout width="wide">
@@ -123,144 +120,185 @@ function ProjectsListPage() {
         title="Projects"
         description="Repository and pipeline entry points for your build system."
         actions={
-          projects.length > 0 && canWriteProjects ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <HugeiconsIcon icon={Add01Icon} size={16} />
+          canWriteProjects ? (
+            <Button onClick={() => setShowCreate((current) => !current)}>
+              <HugeIcon icon={Add01Icon} size={16} />
               New Project
             </Button>
           ) : undefined
         }
       />
 
-      {projectsLoading ? (
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {projectsError ? (
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load projects: {projectsError.message}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!projectsLoading && !projectsError && projects.length === 0 ? (
+      <Show when={showCreate() && canWriteProjects}>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Create Your First Project
+            <CardTitle class="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Create Project
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              {runtimeMode === 'local'
-                ? 'Choose a local Git repository to create your first project.'
-                : noConnectedSources
-                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
-                  : 'Create a project from a connected source repository to define pipelines and start builds.'}
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              {canWriteProjects ? (
-                <Button onClick={() => setCreateOpen(true)}>
-                  <HugeiconsIcon icon={Add01Icon} size={16} />
-                  Create Project
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Ask an owner/admin/developer to create the first project.
-                </p>
-              )}
+          <CardContent class="grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]">
+            <FormField>
+              <Input
+                value={createName()}
+                onInput={(event) => setCreateName(event.currentTarget.value)}
+                placeholder="Project name"
+              />
+            </FormField>
+            <FormField>
+              <Input
+                value={createRepoPath()}
+                onInput={(event) => setCreateRepoPath(event.currentTarget.value)}
+                placeholder="Repository URL or local path"
+              />
+            </FormField>
+            <Button
+              onClick={handleCreateProject}
+              disabled={createProjectMutation.isPending}
+            >
+              {createProjectMutation.isPending ? 'Creating...' : 'Create'}
+            </Button>
+            <Button variant="outline" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
 
-              {runtimeMode === 'remote' && noConnectedSources ? (
-                canWriteIntegrations ? (
-                  <Button
-                    variant="outline"
-                    render={<Link to={integrationConnectTo} />}
-                    nativeButton={false}
-                  >
-                    <HugeiconsIcon icon={Link04Icon} size={16} />
-                    Connect Source
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Ask an owner/admin to connect a source.
-                  </p>
-                )
-              ) : null}
-            </div>
+            <Show when={createError()}>
+              <div class="md:col-span-4">
+                <FormError>{createError() ?? ''}</FormError>
+              </div>
+            </Show>
           </CardContent>
         </Card>
-      ) : null}
+      </Show>
 
-      {!projectsLoading && !projectsError && projects.length > 0 ? (
+      <Show when={projectsLoading()}>
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Project inventory
-              </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                {projects.length} total
-              </span>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Project</TableHead>
-                  <TableHead>Default branch</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {projects.map((project) => (
-                  <TableRow
-                    key={project.id}
-                    className="group cursor-pointer"
-                    onClick={() =>
-                      void navigate({
-                        to: '/projects/$projectId',
-                        params: { projectId: project.id },
-                      })
+          <CardContent class="space-y-3">
+            <Skeleton class="h-10 w-full" />
+            <Skeleton class="h-10 w-full" />
+            <Skeleton class="h-10 w-full" />
+          </CardContent>
+        </Card>
+      </Show>
+
+      <Show when={!!projectsError()}>
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load projects: {projectsError()?.message}
+          </AlertDescription>
+        </Alert>
+      </Show>
+
+      <Show when={!projectsLoading() && !projectsError()}>
+        <Switch>
+          <Match when={projects().length === 0}>
+            <Card>
+              <CardHeader>
+                <CardTitle class="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                  Create Your First Project
+                </CardTitle>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <p class="text-sm text-muted-foreground">
+                  {runtimeMode() === 'local'
+                    ? 'Choose a local Git repository to create your first project.'
+                    : noConnectedSources()
+                      ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
+                      : 'Create a project from a connected source repository to define pipelines and start builds.'}
+                </p>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <Show
+                    when={canWriteProjects}
+                    fallback={
+                      <p class="text-xs text-muted-foreground">
+                        Owner/Admin/Developer required to create projects.
+                      </p>
                     }
                   >
-                    <TableCell>
-                      <div>
-                        <p className="font-medium group-hover:underline">
-                          {project.name}
-                        </p>
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          {project.id.slice(0, 8)}
-                        </p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {project.default_branch ?? 'not set'}
-                    </TableCell>
-                    <TableCell className="max-w-[30ch] truncate text-sm text-muted-foreground">
-                      {project.description ?? 'No description'}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {relativeTime(project.updated_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      ) : null}
+                    <Button onClick={() => setShowCreate(true)}>
+                      <HugeIcon icon={Add01Icon} size={14} />
+                      Create Project
+                    </Button>
+                  </Show>
 
-      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+                  <Show when={noConnectedSources()}>
+                    <Show
+                      when={canWriteIntegrations}
+                      fallback={
+                        <p class="text-xs text-muted-foreground">
+                          Owner/Admin required to connect a source.
+                        </p>
+                      }
+                    >
+                      <Link to="/settings/integrations">
+                        <Button variant="outline">Connect Source</Button>
+                      </Link>
+                    </Show>
+                  </Show>
+                </div>
+              </CardContent>
+            </Card>
+          </Match>
+
+          <Match when>
+            <Card>
+              <CardHeader>
+                <div class="flex items-center justify-between">
+                  <CardTitle class="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                    Project inventory
+                  </CardTitle>
+                  <span class="text-xs text-muted-foreground">
+                    {projects().length} total
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Project</TableHead>
+                      <TableHead>Default branch</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Updated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <For each={projects()}>
+                      {(project) => (
+                        <TableRow>
+                          <TableCell>
+                            <div>
+                              <Link
+                                to="/projects/$projectId"
+                                params={{ projectId: project.id }}
+                                class="font-medium hover:underline"
+                              >
+                                {project.name}
+                              </Link>
+                              <p class="font-mono text-[11px] text-muted-foreground">
+                                {project.id.slice(0, 8)}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell class="font-mono text-xs text-muted-foreground">
+                            {project.default_branch ?? 'main'}
+                          </TableCell>
+                          <TableCell class="text-sm text-muted-foreground">
+                            {project.description ?? 'No description'}
+                          </TableCell>
+                          <TableCell class="text-sm text-muted-foreground">
+                            {relativeTime(project.updated_at)}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </For>
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </Match>
+        </Switch>
+      </Show>
     </PageLayout>
   )
 }

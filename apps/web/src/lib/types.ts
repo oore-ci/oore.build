@@ -693,6 +693,14 @@ export interface PipelineExecutionConfig {
   platform_commands?: PlatformBuildCommands
   env?: Array<PipelineEnvVar>
   artifact_patterns: Array<string>
+  android_signing_release_enabled?: boolean
+  android_signing_release_store_password?: string
+  android_signing_release_key_alias?: string
+  android_signing_release_key_password?: string
+  android_signing_debug_enabled?: boolean
+  android_signing_debug_store_password?: string
+  android_signing_debug_key_alias?: string
+  android_signing_debug_key_password?: string
 }
 
 export interface Pipeline {

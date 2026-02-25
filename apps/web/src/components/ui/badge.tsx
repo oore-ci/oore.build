@@ -1,28 +1,21 @@
-import { mergeProps } from '@base-ui/react/merge-props'
-import { useRender } from '@base-ui/react/use-render'
-import { cva } from 'class-variance-authority'
-import type { VariantProps } from 'class-variance-authority'
-
+import { cva, type VariantProps } from 'class-variance-authority'
+import type { JSX } from 'solid-js'
 import { cn } from '@/lib/utils'
 
 const badgeVariants = cva(
-  'h-5 gap-1 rounded-4xl border border-transparent px-2 py-0.5 text-xs font-medium transition-all has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&>svg]:size-3! inline-flex items-center justify-center w-fit whitespace-nowrap shrink-0 [&>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive overflow-hidden group/badge',
+  'group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden whitespace-nowrap border border-transparent px-2 py-0.5 text-xs font-medium transition-all [&>svg]:pointer-events-none [&>svg]:size-3!',
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground [a]:hover:bg-primary/80',
-        secondary:
-          'bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80',
-        destructive:
-          'bg-destructive/10 [a]:hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 text-destructive dark:bg-destructive/20',
-        outline:
-          'border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground',
-        ghost:
-          'hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50',
+        default: 'bg-primary text-primary-foreground',
+        secondary: 'bg-secondary text-secondary-foreground',
+        destructive: 'bg-destructive/10 text-destructive',
+        outline: 'border-border text-foreground',
+        ghost: 'hover:bg-muted hover:text-muted-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
-        success: 'bg-success/15 text-success dark:bg-success/20',
-        warning: 'bg-warning/15 text-warning dark:bg-warning/20',
-        info: 'bg-info/15 text-info dark:bg-info/20',
+        success: 'bg-success/15 text-success',
+        warning: 'bg-warning/15 text-warning',
+        info: 'bg-info/15 text-info',
       },
     },
     defaultVariants: {
@@ -31,26 +24,21 @@ const badgeVariants = cva(
   },
 )
 
-function Badge({
-  className,
-  variant = 'default',
-  render,
-  ...props
-}: useRender.ComponentProps<'span'> & VariantProps<typeof badgeVariants>) {
-  return useRender({
-    defaultTagName: 'span',
-    props: mergeProps<'span'>(
-      {
-        className: cn(badgeVariants({ className, variant })),
-      },
-      props,
-    ),
-    render,
-    state: {
-      slot: 'badge',
-      variant,
-    },
-  })
+interface BadgeProps
+  extends JSX.HTMLAttributes<HTMLSpanElement>,
+    VariantProps<typeof badgeVariants> {
+  class?: string
 }
 
-export { Badge, badgeVariants }
+export function Badge(props: BadgeProps) {
+  const { class: className, variant, ...rest } = props
+  return (
+    <span
+      data-slot="badge"
+      class={cn(badgeVariants({ variant, className }))}
+      {...rest}
+    />
+  )
+}
+
+export { badgeVariants }

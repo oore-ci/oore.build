@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRouter } from '@tanstack/react-router'
+import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query'
+import { useNavigate } from '@tanstack/solid-router'
 import type { InviteUserRequest, UpdateUserRoleRequest } from '@/lib/types'
 import {
   deleteUser,
@@ -10,149 +10,123 @@ import {
   reEnableUser,
   updateUserRole,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
+import { useAuthToken, useBaseUrl, useInstanceQueryPrefix } from '@/hooks/query-context'
 import { useAuthStore } from '@/stores/auth-store'
-
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return instance?.url ?? null
-}
 
 export function useCurrentUser() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const prefix = useInstanceQueryPrefix()
 
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'me'],
-    queryFn: () => getMe(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
-  })
+  return createQuery(() => ({
+    queryKey: [prefix(), 'me'],
+    queryFn: () => getMe(baseUrl()!, token()!),
+    enabled: !!baseUrl() && !!token(),
+  }))
 }
 
 export function useUsers() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const prefix = useInstanceQueryPrefix()
 
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'users'],
-    queryFn: () => listUsers(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
-  })
+  return createQuery(() => ({
+    queryKey: [prefix(), 'users'],
+    queryFn: () => listUsers(baseUrl()!, token()!),
+    enabled: !!baseUrl() && !!token(),
+  }))
 }
 
 export function useInviteUser() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (data: InviteUserRequest) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return inviteUser(baseUrl, token, data)
+  return createMutation(() => ({
+    mutationFn: async (data: InviteUserRequest) => {
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return inviteUser(baseUrl()!, token()!, data)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'users'],
-      })
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'users'] })
     },
-  })
+  }))
 }
 
 export function useUpdateUserRole() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: ({
+  return createMutation(() => ({
+    mutationFn: async ({
       userId,
       data,
     }: {
       userId: string
       data: UpdateUserRoleRequest
     }) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return updateUserRole(baseUrl, token, userId, data)
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return updateUserRole(baseUrl()!, token()!, userId, data)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'users'],
-      })
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'users'] })
     },
-  })
+  }))
 }
 
 export function useReEnableUser() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (userId: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return reEnableUser(baseUrl, token, userId)
+  return createMutation(() => ({
+    mutationFn: async (userId: string) => {
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return reEnableUser(baseUrl()!, token()!, userId)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'users'],
-      })
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'users'] })
     },
-  })
+  }))
 }
 
 export function useDeleteUser() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (userId: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return deleteUser(baseUrl, token, userId)
+  return createMutation(() => ({
+    mutationFn: async (userId: string) => {
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return deleteUser(baseUrl()!, token()!, userId)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'users'],
-      })
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'users'] })
     },
-  })
+  }))
 }
 
 export function useLogout() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const router = useRouter()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const clearAuth = useAuthStore((s) => s.clearAuth)
+  const clearAuth = useAuthStore((state) => state.clearAuth)
 
-  return useMutation({
-    mutationFn: () => {
-      if (!baseUrl || !token)
-        return Promise.resolve({ ok: true } as { ok: boolean })
-      return logout(baseUrl, token)
+  return createMutation(() => ({
+    mutationFn: async () => {
+      if (!baseUrl() || !token()) return { ok: true }
+      return logout(baseUrl()!, token()!)
     },
     onSettled: () => {
-      clearAuth()
+      clearAuth()()
       queryClient.clear()
-      void router.navigate({ to: '/login', replace: true })
+      void navigate({ to: '/login', replace: true })
     },
-  })
+  }))
 }

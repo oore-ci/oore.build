@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query'
 import type { CreateProjectRequest, UpdateProjectRequest } from '@/lib/types'
 import {
   createProject,
@@ -7,119 +7,96 @@ import {
   listProjects,
   updateProject,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { useAuthStore } from '@/stores/auth-store'
+import {
+  useAuthToken,
+  useBaseUrl,
+  useInstanceQueryPrefix,
+} from '@/hooks/query-context'
 
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return instance?.url ?? null
-}
-
-export function useProjects(
-  params?: {
-    search?: string
-    limit?: number
-    offset?: number
-  },
-  options?: { enabled?: boolean },
-) {
+export function useProjects(params?: {
+  search?: string
+  limit?: number
+  offset?: number
+}) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
-  const enabled = options?.enabled ?? true
+  const prefix = useInstanceQueryPrefix()
 
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'projects', params ?? {}],
-    queryFn: () => listProjects(baseUrl!, token!, params),
-    enabled: enabled && !!baseUrl && !!token,
-  })
+  return createQuery(() => ({
+    queryKey: [prefix(), 'projects', params ?? {}],
+    queryFn: () => listProjects(baseUrl()!, token()!, params),
+    enabled: !!baseUrl() && !!token(),
+  }))
 }
 
 export function useProject(projectId: string) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const prefix = useInstanceQueryPrefix()
 
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'project', projectId],
-    queryFn: () => getProject(baseUrl!, token!, projectId),
-    enabled: !!baseUrl && !!token && !!projectId,
-  })
+  return createQuery(() => ({
+    queryKey: [prefix(), 'project', projectId],
+    queryFn: () => getProject(baseUrl()!, token()!, projectId),
+    enabled: !!baseUrl() && !!token() && !!projectId,
+  }))
 }
 
 export function useCreateProject() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (data: CreateProjectRequest) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return createProject(baseUrl, token, data)
+  return createMutation(() => ({
+    mutationFn: async (data: CreateProjectRequest) => {
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return createProject(baseUrl()!, token()!, data)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'projects'],
-      })
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'projects'] })
     },
-  })
+  }))
 }
 
 export function useUpdateProject() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: ({
+  return createMutation(() => ({
+    mutationFn: async ({
       projectId,
       data,
     }: {
       projectId: string
       data: UpdateProjectRequest
     }) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return updateProject(baseUrl, token, projectId, data)
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return updateProject(baseUrl()!, token()!, projectId, data)
     },
     onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'projects'] })
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'projects'],
-      })
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'project', variables.projectId],
+        queryKey: [prefix(), 'project', variables.projectId],
       })
     },
-  })
+  }))
 }
 
 export function useDeleteProject() {
-  const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
-  const instance = useActiveInstance()
+  const queryClient = useQueryClient()
+  const prefix = useInstanceQueryPrefix()
 
-  return useMutation({
-    mutationFn: (projectId: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return deleteProject(baseUrl, token, projectId)
+  return createMutation(() => ({
+    mutationFn: async (projectId: string) => {
+      if (!baseUrl() || !token()) throw new Error('Not authenticated')
+      return deleteProject(baseUrl()!, token()!, projectId)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'projects'],
-      })
+      void queryClient.invalidateQueries({ queryKey: [prefix(), 'projects'] })
     },
-  })
+  }))
 }

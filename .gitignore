@@ -30,3 +30,6 @@ dist/releases
 .claude/
 .codex/
 .codex-output/
+
+
+apps/web-react-legacy

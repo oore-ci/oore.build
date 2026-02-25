@@ -24,12 +24,15 @@ import {
   TestTubeIcon,
   Wifi01Icon,
 } from '@hugeicons/core-free-icons'
-import type { IconSvgElement } from '@hugeicons/react'
+
+export type HugeIconNode = ReadonlyArray<
+  readonly [string, Readonly<Record<string, string | number>>]
+>
 
 export interface InstanceIconEntry {
   key: string
   label: string
-  icon: IconSvgElement
+  icon: HugeIconNode
 }
 
 export const INSTANCE_ICONS: Array<InstanceIconEntry> = [
@@ -63,6 +66,6 @@ export const DEFAULT_INSTANCE_ICON_KEY = 'cloud-server'
 
 const iconMap = new Map(INSTANCE_ICONS.map((entry) => [entry.key, entry.icon]))
 
-export function getInstanceIcon(key: string | undefined): IconSvgElement {
+export function getInstanceIcon(key: string | undefined): HugeIconNode {
   return iconMap.get(key ?? '') ?? CloudServerIcon
 }

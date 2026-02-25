@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createSelectorStore } from '@/stores/store-utils'
 
 interface SetupStoreState {
   instanceId: string | null
@@ -30,10 +30,7 @@ function loadSessionToken(instanceId: string | null): string | null {
   }
 }
 
-function saveSessionToken(
-  instanceId: string | null,
-  token: string | null,
-): void {
+function saveSessionToken(instanceId: string | null, token: string | null): void {
   try {
     if (token) {
       sessionStorage.setItem(tokenKey(instanceId), token)
@@ -47,8 +44,8 @@ function saveSessionToken(
 
 function loadSessionExpiresAt(instanceId: string | null): number | null {
   try {
-    const val = sessionStorage.getItem(expiresKey(instanceId))
-    return val ? Number(val) : null
+    const value = sessionStorage.getItem(expiresKey(instanceId))
+    return value ? Number(value) : null
   } catch {
     return null
   }
@@ -69,7 +66,7 @@ function saveSessionExpiresAt(
   }
 }
 
-export const useSetupStore = create<SetupStoreState>((set, get) => ({
+export const useSetupStore = createSelectorStore<SetupStoreState>((set, get) => ({
   instanceId: null,
   currentStep: 0,
   sessionToken: loadSessionToken(null),
