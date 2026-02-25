@@ -62,5 +62,6 @@ make release-smoke
 Release verification tuning knobs (optional):
 
 - `PAGES_VERIFY_MODE` (`parallel` default, `serial` fallback)
+- `PAGES_VERIFY_ENVIRONMENT` (`auto` default; `production`, `preview`, or `all` override)
 - `PAGES_VERIFY_ATTEMPTS` (default `24`)
 - `PAGES_VERIFY_SLEEP_SECONDS` (default `5`)

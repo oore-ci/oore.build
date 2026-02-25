@@ -7,7 +7,10 @@ cd "$ROOT_DIR"
 WRANGLER_BIN="${WRANGLER:-./node_modules/.bin/wrangler}"
 PAGES_BRANCH="${PAGES_BRANCH:-}"
 PAGES_COMMIT_HASH="${PAGES_COMMIT_HASH:-}"
+PAGES_COMMIT_SHORT="${PAGES_COMMIT_HASH:0:7}"
+PAGES_COMMIT_MESSAGE="${PAGES_COMMIT_MESSAGE:-}"
 PAGES_VERIFY_MODE="${PAGES_VERIFY_MODE:-parallel}"
+PAGES_VERIFY_ENVIRONMENT="${PAGES_VERIFY_ENVIRONMENT:-auto}"
 PAGES_VERIFY_ATTEMPTS="${PAGES_VERIFY_ATTEMPTS:-24}"
 PAGES_VERIFY_SLEEP_SECONDS="${PAGES_VERIFY_SLEEP_SECONDS:-5}"
 
@@ -56,6 +59,14 @@ case "$PAGES_VERIFY_MODE" in
     ;;
 esac
 
+case "$PAGES_VERIFY_ENVIRONMENT" in
+  auto|production|preview|all) ;;
+  *)
+    echo "PAGES_VERIFY_ENVIRONMENT must be one of auto|production|preview|all (got: $PAGES_VERIFY_ENVIRONMENT)." >&2
+    exit 1
+    ;;
+esac
+
 PROJECT_ENV_VARS=(
   "PAGES_PROJECT_SITE"
   "PAGES_PROJECT_DOCS"
@@ -66,6 +77,9 @@ PROJECT_ENV_VARS=(
 PROJECT_NAMES=()
 PROJECT_STAGES=()
 PROJECT_ALIASES=()
+PROJECT_ENVIRONMENTS=()
+PROJECT_MATCHED_BRANCHES=()
+PROJECT_MATCHED_COMMITS=()
 
 for required_project in "${PROJECT_ENV_VARS[@]}"; do
   if [[ -z "${!required_project:-}" ]]; then
@@ -75,71 +89,139 @@ for required_project in "${PROJECT_ENV_VARS[@]}"; do
   PROJECT_NAMES+=("${!required_project}")
   PROJECT_STAGES+=("unknown")
   PROJECT_ALIASES+=("")
+  PROJECT_ENVIRONMENTS+=("")
+  PROJECT_MATCHED_BRANCHES+=("")
+  PROJECT_MATCHED_COMMITS+=("")
 done
 
-if [[ "$PAGES_BRANCH" == "stable" ]]; then
-  PAGES_ENVIRONMENT="production"
-else
-  PAGES_ENVIRONMENT="preview"
-fi
+environment_attempt_order() {
+  if [[ "$PAGES_VERIFY_ENVIRONMENT" != "auto" ]]; then
+    echo "$PAGES_VERIFY_ENVIRONMENT"
+    return 0
+  fi
+
+  # Stable should normally map to production, but we fall back to preview/all
+  # because Pages project production-branch settings can drift.
+  if [[ "$PAGES_BRANCH" == "stable" ]]; then
+    echo "production preview all"
+  else
+    echo "preview production all"
+  fi
+}
+
+fetch_deployments_json() {
+  local project_name="$1"
+  local environment_name="$2"
+
+  if [[ "$environment_name" == "all" ]]; then
+    "$WRANGLER_BIN" pages deployment list \
+      --project-name "$project_name" \
+      --json
+  else
+    "$WRANGLER_BIN" pages deployment list \
+      --project-name "$project_name" \
+      --environment "$environment_name" \
+      --json
+  fi
+}
+
+select_matching_deployment() {
+  local deployments_json="$1"
+
+  jq -c \
+    --arg branch "$PAGES_BRANCH" \
+    --arg commit_hash "$PAGES_COMMIT_HASH" \
+    --arg commit_short "$PAGES_COMMIT_SHORT" \
+    --arg commit_message "$PAGES_COMMIT_MESSAGE" \
+    '
+    def meta: (.deployment_trigger.metadata // {});
+
+    def branch_candidate($m):
+      ($m.branch // $m.ref_name // $m.ref // "");
+
+    def branch_match($m):
+      ($m.branch // "") == $branch
+      or ($m.ref_name // "") == $branch
+      or ($m.ref // "") == $branch
+      or ($m.ref // "") == ("refs/heads/" + $branch);
+
+    def commit_candidate($m):
+      ($m.commit_hash // $m.commitHash // $m.commit_sha // $m.sha // $m.commit // "");
+
+    def commit_match($m):
+      (commit_candidate($m) != "") and (
+        commit_candidate($m) == $commit_hash
+        or commit_candidate($m) == $commit_short
+        or ($commit_hash | startswith(commit_candidate($m)))
+        or (commit_candidate($m) | startswith($commit_short))
+      );
+
+    def message_match($m):
+      ($commit_message != "") and (
+        ($m.commit_message // $m.commitMessage // $m.message // "") == $commit_message
+      );
+
+    [
+      .[] as $d
+      | ($d | meta) as $m
+      | select(branch_match($m))
+      | select(commit_match($m) or message_match($m))
+      | {
+          stage: ($d.latest_stage.status // "unknown"),
+          aliases: (($d.aliases // []) | join(", ")),
+          environment: ($d.environment // ""),
+          matched_branch: branch_candidate($m),
+          matched_commit: commit_candidate($m)
+        }
+    ][0] // empty
+    ' <<<"$deployments_json"
+}
 
 query_project() {
   local project_name="$1"
-  local deployments_json stage alias_line
+  local env_name deployments_json match_json
+  local env_attempts
 
-  deployments_json="$($WRANGLER_BIN pages deployment list \
-    --project-name "$project_name" \
-    --environment "$PAGES_ENVIRONMENT" \
-    --json)"
+  env_attempts="$(environment_attempt_order)"
 
-  stage="$(echo "$deployments_json" | jq -r \
-    --arg branch "$PAGES_BRANCH" \
-    --arg commit_hash "$PAGES_COMMIT_HASH" \
-    '
-    [ .[]
-      | select(.deployment_trigger.metadata.branch == $branch)
-      | select(.deployment_trigger.metadata.commit_hash == $commit_hash)
-    ] as $matches
-    | if ($matches | length) == 0
-      then "missing"
-      else ($matches[0].latest_stage.status // "unknown")
-      end
-    ')"
+  for env_name in $env_attempts; do
+    if ! deployments_json="$(fetch_deployments_json "$project_name" "$env_name")"; then
+      return 1
+    fi
 
-  alias_line="$(echo "$deployments_json" | jq -r \
-    --arg branch "$PAGES_BRANCH" \
-    --arg commit_hash "$PAGES_COMMIT_HASH" \
-    '
-    [ .[]
-      | select(.deployment_trigger.metadata.branch == $branch)
-      | select(.deployment_trigger.metadata.commit_hash == $commit_hash)
-    ] as $matches
-    | if ($matches | length) == 0
-      then ""
-      else ($matches[0].aliases | join(", "))
-      end
-    ')"
+    if ! match_json="$(select_matching_deployment "$deployments_json")"; then
+      return 1
+    fi
 
-  printf '%s\t%s\n' "$stage" "$alias_line"
+    if [[ -n "$match_json" ]]; then
+      if [[ "$(jq -r '.environment // ""' <<<"$match_json")" == "" ]]; then
+        match_json="$(jq -c --arg env "$env_name" '.environment = $env' <<<"$match_json")"
+      fi
+      printf '%s\n' "$match_json"
+      return 0
+    fi
+  done
+
+  printf '{"stage":"missing","aliases":"","environment":"","matched_branch":"","matched_commit":""}\n'
 }
 
 print_summary() {
   local prefix="$1"
-  local index project_name stage aliases
+  local index project_name stage aliases environment matched_branch matched_commit
   for index in "${!PROJECT_NAMES[@]}"; do
     project_name="${PROJECT_NAMES[$index]}"
     stage="${PROJECT_STAGES[$index]}"
     aliases="${PROJECT_ALIASES[$index]}"
-    if [[ -n "$aliases" ]]; then
-      echo "[verify-pages] ${prefix} project=${project_name} stage=${stage} aliases=${aliases}"
-    else
-      echo "[verify-pages] ${prefix} project=${project_name} stage=${stage}"
-    fi
+    environment="${PROJECT_ENVIRONMENTS[$index]}"
+    matched_branch="${PROJECT_MATCHED_BRANCHES[$index]}"
+    matched_commit="${PROJECT_MATCHED_COMMITS[$index]}"
+
+    echo "[verify-pages] ${prefix} project=${project_name} stage=${stage} env=${environment:-unknown} matched_branch=${matched_branch:-none} matched_commit=${matched_commit:-none} aliases=${aliases:-none}"
   done
 }
 
 verify_parallel() {
-  local attempt index project_name result stage aliases
+  local attempt index project_name result stage aliases environment matched_branch matched_commit
 
   for ((attempt = 1; attempt <= PAGES_VERIFY_ATTEMPTS; attempt++)); do
     local all_success=1
@@ -151,19 +233,24 @@ verify_parallel() {
       if ! result="$(query_project "$project_name")"; then
         PROJECT_STAGES[$index]="query_error"
         PROJECT_ALIASES[$index]=""
+        PROJECT_ENVIRONMENTS[$index]=""
+        PROJECT_MATCHED_BRANCHES[$index]=""
+        PROJECT_MATCHED_COMMITS[$index]=""
         hard_fail=1
         continue
       fi
 
-      stage="${result%%$'\t'*}"
-      if [[ "$result" == *$'\t'* ]]; then
-        aliases="${result#*$'\t'}"
-      else
-        aliases=""
-      fi
+      stage="$(jq -r '.stage // "unknown"' <<<"$result")"
+      aliases="$(jq -r '.aliases // ""' <<<"$result")"
+      environment="$(jq -r '.environment // ""' <<<"$result")"
+      matched_branch="$(jq -r '.matched_branch // ""' <<<"$result")"
+      matched_commit="$(jq -r '.matched_commit // ""' <<<"$result")"
 
       PROJECT_STAGES[$index]="$stage"
       PROJECT_ALIASES[$index]="$aliases"
+      PROJECT_ENVIRONMENTS[$index]="$environment"
+      PROJECT_MATCHED_BRANCHES[$index]="$matched_branch"
+      PROJECT_MATCHED_COMMITS[$index]="$matched_commit"
 
       case "$stage" in
         success) ;;
@@ -203,28 +290,33 @@ verify_parallel() {
 verify_project_serial() {
   local index="$1"
   local project_name="$2"
-  local attempt result stage aliases
+  local attempt result stage aliases environment matched_branch matched_commit
 
   for ((attempt = 1; attempt <= PAGES_VERIFY_ATTEMPTS; attempt++)); do
     if ! result="$(query_project "$project_name")"; then
       PROJECT_STAGES[$index]="query_error"
       PROJECT_ALIASES[$index]=""
+      PROJECT_ENVIRONMENTS[$index]=""
+      PROJECT_MATCHED_BRANCHES[$index]=""
+      PROJECT_MATCHED_COMMITS[$index]=""
       echo "[verify-pages] ${project_name}: query_error" >&2
       return 1
     fi
 
-    stage="${result%%$'\t'*}"
-    if [[ "$result" == *$'\t'* ]]; then
-      aliases="${result#*$'\t'}"
-    else
-      aliases=""
-    fi
+    stage="$(jq -r '.stage // "unknown"' <<<"$result")"
+    aliases="$(jq -r '.aliases // ""' <<<"$result")"
+    environment="$(jq -r '.environment // ""' <<<"$result")"
+    matched_branch="$(jq -r '.matched_branch // ""' <<<"$result")"
+    matched_commit="$(jq -r '.matched_commit // ""' <<<"$result")"
 
     PROJECT_STAGES[$index]="$stage"
     PROJECT_ALIASES[$index]="$aliases"
+    PROJECT_ENVIRONMENTS[$index]="$environment"
+    PROJECT_MATCHED_BRANCHES[$index]="$matched_branch"
+    PROJECT_MATCHED_COMMITS[$index]="$matched_commit"
 
     if [[ "$stage" == "success" ]]; then
-      echo "[verify-pages] ${project_name}: success"
+      echo "[verify-pages] ${project_name}: success env=${environment:-unknown} matched_branch=${matched_branch:-none} matched_commit=${matched_commit:-none}"
       return 0
     fi
 
@@ -253,6 +345,8 @@ verify_serial() {
   echo "[verify-pages] all Pages targets verified for branch=${PAGES_BRANCH}, commit=${PAGES_COMMIT_HASH}"
   print_summary "summary"
 }
+
+echo "[verify-pages] mode=${PAGES_VERIFY_MODE} env_mode=${PAGES_VERIFY_ENVIRONMENT} branch=${PAGES_BRANCH} commit=${PAGES_COMMIT_HASH}"
 
 if [[ "$PAGES_VERIFY_MODE" == "parallel" ]]; then
   verify_parallel

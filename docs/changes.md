@@ -10,6 +10,13 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-02-25
+
+- OOR-65 follow-up: fixed Pages post-deploy verification false negatives in tag releases when deployment metadata/environment shape differs from strict assumptions (for example short commit hashes and/or preview-vs-production listing differences).
+  - `tools/verify-pages-deploy.sh` now supports robust commit metadata matching (`commit_hash`, `commitHash`, `commit_sha`, `sha`, `commit`) plus commit-message fallback, and uses environment fallback order in `auto` mode (`production -> preview -> all` for `stable`, `preview -> production -> all` otherwise).
+  - Added `PAGES_VERIFY_ENVIRONMENT` control (`auto|production|preview|all`) and expanded summary output with matched environment/branch/commit for faster diagnosis.
+  - OOR-65: https://linear.app/oorebuild/issue/OOR-65
+
 ## 2026-02-23
 
 - CI throughput hardening: consolidated duplicate `validate-pr`/`validate-push` into a single policy-equivalent `validate` step and switched CI execution to `make validate-ci` (parallel frontend/docs and rust lanes) while keeping `make validate` as the canonical local pre-handoff command.
