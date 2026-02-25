@@ -13,6 +13,9 @@ PAGES_VERIFY_MODE="${PAGES_VERIFY_MODE:-parallel}"
 PAGES_VERIFY_ENVIRONMENT="${PAGES_VERIFY_ENVIRONMENT:-auto}"
 PAGES_VERIFY_ATTEMPTS="${PAGES_VERIFY_ATTEMPTS:-24}"
 PAGES_VERIFY_SLEEP_SECONDS="${PAGES_VERIFY_SLEEP_SECONDS:-5}"
+PAGES_VERIFY_FRESH_FALLBACK="${PAGES_VERIFY_FRESH_FALLBACK:-1}"
+PAGES_VERIFY_FRESH_WINDOW_SECONDS="${PAGES_VERIFY_FRESH_WINDOW_SECONDS:-1800}"
+VERIFY_STARTED_AT_EPOCH="$(date +%s)"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "jq is required for Pages deployment verification." >&2
@@ -51,6 +54,11 @@ if ! [[ "$PAGES_VERIFY_SLEEP_SECONDS" =~ ^[0-9]+$ ]] || [[ "$PAGES_VERIFY_SLEEP_
   exit 1
 fi
 
+if ! [[ "$PAGES_VERIFY_FRESH_WINDOW_SECONDS" =~ ^[0-9]+$ ]] || [[ "$PAGES_VERIFY_FRESH_WINDOW_SECONDS" -lt 1 ]]; then
+  echo "PAGES_VERIFY_FRESH_WINDOW_SECONDS must be a positive integer (got: $PAGES_VERIFY_FRESH_WINDOW_SECONDS)." >&2
+  exit 1
+fi
+
 case "$PAGES_VERIFY_MODE" in
   parallel|serial) ;;
   *)
@@ -63,6 +71,14 @@ case "$PAGES_VERIFY_ENVIRONMENT" in
   auto|production|preview|all) ;;
   *)
     echo "PAGES_VERIFY_ENVIRONMENT must be one of auto|production|preview|all (got: $PAGES_VERIFY_ENVIRONMENT)." >&2
+    exit 1
+    ;;
+esac
+
+case "$PAGES_VERIFY_FRESH_FALLBACK" in
+  0|1) ;;
+  *)
+    echo "PAGES_VERIFY_FRESH_FALLBACK must be 0 or 1 (got: $PAGES_VERIFY_FRESH_FALLBACK)." >&2
     exit 1
     ;;
 esac
@@ -80,6 +96,7 @@ PROJECT_ALIASES=()
 PROJECT_ENVIRONMENTS=()
 PROJECT_MATCHED_BRANCHES=()
 PROJECT_MATCHED_COMMITS=()
+PROJECT_MATCH_SOURCES=()
 
 for required_project in "${PROJECT_ENV_VARS[@]}"; do
   if [[ -z "${!required_project:-}" ]]; then
@@ -92,6 +109,7 @@ for required_project in "${PROJECT_ENV_VARS[@]}"; do
   PROJECT_ENVIRONMENTS+=("")
   PROJECT_MATCHED_BRANCHES+=("")
   PROJECT_MATCHED_COMMITS+=("")
+  PROJECT_MATCH_SOURCES+=("")
 done
 
 environment_attempt_order() {
@@ -133,47 +151,125 @@ select_matching_deployment() {
     --arg commit_hash "$PAGES_COMMIT_HASH" \
     --arg commit_short "$PAGES_COMMIT_SHORT" \
     --arg commit_message "$PAGES_COMMIT_MESSAGE" \
+    --argjson verify_started_at "$VERIFY_STARTED_AT_EPOCH" \
+    --argjson fresh_window "$PAGES_VERIFY_FRESH_WINDOW_SECONDS" \
+    --argjson fresh_fallback "$PAGES_VERIFY_FRESH_FALLBACK" \
     '
-    def meta: (.deployment_trigger.metadata // {});
+    def meta($d): ($d.deployment_trigger.metadata // $d.metadata // {});
 
-    def branch_candidate($m):
-      ($m.branch // $m.ref_name // $m.ref // "");
+    def parse_time($v):
+      if $v == null then 0
+      elif ($v | type) == "number" then $v
+      elif ($v | type) == "string" and ($v | test("^[0-9]{13}$")) then (($v | tonumber) / 1000 | floor)
+      elif ($v | type) == "string" and ($v | test("^[0-9]{10}$")) then ($v | tonumber)
+      elif ($v | type) == "string" then
+        ($v | fromdateiso8601?)
+        // ($v | sub("\\.[0-9]+"; "") | fromdateiso8601?)
+        // ($v | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?)
+        // ($v | tonumber?)
+        // 0
+      else 0
+      end;
 
-    def branch_match($m):
+    def branch_candidate($d; $m):
+      ($m.branch // $m.ref_name // $m.ref // $d.branch // $d.ref // $d.source.branch // "");
+
+    def branch_match($d; $m):
       ($m.branch // "") == $branch
       or ($m.ref_name // "") == $branch
       or ($m.ref // "") == $branch
-      or ($m.ref // "") == ("refs/heads/" + $branch);
+      or ($m.ref // "") == ("refs/heads/" + $branch)
+      or ($d.branch // "") == $branch
+      or ($d.ref // "") == $branch
+      or ($d.ref // "") == ("refs/heads/" + $branch)
+      or ($d.source.branch // "") == $branch;
 
-    def commit_candidate($m):
-      ($m.commit_hash // $m.commitHash // $m.commit_sha // $m.sha // $m.commit // "");
-
-    def commit_match($m):
-      (commit_candidate($m) != "") and (
-        commit_candidate($m) == $commit_hash
-        or commit_candidate($m) == $commit_short
-        or ($commit_hash | startswith(commit_candidate($m)))
-        or (commit_candidate($m) | startswith($commit_short))
+    def commit_candidate($d; $m):
+      (
+        $m.commit_hash
+        // $m.commitHash
+        // $m.commit_sha
+        // $m.sha
+        // $m.commit
+        // $d.commit_hash
+        // $d.commitHash
+        // $d.commit_sha
+        // $d.sha
+        // $d.commit
+        // $d.source.commit_hash
+        // $d.source.commitHash
+        // $d.source.sha
+        // ""
       );
 
-    def message_match($m):
+    def commit_match($d; $m):
+      (commit_candidate($d; $m) != "") and (
+        commit_candidate($d; $m) == $commit_hash
+        or commit_candidate($d; $m) == $commit_short
+        or ($commit_hash | startswith(commit_candidate($d; $m)))
+        or (commit_candidate($d; $m) | startswith($commit_short))
+      );
+
+    def message_match($d; $m):
       ($commit_message != "") and (
-        ($m.commit_message // $m.commitMessage // $m.message // "") == $commit_message
+        (
+          $m.commit_message
+          // $m.commitMessage
+          // $m.message
+          // $d.commit_message
+          // $d.commitMessage
+          // $d.source.commit_message
+          // $d.source.commitMessage
+          // ""
+        ) == $commit_message
       );
 
-    [
-      .[] as $d
-      | ($d | meta) as $m
-      | select(branch_match($m))
-      | select(commit_match($m) or message_match($m))
-      | {
-          stage: ($d.latest_stage.status // "unknown"),
-          aliases: (($d.aliases // []) | join(", ")),
-          environment: ($d.environment // ""),
-          matched_branch: branch_candidate($m),
-          matched_commit: commit_candidate($m)
-        }
-    ][0] // empty
+    def deployment_ts($d):
+      [
+        parse_time($d.modified_on),
+        parse_time($d.created_on),
+        parse_time($d.deployed_on),
+        parse_time($d.latest_stage.ended_on),
+        parse_time($d.latest_stage.started_on)
+      ] | max;
+
+    def result_row($d; $m; $source):
+      {
+        stage: ($d.latest_stage.status // "unknown"),
+        aliases: (($d.aliases // []) | join(", ")),
+        environment: ($d.environment // ""),
+        matched_branch: branch_candidate($d; $m),
+        matched_commit: commit_candidate($d; $m),
+        matched_by: $source
+      };
+
+    def metadata_matches:
+      [
+        .[] as $d
+        | (meta($d)) as $m
+        | select(branch_match($d; $m))
+        | select(commit_match($d; $m) or message_match($d; $m))
+        | result_row($d; $m; "metadata")
+      ];
+
+    def fresh_matches:
+      [
+        .[] as $d
+        | (meta($d)) as $m
+        | select(($d.latest_stage.status // "unknown") != "failure")
+        | select(($d.latest_stage.status // "unknown") != "canceled")
+        | select(deployment_ts($d) >= ($verify_started_at - $fresh_window))
+        | {
+            result: result_row($d; $m; "fresh_fallback"),
+            ts: deployment_ts($d)
+          }
+      ]
+      | sort_by(.ts) | reverse
+      | map(.result);
+
+    (metadata_matches[0])
+    // (if $fresh_fallback == 1 then fresh_matches[0] else empty end)
+    // empty
     ' <<<"$deployments_json"
 }
 
@@ -202,12 +298,12 @@ query_project() {
     fi
   done
 
-  printf '{"stage":"missing","aliases":"","environment":"","matched_branch":"","matched_commit":""}\n'
+  printf '{"stage":"missing","aliases":"","environment":"","matched_branch":"","matched_commit":"","matched_by":""}\n'
 }
 
 print_summary() {
   local prefix="$1"
-  local index project_name stage aliases environment matched_branch matched_commit
+  local index project_name stage aliases environment matched_branch matched_commit matched_by
   for index in "${!PROJECT_NAMES[@]}"; do
     project_name="${PROJECT_NAMES[$index]}"
     stage="${PROJECT_STAGES[$index]}"
@@ -215,13 +311,14 @@ print_summary() {
     environment="${PROJECT_ENVIRONMENTS[$index]}"
     matched_branch="${PROJECT_MATCHED_BRANCHES[$index]}"
     matched_commit="${PROJECT_MATCHED_COMMITS[$index]}"
+    matched_by="${PROJECT_MATCH_SOURCES[$index]}"
 
-    echo "[verify-pages] ${prefix} project=${project_name} stage=${stage} env=${environment:-unknown} matched_branch=${matched_branch:-none} matched_commit=${matched_commit:-none} aliases=${aliases:-none}"
+    echo "[verify-pages] ${prefix} project=${project_name} stage=${stage} env=${environment:-unknown} matched_by=${matched_by:-none} matched_branch=${matched_branch:-none} matched_commit=${matched_commit:-none} aliases=${aliases:-none}"
   done
 }
 
 verify_parallel() {
-  local attempt index project_name result stage aliases environment matched_branch matched_commit
+  local attempt index project_name result stage aliases environment matched_branch matched_commit matched_by
 
   for ((attempt = 1; attempt <= PAGES_VERIFY_ATTEMPTS; attempt++)); do
     local all_success=1
@@ -236,6 +333,7 @@ verify_parallel() {
         PROJECT_ENVIRONMENTS[$index]=""
         PROJECT_MATCHED_BRANCHES[$index]=""
         PROJECT_MATCHED_COMMITS[$index]=""
+        PROJECT_MATCH_SOURCES[$index]=""
         hard_fail=1
         continue
       fi
@@ -245,12 +343,14 @@ verify_parallel() {
       environment="$(jq -r '.environment // ""' <<<"$result")"
       matched_branch="$(jq -r '.matched_branch // ""' <<<"$result")"
       matched_commit="$(jq -r '.matched_commit // ""' <<<"$result")"
+      matched_by="$(jq -r '.matched_by // ""' <<<"$result")"
 
       PROJECT_STAGES[$index]="$stage"
       PROJECT_ALIASES[$index]="$aliases"
       PROJECT_ENVIRONMENTS[$index]="$environment"
       PROJECT_MATCHED_BRANCHES[$index]="$matched_branch"
       PROJECT_MATCHED_COMMITS[$index]="$matched_commit"
+      PROJECT_MATCH_SOURCES[$index]="$matched_by"
 
       case "$stage" in
         success) ;;
@@ -290,7 +390,7 @@ verify_parallel() {
 verify_project_serial() {
   local index="$1"
   local project_name="$2"
-  local attempt result stage aliases environment matched_branch matched_commit
+  local attempt result stage aliases environment matched_branch matched_commit matched_by
 
   for ((attempt = 1; attempt <= PAGES_VERIFY_ATTEMPTS; attempt++)); do
     if ! result="$(query_project "$project_name")"; then
@@ -299,6 +399,7 @@ verify_project_serial() {
       PROJECT_ENVIRONMENTS[$index]=""
       PROJECT_MATCHED_BRANCHES[$index]=""
       PROJECT_MATCHED_COMMITS[$index]=""
+      PROJECT_MATCH_SOURCES[$index]=""
       echo "[verify-pages] ${project_name}: query_error" >&2
       return 1
     fi
@@ -308,15 +409,17 @@ verify_project_serial() {
     environment="$(jq -r '.environment // ""' <<<"$result")"
     matched_branch="$(jq -r '.matched_branch // ""' <<<"$result")"
     matched_commit="$(jq -r '.matched_commit // ""' <<<"$result")"
+    matched_by="$(jq -r '.matched_by // ""' <<<"$result")"
 
     PROJECT_STAGES[$index]="$stage"
     PROJECT_ALIASES[$index]="$aliases"
     PROJECT_ENVIRONMENTS[$index]="$environment"
     PROJECT_MATCHED_BRANCHES[$index]="$matched_branch"
     PROJECT_MATCHED_COMMITS[$index]="$matched_commit"
+    PROJECT_MATCH_SOURCES[$index]="$matched_by"
 
     if [[ "$stage" == "success" ]]; then
-      echo "[verify-pages] ${project_name}: success env=${environment:-unknown} matched_branch=${matched_branch:-none} matched_commit=${matched_commit:-none}"
+      echo "[verify-pages] ${project_name}: success env=${environment:-unknown} matched_by=${matched_by:-none} matched_branch=${matched_branch:-none} matched_commit=${matched_commit:-none}"
       return 0
     fi
 
@@ -346,7 +449,7 @@ verify_serial() {
   print_summary "summary"
 }
 
-echo "[verify-pages] mode=${PAGES_VERIFY_MODE} env_mode=${PAGES_VERIFY_ENVIRONMENT} branch=${PAGES_BRANCH} commit=${PAGES_COMMIT_HASH}"
+echo "[verify-pages] mode=${PAGES_VERIFY_MODE} env_mode=${PAGES_VERIFY_ENVIRONMENT} fresh_fallback=${PAGES_VERIFY_FRESH_FALLBACK} fresh_window_s=${PAGES_VERIFY_FRESH_WINDOW_SECONDS} branch=${PAGES_BRANCH} commit=${PAGES_COMMIT_HASH}"
 
 if [[ "$PAGES_VERIFY_MODE" == "parallel" ]]; then
   verify_parallel
