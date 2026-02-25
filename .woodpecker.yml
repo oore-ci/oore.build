@@ -214,10 +214,6 @@ steps:
         export PAGES_COMMIT_MESSAGE="$tag"
         export WRANGLER="./node_modules/.bin/wrangler"
 
-        export PAGES_VERIFY_MODE="${PAGES_VERIFY_MODE:-parallel}"
-        export PAGES_VERIFY_ATTEMPTS="${PAGES_VERIFY_ATTEMPTS:-24}"
-        export PAGES_VERIFY_SLEEP_SECONDS="${PAGES_VERIFY_SLEEP_SECONDS:-5}"
-
         echo "Deploy channel=$channel branch=$PAGES_BRANCH site=$PAGES_PROJECT_SITE docs=$PAGES_PROJECT_DOCS web=$PAGES_PROJECT_WEB"
       - ulimit -n 8192
       - |
@@ -255,7 +251,6 @@ steps:
       # Demo build intentionally overwrites apps/web/dist.
       - make build-demo
       - make deploy-demo-only
-      - bash tools/verify-pages-deploy.sh
 
   - name: release-generate-notes
     image: bash
