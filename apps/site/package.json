@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bash ../../tools/sync-install-scripts.sh && vite --port 3002",
+    "dev": "bash ../../tools/sync-install-scripts.sh && portless run --name oore vite",
+    "dev:legacy": "bash ../../tools/sync-install-scripts.sh && vite --port 3002",
     "build": "bash ../../tools/sync-install-scripts.sh && vite build",
     "preview": "bash ../../tools/sync-install-scripts.sh && vite preview --port 3002"
   },

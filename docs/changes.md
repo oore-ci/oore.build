@@ -10,6 +10,14 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-03-16
+
+- DX: added portless support for named `.localhost` dev URLs.
+  - `apps/web` dev → `web.oore.localhost:1355`, `apps/docs-site` dev → `docs.oore.localhost:1355`, `apps/site` dev → `oore.localhost:1355`, `oored` daemon → `api.oore.localhost:1355`.
+  - Added `make portless-proxy`, `make portless-alias-api`, `make portless-list` targets.
+  - Vite proxy target now reads `OORED_URL` env var (falls back to `http://127.0.0.1:8787`).
+  - Legacy `dev:legacy` scripts preserved for fallback without portless installed.
+
 ## 2026-02-25
 
 - OOR-65 follow-up: fixed Pages post-deploy verification false negatives in tag releases when deployment metadata/environment shape differs from strict assumptions (for example short commit hashes and/or preview-vs-production listing differences).

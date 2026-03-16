@@ -5,7 +5,8 @@
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 		       docs-check lint-woodpecker ui-init install-local validate validate-ci gen-openapi release-smoke \
-		       release-local release-cut
+		       release-local release-cut \
+		       portless-proxy portless-alias-api portless-list
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -177,6 +178,19 @@ lint-woodpecker:
 
 ui-init:
 	bun run ui:init
+
+# ── Portless (named .localhost URLs for dev) ─────────────────────
+# Start the portless reverse proxy (run once, stays in background)
+portless-proxy:
+	portless proxy start
+
+# Alias the oored daemon so it's reachable at api.localhost:1355
+portless-alias-api:
+	portless alias api.oore $(lastword $(subst :, ,$(OORED_DEV_LISTEN_ADDR)))
+
+# Show all active portless routes
+portless-list:
+	portless list
 
 # ── Aggregate Targets ─────────────────────────────────────────────
 build: build-web build-docs build-site cargo-check
