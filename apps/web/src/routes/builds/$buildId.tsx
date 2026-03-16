@@ -37,6 +37,11 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import {
+  formatDuration,
+  formatFileSize,
+  relativeTime,
+} from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/builds/$buildId')({
@@ -47,36 +52,6 @@ export const Route = createFileRoute('/builds/$buildId')({
   },
   component: BuildDetailPage,
 })
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.round(seconds % 60)
-  if (mins < 60) return `${mins}m ${secs}s`
-  const hrs = Math.floor(mins / 60)
-  const remainMins = mins % 60
-  return `${hrs}h ${remainMins}m`
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
-
-function relativeTime(epochSecs: number): string {
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSecs
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
 
 function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
   switch (type) {
@@ -225,7 +200,7 @@ function BuildDetailPage() {
                 {formatDuration(duration)}
               </span>
             ) : null}
-            <span className="text-[oklch(0.5_0_0)]">|</span>
+            <span className="text-border">|</span>
             <span>
               Queued {relativeTime(build.queued_at)}
               {build.started_at
@@ -352,7 +327,7 @@ function ArtifactsPanel({
             {artifacts.map((artifact) => (
               <div
                 key={artifact.id}
-                className="flex items-center gap-2 rounded-md border p-2"
+                className="flex items-center gap-2 border p-2"
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium">

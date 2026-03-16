@@ -35,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/projects/')({
@@ -50,18 +51,6 @@ export const Route = createFileRoute('/projects/')({
   },
   component: ProjectsListPage,
 })
-
-function relativeTime(epochSecs: number): string {
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSecs
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
 
 function ProjectsListPage() {
   const search = useSearch({ from: '/projects/' })

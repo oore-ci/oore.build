@@ -36,6 +36,7 @@ import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus, localLogin } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
+import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
@@ -50,14 +51,6 @@ const KNOWN_LOCAL_DAEMON_URLS = [
   'http://127.0.0.1:8788',
   'http://127.0.0.1:8790',
 ]
-
-function relativeTime(epochSeconds: number): string {
-  const diff = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
 
 function normalizeUrl(value: string): string {
   return value.replace(/\/+$/, '')
@@ -480,7 +473,8 @@ function ConfiguredDashboard({
           </div>
         ) : projects.length === 0 ? (
           <Card>
-            <CardContent className="space-y-3 py-8 text-center">
+            <CardContent>
+              <div className="space-y-3 py-4 text-center">
               <p className="text-sm text-muted-foreground">
                 {noConnectedSources
                   ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
@@ -518,6 +512,7 @@ function ConfiguredDashboard({
                     </p>
                   )
                 ) : null}
+              </div>
               </div>
             </CardContent>
           </Card>
@@ -562,8 +557,10 @@ function ConfiguredDashboard({
           </Card>
         ) : recentBuilds.length === 0 ? (
           <Card>
-            <CardContent className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">No builds yet.</p>
+            <CardContent>
+              <div className="py-4 text-center">
+                <p className="text-sm text-muted-foreground">No builds yet.</p>
+              </div>
             </CardContent>
           </Card>
         ) : (

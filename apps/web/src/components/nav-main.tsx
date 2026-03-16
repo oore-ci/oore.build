@@ -1,10 +1,12 @@
 import { Link, useLocation, useMatches } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  CommandLineIcon,
+  CpuIcon,
   DashboardSquare01Icon,
   Folder02Icon,
-  GitBranchIcon,
   Link04Icon,
+  Settings01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 import {
@@ -34,7 +36,7 @@ interface NavItem {
 const PRIMARY_ITEMS: Array<NavItem> = [
   { title: 'Dashboard', to: '/', icon: DashboardSquare01Icon },
   { title: 'Projects', to: '/projects', icon: Folder02Icon },
-  { title: 'Builds', to: '/builds', icon: GitBranchIcon },
+  { title: 'Builds', to: '/builds', icon: CommandLineIcon },
 ]
 
 const ADMIN_ITEMS: Array<NavItem> = [
@@ -47,7 +49,7 @@ const ADMIN_ITEMS: Array<NavItem> = [
   {
     title: 'Runners',
     to: '/settings/runners',
-    icon: GitBranchIcon,
+    icon: CpuIcon,
     adminOnly: true,
   },
   {
@@ -59,7 +61,7 @@ const ADMIN_ITEMS: Array<NavItem> = [
   {
     title: 'Preferences',
     to: '/settings/preferences',
-    icon: Folder02Icon,
+    icon: Settings01Icon,
     adminOnly: true,
   },
 ]

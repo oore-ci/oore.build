@@ -194,34 +194,28 @@ function IntegrationDetailPage() {
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Installations</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Installations</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {installations.length}
             </p>
-            <p className="text-xs text-muted-foreground">Connected accounts</p>
+            <p className="mt-1 text-xs text-muted-foreground">Connected accounts</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Repositories</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Repositories</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {repositories.length}
             </p>
-            <p className="text-xs text-muted-foreground">Synced repositories</p>
+            <p className="mt-1 text-xs text-muted-foreground">Synced repositories</p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Auth mode</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-sm font-medium">{integration.auth_mode}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Auth mode</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">{integration.auth_mode}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
               Host: {integration.host_url}
             </p>
           </CardContent>
@@ -230,7 +224,7 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Connection details</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Connection details</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -276,7 +270,7 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Actions</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Actions</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {integration.provider === 'gitlab' &&
@@ -363,7 +357,7 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
             Installations ({installations.length})
           </CardTitle>
         </CardHeader>
@@ -402,7 +396,7 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
             Repositories ({repositories.length})
           </CardTitle>
         </CardHeader>
