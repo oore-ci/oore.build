@@ -297,17 +297,15 @@ function UsersSettingsPage() {
 
   if (error) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6">
+      <PageLayout>
         <PageMeta title="User Management" noindex />
-        <div className="max-w-md w-full">
-          <Alert variant="destructive">
-            <AlertDescription>
-              Failed to load users:{' '}
-              {error instanceof Error ? error.message : 'Unknown error'}
-            </AlertDescription>
-          </Alert>
-        </div>
-      </div>
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load users:{' '}
+            {error instanceof Error ? error.message : 'Unknown error'}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
     )
   }
 

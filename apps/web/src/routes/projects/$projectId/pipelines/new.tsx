@@ -36,6 +36,7 @@ import {
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
+import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   staticData: { breadcrumbLabel: 'New Pipeline' },
@@ -460,6 +461,7 @@ function NewPipelinePage() {
 
   return (
     <PageLayout width="wide">
+      <PageMeta title="New Pipeline" />
       <PageHeader
         title="New Pipeline"
         back={{ to: `/projects/${projectId}`, label: 'Project' }}

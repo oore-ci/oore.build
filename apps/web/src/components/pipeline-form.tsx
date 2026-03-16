@@ -151,7 +151,7 @@ function SectionHeader({
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-2">
-        <CardTitle>{title}</CardTitle>
+        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
         {errorCount && errorCount > 0 ? (
           <Badge variant="destructive" className="text-[10px]">
             {errorCount} {errorCount === 1 ? 'error' : 'errors'}
@@ -480,7 +480,7 @@ export default function PipelineForm({
                 />
 
                 {previewDefaults.length > 0 ? (
-                  <div className="space-y-1 rounded-md border p-3">
+                  <div className="space-y-1 border p-3">
                     <p className="text-xs font-medium text-muted-foreground">
                       Default build commands
                     </p>
@@ -989,7 +989,7 @@ export default function PipelineForm({
                   />
 
                   {values.android_signing_release_enabled ? (
-                    <div className="grid gap-3 rounded-md border p-3">
+                    <div className="grid gap-3 border p-3">
                       <FormItem>
                         <FormLabel>Release keystore (.jks)</FormLabel>
                         <FormControl>
@@ -1105,7 +1105,7 @@ export default function PipelineForm({
                   />
 
                   {values.android_signing_debug_enabled ? (
-                    <div className="grid gap-3 rounded-md border p-3">
+                    <div className="grid gap-3 border p-3">
                       <FormItem>
                         <FormLabel>Debug keystore (.jks)</FormLabel>
                         <FormControl>
@@ -1322,7 +1322,7 @@ export default function PipelineForm({
 
                       {iosSigningMode === 'manual' ||
                       iosSigningMode === 'hybrid' ? (
-                        <div className="grid gap-3 rounded-md border p-3">
+                        <div className="grid gap-3 border p-3">
                           <FormItem>
                             <FormLabel>
                               Distribution certificate (.p12)
@@ -1373,7 +1373,7 @@ export default function PipelineForm({
 
                       {iosSigningMode === 'api' ||
                       iosSigningMode === 'hybrid' ? (
-                        <div className="grid gap-3 rounded-md border p-3">
+                        <div className="grid gap-3 border p-3">
                           <FormField
                             control={form.control}
                             name="ios_signing_api_key_id"
@@ -1433,7 +1433,7 @@ export default function PipelineForm({
 
                       {iosSigningMode === 'manual' ||
                       iosSigningMode === 'hybrid' ? (
-                        <div className="space-y-3 rounded-md border p-3">
+                        <div className="space-y-3 border p-3">
                           <p className="text-sm font-medium">
                             Provisioning profiles by bundle ID
                           </p>

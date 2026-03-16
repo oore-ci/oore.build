@@ -209,12 +209,12 @@ function IntegrationsPage() {
                 {integrations.map((integration) => (
                   <div
                     key={integration.id}
-                    className="group flex items-start justify-between gap-3 rounded-md border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
+                    className="group flex items-start justify-between gap-3 border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
                   >
                     <Link
                       to="/settings/integrations/$integrationId"
                       params={{ integrationId: integration.id }}
-                      className="min-w-0 flex-1 rounded-sm p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      className="min-w-0 flex-1 p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                     >
                       <div className="space-y-2">
                         <div>
