@@ -1,4 +1,4 @@
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -31,11 +31,26 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
 import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
+const PAGE_SIZE = 20
+
 export const Route = createFileRoute('/builds/')({
   staticData: { breadcrumbLabel: 'Builds' },
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { page?: number } => ({
+    page: Number(search.page) > 1 ? Number(search.page) : undefined,
+  }),
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -44,8 +59,14 @@ export const Route = createFileRoute('/builds/')({
 })
 
 function BuildsListPage() {
-  const navigate = useNavigate()
-  const buildsQuery = useBuilds({ limit: 100 })
+  const navigate = Route.useNavigate()
+  const search = useSearch({ from: '/builds/' })
+  const page = search.page ?? 1
+  const offset = (page - 1) * PAGE_SIZE
+
+  const buildsQuery = useBuilds({ limit: PAGE_SIZE, offset })
+  const total = buildsQuery.data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const projectsQuery = useProjects({ limit: 200 })
   const setupStatusQuery = useSetupStatus()
   const canTriggerBuild = useHasPermission('builds', 'write')
@@ -153,7 +174,7 @@ function BuildsListPage() {
                   Build queue and history
                 </CardTitle>
                 <span className="text-xs text-muted-foreground">
-                  {builds.length} total
+                  {total} total
                 </span>
               </div>
             </CardHeader>
@@ -240,6 +261,73 @@ function BuildsListPage() {
             </CardContent>
           </Card>
         )
+      ) : null}
+
+      {!isLoading && !error && totalPages > 1 ? (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  onClick={(e) => {
+                    e.preventDefault()
+                    if (page > 1)
+                      void navigate({
+                        search: { page: page - 1 > 1 ? page - 1 : undefined },
+                      })
+                  }}
+                  aria-disabled={page <= 1}
+                  className={page <= 1 ? 'pointer-events-none opacity-50' : ''}
+                />
+              </PaginationItem>
+              {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                let pageNum: number
+                if (totalPages <= 5) {
+                  pageNum = i + 1
+                } else if (page <= 3) {
+                  pageNum = i + 1
+                } else if (page >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i
+                } else {
+                  pageNum = page - 2 + i
+                }
+                return (
+                  <PaginationItem key={pageNum}>
+                    <PaginationLink
+                      isActive={pageNum === page}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        void navigate({
+                          search: {
+                            page: pageNum > 1 ? pageNum : undefined,
+                          },
+                        })
+                      }}
+                    >
+                      {pageNum}
+                    </PaginationLink>
+                  </PaginationItem>
+                )
+              })}
+              <PaginationItem>
+                <PaginationNext
+                  onClick={(e) => {
+                    e.preventDefault()
+                    if (page < totalPages)
+                      void navigate({ search: { page: page + 1 } })
+                  }}
+                  aria-disabled={page >= totalPages}
+                  className={
+                    page >= totalPages ? 'pointer-events-none opacity-50' : ''
+                  }
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
       ) : null}
 
       <TriggerBuildDialog

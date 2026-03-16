@@ -301,7 +301,7 @@ export default function TerminalLogViewer({
   return (
     <div className="flex h-[calc(100vh-18rem)] min-h-80 flex-col">
       {/* Toolbar */}
-      <div className="flex shrink-0 items-center gap-2 border border-b-0 border-border/60 bg-[oklch(0.18_0_0)] px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border border-b-0 border-border/60 bg-[oklch(0.18_0_0)] px-3 py-2">
         <div className="flex items-center gap-1.5">
           {isStreaming ? (
             <span className="flex items-center gap-1.5 text-xs text-[oklch(0.75_0_0)]">
@@ -333,7 +333,7 @@ export default function TerminalLogViewer({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search logs..."
-              className="h-7 w-48 border-[oklch(0.30_0_0)] bg-[oklch(0.14_0_0)] font-mono text-xs text-[oklch(0.92_0_0)] placeholder:text-[oklch(0.48_0_0)]"
+              className="h-7 w-32 sm:w-48 border-[oklch(0.30_0_0)] bg-[oklch(0.14_0_0)] font-mono text-xs text-[oklch(0.92_0_0)] placeholder:text-[oklch(0.48_0_0)]"
             />
             <Button
               variant="ghost"
@@ -411,16 +411,46 @@ export default function TerminalLogViewer({
       </div>
 
       {/* Main log area */}
+      {/* Mobile step selector */}
+      {hasSteps ? (
+        <div className="flex items-center gap-2 border border-b-0 border-[oklch(0.25_0_0)] bg-[oklch(0.17_0_0)] px-3 py-2 md:hidden">
+          <select
+            value={selectedStep}
+            onChange={(e) => setSelectedStep(e.target.value)}
+            className="w-full bg-[oklch(0.14_0_0)] text-[oklch(0.92_0_0)] text-xs border border-[oklch(0.30_0_0)] px-2 py-1.5"
+          >
+            <option value="all">All logs ({allVisibleLogs.length})</option>
+            {stepGroups.map((group) => (
+              <option key={group.name} value={group.name}>
+                {group.status === 'running'
+                  ? '● '
+                  : group.status === 'succeeded'
+                    ? '✓ '
+                    : group.status === 'failed' ||
+                        group.status === 'canceled' ||
+                        group.status === 'timed_out'
+                      ? '✗ '
+                      : '○ '}
+                {group.name}
+                {group.durationMs != null
+                  ? ` (${formatDuration(group.durationMs / 1000)})`
+                  : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
       <div
         className={
           hasSteps
-            ? 'grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] overflow-hidden border border-[oklch(0.25_0_0)]'
+            ? 'grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] overflow-hidden border border-[oklch(0.25_0_0)]'
             : 'min-h-0 flex-1 overflow-hidden border border-[oklch(0.25_0_0)]'
         }
       >
-        {/* Step sidebar */}
+        {/* Step sidebar (desktop only) */}
         {hasSteps ? (
-          <aside className="flex flex-col gap-0 overflow-y-auto border-r border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)] py-1">
+          <aside className="hidden md:flex flex-col gap-0 overflow-y-auto border-r border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)] py-1">
             <button
               type="button"
               onClick={() => setSelectedStep('all')}

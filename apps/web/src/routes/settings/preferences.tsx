@@ -250,6 +250,7 @@ function PreferencesPage() {
       access_key_id: '',
       secret_access_key: '',
     },
+    mode: 'onBlur',
   })
 
   const externalAccessOidcForm = useForm<ExternalAccessOidcFormValues>({
@@ -259,6 +260,7 @@ function PreferencesPage() {
       client_id: '',
       client_secret: '',
     },
+    mode: 'onBlur',
   })
   const externalAccessNetworkForm = useForm<ExternalAccessNetworkFormValues>({
     resolver: zodResolver(externalAccessNetworkSchema),
@@ -266,6 +268,7 @@ function PreferencesPage() {
       public_url: '',
       allowed_origins: '',
     },
+    mode: 'onBlur',
   })
 
   const backendKind = storageForm.watch('backend_kind')

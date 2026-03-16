@@ -103,6 +103,7 @@ function OwnerStep() {
     defaultValues: {
       email: 'owner@local',
     },
+    mode: 'onBlur',
   })
 
   const oidcErrorMessage = getOidcErrorMessage(startOidcMutation.error)

@@ -76,6 +76,7 @@ function SetupModeStep() {
     defaultValues: {
       mode: toModeValue(status?.runtime_mode, status?.remote_auth_mode),
     },
+    mode: 'onBlur',
   })
 
   useEffect(() => {

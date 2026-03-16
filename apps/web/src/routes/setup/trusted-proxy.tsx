@@ -84,6 +84,7 @@ function SetupTrustedProxyStep() {
       trustedProxyCidrs: '',
       sharedSecret: '',
     },
+    mode: 'onBlur',
   })
 
   useEffect(() => {

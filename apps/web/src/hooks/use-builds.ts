@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import type {
   Build,
   BuildLogChunk,
@@ -51,6 +56,7 @@ export function useBuilds(
     queryFn: () => listBuilds(baseUrl!, token!, params),
     enabled: !!baseUrl && !!token,
     refetchInterval: options?.refetchInterval,
+    placeholderData: keepPreviousData,
   })
 }
 

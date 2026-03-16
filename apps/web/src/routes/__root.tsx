@@ -5,7 +5,7 @@ import {
   createRootRoute,
   useMatches,
   useRouter,
-  type ErrorComponentProps,
+  useRouterState,
 } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
@@ -16,8 +16,10 @@ import {
   Home01Icon,
   RotateClockwiseIcon,
 } from '@hugeicons/core-free-icons'
+import type { ErrorComponentProps } from '@tanstack/react-router'
 
 import AppSidebar from '@/components/app-sidebar'
+import ConnectivityBanner from '@/components/connectivity-banner'
 import PageBreadcrumb from '@/components/page-breadcrumb'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -53,6 +55,18 @@ const DevTools = import.meta.env.DEV
       })),
     )
   : () => null
+
+function RouteTransitionBar() {
+  const isLoading = useRouterState({
+    select: (s) => s.status === 'pending',
+  })
+  if (!isLoading) return null
+  return (
+    <div className="fixed top-0 left-0 right-0 z-50 h-0.5 overflow-hidden bg-primary/20">
+      <div className="h-full w-1/3 animate-[route-slide_1s_ease-in-out_infinite] bg-primary" />
+    </div>
+  )
+}
 
 function NotFound() {
   return (
@@ -175,6 +189,7 @@ function RootLayout() {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
+        <RouteTransitionBar />
         {showAppChrome ? (
           <SidebarProvider>
             <AppSidebar />
@@ -201,6 +216,7 @@ function RootLayout() {
                 />
                 <PageBreadcrumb />
               </header>
+              <ConnectivityBanner />
               <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />
               </div>
@@ -208,6 +224,7 @@ function RootLayout() {
           </SidebarProvider>
         ) : (
           <div className="min-h-screen flex flex-col bg-surface">
+            <ConnectivityBanner />
             <div className="flex-1 flex flex-col">
               <Outlet />
             </div>
