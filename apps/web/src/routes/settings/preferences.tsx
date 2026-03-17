@@ -1219,13 +1219,13 @@ function PreferencesPage() {
                                 variant="outline"
                                 size="icon"
                                 aria-label="Browse"
-	                                title="Browse"
-	                                onClick={() => {
-	                                  setArtifactDirPickerOpen(true)
-	                                }}
-	                                disabled={
-	                                  !canWrite || updateStorageMutation.isPending
-	                                }
+                                title="Browse"
+                                onClick={() => {
+                                  setArtifactDirPickerOpen(true)
+                                }}
+                                disabled={
+                                  !canWrite || updateStorageMutation.isPending
+                                }
                               >
                                 <HugeiconsIcon icon={Folder02Icon} size={16} />
                               </Button>
@@ -1311,8 +1311,8 @@ function PreferencesPage() {
                             />
                           </FormControl>
                           <FormDescription>
-                            Keep this bucket private. Oore serves files
-                            via time-limited signed URLs.
+                            Keep this bucket private. Oore serves files via
+                            time-limited signed URLs.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

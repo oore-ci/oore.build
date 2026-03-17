@@ -64,9 +64,7 @@ const STATUS_OPTIONS: Record<string, string> = {
 
 export const Route = createFileRoute('/builds/')({
   staticData: { breadcrumbLabel: 'Builds' },
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { page?: number } => ({
+  validateSearch: (search: Record<string, unknown>): { page?: number } => ({
     page: Number(search.page) > 1 ? Number(search.page) : undefined,
   }),
   beforeLoad: () => {

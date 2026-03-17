@@ -194,7 +194,10 @@ function OidcConfigStep() {
 
   useEffect(() => {
     if (!status) return
-    if (status.runtime_mode !== 'remote' || status.remote_auth_mode !== 'oidc') {
+    if (
+      status.runtime_mode !== 'remote' ||
+      status.remote_auth_mode !== 'oidc'
+    ) {
       void navigate({ to: '/setup/mode' })
     }
   }, [status, navigate])

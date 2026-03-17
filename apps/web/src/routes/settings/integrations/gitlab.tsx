@@ -156,7 +156,9 @@ function GitLabSetupPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">GitLab connection</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            GitLab connection
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {!remoteEnabled ? (

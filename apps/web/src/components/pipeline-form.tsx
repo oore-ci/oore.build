@@ -151,7 +151,9 @@ function SectionHeader({
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-2">
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
+        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          {title}
+        </CardTitle>
         {errorCount && errorCount > 0 ? (
           <Badge variant="destructive" className="text-[10px]">
             {errorCount} {errorCount === 1 ? 'error' : 'errors'}
@@ -451,7 +453,8 @@ export default function PipelineForm({
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Select the platforms you want to build for. You can change this later.
+                    Select the platforms you want to build for. You can change
+                    this later.
                   </p>
                 </div>
 
@@ -523,7 +526,9 @@ export default function PipelineForm({
                   <Alert>
                     <HugeiconsIcon icon={AlertCircleIcon} size={16} />
                     <AlertDescription>
-                      This repository uses local Git — builds can only be triggered manually from the UI or API. Webhook triggers require a connected GitHub or GitLab source.
+                      This repository uses local Git — builds can only be
+                      triggered manually from the UI or API. Webhook triggers
+                      require a connected GitHub or GitLab source.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -987,9 +992,11 @@ export default function PipelineForm({
                               : 'No stored release keystore'}
                           </p>
                         ) : null}
-                        {!values.android_signing_release_enabled && !values.android_signing_debug_enabled ? (
+                        {!values.android_signing_release_enabled &&
+                        !values.android_signing_debug_enabled ? (
                           <p className="text-xs text-muted-foreground">
-                            Signing is optional for debug builds. Enable it when you're ready to distribute release builds.
+                            Signing is optional for debug builds. Enable it when
+                            you're ready to distribute release builds.
                           </p>
                         ) : null}
                       </FormItem>
@@ -1249,7 +1256,9 @@ export default function PipelineForm({
                         ) : null}
                         {!values.ios_signing_enabled ? (
                           <p className="text-xs text-muted-foreground">
-                            Required for installing on physical iOS devices. You'll need a distribution certificate (.p12) and provisioning profiles.
+                            Required for installing on physical iOS devices.
+                            You'll need a distribution certificate (.p12) and
+                            provisioning profiles.
                           </p>
                         ) : null}
                         <FormMessage />
@@ -1457,12 +1466,12 @@ export default function PipelineForm({
                             </p>
                           ) : (
                             <div className="space-y-3">
-	                              {iosBundleIds.map((bundleId) => {
-	                                const existing =
-	                                  iosProfilesByBundle.get(bundleId)
-	                                const selectedFile = iosProfileFiles[bundleId]
-	                                return (
-	                                  <FormItem key={bundleId}>
+                              {iosBundleIds.map((bundleId) => {
+                                const existing =
+                                  iosProfilesByBundle.get(bundleId)
+                                const selectedFile = iosProfileFiles[bundleId]
+                                return (
+                                  <FormItem key={bundleId}>
                                     <FormLabel className="font-mono text-xs">
                                       {bundleId}
                                     </FormLabel>
@@ -1479,17 +1488,17 @@ export default function PipelineForm({
                                           }))
                                         }}
                                       />
-	                                    </FormControl>
-	                                    <p className="text-xs text-muted-foreground">
-	                                      {selectedFile
-	                                        ? `Selected: ${selectedFile.name}`
-	                                        : existing?.has_profile
-	                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
-	                                          : 'Upload .mobileprovision for this bundle ID'}
-	                                    </p>
-	                                  </FormItem>
-	                                )
-	                              })}
+                                    </FormControl>
+                                    <p className="text-xs text-muted-foreground">
+                                      {selectedFile
+                                        ? `Selected: ${selectedFile.name}`
+                                        : existing?.has_profile
+                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
+                                          : 'Upload .mobileprovision for this bundle ID'}
+                                    </p>
+                                  </FormItem>
+                                )
+                              })}
                             </div>
                           )}
                         </div>
