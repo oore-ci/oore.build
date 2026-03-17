@@ -72,11 +72,13 @@ function BuildsListPage() {
   const page = search.page ?? 1
   const offset = (page - 1) * PAGE_SIZE
 
+  const [projectFilter, setProjectFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [branchFilter, setBranchFilter] = useState('')
   const buildsQuery = useBuilds({
     limit: PAGE_SIZE,
     offset,
+    project_id: projectFilter !== 'all' ? projectFilter : undefined,
     status: statusFilter !== 'all' ? statusFilter : undefined,
     branch: branchFilter.trim() || undefined,
   })
@@ -122,6 +124,19 @@ function BuildsListPage() {
 
       {!missingProjects && !isLoading ? (
         <div className="flex items-center gap-3">
+          <Select value={projectFilter} onValueChange={(v) => setProjectFilter(v ?? 'all')}>
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="All projects" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All projects</SelectItem>
+              {projects.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? 'all')}>
             <SelectTrigger className="w-36">
               <SelectValue placeholder="All statuses" />
@@ -141,11 +156,12 @@ function BuildsListPage() {
             onChange={(e) => setBranchFilter(e.target.value)}
             className="max-w-xs"
           />
-          {statusFilter !== 'all' || branchFilter ? (
+          {projectFilter !== 'all' || statusFilter !== 'all' || branchFilter ? (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
+                setProjectFilter('all')
                 setStatusFilter('all')
                 setBranchFilter('')
               }}

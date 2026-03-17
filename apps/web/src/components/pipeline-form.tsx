@@ -450,6 +450,9 @@ export default function PipelineForm({
                       )}
                     />
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Select the platforms you want to build for. You can change this later.
+                  </p>
                 </div>
 
                 <FormField
@@ -520,7 +523,7 @@ export default function PipelineForm({
                   <Alert>
                     <HugeiconsIcon icon={AlertCircleIcon} size={16} />
                     <AlertDescription>
-                      This repository uses manual-only pipeline triggers.
+                      This repository uses local Git — builds can only be triggered manually from the UI or API. Webhook triggers require a connected GitHub or GitLab source.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -984,6 +987,11 @@ export default function PipelineForm({
                               : 'No stored release keystore'}
                           </p>
                         ) : null}
+                        {!values.android_signing_release_enabled && !values.android_signing_debug_enabled ? (
+                          <p className="text-xs text-muted-foreground">
+                            Signing is optional for debug builds. Enable it when you're ready to distribute release builds.
+                          </p>
+                        ) : null}
                       </FormItem>
                     )}
                   />
@@ -1237,6 +1245,11 @@ export default function PipelineForm({
                             {iosSigningData.has_p12 ? 'present' : 'missing'},
                             API key{' '}
                             {iosSigningData.has_api_key ? 'present' : 'missing'}
+                          </p>
+                        ) : null}
+                        {!values.ios_signing_enabled ? (
+                          <p className="text-xs text-muted-foreground">
+                            Required for installing on physical iOS devices. You'll need a distribution certificate (.p12) and provisioning profiles.
                           </p>
                         ) : null}
                         <FormMessage />

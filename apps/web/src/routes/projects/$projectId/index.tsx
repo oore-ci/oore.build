@@ -423,6 +423,25 @@ function ProjectDetailPage() {
           <div className="pt-2">
             <Card>
               <CardContent>
+                {(() => {
+                  const latestSucceeded = builds.find((b) => b.status === 'succeeded')
+                  if (!latestSucceeded) return null
+                  return (
+                    <div className="mb-3 flex items-center gap-2 text-sm">
+                      <Badge variant="default" className="text-[10px]">Latest</Badge>
+                      <Link
+                        to="/builds/$buildId"
+                        params={{ buildId: latestSucceeded.id }}
+                        className="font-mono text-xs text-primary hover:underline"
+                      >
+                        Build #{latestSucceeded.build_number}
+                      </Link>
+                      <span className="text-xs text-muted-foreground">
+                        on {latestSucceeded.branch ?? 'n/a'} · {relativeTime(latestSucceeded.queued_at)}
+                      </span>
+                    </div>
+                  )
+                })()}
                 {builds.length === 0 ? (
                   <div className="space-y-2 py-6 text-center">
                     <p className="text-sm text-muted-foreground">

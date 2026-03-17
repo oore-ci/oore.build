@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Copy01Icon,
   Download04Icon,
   File01Icon,
   GitBranchIcon,
@@ -358,6 +359,20 @@ function ArtifactsPanel({
     })
   }
 
+  function handleCopyLink(artifactId: string, name: string) {
+    downloadMutation.mutate(artifactId, {
+      onSuccess: (res) => {
+        void navigator.clipboard.writeText(res.download_url).then(
+          () => toast.success(`Download link copied for ${name}`),
+          () => toast.error('Failed to copy link'),
+        )
+      },
+      onError: (err) => {
+        toast.error(`Failed to get link for ${name}: ${err.message}`)
+      },
+    })
+  }
+
   return (
     <Card size="sm">
       <CardHeader>
@@ -404,15 +419,28 @@ function ArtifactsPanel({
                     </span>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0"
-                  onClick={() => handleDownload(artifact.id, artifact.name)}
-                  disabled={downloadMutation.isPending}
-                >
-                  <HugeiconsIcon icon={Download04Icon} size={14} />
-                </Button>
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0"
+                    title="Copy download link"
+                    onClick={() => handleCopyLink(artifact.id, artifact.name)}
+                    disabled={downloadMutation.isPending}
+                  >
+                    <HugeiconsIcon icon={Copy01Icon} size={14} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0"
+                    title="Download"
+                    onClick={() => handleDownload(artifact.id, artifact.name)}
+                    disabled={downloadMutation.isPending}
+                  >
+                    <HugeiconsIcon icon={Download04Icon} size={14} />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
