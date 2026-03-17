@@ -123,7 +123,9 @@ function AnsiLine({ content }: { content: string }) {
         if (span.underline) style.textDecoration = 'underline'
         const hasStyle = Object.keys(style).length > 0
         return hasStyle ? (
-          <span key={i} style={style}>{span.text}</span>
+          <span key={i} style={style}>
+            {span.text}
+          </span>
         ) : (
           <span key={i}>{span.text}</span>
         )

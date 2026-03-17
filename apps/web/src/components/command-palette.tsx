@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Home01Icon,
-  FolderLibraryIcon,
   CommandLineIcon,
+  ComputerIcon,
+  FolderLibraryIcon,
+  Home01Icon,
+  LinkSquare01Icon,
   Settings01Icon,
   UserMultiple02Icon,
-  ComputerIcon,
-  LinkSquare01Icon,
 } from '@hugeicons/core-free-icons'
 
 import {
@@ -63,7 +63,7 @@ export default function CommandPalette() {
     [navigate],
   )
 
-  const navItems = useMemo<PaletteItem[]>(
+  const navItems = useMemo<Array<PaletteItem>>(
     () => [
       {
         id: 'nav-dashboard',
@@ -90,7 +90,7 @@ export default function CommandPalette() {
     [go],
   )
 
-  const adminItems = useMemo<PaletteItem[]>(
+  const adminItems = useMemo<Array<PaletteItem>>(
     () =>
       isAdmin
         ? [
@@ -127,7 +127,7 @@ export default function CommandPalette() {
     [go, isAdmin],
   )
 
-  const actionItems = useMemo<PaletteItem[]>(
+  const actionItems = useMemo<Array<PaletteItem>>(
     () =>
       canWriteProjects
         ? [
@@ -143,7 +143,7 @@ export default function CommandPalette() {
     [go, canWriteProjects],
   )
 
-  const projectItems = useMemo<PaletteItem[]>(
+  const projectItems = useMemo<Array<PaletteItem>>(
     () =>
       projects.map((project) => ({
         id: `project-${project.id}`,

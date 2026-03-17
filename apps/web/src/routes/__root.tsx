@@ -20,7 +20,6 @@ import {
 import type { ErrorComponentProps } from '@tanstack/react-router'
 
 import AppSidebar from '@/components/app-sidebar'
-const CommandPalette = lazy(() => import('@/components/command-palette'))
 import ConnectivityBanner from '@/components/connectivity-banner'
 import PageBreadcrumb from '@/components/page-breadcrumb'
 import { Button } from '@/components/ui/button'
@@ -38,6 +37,8 @@ import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
+
+const CommandPalette = lazy(() => import('@/components/command-palette'))
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
@@ -129,10 +130,7 @@ function RootError({ error, reset }: ErrorComponentProps) {
           <HugeiconsIcon icon={RotateClockwiseIcon} size={16} />
           Try again
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => window.history.back()}
-        >
+        <Button variant="outline" onClick={() => window.history.back()}>
           <HugeiconsIcon icon={ArrowLeft02Icon} size={16} />
           Go back
         </Button>
@@ -207,11 +205,7 @@ function RootLayout() {
                   className="mr-2 h-4! self-auto!"
                 />
                 <Link to="/" className="flex items-center gap-2 pr-1">
-                  <img
-                    src="/logo.svg"
-                    alt="Oore CI logo"
-                    className="size-5"
-                  />
+                  <img src="/logo.svg" alt="Oore CI logo" className="size-5" />
                   <span className="hidden text-sm font-semibold tracking-tight sm:inline">
                     Oore CI
                   </span>
@@ -224,7 +218,14 @@ function RootLayout() {
                 <div className="ml-auto">
                   <button
                     type="button"
-                    onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+                    onClick={() =>
+                      window.dispatchEvent(
+                        new KeyboardEvent('keydown', {
+                          key: 'k',
+                          metaKey: true,
+                        }),
+                      )
+                    }
                     className="inline-flex h-8 items-center gap-2 rounded-sm border bg-muted/50 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                   >
                     <HugeiconsIcon icon={Search01Icon} size={14} />

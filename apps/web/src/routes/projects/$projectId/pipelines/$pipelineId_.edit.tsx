@@ -276,15 +276,15 @@ function EditPipelinePage() {
       debugKeystoreFile,
       origSetErrors,
     )
-	    const iosSigningPayload = await buildIosSigningPayload(
-	      values,
-	      iosSigningFiles,
-	      origSetErrors,
-	    )
-	    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via origSetErrors callback during payload construction
-	    if (hasPayloadErrors) {
-	      return
-	    }
+    const iosSigningPayload = await buildIosSigningPayload(
+      values,
+      iosSigningFiles,
+      origSetErrors,
+    )
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via origSetErrors callback during payload construction
+    if (hasPayloadErrors) {
+      return
+    }
 
     try {
       await updateMutation.mutateAsync({
@@ -479,13 +479,13 @@ function EditPipelinePage() {
       if (!p12Password && !hasStoredP12Password)
         errors.push('Manual/Hybrid iOS signing requires p12 password')
 
-	      for (const bundleId of bundleIds) {
-	        const hasStoredProfile = !!existing?.provisioning_profiles.find(
-	          (profile) => profile.bundle_id === bundleId && profile.has_profile,
-	        )
-	        if (!iosSigningFiles.profileFiles[bundleId] && !hasStoredProfile) {
-	          errors.push(
-	            `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
+      for (const bundleId of bundleIds) {
+        const hasStoredProfile = !!existing?.provisioning_profiles.find(
+          (profile) => profile.bundle_id === bundleId && profile.has_profile,
+        )
+        if (!iosSigningFiles.profileFiles[bundleId] && !hasStoredProfile) {
+          errors.push(
+            `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
           )
         }
       }
