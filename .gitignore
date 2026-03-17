@@ -30,3 +30,7 @@ dist/releases
 .claude/
 .codex/
 .codex-output/
+
+# playwright / browser automation
+.playwright-mcp/
+/*.png
