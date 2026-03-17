@@ -54,6 +54,7 @@ const ANSI_BG_COLORS: Record<number, string> = {
 
 // Match ESC[ ... m sequences
 const ANSI_RE = /\x1b\[([0-9;]*)m/g
+const ANSI_DETECT_RE = /\x1b\[/
 
 export function parseAnsi(input: string): AnsiSpan[] {
   const spans: AnsiSpan[] = []
@@ -132,5 +133,5 @@ export function parseAnsi(input: string): AnsiSpan[] {
 }
 
 export function hasAnsiCodes(input: string): boolean {
-  return /\x1b\[/.test(input)
+  return ANSI_DETECT_RE.test(input)
 }

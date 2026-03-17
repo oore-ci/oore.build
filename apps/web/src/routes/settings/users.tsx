@@ -64,6 +64,8 @@ export const Route = createFileRoute('/settings/users')({
   component: UsersSettingsPage,
 })
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 const ROLE_OPTIONS: Record<string, string> = {
   admin: 'Admin',
   developer: 'Developer',
@@ -409,7 +411,7 @@ function UsersSettingsPage() {
                 onBlur={() => {
                   if (
                     inviteEmail.trim() &&
-                    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail.trim())
+                    !EMAIL_RE.test(inviteEmail.trim())
                   ) {
                     setEmailError('Please enter a valid email address')
                   }

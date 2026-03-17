@@ -20,7 +20,7 @@ import {
 import type { ErrorComponentProps } from '@tanstack/react-router'
 
 import AppSidebar from '@/components/app-sidebar'
-import CommandPalette from '@/components/command-palette'
+const CommandPalette = lazy(() => import('@/components/command-palette'))
 import ConnectivityBanner from '@/components/connectivity-banner'
 import PageBreadcrumb from '@/components/page-breadcrumb'
 import { Button } from '@/components/ui/button'
@@ -248,7 +248,11 @@ function RootLayout() {
           </div>
         )}
         <Toaster />
-        {showAppChrome ? <CommandPalette /> : null}
+        {showAppChrome ? (
+          <Suspense fallback={null}>
+            <CommandPalette />
+          </Suspense>
+        ) : null}
         {import.meta.env.VITE_DEMO_MODE === 'true' && (
           <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
             <span className="size-1.5 animate-pulse bg-primary" />
