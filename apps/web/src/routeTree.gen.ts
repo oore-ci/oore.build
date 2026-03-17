@@ -26,8 +26,11 @@ import { Route as SettingsPreferencesRouteImport } from './routes/settings/prefe
 import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
+import { Route as SettingsNotificationsIndexRouteImport } from './routes/settings/notifications/index'
 import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings/integrations/index'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
+import { Route as SettingsNotificationsNewRouteImport } from './routes/settings/notifications/new'
+import { Route as SettingsNotificationsChannelIdRouteImport } from './routes/settings/notifications/$channelId'
 import { Route as SettingsIntegrationsLocalGitRouteImport } from './routes/settings/integrations/local-git'
 import { Route as SettingsIntegrationsGitlabRouteImport } from './routes/settings/integrations/gitlab'
 import { Route as SettingsIntegrationsGithubRouteImport } from './routes/settings/integrations/github'
@@ -121,6 +124,12 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsNotificationsIndexRoute =
+  SettingsNotificationsIndexRouteImport.update({
+    id: '/settings/notifications/',
+    path: '/settings/notifications/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SettingsIntegrationsIndexRoute =
   SettingsIntegrationsIndexRouteImport.update({
     id: '/settings/integrations/',
@@ -132,6 +141,18 @@ const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   path: '/projects/$projectId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsNotificationsNewRoute =
+  SettingsNotificationsNewRouteImport.update({
+    id: '/settings/notifications/new',
+    path: '/settings/notifications/new',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SettingsNotificationsChannelIdRoute =
+  SettingsNotificationsChannelIdRouteImport.update({
+    id: '/settings/notifications/$channelId',
+    path: '/settings/notifications/$channelId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SettingsIntegrationsLocalGitRoute =
   SettingsIntegrationsLocalGitRouteImport.update({
     id: '/settings/integrations/local-git',
@@ -197,8 +218,11 @@ export interface FileRoutesByFullPath {
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/settings/integrations/local-git': typeof SettingsIntegrationsLocalGitRoute
+  '/settings/notifications/$channelId': typeof SettingsNotificationsChannelIdRoute
+  '/settings/notifications/new': typeof SettingsNotificationsNewRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
+  '/settings/notifications/': typeof SettingsNotificationsIndexRoute
   '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
@@ -224,8 +248,11 @@ export interface FileRoutesByTo {
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/settings/integrations/local-git': typeof SettingsIntegrationsLocalGitRoute
+  '/settings/notifications/$channelId': typeof SettingsNotificationsChannelIdRoute
+  '/settings/notifications/new': typeof SettingsNotificationsNewRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations': typeof SettingsIntegrationsIndexRoute
+  '/settings/notifications': typeof SettingsNotificationsIndexRoute
   '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
@@ -253,8 +280,11 @@ export interface FileRoutesById {
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
   '/settings/integrations/gitlab': typeof SettingsIntegrationsGitlabRoute
   '/settings/integrations/local-git': typeof SettingsIntegrationsLocalGitRoute
+  '/settings/notifications/$channelId': typeof SettingsNotificationsChannelIdRoute
+  '/settings/notifications/new': typeof SettingsNotificationsNewRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
+  '/settings/notifications/': typeof SettingsNotificationsIndexRoute
   '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId_/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
@@ -283,8 +313,11 @@ export interface FileRouteTypes {
     | '/settings/integrations/github'
     | '/settings/integrations/gitlab'
     | '/settings/integrations/local-git'
+    | '/settings/notifications/$channelId'
+    | '/settings/notifications/new'
     | '/projects/$projectId/'
     | '/settings/integrations/'
+    | '/settings/notifications/'
     | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
     | '/projects/$projectId/pipelines/$pipelineId/edit'
@@ -310,8 +343,11 @@ export interface FileRouteTypes {
     | '/settings/integrations/github'
     | '/settings/integrations/gitlab'
     | '/settings/integrations/local-git'
+    | '/settings/notifications/$channelId'
+    | '/settings/notifications/new'
     | '/projects/$projectId'
     | '/settings/integrations'
+    | '/settings/notifications'
     | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
     | '/projects/$projectId/pipelines/$pipelineId/edit'
@@ -338,8 +374,11 @@ export interface FileRouteTypes {
     | '/settings/integrations/github'
     | '/settings/integrations/gitlab'
     | '/settings/integrations/local-git'
+    | '/settings/notifications/$channelId'
+    | '/settings/notifications/new'
     | '/projects/$projectId/'
     | '/settings/integrations/'
+    | '/settings/notifications/'
     | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
     | '/projects/$projectId/pipelines/$pipelineId_/edit'
@@ -361,8 +400,11 @@ export interface RootRouteChildren {
   SettingsIntegrationsGithubRoute: typeof SettingsIntegrationsGithubRoute
   SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
   SettingsIntegrationsLocalGitRoute: typeof SettingsIntegrationsLocalGitRoute
+  SettingsNotificationsChannelIdRoute: typeof SettingsNotificationsChannelIdRoute
+  SettingsNotificationsNewRoute: typeof SettingsNotificationsNewRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
+  SettingsNotificationsIndexRoute: typeof SettingsNotificationsIndexRoute
   ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
   ProjectsProjectIdPipelinesNewRoute: typeof ProjectsProjectIdPipelinesNewRoute
   ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
@@ -489,6 +531,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/notifications/': {
+      id: '/settings/notifications/'
+      path: '/settings/notifications'
+      fullPath: '/settings/notifications/'
+      preLoaderRoute: typeof SettingsNotificationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/integrations/': {
       id: '/settings/integrations/'
       path: '/settings/integrations'
@@ -501,6 +550,20 @@ declare module '@tanstack/react-router' {
       path: '/projects/$projectId'
       fullPath: '/projects/$projectId/'
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/notifications/new': {
+      id: '/settings/notifications/new'
+      path: '/settings/notifications/new'
+      fullPath: '/settings/notifications/new'
+      preLoaderRoute: typeof SettingsNotificationsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/notifications/$channelId': {
+      id: '/settings/notifications/$channelId'
+      path: '/settings/notifications/$channelId'
+      fullPath: '/settings/notifications/$channelId'
+      preLoaderRoute: typeof SettingsNotificationsChannelIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/integrations/local-git': {
@@ -592,8 +655,11 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsIntegrationsGithubRoute: SettingsIntegrationsGithubRoute,
   SettingsIntegrationsGitlabRoute: SettingsIntegrationsGitlabRoute,
   SettingsIntegrationsLocalGitRoute: SettingsIntegrationsLocalGitRoute,
+  SettingsNotificationsChannelIdRoute: SettingsNotificationsChannelIdRoute,
+  SettingsNotificationsNewRoute: SettingsNotificationsNewRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
+  SettingsNotificationsIndexRoute: SettingsNotificationsIndexRoute,
   ProjectsProjectIdPipelinesPipelineIdRoute:
     ProjectsProjectIdPipelinesPipelineIdRoute,
   ProjectsProjectIdPipelinesNewRoute: ProjectsProjectIdPipelinesNewRoute,

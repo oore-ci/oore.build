@@ -6,6 +6,7 @@ import {
   DashboardSquare01Icon,
   Folder02Icon,
   Link04Icon,
+  Notification03Icon,
   Settings01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
@@ -56,6 +57,12 @@ const ADMIN_ITEMS: Array<NavItem> = [
     title: 'Sources',
     to: '/settings/integrations',
     icon: Link04Icon,
+    adminOnly: true,
+  },
+  {
+    title: 'Notifications',
+    to: '/settings/notifications',
+    icon: Notification03Icon,
     adminOnly: true,
   },
   {
