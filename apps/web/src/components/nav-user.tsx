@@ -1,6 +1,7 @@
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowUp01Icon,
+  BookOpen01Icon,
   Logout03Icon,
   Moon02Icon,
   SmartPhone01Icon,
@@ -102,17 +103,6 @@ export default function NavUser() {
                   </div>
                 </div>
               </DropdownMenuLabel>
-              <DropdownMenuLabel className="px-2 py-0 text-[11px] font-normal text-muted-foreground">
-                {authUser.role === 'qa_viewer'
-                  ? 'View-only access: browse projects and download build artifacts.'
-                  : authUser.role === 'developer'
-                    ? 'Can create projects, pipelines, and trigger builds.'
-                    : authUser.role === 'admin'
-                      ? 'Full access except owner-level operations.'
-                      : authUser.role === 'owner'
-                        ? 'Full instance control including setup and user management.'
-                        : ''}
-              </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
@@ -142,6 +132,18 @@ export default function NavUser() {
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              render={
+                <a
+                  href="https://docs.oore.build"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+            >
+              <HugeiconsIcon icon={BookOpen01Icon} size={16} />
+              Documentation
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => logoutMutation.mutate()}
               disabled={logoutMutation.isPending}

@@ -53,6 +53,15 @@ import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 const PAGE_SIZE = 20
 
+const STATUS_OPTIONS: Record<string, string> = {
+  all: 'All statuses',
+  queued: 'Queued',
+  running: 'Running',
+  succeeded: 'Succeeded',
+  failed: 'Failed',
+  canceled: 'Canceled',
+}
+
 export const Route = createFileRoute('/builds/')({
   staticData: { breadcrumbLabel: 'Builds' },
   validateSearch: (
@@ -125,9 +134,16 @@ function BuildsListPage() {
 
       {!missingProjects && !isLoading ? (
         <div className="flex items-center gap-3">
-          <Select value={projectFilter} onValueChange={(v) => setProjectFilter(v ?? 'all')}>
+          <Select
+            value={projectFilter}
+            onValueChange={(v) => setProjectFilter(v ?? 'all')}
+            items={Object.fromEntries([
+              ['all', 'All projects'],
+              ...projects.map((p) => [p.id, p.name] as const),
+            ])}
+          >
             <SelectTrigger className="w-44">
-              <SelectValue placeholder="All projects" />
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All projects</SelectItem>
@@ -138,17 +154,20 @@ function BuildsListPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? 'all')}>
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => setStatusFilter(v ?? 'all')}
+            items={STATUS_OPTIONS}
+          >
             <SelectTrigger className="w-36">
-              <SelectValue placeholder="All statuses" />
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="queued">Queued</SelectItem>
-              <SelectItem value="running">Running</SelectItem>
-              <SelectItem value="succeeded">Succeeded</SelectItem>
-              <SelectItem value="failed">Failed</SelectItem>
-              <SelectItem value="canceled">Canceled</SelectItem>
+              {Object.entries(STATUS_OPTIONS).map(([key, label]) => (
+                <SelectItem key={key} value={key}>
+                  {label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Input

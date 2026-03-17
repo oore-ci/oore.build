@@ -30,6 +30,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from '@/components/ui/sidebar'
+import { Kbd } from '@/components/ui/kbd'
 import { Toaster } from '@/components/ui/sonner'
 import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
@@ -228,9 +229,7 @@ function RootLayout() {
                   >
                     <HugeiconsIcon icon={Search01Icon} size={14} />
                     <span className="hidden sm:inline">Search</span>
-                    <kbd className="hidden rounded border bg-background px-1 font-mono text-[10px] sm:inline-block">
-                      ⌘K
-                    </kbd>
+                    <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
                   </button>
                 </div>
               </header>
