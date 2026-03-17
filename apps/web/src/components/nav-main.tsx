@@ -4,6 +4,7 @@ import {
   CommandLineIcon,
   CpuIcon,
   DashboardSquare01Icon,
+  Delete02Icon,
   Folder02Icon,
   Link04Icon,
   Settings01Icon,
@@ -56,6 +57,12 @@ const ADMIN_ITEMS: Array<NavItem> = [
     title: 'Sources',
     to: '/settings/integrations',
     icon: Link04Icon,
+    adminOnly: true,
+  },
+  {
+    title: 'Retention',
+    to: '/settings/retention',
+    icon: Delete02Icon,
     adminOnly: true,
   },
   {

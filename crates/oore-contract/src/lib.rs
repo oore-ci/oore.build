@@ -751,8 +751,9 @@ impl BuildStatus {
                 Self::Canceled,
                 Self::TimedOut,
             ],
-            // Terminal states have no valid transitions
-            Self::Succeeded | Self::Failed | Self::Canceled | Self::TimedOut | Self::Expired => &[],
+            // Terminal states can transition to Expired via retention cleanup
+            Self::Succeeded | Self::Failed | Self::Canceled | Self::TimedOut => &[Self::Expired],
+            Self::Expired => &[],
         }
     }
 
@@ -2030,6 +2031,139 @@ pub struct AppendBuildLogsResponse {
 pub struct BuildLogsResponse {
     pub logs: Vec<BuildLogChunk>,
     pub total: i64,
+}
+
+// ── Retention policy types ───────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetentionCleanupTarget {
+    ArtifactsOnly,
+    Full,
+}
+
+impl fmt::Display for RetentionCleanupTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::ArtifactsOnly => "artifacts_only",
+            Self::Full => "full",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for RetentionCleanupTarget {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "artifacts_only" => Ok(Self::ArtifactsOnly),
+            "full" => Ok(Self::Full),
+            other => Err(format!("unknown retention cleanup target: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RetentionPolicy {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    pub cleanup_target: RetentionCleanupTarget,
+    #[serde(default)]
+    pub keep_statuses: Vec<String>,
+    pub dry_run: bool,
+    pub cleanup_interval_secs: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RetentionPolicyResponse {
+    pub policy: RetentionPolicy,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateRetentionPolicyRequest {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    pub cleanup_target: RetentionCleanupTarget,
+    #[serde(default)]
+    pub keep_statuses: Vec<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default = "default_cleanup_interval")]
+    pub cleanup_interval_secs: i64,
+}
+
+fn default_cleanup_interval() -> i64 {
+    3600
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectRetentionOverride {
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_target: Option<RetentionCleanupTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_statuses: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct EffectiveProjectRetentionResponse {
+    pub effective: RetentionPolicy,
+    pub has_override: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_fields: Option<ProjectRetentionOverride>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectRetentionOverrideRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_target: Option<RetentionCleanupTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_statuses: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RetentionCleanupSummary {
+    pub builds_expired: i64,
+    pub artifacts_deleted: i64,
+    pub bytes_reclaimed: i64,
+    pub dry_run: bool,
+    pub ran_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RetentionCleanupSummaryResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_cleanup: Option<RetentionCleanupSummary>,
 }
 
 // ── Tests ──────────────────────────────────────────────────────

@@ -2273,6 +2273,123 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/retention": {
+      "get": {
+        "tags": [
+          "Retention Policy"
+        ],
+        "summary": "Get project retention (effective policy merged with overrides)",
+        "operationId": "get_project_retention",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective project retention",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveProjectRetentionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Retention Policy"
+        ],
+        "summary": "Update project retention override",
+        "operationId": "update_project_retention",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectRetentionOverrideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Override updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveProjectRetentionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Retention Policy"
+        ],
+        "summary": "Delete project retention override (revert to global)",
+        "operationId": "delete_project_retention",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Override removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveProjectRetentionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/public/setup-status": {
       "get": {
         "tags": [
@@ -3131,6 +3248,92 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/retention": {
+      "get": {
+        "tags": [
+          "Retention Policy"
+        ],
+        "summary": "Get global retention policy",
+        "operationId": "get_retention_policy",
+        "responses": {
+          "200": {
+            "description": "Current retention policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPolicyResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Retention Policy"
+        ],
+        "summary": "Update global retention policy",
+        "operationId": "update_retention_policy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRetentionPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Policy updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionPolicyResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/retention/last-cleanup": {
+      "get": {
+        "tags": [
+          "Retention Policy"
+        ],
+        "summary": "Get last cleanup summary",
+        "operationId": "get_retention_last_cleanup",
+        "responses": {
+          "200": {
+            "description": "Last cleanup summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionCleanupSummaryResponse"
                 }
               }
             }
@@ -5135,6 +5338,31 @@
           }
         }
       },
+      "EffectiveProjectRetentionResponse": {
+        "type": "object",
+        "required": [
+          "effective",
+          "has_override"
+        ],
+        "properties": {
+          "effective": {
+            "$ref": "#/components/schemas/RetentionPolicy"
+          },
+          "has_override": {
+            "type": "boolean"
+          },
+          "override_fields": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProjectRetentionOverride"
+              }
+            ]
+          }
+        }
+      },
       "ExternalAccessNetworkSettings": {
         "type": "object",
         "required": [
@@ -6439,6 +6667,70 @@
           }
         }
       },
+      "ProjectRetentionOverride": {
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "properties": {
+          "cleanup_target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetentionCleanupTarget"
+              }
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "keep_statuses": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_artifact_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_builds_per_project": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "ReEnableUserResponse": {
         "type": "object",
         "required": [
@@ -6570,6 +6862,128 @@
           "oidc",
           "trusted_proxy"
         ]
+      },
+      "RetentionCleanupSummary": {
+        "type": "object",
+        "required": [
+          "builds_expired",
+          "artifacts_deleted",
+          "bytes_reclaimed",
+          "dry_run",
+          "ran_at"
+        ],
+        "properties": {
+          "artifacts_deleted": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "builds_expired": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bytes_reclaimed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "ran_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RetentionCleanupSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "last_cleanup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetentionCleanupSummary"
+              }
+            ]
+          }
+        }
+      },
+      "RetentionCleanupTarget": {
+        "type": "string",
+        "enum": [
+          "artifacts_only",
+          "full"
+        ]
+      },
+      "RetentionPolicy": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "cleanup_target",
+          "dry_run",
+          "cleanup_interval_secs"
+        ],
+        "properties": {
+          "cleanup_interval_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cleanup_target": {
+            "$ref": "#/components/schemas/RetentionCleanupTarget"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "keep_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_artifact_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_builds_per_project": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "RetentionPolicyResponse": {
+        "type": "object",
+        "required": [
+          "policy"
+        ],
+        "properties": {
+          "policy": {
+            "$ref": "#/components/schemas/RetentionPolicy"
+          }
+        }
       },
       "Runner": {
         "type": "object",
@@ -7412,6 +7826,106 @@
           }
         }
       },
+      "UpdateProjectRetentionOverrideRequest": {
+        "type": "object",
+        "properties": {
+          "cleanup_target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetentionCleanupTarget"
+              }
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "keep_statuses": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_artifact_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_builds_per_project": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "UpdateRetentionPolicyRequest": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "cleanup_target"
+        ],
+        "properties": {
+          "cleanup_interval_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cleanup_target": {
+            "$ref": "#/components/schemas/RetentionCleanupTarget"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "keep_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_artifact_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "max_builds_per_project": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "UpdateRunnerRequest": {
         "type": "object",
         "properties": {
@@ -7644,6 +8158,10 @@
     {
       "name": "Instance Settings",
       "description": "Instance-wide configuration — artifact storage, key storage preferences."
+    },
+    {
+      "name": "Retention Policy",
+      "description": "Build retention and cleanup — automatic cleanup of old builds and artifacts based on age, count, or size policies."
     },
     {
       "name": "Integrations",

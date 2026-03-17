@@ -16,6 +16,7 @@ pub mod pipeline_signing;
 pub mod pipelines;
 pub mod projects;
 pub mod rbac;
+pub mod retention;
 pub mod runners;
 pub mod scheduler;
 pub mod session;
@@ -1948,7 +1949,7 @@ async fn build_router_inner(
     {
         let store_guard = shared_state.store.lock().await;
         let pool = store_guard.pool().clone();
-        background::start_background_tasks(pool, sched);
+        background::start_background_tasks(pool, sched, shared_state.storage.clone());
     }
 
     let allowed_origins_for_cors = allowed_origins_state.clone();
@@ -2257,6 +2258,21 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/local-download/{token}",
             get(artifacts::download_local_artifact),
+        )
+        // ── Retention policy ────────────────────────────────────
+        .route(
+            "/v1/settings/retention",
+            get(retention::get_retention_policy).put(retention::update_retention_policy),
+        )
+        .route(
+            "/v1/settings/retention/last-cleanup",
+            get(retention::get_last_cleanup),
+        )
+        .route(
+            "/v1/projects/{project_id}/retention",
+            get(retention::get_project_retention)
+                .put(retention::update_project_retention)
+                .delete(retention::delete_project_retention),
         )
         .layer(cors)
         .with_state(shared_state)

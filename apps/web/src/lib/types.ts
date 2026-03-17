@@ -884,3 +884,72 @@ export interface SyncPipelineIosSigningResponse {
   synced_bundle_ids: Array<string>
   warnings: Array<string>
 }
+
+// ── Retention policy types ──────────────────────────────────────
+
+export type RetentionCleanupTarget = 'artifacts_only' | 'full'
+
+export interface RetentionPolicy {
+  enabled: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target: RetentionCleanupTarget
+  keep_statuses: Array<string>
+  dry_run: boolean
+  cleanup_interval_secs: number
+  updated_at?: number
+}
+
+export interface RetentionPolicyResponse {
+  policy: RetentionPolicy
+}
+
+export interface UpdateRetentionPolicyRequest {
+  enabled: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target: RetentionCleanupTarget
+  keep_statuses: Array<string>
+  dry_run: boolean
+  cleanup_interval_secs: number
+}
+
+export interface ProjectRetentionOverride {
+  project_id: string
+  enabled?: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target?: RetentionCleanupTarget
+  keep_statuses?: Array<string>
+  updated_at?: number
+}
+
+export interface EffectiveProjectRetentionResponse {
+  effective: RetentionPolicy
+  has_override: boolean
+  override_fields?: ProjectRetentionOverride
+}
+
+export interface UpdateProjectRetentionOverrideRequest {
+  enabled?: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target?: RetentionCleanupTarget
+  keep_statuses?: Array<string>
+}
+
+export interface RetentionCleanupSummary {
+  builds_expired: number
+  artifacts_deleted: number
+  bytes_reclaimed: number
+  dry_run: boolean
+  ran_at: number
+}
+
+export interface RetentionCleanupSummaryResponse {
+  last_cleanup?: RetentionCleanupSummary
+}
