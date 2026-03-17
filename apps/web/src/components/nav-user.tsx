@@ -102,6 +102,17 @@ export default function NavUser() {
                   </div>
                 </div>
               </DropdownMenuLabel>
+              <DropdownMenuLabel className="px-2 py-0 text-[11px] font-normal text-muted-foreground">
+                {authUser.role === 'qa_viewer'
+                  ? 'View-only access: browse projects and download build artifacts.'
+                  : authUser.role === 'developer'
+                    ? 'Can create projects, pipelines, and trigger builds.'
+                    : authUser.role === 'admin'
+                      ? 'Full access except owner-level operations.'
+                      : authUser.role === 'owner'
+                        ? 'Full instance control including setup and user management.'
+                        : ''}
+              </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

@@ -396,7 +396,9 @@ function ProjectDetailPage() {
 
             {pipelines.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
-                No pipelines yet. Add one to start building.
+                {canWritePipelines
+                  ? 'No pipelines yet. Add one to start building.'
+                  : 'No pipelines yet. Ask a developer or admin to add one.'}
               </p>
             ) : (
               pipelines.map((pipeline) => {
@@ -445,7 +447,9 @@ function ProjectDetailPage() {
                 {builds.length === 0 ? (
                   <div className="space-y-2 py-6 text-center">
                     <p className="text-sm text-muted-foreground">
-                      No builds yet.
+                      {canTriggerBuild
+                        ? 'No builds yet.'
+                        : 'No builds yet. Builds will appear here once triggered by a developer.'}
                     </p>
                     {canTriggerBuild &&
                     pipelines.length > 0 &&
