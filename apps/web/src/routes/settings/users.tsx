@@ -114,7 +114,24 @@ function UsersSettingsPage() {
       { email: inviteEmail, role: inviteRole },
       {
         onSuccess: () => {
-          toast.success(`${inviteEmail} invited`)
+          const instanceUrl = window.location.origin
+          void navigator.clipboard.writeText(instanceUrl).then(
+            () => {
+              toast.success(
+                `${inviteEmail} invited — instance URL copied to clipboard`,
+                {
+                  description: `Share this with them: ${instanceUrl}`,
+                  duration: 8000,
+                },
+              )
+            },
+            () => {
+              toast.success(`${inviteEmail} invited`, {
+                description: `Share this URL with them: ${instanceUrl}`,
+                duration: 8000,
+              })
+            },
+          )
           setInviteEmail('')
           setInviteRole('developer')
         },

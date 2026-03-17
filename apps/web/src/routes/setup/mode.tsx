@@ -172,6 +172,13 @@ function SetupModeStep() {
                     </SelectContent>
                   </Select>
                 </FormControl>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  {field.value === 'local'
+                    ? 'Best for solo developers. Only accessible from this machine \u2014 no external auth needed.'
+                    : field.value === 'remote_oidc'
+                      ? 'Best for teams. Users authenticate via an identity provider (Google, Okta, etc.).'
+                      : 'Best for zero-trust setups. A reverse proxy (e.g., Warpgate) handles authentication.'}
+                </p>
                 <FormMessage />
               </FormItem>
             )}

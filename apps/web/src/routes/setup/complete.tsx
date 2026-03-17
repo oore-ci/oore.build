@@ -147,15 +147,15 @@ function CompleteStep() {
             </div>
           ) : null}
 
-          <Alert variant="destructive">
-            <AlertTitle>Warning — Irreversible action</AlertTitle>
+          <Alert>
+            <AlertTitle>Finalize setup</AlertTitle>
             <AlertDescription>
-              Completing setup will permanently lock down all setup endpoints.
-              This cannot be undone. Make sure your owner details
-              {isLocalMode
-                ? ''
-                : ' and remote authentication configuration'}{' '}
-              are correct before proceeding.
+              This will lock down the initial setup wizard so it cannot be
+              re-run. You can still change settings (authentication,
+              preferences, users) from the admin panel after setup is complete.
+              {!isLocalMode
+                ? ' Verify your OIDC or proxy configuration is correct before proceeding.'
+                : ''}
             </AlertDescription>
           </Alert>
 

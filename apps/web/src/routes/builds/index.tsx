@@ -20,6 +20,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -64,7 +72,14 @@ function BuildsListPage() {
   const page = search.page ?? 1
   const offset = (page - 1) * PAGE_SIZE
 
-  const buildsQuery = useBuilds({ limit: PAGE_SIZE, offset })
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [branchFilter, setBranchFilter] = useState('')
+  const buildsQuery = useBuilds({
+    limit: PAGE_SIZE,
+    offset,
+    status: statusFilter !== 'all' ? statusFilter : undefined,
+    branch: branchFilter.trim() || undefined,
+  })
   const total = buildsQuery.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const projectsQuery = useProjects({ limit: 200 })
@@ -104,6 +119,42 @@ function BuildsListPage() {
           ) : undefined
         }
       />
+
+      {!missingProjects && !isLoading ? (
+        <div className="flex items-center gap-3">
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? 'all')}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="queued">Queued</SelectItem>
+              <SelectItem value="running">Running</SelectItem>
+              <SelectItem value="succeeded">Succeeded</SelectItem>
+              <SelectItem value="failed">Failed</SelectItem>
+              <SelectItem value="canceled">Canceled</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder="Filter by branch..."
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            className="max-w-xs"
+          />
+          {statusFilter !== 'all' || branchFilter ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setStatusFilter('all')
+                setBranchFilter('')
+              }}
+            >
+              Clear filters
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {isLoading ? (
         <Card>

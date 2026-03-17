@@ -29,6 +29,7 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
+import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
@@ -180,6 +181,8 @@ function RootLayout() {
     !!activeInstanceId &&
     !!authToken &&
     !!authUser
+
+  useSessionMonitor()
 
   useEffect(() => {
     useSetupStore.getState().setInstanceContext(activeInstanceId)

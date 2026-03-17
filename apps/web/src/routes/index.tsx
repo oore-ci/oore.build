@@ -348,6 +348,24 @@ function ConfiguredDashboard({
   const navigate = useNavigate()
   const [triggerOpen, setTriggerOpen] = useState(false)
   const [triggerProjectId, setTriggerProjectId] = useState<string | undefined>()
+  const authUser = useAuthStore((s) => s.user)
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try {
+      return !localStorage.getItem('oore_welcomed')
+    } catch {
+      return false
+    }
+  })
+
+  function dismissWelcome() {
+    setShowWelcome(false)
+    try {
+      localStorage.setItem('oore_welcomed', '1')
+    } catch {
+      // ignore
+    }
+  }
+
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteBuilds = useHasPermission('builds', 'write')
@@ -426,6 +444,32 @@ function ConfiguredDashboard({
         }
       />
 
+      {showWelcome ? (
+        <Alert>
+          <AlertTitle>
+            Welcome to Oore CI
+            {userName ? `, ${userName.split('@')[0]}` : ''}!
+          </AlertTitle>
+          <AlertDescription className="flex items-start justify-between gap-4">
+            <span>
+              {authUser?.role === 'qa_viewer'
+                ? 'You have view-only access. Browse projects and download build artifacts from the Builds page.'
+                : authUser?.role === 'developer'
+                  ? 'You can create projects, configure pipelines, and trigger builds. Start by exploring the Projects page.'
+                  : 'You have full admin access. Manage users, runners, and integrations from the sidebar.'}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={dismissWelcome}
+            >
+              Dismiss
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* Active Builds */}
       {activeBuilds.length > 0 ? (
         <section className="space-y-2">
@@ -473,46 +517,105 @@ function ConfiguredDashboard({
           </div>
         ) : projects.length === 0 ? (
           <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">
+                Getting Started
+              </CardTitle>
+            </CardHeader>
             <CardContent>
-              <div className="space-y-3 py-4 text-center">
-              <p className="text-sm text-muted-foreground">
-                {noConnectedSources
-                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
-                  : 'No projects yet.'}
-              </p>
-              <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
-                {canWriteProjects ? (
-                  <Button
-                    render={
-                      <Link to="/projects" search={{ openCreate: '1' }} />
-                    }
-                    nativeButton={false}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} size={14} />
-                    Create Project
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Owner/Admin/Developer required to create projects.
-                  </p>
-                )}
-
-                {noConnectedSources ? (
-                  canWriteIntegrations ? (
-                    <Button
-                      variant="outline"
-                      render={<Link to={integrationConnectTo} />}
-                      nativeButton={false}
-                    >
-                      Connect Source
-                    </Button>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Owner/Admin required to connect a source.
-                    </p>
-                  )
-                ) : null}
-              </div>
+              <div className="space-y-3">
+                <ol className="space-y-3 text-sm">
+                  {runtimeMode === 'remote' && noConnectedSources ? (
+                    <li className="flex items-start gap-3">
+                      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                        1
+                      </span>
+                      <div className="space-y-1.5">
+                        <p className="font-medium">Connect a source</p>
+                        <p className="text-xs text-muted-foreground">
+                          Link GitHub or GitLab to import repositories and
+                          enable webhook-triggered builds.
+                        </p>
+                        {canWriteIntegrations ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            render={<Link to={integrationConnectTo} />}
+                            nativeButton={false}
+                          >
+                            Connect Source
+                          </Button>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Ask an admin to connect a source.
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  ) : null}
+                  <li className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                      {runtimeMode === 'remote' && noConnectedSources
+                        ? '2'
+                        : '1'}
+                    </span>
+                    <div className="space-y-1.5">
+                      <p className="font-medium">Create a project</p>
+                      <p className="text-xs text-muted-foreground">
+                        {runtimeMode === 'local'
+                          ? 'Point to a local Flutter repository to get started.'
+                          : 'Pick a repository from a connected source or use a local path.'}
+                      </p>
+                      {canWriteProjects ? (
+                        <Button
+                          size="sm"
+                          render={
+                            <Link
+                              to="/projects"
+                              search={{ openCreate: '1' }}
+                            />
+                          }
+                          nativeButton={false}
+                        >
+                          <HugeiconsIcon icon={Add01Icon} size={14} />
+                          Create Project
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Ask a developer or admin to create a project.
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                      {runtimeMode === 'remote' && noConnectedSources
+                        ? '3'
+                        : '2'}
+                    </span>
+                    <div className="space-y-1.5">
+                      <p className="font-medium">Add a pipeline</p>
+                      <p className="text-xs text-muted-foreground">
+                        Configure which platforms to build (Android, iOS, macOS)
+                        and signing settings.
+                      </p>
+                    </div>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                      {runtimeMode === 'remote' && noConnectedSources
+                        ? '4'
+                        : '3'}
+                    </span>
+                    <div className="space-y-1.5">
+                      <p className="font-medium">Run your first build</p>
+                      <p className="text-xs text-muted-foreground">
+                        Trigger a build manually or push to your repository to
+                        start automatically.
+                      </p>
+                    </div>
+                  </li>
+                </ol>
               </div>
             </CardContent>
           </Card>

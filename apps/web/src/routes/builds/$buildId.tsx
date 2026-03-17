@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Download04Icon,
@@ -99,6 +99,63 @@ function BuildDetailPage() {
       setLabel('/builds/$buildId', `Build #${data.build.build_number}`)
     }
   }, [data?.build.build_number, setLabel])
+
+  // ── Build notifications (title + browser Notification) ──
+  const prevStatusRef = useRef<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'default'
+    ) {
+      Notification.requestPermission()
+    }
+    return () => {
+      document.title = 'Oore CI'
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!data?.build) return
+
+    const { build_number, status, branch } = data.build
+
+    switch (status) {
+      case 'running':
+      case 'queued':
+        document.title = `\u23F3 Build #${build_number} | Oore CI`
+        break
+      case 'succeeded':
+        document.title = `\u2713 Build #${build_number} | Oore CI`
+        break
+      case 'failed':
+      case 'timed_out':
+      case 'expired':
+        document.title = `\u2717 Build #${build_number} | Oore CI`
+        break
+      case 'canceled':
+        document.title = `\u2298 Build #${build_number} | Oore CI`
+        break
+      default:
+        document.title = `Build #${build_number} | Oore CI`
+    }
+
+    const prevStatus = prevStatusRef.current
+    prevStatusRef.current = status
+
+    if (
+      prevStatus !== undefined &&
+      prevStatus !== status &&
+      isTerminal &&
+      document.hidden &&
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted'
+    ) {
+      new Notification(`Build #${build_number} ${status}`, {
+        body: `Branch: ${branch ?? 'n/a'}`,
+      })
+    }
+  }, [data?.build, isTerminal])
 
   // ── Log stream / fetch ───────────────────────────────────
 
