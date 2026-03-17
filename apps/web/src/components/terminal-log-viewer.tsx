@@ -13,6 +13,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { BuildLogChunk, StepResult } from '@/lib/types'
+import { parseAnsi } from '@/lib/ansi-to-html'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -100,6 +101,34 @@ const ERROR_PATTERN =
 function findFirstErrorIndex(lines: Array<BuildLogChunk>): number {
   return lines.findIndex(
     (chunk) => chunk.stream === 'stderr' || ERROR_PATTERN.test(chunk.content),
+  )
+}
+
+// ── ANSI line renderer ─────────────────────────────────────────
+
+function AnsiLine({ content }: { content: string }) {
+  const spans = parseAnsi(content)
+  if (spans.length === 1 && !spans[0].fg && !spans[0].bold) {
+    return <>{content}</>
+  }
+  return (
+    <>
+      {spans.map((span, i) => {
+        const style: React.CSSProperties = {}
+        if (span.fg) style.color = span.fg
+        if (span.bg) style.backgroundColor = span.bg
+        if (span.bold) style.fontWeight = 700
+        if (span.dim) style.opacity = 0.6
+        if (span.italic) style.fontStyle = 'italic'
+        if (span.underline) style.textDecoration = 'underline'
+        const hasStyle = Object.keys(style).length > 0
+        return hasStyle ? (
+          <span key={i} style={style}>{span.text}</span>
+        ) : (
+          <span key={i}>{span.text}</span>
+        )
+      })}
+    </>
   )
 }
 
@@ -569,7 +598,7 @@ export default function TerminalLogViewer({
                             : 'whitespace-pre pr-4'
                         }
                       >
-                        {chunk.content}
+                        <AnsiLine content={chunk.content} />
                       </span>
                     </div>
                   )

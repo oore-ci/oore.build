@@ -37,6 +37,7 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
 import { PageMeta } from '@/lib/seo'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   staticData: { breadcrumbLabel: 'New Pipeline' },
@@ -86,6 +87,73 @@ const emptyDefaults: PipelineFormValues = {
   max_concurrent: undefined,
 }
 
+const PIPELINE_TEMPLATES = [
+  {
+    key: 'debug-apk',
+    label: 'Quick Debug APK',
+    description: 'Android debug build, no signing. Fastest way to test.',
+    values: {
+      ...emptyDefaults,
+      name: 'Debug APK',
+      platform_android: true,
+      platform_ios: false,
+      platform_macos: false,
+      artifact_patterns: '*.apk',
+    } satisfies PipelineFormValues,
+    events: ['push'],
+  },
+  {
+    key: 'release-android',
+    label: 'Release Android',
+    description: 'Android release build with signing enabled.',
+    values: {
+      ...emptyDefaults,
+      name: 'Release Android',
+      platform_android: true,
+      platform_ios: false,
+      platform_macos: false,
+      android_signing_release_enabled: true,
+      artifact_patterns: '*.apk\n*.aab',
+    } satisfies PipelineFormValues,
+    events: ['push', 'tag_push'],
+  },
+  {
+    key: 'ios-android',
+    label: 'iOS + Android',
+    description: 'Both mobile platforms. Configure signing after creation.',
+    values: {
+      ...emptyDefaults,
+      name: 'Mobile Release',
+      platform_android: true,
+      platform_ios: true,
+      platform_macos: false,
+      artifact_patterns: '*.apk\n*.aab\n*.ipa',
+    } satisfies PipelineFormValues,
+    events: ['push', 'tag_push'],
+  },
+  {
+    key: 'full-stack',
+    label: 'All Platforms',
+    description: 'Android, iOS, and macOS. Full Flutter build matrix.',
+    values: {
+      ...emptyDefaults,
+      name: 'Full Build',
+      platform_android: true,
+      platform_ios: true,
+      platform_macos: true,
+      artifact_patterns: '*.apk\n*.aab\n*.ipa\n*.app',
+    } satisfies PipelineFormValues,
+    events: ['push', 'tag_push'],
+  },
+  {
+    key: 'custom',
+    label: 'Custom',
+    description: 'Start from scratch with full control.',
+    values: emptyDefaults,
+    events: ['push'],
+  },
+] as const
+
 function NewPipelinePage() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
@@ -99,6 +167,10 @@ function NewPipelinePage() {
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
   const [validationErrors, setValidationErrors] = useState<Array<string>>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('custom')
+  const activeTemplate =
+    PIPELINE_TEMPLATES.find((t) => t.key === selectedTemplate) ??
+    PIPELINE_TEMPLATES[PIPELINE_TEMPLATES.length - 1]
 
   async function handleSubmit(
     data: PipelineFormValues,
@@ -467,10 +539,34 @@ function NewPipelinePage() {
         back={{ to: `/projects/${projectId}`, label: 'Project' }}
         description="Configure a new build pipeline for this project."
       />
+      <div className="mx-auto mb-6 max-w-4xl">
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Start from a template</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {PIPELINE_TEMPLATES.map((tmpl) => (
+              <button
+                key={tmpl.key}
+                type="button"
+                onClick={() => setSelectedTemplate(tmpl.key)}
+                className={cn(
+                  'flex flex-col items-start gap-1 border p-3 text-left text-sm transition-colors hover:bg-accent',
+                  selectedTemplate === tmpl.key && 'border-primary bg-accent',
+                )}
+              >
+                <span className="font-medium">{tmpl.label}</span>
+                <span className="text-xs text-muted-foreground">
+                  {tmpl.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className="mx-auto max-w-4xl">
         <PipelineForm
-          initialValues={emptyDefaults}
-          initialEvents={manualOnlyTriggers ? [] : ['push']}
+          key={selectedTemplate}
+          initialValues={activeTemplate.values}
+          initialEvents={manualOnlyTriggers ? [] : [...activeTemplate.events]}
           initialCancelPrevious={true}
           manualOnlyTriggers={manualOnlyTriggers}
           onSubmit={handleSubmit}
