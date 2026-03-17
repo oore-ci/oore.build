@@ -15,6 +15,7 @@ import {
   ArrowLeft02Icon,
   Home01Icon,
   RotateClockwiseIcon,
+  Search01Icon,
 } from '@hugeicons/core-free-icons'
 import type { ErrorComponentProps } from '@tanstack/react-router'
 
@@ -219,6 +220,19 @@ function RootLayout() {
                   className="mr-2 h-4! self-auto!"
                 />
                 <PageBreadcrumb />
+                <div className="ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+                    className="inline-flex h-8 items-center gap-2 rounded-sm border bg-muted/50 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <HugeiconsIcon icon={Search01Icon} size={14} />
+                    <span className="hidden sm:inline">Search</span>
+                    <kbd className="hidden rounded border bg-background px-1 font-mono text-[10px] sm:inline-block">
+                      ⌘K
+                    </kbd>
+                  </button>
+                </div>
               </header>
               <ConnectivityBanner />
               <div className="flex flex-1 flex-col bg-surface">
