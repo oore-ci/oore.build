@@ -44,6 +44,11 @@ export const Route = createFileRoute('/settings/notifications/new')({
   component: NewNotificationChannelPage,
 })
 
+const CHANNEL_TYPES: Record<string, string> = {
+  webhook: 'Webhook (Generic HTTP POST)',
+  mattermost: 'Mattermost / Slack',
+}
+
 const TERMINAL_EVENTS = [
   { value: 'succeeded', label: 'Succeeded' },
   { value: 'failed', label: 'Failed' },
@@ -141,8 +146,9 @@ function NewNotificationChannelPage() {
                   <FormItem>
                     <FormLabel>Type</FormLabel>
                     <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
+                      value={field.value}
+                      onValueChange={(value) => field.onChange(value)}
+                      items={CHANNEL_TYPES}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -150,12 +156,11 @@ function NewNotificationChannelPage() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="webhook">
-                          Webhook (Generic HTTP POST)
-                        </SelectItem>
-                        <SelectItem value="mattermost">
-                          Mattermost / Slack
-                        </SelectItem>
+                        {Object.entries(CHANNEL_TYPES).map(([key, label]) => (
+                          <SelectItem key={key} value={key}>
+                            {label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <FormDescription>
