@@ -332,13 +332,23 @@ function ProjectDetailPage() {
           canTriggerBuild || canDeleteProjects ? (
             <>
               {canTriggerBuild ? (
-                <Button
-                  onClick={() => openTriggerBuild()}
-                  disabled={pipelines.length === 0 || !projectHasSource}
+                <span
+                  title={
+                    pipelines.length === 0
+                      ? 'Add a pipeline first before running builds'
+                      : !projectHasSource
+                        ? 'Connect a source repository first'
+                        : undefined
+                  }
                 >
-                  <HugeiconsIcon icon={PlayIcon} size={16} />
-                  Run Build
-                </Button>
+                  <Button
+                    onClick={() => openTriggerBuild()}
+                    disabled={pipelines.length === 0 || !projectHasSource}
+                  >
+                    <HugeiconsIcon icon={PlayIcon} size={16} />
+                    Run Build
+                  </Button>
+                </span>
               ) : null}
               {canDeleteProjects ? (
                 <Button
@@ -477,12 +487,23 @@ function ProjectDetailPage() {
                         <TableRow
                           key={build.id}
                           className="group cursor-pointer"
+                          role="link"
+                          tabIndex={0}
                           onClick={() =>
                             void navigate({
                               to: '/builds/$buildId',
                               params: { buildId: build.id },
                             })
                           }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              void navigate({
+                                to: '/builds/$buildId',
+                                params: { buildId: build.id },
+                              })
+                            }
+                          }}
                         >
                           <TableCell className="font-mono text-sm group-hover:underline">
                             #{build.build_number}

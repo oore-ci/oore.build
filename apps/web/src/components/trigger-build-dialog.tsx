@@ -20,6 +20,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -286,11 +287,18 @@ export default function TriggerBuildDialog({
                           })
                         }
                       }}
+                      disabled={projectsQuery.isLoading}
                       items={projectItems}
                     >
                       <FormControl>
                         <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select a project" />
+                          <SelectValue
+                            placeholder={
+                              projectsQuery.isLoading
+                                ? 'Loading projects...'
+                                : 'Select a project'
+                            }
+                          />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -367,6 +375,10 @@ export default function TriggerBuildDialog({
                       {...field}
                     />
                   </FormControl>
+                  <FormDescription>
+                    The branch to build. If both branch and commit SHA are
+                    provided, the commit takes precedence.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

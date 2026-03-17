@@ -70,6 +70,17 @@ const ROLE_OPTIONS: Record<string, string> = {
   qa_viewer: 'QA Viewer',
 }
 
+const ROLE_DESCRIPTIONS: Record<string, string> = {
+  owner:
+    'Full access. Can manage billing, delete the instance, and configure all settings.',
+  admin:
+    'Can manage users, integrations, and all projects. Cannot delete the instance.',
+  developer:
+    'Can create and manage projects, pipelines, and builds. Cannot manage users or integrations.',
+  qa_viewer:
+    'Read-only access to builds and artifacts. Cannot modify projects or settings.',
+}
+
 interface ConfirmAction {
   type: 'disable' | 'role_change' | 'bulk_disable'
   userId: string
@@ -90,6 +101,7 @@ function UsersSettingsPage() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<UserRole>('developer')
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [emailError, setEmailError] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
   const [sorting, setSorting] = useState<SortingState>([])
@@ -386,13 +398,28 @@ function UsersSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-3">
-            <Input
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="email@example.com"
-              className="flex-1"
-            />
+            <div className="flex flex-1 flex-col gap-1">
+              <Input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => {
+                  setInviteEmail(e.target.value)
+                  if (emailError) setEmailError(null)
+                }}
+                onBlur={() => {
+                  if (
+                    inviteEmail.trim() &&
+                    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail.trim())
+                  ) {
+                    setEmailError('Please enter a valid email address')
+                  }
+                }}
+                placeholder="email@example.com"
+              />
+              {emailError ? (
+                <p className="text-xs text-destructive">{emailError}</p>
+              ) : null}
+            </div>
             <Select
               value={inviteRole}
               onValueChange={(v) => setInviteRole(v as UserRole)}
@@ -411,7 +438,9 @@ function UsersSettingsPage() {
             </Select>
             <Button
               onClick={handleInvite}
-              disabled={!inviteEmail || inviteMutation.isPending}
+              disabled={
+                !inviteEmail || !!emailError || inviteMutation.isPending
+              }
             >
               {inviteMutation.isPending ? (
                 <>
@@ -423,6 +452,9 @@ function UsersSettingsPage() {
               )}
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {ROLE_DESCRIPTIONS[inviteRole] ?? ''}
+          </p>
           {inviteError ? (
             <p className="text-sm text-destructive">{inviteError}</p>
           ) : null}

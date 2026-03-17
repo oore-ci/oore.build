@@ -47,6 +47,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
+import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
@@ -275,12 +276,23 @@ function BuildsListPage() {
                       <TableRow
                         key={build.id}
                         className="group cursor-pointer"
+                        role="link"
+                        tabIndex={0}
                         onClick={() =>
                           void navigate({
                             to: '/builds/$buildId',
                             params: { buildId: build.id },
                           })
                         }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            void navigate({
+                              to: '/builds/$buildId',
+                              params: { buildId: build.id },
+                            })
+                          }
+                        }}
                       >
                         <TableCell>
                           <div>
@@ -318,7 +330,7 @@ function BuildsListPage() {
                             : 'n/a'}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
-                          {new Date(build.created_at * 1000).toLocaleString()}
+                          {relativeTime(build.created_at)}
                         </TableCell>
                       </TableRow>
                     ))}

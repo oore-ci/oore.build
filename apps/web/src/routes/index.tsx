@@ -673,6 +673,7 @@ function ConfiguredDashboard({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Build</TableHead>
+                    <TableHead>Project</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Branch</TableHead>
                     <TableHead>Commit</TableHead>
@@ -680,38 +681,46 @@ function ConfiguredDashboard({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recentBuilds.map((build) => (
-                    <TableRow
-                      key={build.id}
-                      className="group cursor-pointer"
-                      onClick={() =>
-                        void navigate({
-                          to: '/builds/$buildId',
-                          params: { buildId: build.id },
-                        })
-                      }
-                    >
-                      <TableCell className="font-mono text-sm group-hover:underline">
-                        #{build.build_number}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusVariant(build.status)}>
-                          {build.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.branch ?? 'n/a'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.commit_sha
-                          ? build.commit_sha.slice(0, 8)
-                          : 'n/a'}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {relativeTime(build.created_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {recentBuilds.map((build) => {
+                    const projectName =
+                      projects.find((p) => p.id === build.project_id)?.name ??
+                      build.project_id.slice(0, 8)
+                    return (
+                      <TableRow
+                        key={build.id}
+                        className="group cursor-pointer"
+                        onClick={() =>
+                          void navigate({
+                            to: '/builds/$buildId',
+                            params: { buildId: build.id },
+                          })
+                        }
+                      >
+                        <TableCell className="font-mono text-sm group-hover:underline">
+                          #{build.build_number}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {projectName}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getStatusVariant(build.status)}>
+                            {build.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {build.branch ?? 'n/a'}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {build.commit_sha
+                            ? build.commit_sha.slice(0, 8)
+                            : 'n/a'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {relativeTime(build.created_at)}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </CardContent>

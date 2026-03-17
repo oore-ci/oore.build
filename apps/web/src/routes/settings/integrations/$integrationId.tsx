@@ -67,6 +67,21 @@ export const Route = createFileRoute('/settings/integrations/$integrationId')({
   component: IntegrationDetailPage,
 })
 
+function humanizeAuthMode(mode: string): string {
+  const labels: Record<string, string> = {
+    github_app_manifest: 'GitHub App (Manifest)',
+    github_app: 'GitHub App',
+    oauth_app: 'OAuth App',
+    pat: 'Personal Access Token',
+  }
+  return (
+    labels[mode] ??
+    mode
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+  )
+}
+
 function IntegrationDetailPage() {
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
@@ -214,7 +229,7 @@ function IntegrationDetailPage() {
         <Card>
           <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Auth mode</p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{integration.auth_mode}</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">{humanizeAuthMode(integration.auth_mode)}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Host: {integration.host_url}
             </p>
@@ -245,7 +260,7 @@ function IntegrationDetailPage() {
                 <TableCell className="text-muted-foreground">
                   Auth mode
                 </TableCell>
-                <TableCell>{integration.auth_mode}</TableCell>
+                <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
               </TableRow>
               {integration.app_id ? (
                 <TableRow>

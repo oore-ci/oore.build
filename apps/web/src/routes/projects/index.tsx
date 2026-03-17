@@ -215,12 +215,23 @@ function ProjectsListPage() {
                   <TableRow
                     key={project.id}
                     className="group cursor-pointer"
+                    role="link"
+                    tabIndex={0}
                     onClick={() =>
                       void navigate({
                         to: '/projects/$projectId',
                         params: { projectId: project.id },
                       })
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void navigate({
+                          to: '/projects/$projectId',
+                          params: { projectId: project.id },
+                        })
+                      }
+                    }}
                   >
                     <TableCell>
                       <div>

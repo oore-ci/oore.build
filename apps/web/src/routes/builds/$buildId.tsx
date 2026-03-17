@@ -313,6 +313,7 @@ function BuildDetailPage() {
           <ArtifactsPanel
             artifacts={artifactsQuery.data?.artifacts ?? []}
             isLoading={artifactsQuery.isLoading}
+            buildStatus={build.status}
           />
 
           <EventTimeline events={events} />
@@ -342,9 +343,11 @@ function BuildDetailPage() {
 function ArtifactsPanel({
   artifacts,
   isLoading,
+  buildStatus,
 }: {
   artifacts: Array<Artifact>
   isLoading: boolean
+  buildStatus: string
 }) {
   const downloadMutation = useArtifactDownloadLink()
 
@@ -393,7 +396,11 @@ function ArtifactsPanel({
             <Skeleton className="h-8 w-full" />
           </div>
         ) : !artifacts.length ? (
-          <p className="text-xs text-muted-foreground">No artifacts yet.</p>
+          <p className="text-xs text-muted-foreground">
+            {buildStatus === 'succeeded' || buildStatus === 'failed'
+              ? 'No artifacts were produced. Check that your pipeline has artifact patterns configured.'
+              : 'Artifacts will appear here once the build produces them.'}
+          </p>
         ) : (
           <div className="space-y-2">
             {artifacts.map((artifact) => (
@@ -425,6 +432,7 @@ function ArtifactsPanel({
                     size="icon"
                     className="size-7 shrink-0"
                     title="Copy download link"
+                    aria-label={`Copy link for ${artifact.name}`}
                     onClick={() => handleCopyLink(artifact.id, artifact.name)}
                     disabled={downloadMutation.isPending}
                   >
@@ -435,6 +443,7 @@ function ArtifactsPanel({
                     size="icon"
                     className="size-7 shrink-0"
                     title="Download"
+                    aria-label={`Download ${artifact.name}`}
                     onClick={() => handleDownload(artifact.id, artifact.name)}
                     disabled={downloadMutation.isPending}
                   >

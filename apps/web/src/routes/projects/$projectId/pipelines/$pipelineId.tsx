@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -15,6 +15,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import { useBuilds } from '@/hooks/use-builds'
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
@@ -145,7 +146,18 @@ function PipelineDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
+  const setLabel = useBreadcrumbStore((s) => s.setLabel)
+
   const label = data?.pipeline.name ?? 'Pipeline Details'
+
+  useEffect(() => {
+    if (data?.pipeline.name) {
+      setLabel(
+        '/projects/$projectId/pipelines/$pipelineId',
+        data.pipeline.name,
+      )
+    }
+  }, [data?.pipeline.name, setLabel])
 
   if (isLoading) {
     return (
@@ -575,12 +587,23 @@ function PipelineDetailPage() {
                   <TableRow
                     key={build.id}
                     className="group cursor-pointer"
+                    role="link"
+                    tabIndex={0}
                     onClick={() =>
                       void navigate({
                         to: '/builds/$buildId',
                         params: { buildId: build.id },
                       })
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void navigate({
+                          to: '/builds/$buildId',
+                          params: { buildId: build.id },
+                        })
+                      }
+                    }}
                   >
                     <TableCell className="font-mono text-sm group-hover:underline">
                       #{build.build_number}
