@@ -128,9 +128,17 @@ async fn dispatch_event(
             }
         };
 
-        let secret = encrypted_secret
+        let secret = match encrypted_secret
             .as_deref()
-            .and_then(|es| crypto::decrypt(es, encryption_key).ok());
+            .map(|es| crypto::decrypt(es, encryption_key))
+            .transpose()
+        {
+            Ok(s) => s,
+            Err(e) => {
+                error!(channel_id = %channel_id, error = %e, "failed to decrypt HMAC secret, skipping channel");
+                continue;
+            }
+        };
 
         let channel_type = channel_type_str
             .parse::<NotificationChannelType>()
