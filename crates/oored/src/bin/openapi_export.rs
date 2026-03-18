@@ -125,6 +125,14 @@ use utoipa::OpenApi;
         paths::create_artifact,
         paths::list_artifacts,
         paths::generate_download_link,
+        // ── Notification Channels ──
+        paths::list_notification_channels,
+        paths::create_notification_channel,
+        paths::get_notification_channel,
+        paths::update_notification_channel,
+        paths::delete_notification_channel,
+        paths::test_notification_channel,
+        paths::list_notification_deliveries,
         // ── Webhooks ──
         paths::github_webhook,
         paths::gitlab_webhook,
@@ -296,6 +304,18 @@ use utoipa::OpenApi;
         oore_contract::AppendBuildLogsRequest,
         oore_contract::AppendBuildLogsResponse,
         oore_contract::BuildLogsResponse,
+        // Notification Channels
+        oore_contract::NotificationChannelType,
+        oore_contract::NotificationDeliveryStatus,
+        oore_contract::NotificationChannel,
+        oore_contract::CreateNotificationChannelRequest,
+        oore_contract::UpdateNotificationChannelRequest,
+        oore_contract::NotificationChannelResponse,
+        oore_contract::ListNotificationChannelsResponse,
+        oore_contract::DeleteNotificationChannelResponse,
+        oore_contract::TestNotificationChannelResponse,
+        oore_contract::NotificationDelivery,
+        oore_contract::ListNotificationDeliveriesResponse,
         // Audit Logs
         oore_contract::AuditLogEntry,
         oore_contract::ListAuditLogsResponse,
@@ -314,6 +334,7 @@ use utoipa::OpenApi;
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
+        (name = "Notification Channels", description = "Outbound notification channel configuration — webhook, Mattermost."),
         (name = "Audit Logs", description = "Read-only audit trail of all user and system actions."),
         (name = "Webhooks", description = "Incoming webhook receivers for GitHub and GitLab."),
     ),
@@ -1507,4 +1528,106 @@ mod paths {
         )
     )]
     pub(super) async fn list_audit_logs() {}
+
+    // ── Notification Channels ──
+
+    /// List notification channels
+    ///
+    /// Returns all configured notification channels.
+    #[utoipa::path(get, path = "/v1/settings/notification-channels", tag = "Notification Channels",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of notification channels", body = ListNotificationChannelsResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_notification_channels() {}
+
+    /// Create notification channel
+    ///
+    /// Creates a new webhook or Mattermost notification channel.
+    #[utoipa::path(post, path = "/v1/settings/notification-channels", tag = "Notification Channels",
+        request_body = CreateNotificationChannelRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel created", body = NotificationChannelResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_notification_channel() {}
+
+    /// Get notification channel
+    ///
+    /// Returns details for a single notification channel.
+    #[utoipa::path(get, path = "/v1/settings/notification-channels/{id}", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel details", body = NotificationChannelResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_notification_channel() {}
+
+    /// Update notification channel
+    ///
+    /// Updates an existing notification channel. Omitted fields are preserved.
+    #[utoipa::path(put, path = "/v1/settings/notification-channels/{id}", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        request_body = UpdateNotificationChannelRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel updated", body = NotificationChannelResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn update_notification_channel() {}
+
+    /// Delete notification channel
+    ///
+    /// Permanently deletes a notification channel and its delivery history.
+    #[utoipa::path(delete, path = "/v1/settings/notification-channels/{id}", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel deleted", body = DeleteNotificationChannelResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn delete_notification_channel() {}
+
+    /// Test notification channel
+    ///
+    /// Sends a test notification to verify the channel is configured correctly.
+    #[utoipa::path(post, path = "/v1/settings/notification-channels/{id}/test", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Test result", body = TestNotificationChannelResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn test_notification_channel() {}
+
+    /// List notification deliveries
+    ///
+    /// Returns delivery history for a notification channel (most recent 100).
+    #[utoipa::path(get, path = "/v1/settings/notification-channels/{id}/deliveries", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Delivery history", body = ListNotificationDeliveriesResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_notification_deliveries() {}
 }

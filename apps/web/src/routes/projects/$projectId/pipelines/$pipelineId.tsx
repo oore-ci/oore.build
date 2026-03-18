@@ -152,10 +152,7 @@ function PipelineDetailPage() {
 
   useEffect(() => {
     if (data?.pipeline.name) {
-      setLabel(
-        '/projects/$projectId/pipelines/$pipelineId',
-        data.pipeline.name,
-      )
+      setLabel('/projects/$projectId/pipelines/$pipelineId', data.pipeline.name)
     }
   }, [data?.pipeline.name, setLabel])
 

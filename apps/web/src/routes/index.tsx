@@ -239,11 +239,7 @@ function IndexPage() {
         <div className="w-full max-w-md space-y-8">
           <div className="space-y-3 text-center">
             <div className="mx-auto flex size-14 items-center justify-center">
-              <img
-                src="/logo.svg"
-                alt="Oore CI logo"
-                className="size-full"
-              />
+              <img src="/logo.svg" alt="Oore CI logo" className="size-full" />
             </div>
             <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
             <p className="text-sm text-muted-foreground">
@@ -570,10 +566,7 @@ function ConfiguredDashboard({
                         <Button
                           size="sm"
                           render={
-                            <Link
-                              to="/projects"
-                              search={{ openCreate: '1' }}
-                            />
+                            <Link to="/projects" search={{ openCreate: '1' }} />
                           }
                           nativeButton={false}
                         >

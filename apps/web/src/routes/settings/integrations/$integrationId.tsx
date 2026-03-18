@@ -76,9 +76,7 @@ function humanizeAuthMode(mode: string): string {
   }
   return (
     labels[mode] ??
-    mode
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase())
+    mode.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
   )
 }
 
@@ -210,26 +208,38 @@ function IntegrationDetailPage() {
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Installations</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Installations
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {installations.length}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Connected accounts</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Connected accounts
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Repositories</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Repositories
+            </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
               {repositories.length}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Synced repositories</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Synced repositories
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Auth mode</p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{humanizeAuthMode(integration.auth_mode)}</p>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Auth mode
+            </p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
+              {humanizeAuthMode(integration.auth_mode)}
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Host: {integration.host_url}
             </p>
@@ -239,7 +249,9 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Connection details</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Connection details
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -285,7 +297,9 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Actions</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Actions
+          </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {integration.provider === 'gitlab' &&

@@ -285,7 +285,9 @@ function IntegrationsPage() {
                               }
                               disabled={deleteMutation.isPending}
                             >
-                              {deleteMutation.isPending ? 'Disconnecting...' : 'Disconnect'}
+                              {deleteMutation.isPending
+                                ? 'Disconnecting...'
+                                : 'Disconnect'}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

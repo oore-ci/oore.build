@@ -56,8 +56,8 @@ const ANSI_BG_COLORS: Record<number, string> = {
 const ANSI_RE = /\x1b\[([0-9;]*)m/g
 const ANSI_DETECT_RE = /\x1b\[/
 
-export function parseAnsi(input: string): AnsiSpan[] {
-  const spans: AnsiSpan[] = []
+export function parseAnsi(input: string): Array<AnsiSpan> {
+  const spans: Array<AnsiSpan> = []
   let bold = false
   let dim = false
   let italic = false
@@ -77,9 +77,7 @@ export function parseAnsi(input: string): AnsiSpan[] {
     lastIndex = match.index + match[0].length
 
     // Parse SGR codes
-    const codes = match[1]
-      ? match[1].split(';').map(Number)
-      : [0]
+    const codes = match[1] ? match[1].split(';').map(Number) : [0]
 
     for (const code of codes) {
       if (code === 0) {

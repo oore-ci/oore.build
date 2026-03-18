@@ -19,6 +19,17 @@ Rules:
   - RBAC: `audit_logs:read` permission for owner and admin roles.
   - OpenAPI spec updated.
 
+- **Notification channels (webhook + Mattermost)** — [OOR-143](https://linear.app/oorebuild/issue/OOR-143):
+  - Backend: CRUD endpoints for notification channels under `/v1/settings/notification-channels` (create, list, get, update, delete, test, delivery history).
+  - Backend: Background dispatch worker subscribes to `BuildStateEvent` broadcast and delivers notifications on terminal build states.
+  - Backend: Fixed event publishing gap — `publish_event` now called after manual cancel and runner terminal transitions (not just timeout monitor).
+  - Backend: Migration `019_notification_channels.sql` — `notification_channels` + `notification_deliveries` tables.
+  - Backend: Webhook delivery with optional HMAC-SHA256 signing (`X-Oore-Signature`), Mattermost/Slack-compatible incoming webhook format.
+  - Frontend: Settings UI for notification channels — list, create, edit, delete, test, delivery history.
+  - Frontend: Sidebar nav entry under Admin section.
+  - OpenAPI spec updated with Notification Channels tag and all new endpoints/schemas.
+  - Email channel deferred to [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
+
 - UX journey audit — multi-persona frontend fixes across `apps/web`:
   - Session expiry: added 5-minute warning toast + auto-redirect to login on expiry.
   - Build notifications: `document.title` updates with status emoji + browser Notification API on terminal state.

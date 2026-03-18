@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "portless run --name web.oore vite",
+    "dev": "portless run --name web.oore --app-port 3000 vite --port 3000",
     "dev:legacy": "vite --port 3000",
     "build": "vite build && tsc",
     "preview": "vite preview",

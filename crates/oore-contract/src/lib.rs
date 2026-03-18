@@ -2311,3 +2311,149 @@ mod tests {
         assert_eq!(api.key_id.as_deref(), Some("ABC123XYZ"));
     }
 }
+
+// ── Notification channel types ──────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationChannelType {
+    Webhook,
+    Mattermost,
+}
+
+impl fmt::Display for NotificationChannelType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Webhook => f.write_str("webhook"),
+            Self::Mattermost => f.write_str("mattermost"),
+        }
+    }
+}
+
+impl FromStr for NotificationChannelType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "webhook" => Ok(Self::Webhook),
+            "mattermost" => Ok(Self::Mattermost),
+            other => Err(format!("unknown notification channel type: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationDeliveryStatus {
+    Pending,
+    Delivered,
+    Failed,
+}
+
+impl fmt::Display for NotificationDeliveryStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending => f.write_str("pending"),
+            Self::Delivered => f.write_str("delivered"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NotificationChannel {
+    pub id: String,
+    pub name: String,
+    pub channel_type: NotificationChannelType,
+    pub enabled: bool,
+    /// Which terminal build statuses trigger this channel. Empty means all.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// True if the channel has a URL configured (the actual URL is never exposed).
+    pub has_url: bool,
+    /// True if the channel has an HMAC secret configured (webhook only).
+    pub has_secret: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateNotificationChannelRequest {
+    pub name: String,
+    pub channel_type: NotificationChannelType,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Terminal build statuses to notify on. Empty or omitted means all terminal events.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Webhook/Mattermost incoming webhook URL (required).
+    pub url: String,
+    /// HMAC secret for signing webhook payloads (webhook only, optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateNotificationChannelRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<String>>,
+    /// New URL. Omit to keep existing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// New HMAC secret. Omit to keep existing; pass empty string to clear.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct NotificationChannelResponse {
+    pub channel: NotificationChannel,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListNotificationChannelsResponse {
+    pub channels: Vec<NotificationChannel>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DeleteNotificationChannelResponse {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestNotificationChannelResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NotificationDelivery {
+    pub id: String,
+    pub channel_id: String,
+    pub build_id: String,
+    pub event_type: String,
+    pub status: NotificationDeliveryStatus,
+    pub attempt_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListNotificationDeliveriesResponse {
+    pub deliveries: Vec<NotificationDelivery>,
+    pub total: i64,
+}

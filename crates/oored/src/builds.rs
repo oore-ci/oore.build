@@ -831,6 +831,18 @@ pub async fn cancel_build(
     )
     .await;
 
+    // Publish event for notification dispatch
+    state
+        .scheduler
+        .publish_event(crate::scheduler::BuildStateEvent {
+            build_id: build_id.clone(),
+            from_status: None,
+            to_status: "canceled".to_string(),
+            actor: Some(auth.0.email.clone()),
+            reason: Some("canceled by user".to_string()),
+            timestamp: crate::util::now_unix(),
+        });
+
     info!(build_id = %build_id, canceled_by = %auth.0.email, "build canceled");
 
     Ok(Json(CancelBuildResponse { build }))

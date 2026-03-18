@@ -90,8 +90,8 @@ function CompleteStep() {
           <Alert>
             <AlertTitle>Setup complete</AlertTitle>
             <AlertDescription>
-              Your Oore instance is ready. Setup endpoints have been
-              permanently disabled.
+              Your Oore instance is ready. Setup endpoints have been permanently
+              disabled.
             </AlertDescription>
           </Alert>
 
