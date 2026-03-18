@@ -240,38 +240,37 @@ function PreferencesPage() {
   const updatePreferencesMutation = useUpdateInstancePreferences()
 
   const storageSettings = settingsQuery.data?.settings
-  const storageValues = storageSettings
-    ? (() => {
-        const backend_kind =
-          storageSettings.provider === 'disabled'
-            ? 'disabled'
-            : storageSettings.provider === 'local'
-              ? 'local'
-              : 'object'
-        const object_service =
-          storageSettings.provider === 'r2'
-            ? 'cloudflare_r2'
-            : storageSettings.provider === 's3'
-              ? storageSettings.s3_endpoint
-                ? 'custom'
-                : 'aws_s3'
-              : 'aws_s3'
-        const region =
-          storageSettings.provider === 'r2'
-            ? (storageSettings.s3_region ?? 'auto')
-            : (storageSettings.s3_region ?? 'us-east-1')
-        return {
-          backend_kind,
-          object_service,
-          local_base_dir: storageSettings.local_base_dir ?? '',
-          s3_bucket: storageSettings.s3_bucket ?? '',
-          s3_region: region,
-          s3_endpoint: storageSettings.s3_endpoint ?? '',
-          access_key_id: '',
-          secret_access_key: '',
-        } as StorageFormValues
-      })()
-    : undefined
+  const storageValues = useMemo(() => {
+    if (!storageSettings) return undefined
+    const backend_kind =
+      storageSettings.provider === 'disabled'
+        ? 'disabled'
+        : storageSettings.provider === 'local'
+          ? 'local'
+          : 'object'
+    const object_service =
+      storageSettings.provider === 'r2'
+        ? 'cloudflare_r2'
+        : storageSettings.provider === 's3'
+          ? storageSettings.s3_endpoint
+            ? 'custom'
+            : 'aws_s3'
+          : 'aws_s3'
+    const region =
+      storageSettings.provider === 'r2'
+        ? (storageSettings.s3_region ?? 'auto')
+        : (storageSettings.s3_region ?? 'us-east-1')
+    return {
+      backend_kind,
+      object_service,
+      local_base_dir: storageSettings.local_base_dir ?? '',
+      s3_bucket: storageSettings.s3_bucket ?? '',
+      s3_region: region,
+      s3_endpoint: storageSettings.s3_endpoint ?? '',
+      access_key_id: '',
+      secret_access_key: '',
+    } as StorageFormValues
+  }, [storageSettings])
 
   const storageForm = useForm<StorageFormValues>({
     resolver: zodResolver(storageSchema),
@@ -299,12 +298,13 @@ function PreferencesPage() {
     mode: 'onBlur',
   })
   const networkSettings = networkSettingsQuery.data?.settings
-  const networkValues = networkSettings
-    ? {
-        public_url: networkSettings.public_url ?? '',
-        allowed_origins: networkSettings.allowed_origins.join('\n'),
-      }
-    : undefined
+  const networkValues = useMemo(() => {
+    if (!networkSettings) return undefined
+    return {
+      public_url: networkSettings.public_url ?? '',
+      allowed_origins: networkSettings.allowed_origins.join('\n'),
+    }
+  }, [networkSettings])
 
   const externalAccessNetworkForm = useForm<ExternalAccessNetworkFormValues>({
     resolver: zodResolver(externalAccessNetworkSchema),
