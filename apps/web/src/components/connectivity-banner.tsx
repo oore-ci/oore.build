@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { WifiDisconnected04Icon } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import { queryClient } from '@/lib/query-client'
 
@@ -10,7 +11,7 @@ export default function ConnectivityBanner() {
   )
   const [daemonUnreachable, setDaemonUnreachable] = useState(false)
 
-  useEffect(() => {
+  useMountEffect(() => {
     const goOnline = () => {
       setOffline(false)
       setDaemonUnreachable(false)
@@ -22,9 +23,9 @@ export default function ConnectivityBanner() {
       window.removeEventListener('online', goOnline)
       window.removeEventListener('offline', goOffline)
     }
-  }, [])
+  })
 
-  useEffect(() => {
+  useMountEffect(() => {
     let consecutiveFailures = 0
     const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
       if (event.type === 'updated' && event.action.type === 'error') {
@@ -37,7 +38,7 @@ export default function ConnectivityBanner() {
       }
     })
     return unsubscribe
-  }, [])
+  })
 
   if (!offline && !daemonUnreachable) return null
 

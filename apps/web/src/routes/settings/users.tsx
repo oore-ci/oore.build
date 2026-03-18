@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import {
   getCoreRowModel,
   getFilteredRowModel,
@@ -6,7 +6,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { getColumns } from './-users-columns'
 import { UsersToolbar } from './-users-toolbar'
@@ -92,7 +92,6 @@ interface ConfirmAction {
 }
 
 function UsersSettingsPage() {
-  const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
   const { data, isLoading, error } = useUsers()
   const inviteMutation = useInviteUser()
@@ -109,13 +108,6 @@ function UsersSettingsPage() {
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-
-  // Redirect non-admin users
-  useEffect(() => {
-    if (authUser && authUser.role !== 'owner' && authUser.role !== 'admin') {
-      void navigate({ to: '/' })
-    }
-  }, [authUser, navigate])
 
   const showError = useCallback((err: unknown, fallback: string) => {
     const message = err instanceof ApiClientError ? err.message : fallback

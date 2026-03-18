@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { Suspense, lazy, useRef } from 'react'
 import {
   Link,
   Outlet,
@@ -185,10 +185,13 @@ function RootLayout() {
 
   useSessionMonitor()
 
-  useEffect(() => {
+  // Sync instance context on initial render (store action handles subsequent changes)
+  const instanceContextSynced = useRef(false)
+  if (activeInstanceId && !instanceContextSynced.current) {
+    instanceContextSynced.current = true
     useSetupStore.getState().setInstanceContext(activeInstanceId)
     useAuthStore.getState().setInstanceContext(activeInstanceId)
-  }, [activeInstanceId])
+  }
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

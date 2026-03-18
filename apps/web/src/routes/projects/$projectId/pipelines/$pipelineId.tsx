@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -16,6 +16,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuilds } from '@/hooks/use-builds'
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
@@ -150,11 +151,7 @@ function PipelineDetailPage() {
 
   const label = data?.pipeline.name ?? 'Pipeline Details'
 
-  useEffect(() => {
-    if (data?.pipeline.name) {
-      setLabel('/projects/$projectId/pipelines/$pipelineId', data.pipeline.name)
-    }
-  }, [data?.pipeline.name, setLabel])
+  useBreadcrumbLabel(setLabel, '/projects/$projectId/pipelines/$pipelineId', data?.pipeline.name)
 
   if (isLoading) {
     return (

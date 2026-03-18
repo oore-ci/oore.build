@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -9,6 +9,8 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { RuntimeMode } from '@/lib/types'
+import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
@@ -34,7 +36,7 @@ import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
-import { getSetupStatus, localLogin } from '@/lib/api'
+import { getSetupStatus } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
@@ -65,16 +67,6 @@ function isLoopbackHostname(hostname: string): boolean {
   )
 }
 
-function resolveBackendHostname(rawUrl: string): string {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return window.location.hostname
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
-}
-
 async function getSetupStatusWithTimeout(baseUrl: string, timeoutMs: number) {
   return await Promise.race([
     getSetupStatus(baseUrl),
@@ -99,20 +91,14 @@ async function detectReachableLocalDaemonUrl(): Promise<string | null> {
 function IndexPage() {
   const instance = useActiveInstance()
   const { data: status, isLoading, error } = useSetupStatus()
-  const navigate = useNavigate()
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
   const [isAutoLocalSigningIn, setIsAutoLocalSigningIn] = useState(false)
   const autoDetectAttemptedRef = useRef(false)
-  const autoLocalLoginInstanceRef = useRef<string | null>(null)
-  const authToken = useAuthStore((s) => s.token)
-  const authExpiresAt = useAuthStore((s) => s.expiresAt)
   const authUser = useAuthStore((s) => s.user)
-  const clearAuth = useAuthStore((s) => s.clearAuth)
-  const setAuth = useAuthStore((s) => s.setAuth)
 
-  useEffect(() => {
+  useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
     if (!isLoopbackHostname(window.location.hostname)) return
 
@@ -137,74 +123,9 @@ function IndexPage() {
       .finally(() => {
         setIsDetectingLocalInstance(false)
       })
-  }, [instance])
+  })
 
-  useEffect(() => {
-    if (!status || !instance) return
-
-    if (status.setup_mode && status.runtime_mode !== 'local') {
-      void navigate({ to: '/setup' })
-      return
-    }
-
-    const now = Math.floor(Date.now() / 1000)
-    const hasValidToken =
-      !!authToken && authExpiresAt != null && authExpiresAt > now
-
-    if (status.runtime_mode === 'local') {
-      const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-      const backendIsLoopback = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
-      )
-
-      if (!uiIsLoopback || !backendIsLoopback) {
-        if (!hasValidToken) {
-          clearAuth()
-          void navigate({ to: '/login' })
-        }
-        return
-      }
-
-      if (hasValidToken) return
-      if (autoLocalLoginInstanceRef.current === instance.id) return
-
-      autoLocalLoginInstanceRef.current = instance.id
-      setIsAutoLocalSigningIn(true)
-      clearAuth()
-      void localLogin(instance.url, {})
-        .then((response) => {
-          if (!response.user.user_id || !response.user.role) {
-            throw new Error('Incomplete user profile received from server')
-          }
-          setAuth(
-            response.session_token,
-            response.expires_at,
-            {
-              email: response.user.email,
-              oidc_subject: response.user.oidc_subject,
-              user_id: response.user.user_id,
-              role: response.user.role,
-              avatar_url: response.user.avatar_url,
-            },
-            'local',
-          )
-        })
-        .catch(() => {
-          autoLocalLoginInstanceRef.current = null
-          clearAuth()
-          void navigate({ to: '/login' })
-        })
-        .finally(() => {
-          setIsAutoLocalSigningIn(false)
-        })
-      return
-    }
-
-    if (status.is_configured && !hasValidToken) {
-      clearAuth()
-      void navigate({ to: '/login' })
-    }
-  }, [status, instance, authToken, authExpiresAt, clearAuth, setAuth, navigate])
+  useIndexAuthGuard(status, instance, setIsAutoLocalSigningIn)
 
   if (!instance && isDetectingLocalInstance) {
     return (

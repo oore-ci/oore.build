@@ -4,7 +4,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
 
-import { useEffect } from 'react'
 import type { RetentionCleanupTarget } from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
@@ -110,23 +109,8 @@ function RetentionPage() {
   const policy = policyData?.policy
   const lastCleanup = cleanupData?.last_cleanup
 
-  const form = useForm<RetentionFormValues>({
-    resolver: zodResolver(retentionSchema),
-    defaultValues: {
-      enabled: false,
-      max_age_days: '',
-      max_builds_per_project: '',
-      max_artifact_size_mb: '',
-      cleanup_target: 'artifacts_only',
-      keep_statuses: [],
-      dry_run: false,
-      cleanup_interval_secs: '3600',
-    },
-  })
-
-  useEffect(() => {
-    if (policy) {
-      form.reset({
+  const policyValues = policy
+    ? {
         enabled: policy.enabled,
         max_age_days:
           policy.max_age_days != null ? String(policy.max_age_days) : '',
@@ -141,9 +125,25 @@ function RetentionPage() {
         keep_statuses: policy.keep_statuses,
         dry_run: policy.dry_run,
         cleanup_interval_secs: String(policy.cleanup_interval_secs),
-      })
-    }
-  }, [policy, form])
+      }
+    : undefined
+
+  const form = useForm<RetentionFormValues>({
+    resolver: zodResolver(retentionSchema),
+    defaultValues: {
+      enabled: false,
+      max_age_days: '',
+      max_builds_per_project: '',
+      max_artifact_size_mb: '',
+      cleanup_target: 'artifacts_only',
+      keep_statuses: [],
+      dry_run: false,
+      cleanup_interval_secs: '3600',
+    },
+    values: policyValues,
+  })
+
+
 
   const enabled = form.watch('enabled')
 

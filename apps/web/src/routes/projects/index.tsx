@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -84,26 +84,21 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  useEffect(() => {
-    if (search.openCreate !== '1') return
-    if (projectsLoading) return
-
-    if (!projectsError && canWriteProjects) {
+  const openCreateRef = useRef(false)
+  if (
+    search.openCreate === '1' &&
+    !projectsLoading &&
+    !projectsError &&
+    canWriteProjects &&
+    !openCreateRef.current
+  ) {
+    openCreateRef.current = true
+    // Schedule state update for after render completes
+    queueMicrotask(() => {
       setCreateOpen(true)
-    }
-
-    void navigate({
-      to: '/projects',
-      search: {},
-      replace: true,
+      void navigate({ to: '/projects', search: {}, replace: true })
     })
-  }, [
-    canWriteProjects,
-    navigate,
-    projectsError,
-    projectsLoading,
-    search.openCreate,
-  ])
+  }
 
   return (
     <PageLayout width="wide">

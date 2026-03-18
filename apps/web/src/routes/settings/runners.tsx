@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -110,15 +110,13 @@ function RenameRunnerDialog({
   const form = useForm<RenameRunnerForm>({
     resolver: zodResolver(renameRunnerSchema),
     defaultValues: { name: runner?.name ?? '' },
+    values: { name: runner?.name ?? '' },
     mode: 'onBlur',
   })
 
   const initialName = runner?.name ?? ''
   const isEmbedded = !runner?.registered_by
 
-  useEffect(() => {
-    form.reset({ name: runner?.name ?? '' })
-  }, [runner, form])
 
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) {

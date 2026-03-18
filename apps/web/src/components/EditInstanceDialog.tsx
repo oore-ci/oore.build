@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -66,16 +65,6 @@ export default function EditInstanceDialog({
     mode: 'onBlur',
   })
 
-  useEffect(() => {
-    if (instance && open) {
-      reset({
-        label: instance.label,
-        url: instance.url,
-        icon: instance.icon ?? DEFAULT_INSTANCE_ICON_KEY,
-      })
-    }
-  }, [instance, open, reset])
-
   const selectedIcon = watch('icon')
 
   function onSubmit(data: EditInstanceForm) {
@@ -89,7 +78,13 @@ export default function EditInstanceDialog({
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen) {
+    if (nextOpen && instance) {
+      reset({
+        label: instance.label,
+        url: instance.url,
+        icon: instance.icon ?? DEFAULT_INSTANCE_ICON_KEY,
+      })
+    } else if (!nextOpen) {
       reset()
     }
     onOpenChange(nextOpen)

@@ -22,6 +22,20 @@ Rules:
   - Deleted: `.woodpecker.yml`, `tools/lint-woodpecker.sh`, `lint-woodpecker` Makefile target.
   - Updated: `tools/validate-ci.sh` (removed woodpecker lint call), `Makefile` (removed woodpecker references).
 
+- **Ban direct useEffect — useMountEffect + ESLint enforcement** ([OOR-145](https://linear.app/oorebuild/issue/OOR-145)):
+  - Frontend: Created `useMountEffect` hook as the only sanctioned wrapper for mount-only effects.
+  - Frontend: Created sanctioned hooks for common reactive patterns: `useBreadcrumbLabel`, `useAutoScroll`, `useBuildNotification`, `useIndexAuthGuard`.
+  - Frontend: Replaced all 58 direct `useEffect` calls across 35 files with proper patterns: derived state, react-hook-form `values` prop, `onOpenChange` callbacks, `useMountEffect`, event handlers, and named hooks.
+  - Frontend: Added ESLint `no-restricted-syntax` rule banning `useEffect` / `React.useEffect` with exemptions for sanctioned hook files.
+  - Frontend: Form resets now use react-hook-form `values` prop (runners, retention, notifications, project settings, setup/mode).
+  - Frontend: Login page runtime mode now derived from `useSetupStatus()` query instead of one-shot fetch.
+
+- **Demo mode audit: add missing MSW handlers** — [OOR-146](https://linear.app/oorebuild/issue/OOR-146):
+  - Added demo handlers + fixture data for notification channels (CRUD, test, deliveries), build retention policy (global + per-project overrides), and audit log viewer (filtered, paginated).
+  - All three features (OOR-143, OOR-137, OOR-135) now fully functional in `VITE_DEMO_MODE=true`.
+  - New files: `demo/data/{notification-channels,retention,audit-logs}.ts`, `demo/handlers/{notifications,retention,audit-logs}.ts`.
+  - Updated `demo/seed.ts` (added `NOTIFICATION_CHANNEL_IDS`) and `demo/handlers/index.ts`.
+
 ## 2026-03-17
 
 - Audit log read endpoint and frontend viewer ([OOR-135](https://linear.app/oorebuild/issue/OOR-135)):

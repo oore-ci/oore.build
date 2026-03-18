@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -13,6 +13,8 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { BuildLogChunk, StepResult } from '@/lib/types'
+import { useMountEffect } from '@/hooks/use-mount-effect'
+import { useAutoScroll } from '@/hooks/use-auto-scroll'
 import { parseAnsi } from '@/lib/ansi-to-html'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -142,7 +144,7 @@ export default function TerminalLogViewer({
   isStreaming,
   streamError,
 }: TerminalLogViewerProps) {
-  const [selectedStep, setSelectedStep] = useState<string>('')
+  const [userSelectedStep, setUserSelectedStep] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [wrapLines, setWrapLines] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -206,15 +208,17 @@ export default function TerminalLogViewer({
     }
   }, [logs, stepResults])
 
-  // ── Auto-select running step ───────────────────────────────
-
-  useEffect(() => {
-    const hasSelected =
-      selectedStep === 'all' || stepGroups.some((g) => g.name === selectedStep)
-    if (hasSelected) return
+  // ── Derive selected step ──────────────────────────────────
+  const selectedStep = useMemo(() => {
+    if (userSelectedStep !== null) {
+      const valid =
+        userSelectedStep === 'all' ||
+        stepGroups.some((g) => g.name === userSelectedStep)
+      if (valid) return userSelectedStep
+    }
     const running = stepGroups.find((g) => g.status === 'running')
-    setSelectedStep(running?.name ?? stepGroups.at(0)?.name ?? 'all')
-  }, [stepGroups, selectedStep])
+    return running?.name ?? stepGroups.at(0)?.name ?? 'all'
+  }, [userSelectedStep, stepGroups])
 
   // ── Filtered logs ──────────────────────────────────────────
 
@@ -253,11 +257,7 @@ export default function TerminalLogViewer({
 
   // ── Auto-scroll ────────────────────────────────────────────
 
-  useEffect(() => {
-    if (autoScroll && filteredLogs.length > 0) {
-      virtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' })
-    }
-  }, [filteredLogs.length, autoScroll, virtualizer])
+  useAutoScroll(virtualizer, filteredLogs.length, autoScroll)
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
@@ -267,16 +267,19 @@ export default function TerminalLogViewer({
   }, [])
 
   // Attach scroll listener to the ScrollArea viewport
-  useEffect(() => {
+  useMountEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
     el.addEventListener('scroll', handleScroll)
     return () => el.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
+  })
 
   // ── Keyboard shortcuts ─────────────────────────────────────
 
-  useEffect(() => {
+  const searchOpenRef = useRef(searchOpen)
+  searchOpenRef.current = searchOpen
+
+  useMountEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         const el = scrollContainerRef.current
@@ -289,14 +292,14 @@ export default function TerminalLogViewer({
           setTimeout(() => searchInputRef.current?.focus(), 0)
         }
       }
-      if (e.key === 'Escape' && searchOpen) {
+      if (e.key === 'Escape' && searchOpenRef.current) {
         setSearchOpen(false)
         setSearchQuery('')
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [searchOpen])
+  })
 
   // ── Jump to first error ────────────────────────────────────
 
@@ -447,7 +450,7 @@ export default function TerminalLogViewer({
         <div className="flex items-center gap-2 border border-b-0 border-[oklch(0.25_0_0)] bg-[oklch(0.17_0_0)] px-3 py-2 md:hidden">
           <select
             value={selectedStep}
-            onChange={(e) => setSelectedStep(e.target.value)}
+            onChange={(e) => setUserSelectedStep(e.target.value)}
             className="w-full bg-[oklch(0.14_0_0)] text-[oklch(0.92_0_0)] text-xs border border-[oklch(0.30_0_0)] px-2 py-1.5"
           >
             <option value="all">All logs ({allVisibleLogs.length})</option>
@@ -484,7 +487,7 @@ export default function TerminalLogViewer({
           <aside className="hidden md:flex flex-col gap-0 overflow-y-auto border-r border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)] py-1">
             <button
               type="button"
-              onClick={() => setSelectedStep('all')}
+              onClick={() => setUserSelectedStep('all')}
               className={`flex items-center justify-between px-3 py-1.5 text-left text-xs transition-colors ${
                 selectedStep === 'all'
                   ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
@@ -500,7 +503,7 @@ export default function TerminalLogViewer({
               <button
                 key={group.name}
                 type="button"
-                onClick={() => setSelectedStep(group.name)}
+                onClick={() => setUserSelectedStep(group.name)}
                 className={`flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
                   selectedStep === group.name
                     ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'

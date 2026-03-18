@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -89,13 +89,14 @@ function BootstrapTokenStep() {
     mode: 'onBlur',
   })
 
-  // Set step to 0 unless backend state + session indicate we should skip ahead
-  useEffect(() => {
-    if (!status || !sessionToken) {
+  // Set step based on backend state — runs once when status resolves
+  const setupStepDone = useRef(false)
+  if (!status || !sessionToken) {
+    if (!setupStepDone.current) {
       setCurrentStep(0)
-      return
     }
-
+  } else if (!setupStepDone.current) {
+    setupStepDone.current = true
     const backendStep = stateToStep(status.state, status.runtime_mode)
     if (backendStep >= 1) {
       setCurrentStep(backendStep)
@@ -103,16 +104,16 @@ function BootstrapTokenStep() {
         status.state === 'bootstrap_pending' ||
         status.state === 'uninitialized'
       ) {
-        void navigate({ to: '/setup/mode' })
+        queueMicrotask(() => void navigate({ to: '/setup/mode' }))
       } else if (status.state === 'idp_configured') {
-        void navigate({ to: '/setup/owner' })
+        queueMicrotask(() => void navigate({ to: '/setup/owner' }))
       } else if (status.state === 'owner_created') {
-        void navigate({ to: '/setup/complete' })
+        queueMicrotask(() => void navigate({ to: '/setup/complete' }))
       }
     } else {
       setCurrentStep(0)
     }
-  }, [status, sessionToken, navigate, setCurrentStep])
+  }
 
   const errorMessage = verifyMutation.error
     ? getApiErrorMessage(verifyMutation.error, {

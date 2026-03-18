@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -87,19 +88,20 @@ function SetupTrustedProxyStep() {
     mode: 'onBlur',
   })
 
-  useEffect(() => {
+  useMountEffect(() => {
     setCurrentStep(2)
-  }, [setCurrentStep])
+  })
 
-  useEffect(() => {
-    if (!status) return
+  const proxyGuardDone = useRef(false)
+  if (status && !proxyGuardDone.current) {
+    proxyGuardDone.current = true
     if (
       status.runtime_mode !== 'remote' ||
       status.remote_auth_mode !== 'trusted_proxy'
     ) {
-      void navigate({ to: '/setup/mode' })
+      queueMicrotask(() => void navigate({ to: '/setup/mode' }))
     }
-  }, [status, navigate])
+  }
 
   const errorMessage = configureMutation.error
     ? getApiErrorMessage(configureMutation.error, {

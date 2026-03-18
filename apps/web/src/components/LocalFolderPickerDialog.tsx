@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -49,12 +49,6 @@ export default function LocalFolderPickerDialog({
 }: LocalFolderPickerDialogProps) {
   const [browserPath, setBrowserPath] = useState<string | undefined>(undefined)
 
-  useEffect(() => {
-    if (!open) return
-    const candidate = initialPath?.trim()
-    setBrowserPath(candidate ? candidate : undefined)
-  }, [open, initialPath])
-
   const {
     data: browserData,
     isLoading: browserLoading,
@@ -76,7 +70,10 @@ export default function LocalFolderPickerDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
+        if (nextOpen) {
+          const candidate = initialPath?.trim()
+          setBrowserPath(candidate ? candidate : undefined)
+        } else {
           setBrowserPath(undefined)
         }
         onOpenChange(nextOpen)

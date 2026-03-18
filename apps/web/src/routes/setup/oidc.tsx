@@ -1,10 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -188,19 +189,20 @@ function OidcConfigStep() {
 
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
-  useEffect(() => {
+  useMountEffect(() => {
     setCurrentStep(2)
-  }, [setCurrentStep])
+  })
 
-  useEffect(() => {
-    if (!status) return
+  const oidcGuardDone = useRef(false)
+  if (status && !oidcGuardDone.current) {
+    oidcGuardDone.current = true
     if (
       status.runtime_mode !== 'remote' ||
       status.remote_auth_mode !== 'oidc'
     ) {
-      void navigate({ to: '/setup/mode' })
+      queueMicrotask(() => void navigate({ to: '/setup/mode' }))
     }
-  }, [status, navigate])
+  }
 
   function handleProviderChange(value: ProviderId) {
     setSelectedProvider(value)
