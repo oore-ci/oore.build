@@ -12,6 +12,7 @@ export function useSessionCountdown(): SessionCountdown {
   const sessionExpiresAt = useSetupStore((s) => s.sessionExpiresAt)
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (sessionExpiresAt == null) {
       setRemainingSeconds(null)

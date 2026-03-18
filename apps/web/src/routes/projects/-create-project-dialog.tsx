@@ -146,12 +146,14 @@ export default function CreateProjectDialog({
     mode: 'onBlur',
   })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open) return
     setSourceKind(isRemoteMode ? 'repo' : 'local')
     setSourceKindTouched(false)
   }, [open, isRemoteMode])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open) return
     if (!isRemoteMode) return
@@ -171,6 +173,7 @@ export default function CreateProjectDialog({
     hasRepos,
   ])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open) return
     if (sourceKind !== 'repo') return

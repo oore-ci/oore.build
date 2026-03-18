@@ -90,6 +90,7 @@ function BootstrapTokenStep() {
   })
 
   // Set step to 0 unless backend state + session indicate we should skip ahead
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!status || !sessionToken) {
       setCurrentStep(0)

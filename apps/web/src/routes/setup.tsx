@@ -139,6 +139,7 @@ function SetupLayout() {
         ? ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
         : ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (isExpired) {
       useSetupStore.getState().reset()

@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useAuthStore } from '@/stores/auth-store'
 
 const WARN_BEFORE_S = 5 * 60 // 5 minutes
@@ -10,7 +11,7 @@ export function useSessionMonitor() {
   const navigate = useNavigate()
   const warnedRef = useRef(false)
 
-  useEffect(() => {
+  useMountEffect(() => {
     const id = setInterval(() => {
       const { token, expiresAt, clearAuth } = useAuthStore.getState()
       if (!token || expiresAt == null) {
@@ -39,5 +40,5 @@ export function useSessionMonitor() {
     }, CHECK_INTERVAL_MS)
 
     return () => clearInterval(id)
-  }, [navigate])
+  })
 }

@@ -85,6 +85,7 @@ function BuildDetailPage() {
   const buildStatus = data?.build.status
   const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (isTerminal) setKnownTerminal(true)
   }, [isTerminal])
@@ -95,6 +96,7 @@ function BuildDetailPage() {
     ? `Build #${data.build.build_number}`
     : 'Build Details'
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (data?.build.build_number) {
       setLabel('/builds/$buildId', `Build #${data.build.build_number}`)
@@ -104,6 +106,7 @@ function BuildDetailPage() {
   // ── Build notifications (title + browser Notification) ──
   const prevStatusRef = useRef<string | undefined>(undefined)
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (
       typeof Notification !== 'undefined' &&
@@ -116,6 +119,7 @@ function BuildDetailPage() {
     }
   }, [])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!data?.build) return
 

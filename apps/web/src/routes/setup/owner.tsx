@@ -131,11 +131,13 @@ function OwnerStep() {
       })
     : null
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!status) return
     setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
   }, [status, setCurrentStep])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!status) return
     if (status.state === 'owner_created') {

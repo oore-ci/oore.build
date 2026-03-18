@@ -101,6 +101,7 @@ function NotificationChannelDetailPage() {
     mode: 'onBlur',
   })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (channel) {
       form.reset({

@@ -119,6 +119,7 @@ function ProjectSettingsForm({
     mode: 'onBlur',
   })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     form.reset({
       name: currentValues.name,

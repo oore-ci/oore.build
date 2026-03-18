@@ -99,6 +99,7 @@ function IntegrationDetailPage() {
     detail?.integration.provider ??
     'Source Details'
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (detail?.integration) {
       setLabel(
@@ -108,6 +109,7 @@ function IntegrationDetailPage() {
     }
   }, [detail?.integration.display_name, detail?.integration.provider, setLabel])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (search.installed === 'true') {
       toast.success('GitHub App installed successfully')

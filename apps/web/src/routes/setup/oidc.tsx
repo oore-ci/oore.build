@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -188,10 +189,11 @@ function OidcConfigStep() {
 
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
-  useEffect(() => {
+  useMountEffect(() => {
     setCurrentStep(2)
-  }, [setCurrentStep])
+  })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!status) return
     if (

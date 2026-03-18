@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -10,6 +10,7 @@ import {
   Settings01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   CommandDialog,
@@ -44,7 +45,7 @@ export default function CommandPalette() {
   const projects = projectsData?.projects ?? []
 
   // Keyboard shortcut to open
-  useEffect(() => {
+  useMountEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
@@ -53,7 +54,7 @@ export default function CommandPalette() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  })
 
   const go = useCallback(
     (to: string) => {

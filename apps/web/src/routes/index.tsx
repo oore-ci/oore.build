@@ -112,6 +112,7 @@ function IndexPage() {
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const setAuth = useAuthStore((s) => s.setAuth)
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
     if (!isLoopbackHostname(window.location.hostname)) return
@@ -139,6 +140,7 @@ function IndexPage() {
       })
   }, [instance])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!status || !instance) return
 

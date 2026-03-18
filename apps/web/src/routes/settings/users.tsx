@@ -111,6 +111,7 @@ function UsersSettingsPage() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
 
   // Redirect non-admin users
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (authUser && authUser.role !== 'owner' && authUser.role !== 'admin') {
       void navigate({ to: '/' })

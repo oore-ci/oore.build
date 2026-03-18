@@ -150,6 +150,7 @@ function PipelineDetailPage() {
 
   const label = data?.pipeline.name ?? 'Pipeline Details'
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (data?.pipeline.name) {
       setLabel('/projects/$projectId/pipelines/$pipelineId', data.pipeline.name)

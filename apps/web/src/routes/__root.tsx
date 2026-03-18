@@ -185,6 +185,7 @@ function RootLayout() {
 
   useSessionMonitor()
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     useSetupStore.getState().setInstanceContext(activeInstanceId)
     useAuthStore.getState().setInstanceContext(activeInstanceId)

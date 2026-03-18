@@ -84,6 +84,7 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (search.openCreate !== '1') return
     if (projectsLoading) return

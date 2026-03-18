@@ -146,6 +146,7 @@ export default function TriggerBuildDialog({
     [pipelines],
   )
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open) return
     form.reset(
@@ -165,6 +166,7 @@ export default function TriggerBuildDialog({
     form,
   ])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open || fixedProjectId) return
     if (projects.length === 0) return
@@ -175,6 +177,7 @@ export default function TriggerBuildDialog({
     }
   }, [open, fixedProjectId, projects, form])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open || fixedPipelineId) return
     if (!projectId) return

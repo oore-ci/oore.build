@@ -58,6 +58,7 @@ function IntegrationsPage() {
   const runtimeMode = preferences?.preferences.runtime_mode ?? 'local'
   const remoteEnabled = runtimeMode === 'remote'
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (search.github === 'success') {
       toast.success('GitHub App connected successfully')

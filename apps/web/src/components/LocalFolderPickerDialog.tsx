@@ -49,6 +49,7 @@ export default function LocalFolderPickerDialog({
 }: LocalFolderPickerDialogProps) {
   const [browserPath, setBrowserPath] = useState<string | undefined>(undefined)
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!open) return
     const candidate = initialPath?.trim()

@@ -13,6 +13,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { BuildLogChunk, StepResult } from '@/lib/types'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { parseAnsi } from '@/lib/ansi-to-html'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -208,6 +209,7 @@ export default function TerminalLogViewer({
 
   // ── Auto-select running step ───────────────────────────────
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     const hasSelected =
       selectedStep === 'all' || stepGroups.some((g) => g.name === selectedStep)
@@ -253,6 +255,7 @@ export default function TerminalLogViewer({
 
   // ── Auto-scroll ────────────────────────────────────────────
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (autoScroll && filteredLogs.length > 0) {
       virtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' })
@@ -267,15 +270,16 @@ export default function TerminalLogViewer({
   }, [])
 
   // Attach scroll listener to the ScrollArea viewport
-  useEffect(() => {
+  useMountEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
     el.addEventListener('scroll', handleScroll)
     return () => el.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
+  })
 
   // ── Keyboard shortcuts ─────────────────────────────────────
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {

@@ -9,6 +9,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -226,11 +227,12 @@ export default function PipelineForm({
     () => !!initialValues.ios_signing_enabled,
   )
 
-  useEffect(() => {
+  useMountEffect(() => {
     const subscription = form.watch(() => setIsDirty(true))
     return () => subscription.unsubscribe()
-  }, [form])
+  })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
       if (isDirty) {

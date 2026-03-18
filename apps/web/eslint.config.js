@@ -12,4 +12,28 @@ export default [
       'tools/oore-web.js',
     ],
   },
+  {
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='useEffect']",
+          message:
+            'Direct useEffect is banned. Use useMountEffect for mount-only effects, derive state inline, use event handlers, or use TanStack Query. See: OOR-145',
+        },
+        {
+          selector:
+            "CallExpression[callee.object.name='React'][callee.property.name='useEffect']",
+          message:
+            'Direct React.useEffect is banned. Use useMountEffect for mount-only effects, derive state inline, use event handlers, or use TanStack Query. See: OOR-145',
+        },
+      ],
+    },
+  },
+  {
+    files: ['**/use-mount-effect.ts'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
 ]

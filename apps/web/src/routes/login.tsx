@@ -114,17 +114,20 @@ function LoginPage() {
   const localLoginAvailable = runtimeMode != null && loopbackLocalPath
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
     }
   }, [hasValidToken, navigate])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     setError(null)
     setConnectivityIssue(null)
   }, [instance?.id])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     let canceled = false
     if (!instance) {

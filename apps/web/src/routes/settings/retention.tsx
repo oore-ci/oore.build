@@ -124,6 +124,7 @@ function RetentionPage() {
     },
   })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (policy) {
       form.reset({

@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -79,10 +80,11 @@ function SetupModeStep() {
     mode: 'onBlur',
   })
 
-  useEffect(() => {
+  useMountEffect(() => {
     setCurrentStep(1)
-  }, [setCurrentStep])
+  })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!status) return
     form.setValue(

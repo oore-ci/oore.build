@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { OidcCallbackResponse } from '@/lib/types'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { setupOidcVerify } from '@/lib/api'
 import { precheckOidcCallback } from '@/lib/oidc-callback'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -35,7 +36,7 @@ function AuthCallbackPage() {
   )
   const exchangeStartedRef = useRef(false)
 
-  useEffect(() => {
+  useMountEffect(() => {
     // Guard against React StrictMode double-execution.
     if (exchangeStartedRef.current) return
     exchangeStartedRef.current = true
@@ -78,7 +79,7 @@ function AuthCallbackPage() {
     } else {
       handleAuthFlow(precheck.code, precheck.state, instanceId)
     }
-  }, [navigate, setAuth])
+  })
 
   function failAuth(message: string, flow: string | null, hint: string) {
     cleanupOidcSessionStorage()

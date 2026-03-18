@@ -66,6 +66,7 @@ export default function EditInstanceDialog({
     mode: 'onBlur',
   })
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (instance && open) {
       reset({

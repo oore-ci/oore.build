@@ -116,6 +116,7 @@ function RenameRunnerDialog({
   const initialName = runner?.name ?? ''
   const isEmbedded = !runner?.registered_by
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     form.reset({ name: runner?.name ?? '' })
   }, [runner, form])

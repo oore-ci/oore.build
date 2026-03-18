@@ -57,6 +57,7 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
   const isLocalMode = status?.runtime_mode === 'local'
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     setCurrentStep(isLocalMode ? 3 : 4)
   }, [isLocalMode, setCurrentStep])
@@ -68,6 +69,7 @@ function CompleteStep() {
 
   // Clean up session token after completion, but keep step at 4
   // so the indicator shows all steps as completed
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (isComplete) {
       setCurrentStep(isLocalMode ? 4 : 5)

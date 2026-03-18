@@ -274,6 +274,7 @@ function PreferencesPage() {
   const backendKind = storageForm.watch('backend_kind')
   const objectService = storageForm.watch('object_service')
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     const settings = settingsQuery.data?.settings
     if (!settings) return
@@ -311,6 +312,7 @@ function PreferencesPage() {
     })
   }, [settingsQuery.data, storageForm])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (backendKind !== 'object') return
     if (objectService === 'cloudflare_r2') {
@@ -326,6 +328,7 @@ function PreferencesPage() {
     }
   }, [backendKind, objectService, storageForm])
 
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     const network = networkSettingsQuery.data?.settings
     if (!network) return
