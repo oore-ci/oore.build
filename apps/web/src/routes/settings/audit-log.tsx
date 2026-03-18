@@ -126,7 +126,10 @@ function AuditLogPage() {
       <div className="flex items-center gap-3">
         <Select
           value={resourceTypeFilter}
-          onValueChange={(v) => setResourceTypeFilter(v ?? 'all')}
+          onValueChange={(v) => {
+            setResourceTypeFilter(v ?? 'all')
+            void navigate({ search: { page: 1 } })
+          }}
           items={RESOURCE_TYPE_OPTIONS}
         >
           <SelectTrigger className="w-40">
@@ -143,20 +146,29 @@ function AuditLogPage() {
         <Input
           placeholder="Filter by action..."
           value={actionFilter}
-          onChange={(e) => setActionFilter(e.target.value)}
+          onChange={(e) => {
+            setActionFilter(e.target.value)
+            void navigate({ search: { page: 1 } })
+          }}
           className="max-w-xs"
         />
         <Input
           type="date"
           value={fromDate}
-          onChange={(e) => setFromDate(e.target.value)}
+          onChange={(e) => {
+            setFromDate(e.target.value)
+            void navigate({ search: { page: 1 } })
+          }}
           className="w-36"
           aria-label="From date"
         />
         <Input
           type="date"
           value={toDate}
-          onChange={(e) => setToDate(e.target.value)}
+          onChange={(e) => {
+            setToDate(e.target.value)
+            void navigate({ search: { page: 1 } })
+          }}
           className="w-36"
           aria-label="To date"
         />
@@ -169,6 +181,7 @@ function AuditLogPage() {
               setActionFilter('')
               setFromDate('')
               setToDate('')
+              void navigate({ search: { page: 1 } })
             }}
           >
             Clear filters
