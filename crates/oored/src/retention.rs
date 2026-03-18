@@ -118,32 +118,32 @@ pub async fn update_retention_policy(
             "cleanup_interval_secs must be at least 60",
         ));
     }
-    if let Some(v) = req.max_age_days {
-        if v < 1 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "validation_error",
-                "max_age_days must be at least 1",
-            ));
-        }
+    if let Some(v) = req.max_age_days
+        && v < 1
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "max_age_days must be at least 1",
+        ));
     }
-    if let Some(v) = req.max_builds_per_project {
-        if v < 1 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "validation_error",
-                "max_builds_per_project must be at least 1",
-            ));
-        }
+    if let Some(v) = req.max_builds_per_project
+        && v < 1
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "max_builds_per_project must be at least 1",
+        ));
     }
-    if let Some(v) = req.max_artifact_size_bytes {
-        if v < 1 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "validation_error",
-                "max_artifact_size_bytes must be at least 1",
-            ));
-        }
+    if let Some(v) = req.max_artifact_size_bytes
+        && v < 1
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "max_artifact_size_bytes must be at least 1",
+        ));
     }
 
     let now = now_unix();
