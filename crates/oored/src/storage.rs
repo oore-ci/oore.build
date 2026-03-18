@@ -129,6 +129,17 @@ impl StorageClient {
 
         Ok(presigned.uri().to_string())
     }
+
+    pub async fn delete_object(&self, key: &str) -> Result<(), anyhow::Error> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .with_context(|| format!("failed to delete S3 object: {key}"))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -290,6 +301,17 @@ impl LocalStorageClient {
         Ok(Some(LocalDownloadPayload { bytes, file_name }))
     }
 
+    pub async fn delete_file(&self, key: &str) -> Result<(), anyhow::Error> {
+        let path = self.full_path_for_key(key)?;
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => {
+                Err(e).with_context(|| format!("failed to delete local artifact: {}", path.display()))
+            }
+        }
+    }
+
     pub fn base_dir(&self) -> String {
         self.base_dir.to_string_lossy().to_string()
     }
@@ -345,6 +367,14 @@ impl StorageBackend {
         match self {
             Self::Local(client) => client.handle_download(token).await,
             _ => Ok(None),
+        }
+    }
+
+    pub async fn delete_object(&self, key: &str) -> Result<(), anyhow::Error> {
+        match self {
+            Self::Disabled => Ok(()),
+            Self::S3(client) => client.delete_object(key).await,
+            Self::Local(client) => client.delete_file(key).await,
         }
     }
 }

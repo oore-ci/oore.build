@@ -125,7 +125,7 @@ pub async fn transition_build(
     } else {
         ""
     };
-    let finished_at_update = if target_status.is_terminal() {
+    let finished_at_update = if target_status.is_terminal() && !current_status.is_terminal() {
         "finished_at = ?4,"
     } else {
         ""

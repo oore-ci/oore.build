@@ -19,6 +19,7 @@ import type {
   CreateProjectRequest,
   CreateProjectResponse,
   DeleteNotificationChannelResponse,
+  EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
   GitHubAppCompleteRequest,
@@ -59,6 +60,8 @@ import type {
   ReEnableUserResponse,
   RegisterIosDeviceRequest,
   RegisterIosDeviceResponse,
+  RetentionCleanupSummaryResponse,
+  RetentionPolicyResponse,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
@@ -82,6 +85,8 @@ import type {
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
+  UpdateProjectRetentionOverrideRequest,
+  UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
   UpdateTrustedProxySettingsRequest,
@@ -1286,6 +1291,84 @@ export function listNotificationDeliveries(
     baseUrl,
     `/v1/settings/notification-channels/${channelId}/deliveries`,
     { headers: authHeaders(token) },
+  )
+}
+
+// ── Retention Policy API ────────────────────────────────────────
+
+export function getRetentionPolicy(
+  baseUrl: string,
+  token: string,
+): Promise<RetentionPolicyResponse> {
+  return request<RetentionPolicyResponse>(baseUrl, '/v1/settings/retention', {
+    headers: authHeaders(token),
+  })
+}
+
+export function updateRetentionPolicy(
+  baseUrl: string,
+  token: string,
+  data: UpdateRetentionPolicyRequest,
+): Promise<RetentionPolicyResponse> {
+  return request<RetentionPolicyResponse>(baseUrl, '/v1/settings/retention', {
+    method: 'PUT',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
+}
+
+export function getRetentionLastCleanup(
+  baseUrl: string,
+  token: string,
+): Promise<RetentionCleanupSummaryResponse> {
+  return request<RetentionCleanupSummaryResponse>(
+    baseUrl,
+    '/v1/settings/retention/last-cleanup',
+    { headers: authHeaders(token) },
+  )
+}
+
+export function getProjectRetention(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+): Promise<EffectiveProjectRetentionResponse> {
+  return request<EffectiveProjectRetentionResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/retention`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function updateProjectRetention(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  data: UpdateProjectRetentionOverrideRequest,
+): Promise<EffectiveProjectRetentionResponse> {
+  return request<EffectiveProjectRetentionResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/retention`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export async function deleteProjectRetention(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+): Promise<EffectiveProjectRetentionResponse> {
+  return request<EffectiveProjectRetentionResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/retention`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    },
   )
 }
 

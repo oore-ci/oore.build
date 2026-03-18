@@ -29,6 +29,17 @@ Rules:
   - Frontend: Sidebar nav entry under Admin section.
   - OpenAPI spec updated with Notification Channels tag and all new endpoints/schemas.
   - Email channel deferred to [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
+- **OOR-137: Build retention and cleanup policies** — automatic cleanup of old builds and artifacts.
+  - Backend: retention policy engine with three criteria (max age, max count, max artifact size per project).
+  - Global singleton settings table + per-project override table (migration 020).
+  - Background cleanup job runs at configurable interval (default 1h), supports dry-run mode.
+  - Two cleanup modes: `artifacts_only` (delete files, mark builds as Expired) or `full` (delete everything).
+  - Storage deletion support added to `StorageBackend` (S3 + local).
+  - `BuildStatus::valid_transitions()` updated: terminal states can now transition to `Expired`.
+  - API endpoints: `GET/PUT /v1/settings/retention`, `GET /v1/settings/retention/last-cleanup`, `GET/PUT/DELETE /v1/projects/{project_id}/retention`.
+  - Frontend: dedicated `/settings/retention` page with policy form, last-cleanup summary, protected statuses.
+  - Navigation: "Retention" item added to admin sidebar.
+  - Linear: https://linear.app/oorebuild/issue/OOR-137/build-retention-and-cleanup-policies
 
 - UX journey audit — multi-persona frontend fixes across `apps/web`:
   - Session expiry: added 5-minute warning toast + auto-redirect to login on expiry.
