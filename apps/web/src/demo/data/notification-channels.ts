@@ -1,0 +1,91 @@
+import type {
+  NotificationChannel,
+  NotificationDelivery,
+} from '@/lib/types'
+import {
+  ago,
+  BUILD_IDS,
+  DEMO_USER_ID,
+  NOTIFICATION_CHANNEL_IDS,
+  USER_IDS,
+} from '../seed'
+
+export const demoNotificationChannels: Array<NotificationChannel> = [
+  {
+    id: NOTIFICATION_CHANNEL_IDS.webhook,
+    name: 'Build Failures Webhook',
+    channel_type: 'webhook',
+    enabled: true,
+    events: ['failed', 'timed_out'],
+    has_url: true,
+    has_secret: true,
+    created_by: DEMO_USER_ID,
+    created_at: ago(86400 * 14),
+    updated_at: ago(86400 * 2),
+  },
+  {
+    id: NOTIFICATION_CHANNEL_IDS.mattermost,
+    name: 'Team Mattermost',
+    channel_type: 'mattermost',
+    enabled: true,
+    events: [],
+    has_url: true,
+    has_secret: false,
+    created_by: USER_IDS.admin,
+    created_at: ago(86400 * 7),
+    updated_at: ago(86400 * 7),
+  },
+]
+
+export const demoNotificationDeliveries: Array<NotificationDelivery> = [
+  {
+    id: 'delivery-demo-001',
+    channel_id: NOTIFICATION_CHANNEL_IDS.webhook,
+    build_id: BUILD_IDS.failed1,
+    event_type: 'failed',
+    status: 'delivered',
+    attempt_count: 1,
+    created_at: ago(3600 * 4),
+    delivered_at: ago(3600 * 4),
+  },
+  {
+    id: 'delivery-demo-002',
+    channel_id: NOTIFICATION_CHANNEL_IDS.webhook,
+    build_id: BUILD_IDS.timedOut1,
+    event_type: 'timed_out',
+    status: 'delivered',
+    attempt_count: 1,
+    created_at: ago(3600 * 8),
+    delivered_at: ago(3600 * 8),
+  },
+  {
+    id: 'delivery-demo-003',
+    channel_id: NOTIFICATION_CHANNEL_IDS.webhook,
+    build_id: BUILD_IDS.failed2,
+    event_type: 'failed',
+    status: 'failed',
+    attempt_count: 3,
+    last_error: 'Connection timed out after 10s',
+    created_at: ago(86400),
+  },
+  {
+    id: 'delivery-demo-004',
+    channel_id: NOTIFICATION_CHANNEL_IDS.mattermost,
+    build_id: BUILD_IDS.succeeded1,
+    event_type: 'succeeded',
+    status: 'delivered',
+    attempt_count: 1,
+    created_at: ago(1800),
+    delivered_at: ago(1800),
+  },
+  {
+    id: 'delivery-demo-005',
+    channel_id: NOTIFICATION_CHANNEL_IDS.mattermost,
+    build_id: BUILD_IDS.failed1,
+    event_type: 'failed',
+    status: 'delivered',
+    attempt_count: 1,
+    created_at: ago(3600 * 4),
+    delivered_at: ago(3600 * 4),
+  },
+]

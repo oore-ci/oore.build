@@ -71,6 +71,12 @@ export const INTEGRATION_IDS = {
   gitlab: 'integ-demo-gl-001',
 } as const
 
+// ── Notification Channel IDs ─────────────────────────────────────
+export const NOTIFICATION_CHANNEL_IDS = {
+  webhook: 'notif-demo-001',
+  mattermost: 'notif-demo-002',
+} as const
+
 // ── User IDs ──────────────────────────────────────────────────────
 export const USER_IDS = {
   owner: DEMO_USER_ID,

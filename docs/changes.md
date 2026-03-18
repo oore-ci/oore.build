@@ -10,6 +10,14 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-03-18
+
+- **Demo mode audit: add missing MSW handlers** — [OOR-146](https://linear.app/oorebuild/issue/OOR-146):
+  - Added demo handlers + fixture data for notification channels (CRUD, test, deliveries), build retention policy (global + per-project overrides), and audit log viewer (filtered, paginated).
+  - All three features (OOR-143, OOR-137, OOR-135) now fully functional in `VITE_DEMO_MODE=true`.
+  - New files: `demo/data/{notification-channels,retention,audit-logs}.ts`, `demo/handlers/{notifications,retention,audit-logs}.ts`.
+  - Updated `demo/seed.ts` (added `NOTIFICATION_CHANNEL_IDS`) and `demo/handlers/index.ts`.
+
 ## 2026-03-17
 
 - Audit log read endpoint and frontend viewer ([OOR-135](https://linear.app/oorebuild/issue/OOR-135)):
