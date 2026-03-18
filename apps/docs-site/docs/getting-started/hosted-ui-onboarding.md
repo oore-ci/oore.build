@@ -12,6 +12,24 @@ Use this guide after installing backend binaries to complete setup from `https:/
 It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
 :::
 
+## Preflight checks
+
+Before opening the Hosted UI, verify your backend is reachable over HTTPS from your local machine (where you run the browser). Replace `YOUR_URL` with your actual backend URL.
+
+1. **Verify HTTPS connection**:
+   ```bash
+   # Should return HTTP 200/401/403, not a timeout or DNS error
+   curl -I https://YOUR_URL/healthz
+   ```
+
+2. **Verify public status reachability**:
+   ```bash
+   # Should return JSON with "ready": false (if not set up)
+   curl https://YOUR_URL/v1/public/setup-status
+   ```
+
+If these commands fail, check your tunnel/reverse proxy configuration and ensure the Oore daemon is running. See [Troubleshooting](/operations/troubleshooting) if you hit DNS or SSL errors.
+
 ## 1. Start the daemon
 
 ```bash

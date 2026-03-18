@@ -14,7 +14,37 @@ If you’re evaluating Oore CI, this page is the shortest path to your first gre
 
 Before broader rollout, review: [Known Alpha Limitations](/getting-started/known-limitations).
 
+## Release Channels
+
+Oore CI uses three release channels to balance stability and velocity.
+
+| Channel | Frequency | Stability | Recommended For |
+|---|---|---|---|
+| **stable** | ~Weekly | Highest | Typical evaluation and production usage. |
+| **beta** | ~Daily | Moderate | Previewing upcoming features. |
+| **alpha** | Per-commit | Experimental | Testing bug fixes or contributing code. |
+
+### Install/Update Examples
+
+```bash
+# Install stable (default)
+curl -fsSL https://oore.build/install | bash
+
+# Install alpha
+curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+
+# Update to latest on your current channel
+oore update
+```
+
 ## The two supported onboarding paths
+
+Choosing the right path depends on your environment and whether your daemon is reachable from the public internet.
+
+| Path | Use When | Requirements | Tradeoffs |
+|---|---|---|---|
+| **Local-only** | Fast local evaluation on a single Mac. | macOS, loopback access (`127.0.0.1`) | No remote UI access; authentication is loopback-only. |
+| **Hosted UI** | Team collaboration or remote dashboard access. | macOS, **HTTPS-reachable URL**, OIDC provider. | Requires a tunnel (e.g. Cloudflare) and an OIDC provider (e.g. GitHub). |
 
 ### Path A: Local-first (no HTTPS required)
 
@@ -46,7 +76,7 @@ Continue with:
 
 Best when you want the hosted UI at `https://ci.oore.build` from day one.
 
-Important constraint: a browser page loaded from `https://ci.oore.build` cannot call `http://127.0.0.1:*`.
+**Important constraint**: Browsers block `https` pages (like `ci.oore.build`) from making requests to `http://127.0.0.1` or other `http` origins. You **must** provide an `https://` URL for your backend.
 
 1. Install + start the daemon as above.
 2. Make your backend reachable over HTTPS (for example, via a tunnel):
