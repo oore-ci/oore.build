@@ -15,6 +15,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
+use crate::project_rbac::{
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
+};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -441,10 +444,12 @@ pub async fn create_build(
     Path(project_id): Path<String>,
     Json(req): Json<CreateBuildRequest>,
 ) -> ApiResult<CreateBuildResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "write").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
+
+    let effective =
+        resolve_effective_project_role(pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
 
     let requested_branch = normalize_optional(req.branch);
     let commit_sha = normalize_optional(req.commit_sha);

@@ -17,6 +17,8 @@ pub mod oidc;
 pub mod pipeline_ios_signing;
 pub mod pipeline_signing;
 pub mod pipelines;
+pub mod project_members;
+pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
 pub mod retention;
@@ -2168,6 +2170,17 @@ async fn build_router_inner(
             get(projects::get_project)
                 .patch(projects::update_project)
                 .delete(projects::delete_project),
+        )
+        // Project member endpoints
+        .route(
+            "/v1/projects/{project_id}/members",
+            get(project_members::list_project_members)
+                .post(project_members::add_project_member),
+        )
+        .route(
+            "/v1/projects/{project_id}/members/{user_id}",
+            axum::routing::patch(project_members::update_project_member)
+                .delete(project_members::remove_project_member),
         )
         // Pipeline endpoints
         .route(

@@ -1532,12 +1532,89 @@ pub struct ProjectDetailResponse {
     pub project: Project,
     pub pipeline_count: i64,
     pub build_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_user_role: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListProjectsResponse {
     pub projects: Vec<Project>,
     pub total: i64,
+}
+
+// ── Project member / per-project RBAC types ─────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRole {
+    Maintainer,
+    Developer,
+    Viewer,
+}
+
+impl fmt::Display for ProjectRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Maintainer => "maintainer",
+            Self::Developer => "developer",
+            Self::Viewer => "viewer",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for ProjectRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "maintainer" => Ok(Self::Maintainer),
+            "developer" => Ok(Self::Developer),
+            "viewer" => Ok(Self::Viewer),
+            other => Err(format!("unknown project role: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectMember {
+    pub id: String,
+    pub project_id: String,
+    pub user_id: String,
+    pub role: ProjectRole,
+    pub user_email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_avatar_url: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AddProjectMemberRequest {
+    pub user_id: String,
+    pub role: ProjectRole,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AddProjectMemberResponse {
+    pub member: ProjectMember,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectMemberRequest {
+    pub role: ProjectRole,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectMemberResponse {
+    pub member: ProjectMember,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListProjectMembersResponse {
+    pub members: Vec<ProjectMember>,
 }
 
 // ── Pipeline API types ──────────────────────────────────────────
