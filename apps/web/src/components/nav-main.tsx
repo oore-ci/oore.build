@@ -1,6 +1,7 @@
 import { Link, useLocation, useMatches } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Audit01Icon,
   CommandLineIcon,
   CpuIcon,
   DashboardSquare01Icon,
@@ -76,6 +77,12 @@ const ADMIN_ITEMS: Array<NavItem> = [
     title: 'Preferences',
     to: '/settings/preferences',
     icon: Settings01Icon,
+    adminOnly: true,
+  },
+  {
+    title: 'Audit Log',
+    to: '/settings/audit-log',
+    icon: Audit01Icon,
     adminOnly: true,
   },
 ]

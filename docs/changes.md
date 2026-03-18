@@ -12,6 +12,13 @@ Rules:
 
 ## 2026-03-17
 
+- Audit log read endpoint and frontend viewer ([OOR-135](https://linear.app/oorebuild/issue/OOR-135)):
+  - Backend: `GET /v1/audit-logs` with filtering (actor, action, resource type, date range) and pagination. RBAC: owner/admin only.
+  - Frontend: `/settings/audit-log` page with table, filters, pagination. Added to sidebar nav under Admin.
+  - Contract types: `AuditLogEntry`, `ListAuditLogsResponse` in `oore-contract`.
+  - RBAC: `audit_logs:read` permission for owner and admin roles.
+  - OpenAPI spec updated.
+
 - **Notification channels (webhook + Mattermost)** — [OOR-143](https://linear.app/oorebuild/issue/OOR-143):
   - Backend: CRUD endpoints for notification channels under `/v1/settings/notification-channels` (create, list, get, update, delete, test, delivery history).
   - Backend: Background dispatch worker subscribes to `BuildStateEvent` broadcast and delivers notifications on terminal build states.

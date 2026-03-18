@@ -35,6 +35,7 @@ import type {
   InviteUserRequest,
   InviteUserResponse,
   ListArtifactsResponse,
+  ListAuditLogsResponse,
   ListBuildsResponse,
   ListInstallationsResponse,
   ListIntegrationsResponse,
@@ -1368,5 +1369,36 @@ export async function deleteProjectRetention(
       method: 'DELETE',
       headers: authHeaders(token),
     },
+  )
+}
+
+// ── Audit Logs ──────────────────────────────────────────────────
+
+export function listAuditLogs(
+  baseUrl: string,
+  token: string,
+  params?: {
+    limit?: number
+    offset?: number
+    actor_id?: string
+    action?: string
+    resource_type?: string
+    from_ts?: number
+    to_ts?: number
+  },
+): Promise<ListAuditLogsResponse> {
+  const query = new URLSearchParams()
+  if (params?.limit) query.set('limit', String(params.limit))
+  if (params?.offset) query.set('offset', String(params.offset))
+  if (params?.actor_id) query.set('actor_id', params.actor_id)
+  if (params?.action) query.set('action', params.action)
+  if (params?.resource_type) query.set('resource_type', params.resource_type)
+  if (params?.from_ts) query.set('from_ts', String(params.from_ts))
+  if (params?.to_ts) query.set('to_ts', String(params.to_ts))
+  const qs = query.toString()
+  return request<ListAuditLogsResponse>(
+    baseUrl,
+    `/v1/audit-logs${qs ? `?${qs}` : ''}`,
+    { headers: authHeaders(token) },
   )
 }

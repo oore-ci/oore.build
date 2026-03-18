@@ -1,3 +1,4 @@
+pub mod audit_logs;
 pub mod apple_api;
 pub mod artifacts;
 pub mod auth;
@@ -2215,6 +2216,8 @@ async fn build_router_inner(
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
+        // Audit log endpoints
+        .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
         // Runner endpoints
         .route("/v1/runners/register", post(runners::register_runner))
         .route(
