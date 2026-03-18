@@ -225,11 +225,9 @@ function RetentionPage() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>Global Retention Policy</span>
-                {policy && (
-                  <Badge variant={policy.enabled ? 'default' : 'outline'}>
-                    {policy.enabled ? 'Active' : 'Disabled'}
-                  </Badge>
-                )}
+                <Badge variant={enabled ? 'default' : 'outline'}>
+                  {enabled ? 'Active' : 'Disabled'}
+                </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
