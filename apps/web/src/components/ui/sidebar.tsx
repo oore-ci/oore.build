@@ -97,6 +97,10 @@ function SidebarProvider({
   }, [isMobile, setOpen, setOpenMobile])
 
   // Adds a keyboard shortcut to toggle the sidebar.
+  // Use a ref so the mount-only listener always calls the latest toggleSidebar.
+  const toggleRef = React.useRef(toggleSidebar)
+  toggleRef.current = toggleSidebar
+
   useMountEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -104,7 +108,7 @@ function SidebarProvider({
         (event.metaKey || event.ctrlKey)
       ) {
         event.preventDefault()
-        toggleSidebar()
+        toggleRef.current()
       }
     }
 
