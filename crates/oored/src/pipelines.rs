@@ -16,6 +16,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
+use crate::project_rbac::{
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
+};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -369,7 +372,14 @@ pub async fn create_pipeline(
     Path(project_id): Path<String>,
     Json(req): Json<CreatePipelineRequest>,
 ) -> ApiResult<CreatePipelineResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "write").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+
+    let effective =
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    require_project_permission(&effective, ProjectPermission::ManagePipelines)?;
 
     let name = req.name.trim();
     if name.is_empty() {
@@ -380,14 +390,11 @@ pub async fn create_pipeline(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
-
     // Validate project exists
     let project_exists: bool =
         sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
             .bind(&project_id)
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .unwrap_or(false);
 
@@ -409,7 +416,7 @@ pub async fn create_pipeline(
             tc_errors.join("; "),
         ));
     }
-    if project_trigger_mode(pool, &project_id).await? == ProjectTriggerMode::ManualOnly {
+    if project_trigger_mode(&pool, &project_id).await? == ProjectTriggerMode::ManualOnly {
         let local_tc_errors = validate_manual_only_trigger_config(&trigger_config);
         if !local_tc_errors.is_empty() {
             return Err(api_err(
@@ -478,7 +485,7 @@ pub async fn create_pipeline(
     .bind(&trigger_config_json)
     .bind(&concurrency_json)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to create pipeline");
@@ -492,7 +499,7 @@ pub async fn create_pipeline(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "pipeline_created",
         "pipeline",
@@ -527,10 +534,12 @@ pub async fn list_pipelines(
     Path(project_id): Path<String>,
     Query(params): Query<ListPipelinesQuery>,
 ) -> ApiResult<ListPipelinesResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
+
+    let effective =
+        resolve_effective_project_role(pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    require_project_permission(&effective, ProjectPermission::Read)?;
 
     // Validate project exists
     let project_exists: bool =

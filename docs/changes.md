@@ -23,6 +23,19 @@ Rules:
   - OpenAPI spec updated with Notification Channels tag and all new endpoints/schemas.
   - Email channel deferred to [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
 
+- **Granular RBAC with per-project permissions** (OOR-136, backend-only):
+  - Added `project_members` table (migration 020) with per-project roles: `maintainer`, `developer`, `viewer`.
+  - New `project_rbac` module: project-scoped authorization (`resolve_effective_project_role`, `check_project_permission`). Owner/admin bypass membership (implicit full access).
+  - New API endpoints: `GET/POST /v1/projects/{id}/members`, `PATCH/DELETE /v1/projects/{id}/members/{user_id}`.
+  - `list_projects` now filters by membership for non-admin users.
+  - `get_project` returns `current_user_role` in response.
+  - `update_project`, `delete_project`, `create_pipeline`, `list_pipelines`, `create_build` now use project-level permission checks.
+  - Project creators are auto-added as `maintainer`.
+  - No backfill: existing developer/qa_viewer users must be explicitly added to projects.
+  - Contract types added to `oore-contract`: `ProjectRole`, `ProjectMember`, request/response types.
+  - OpenAPI spec updated.
+  - Linear: https://linear.app/oorebuild/issue/OOR-136/granular-rbac-with-per-project-permissions
+
 - UX journey audit — multi-persona frontend fixes across `apps/web`:
   - Session expiry: added 5-minute warning toast + auto-redirect to login on expiry.
   - Build notifications: `document.title` updates with status emoji + browser Notification API on terminal state.

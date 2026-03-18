@@ -85,6 +85,11 @@ use utoipa::OpenApi;
         paths::get_project,
         paths::update_project,
         paths::delete_project,
+        // ── Project Members ──
+        paths::list_project_members,
+        paths::add_project_member,
+        paths::update_project_member,
+        paths::remove_project_member,
         // ── Pipelines ──
         paths::create_pipeline,
         paths::list_pipelines,
@@ -208,6 +213,14 @@ use utoipa::OpenApi;
         oore_contract::UpdateProjectRequest,
         oore_contract::ProjectDetailResponse,
         oore_contract::ListProjectsResponse,
+        // Project Members
+        oore_contract::ProjectRole,
+        oore_contract::ProjectMember,
+        oore_contract::AddProjectMemberRequest,
+        oore_contract::AddProjectMemberResponse,
+        oore_contract::UpdateProjectMemberRequest,
+        oore_contract::UpdateProjectMemberResponse,
+        oore_contract::ListProjectMembersResponse,
         // Pipelines
         oore_contract::BuildPlatform,
         oore_contract::PipelineCommandStages,
@@ -323,6 +336,7 @@ use utoipa::OpenApi;
         (name = "Instance Settings", description = "Instance-wide configuration — artifact storage, key storage preferences."),
         (name = "Integrations", description = "SCM integrations — local git, GitHub App, and GitLab."),
         (name = "Projects", description = "Project CRUD — each project groups one or more pipelines."),
+        (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
@@ -1053,6 +1067,62 @@ mod paths {
         )
     )]
     pub(super) async fn delete_project() {}
+
+    // ── Project Members ──
+
+    /// List project members
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/members", tag = "Project Members",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Member list", body = ListProjectMembersResponse),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_project_members() {}
+
+    /// Add a member to a project
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/members", tag = "Project Members",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = AddProjectMemberRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Member added", body = AddProjectMemberResponse),
+            (status = 400, description = "Invalid user or user already has implicit access", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+            (status = 409, description = "User is already a member", body = ApiError),
+        )
+    )]
+    pub(super) async fn add_project_member() {}
+
+    /// Update a project member's role
+    #[utoipa::path(patch, path = "/v1/projects/{project_id}/members/{user_id}", tag = "Project Members",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("user_id" = String, Path, description = "User ID"),
+        ),
+        request_body = UpdateProjectMemberRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Member role updated", body = UpdateProjectMemberResponse),
+            (status = 404, description = "Project or member not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn update_project_member() {}
+
+    /// Remove a member from a project
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/members/{user_id}", tag = "Project Members",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("user_id" = String, Path, description = "User ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Member removed"),
+            (status = 404, description = "Project or member not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn remove_project_member() {}
 
     // ── Pipelines ──
 
