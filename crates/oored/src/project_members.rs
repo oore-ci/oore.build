@@ -215,6 +215,39 @@ pub async fn update_project_member(
 
     let now = now_unix();
 
+    // Prevent demoting the last maintainer — would leave project unmanageable
+    if req.role != ProjectRole::Maintainer {
+        let current_role: Option<String> = sqlx::query_scalar(
+            "SELECT role FROM project_members WHERE project_id = ?1 AND user_id = ?2",
+        )
+        .bind(&project_id)
+        .bind(&user_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to check current member role");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to check member role")
+        })?;
+
+        if current_role.as_deref() == Some("maintainer") {
+            let maintainer_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM project_members WHERE project_id = ?1 AND role = 'maintainer'",
+            )
+            .bind(&project_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+
+            if maintainer_count <= 1 {
+                return Err(api_err(
+                    StatusCode::CONFLICT,
+                    "last_maintainer",
+                    "Cannot demote the last maintainer — project would become unmanageable",
+                ));
+            }
+        }
+    }
+
     let result = sqlx::query(
         "UPDATE project_members SET role = ?1, updated_at = ?2 WHERE project_id = ?3 AND user_id = ?4",
     )
@@ -288,6 +321,37 @@ pub async fn remove_project_member(
 
     let effective = resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
+
+    // Prevent removing the last maintainer — would leave project unmanageable
+    let target_role: Option<String> = sqlx::query_scalar(
+        "SELECT role FROM project_members WHERE project_id = ?1 AND user_id = ?2",
+    )
+    .bind(&project_id)
+    .bind(&user_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to check target member role");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to check member role")
+    })?;
+
+    if target_role.as_deref() == Some("maintainer") {
+        let maintainer_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM project_members WHERE project_id = ?1 AND role = 'maintainer'",
+        )
+        .bind(&project_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+        if maintainer_count <= 1 {
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "last_maintainer",
+                "Cannot remove the last maintainer — project would become unmanageable",
+            ));
+        }
+    }
 
     let result = sqlx::query(
         "DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2",

@@ -390,7 +390,7 @@ pub async fn create_project(
     // who will need explicit membership; admins/owners bypass membership checks).
     if auth.0.role != "owner" && auth.0.role != "admin" {
         let member_id = Uuid::new_v4().to_string();
-        let _ = sqlx::query(
+        sqlx::query(
             "INSERT INTO project_members (id, project_id, user_id, role, created_by, created_at, updated_at) \
              VALUES (?1, ?2, ?3, 'maintainer', ?3, ?4, ?4)",
         )
@@ -399,7 +399,11 @@ pub async fn create_project(
         .bind(&auth.0.user_id)
         .bind(now)
         .execute(&pool)
-        .await;
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to auto-add creator as project maintainer");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to add creator as project member")
+        })?;
     }
 
     info!(project_id = %project_id, name = %name, "project created");
