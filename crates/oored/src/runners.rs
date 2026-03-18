@@ -508,6 +508,20 @@ pub async fn update_job_status(
 
     let events = event_rows.iter().map(row_to_build_event).collect();
 
+    // Publish event for notification dispatch on terminal statuses
+    if target_status.is_terminal() {
+        state
+            .scheduler
+            .publish_event(crate::scheduler::BuildStateEvent {
+                build_id: job_id.clone(),
+                from_status: None,
+                to_status: target_status.to_string(),
+                actor: Some(actor_str.clone()),
+                reason: Some(reason.to_string()),
+                timestamp: crate::util::now_unix(),
+            });
+    }
+
     info!(
         build_id = %job_id,
         runner_id = %runner_id,

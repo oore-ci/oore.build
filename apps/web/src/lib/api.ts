@@ -13,10 +13,12 @@ import type {
   CreateBuildResponse,
   CreateLocalGitIntegrationRequest,
   CreateLocalGitIntegrationResponse,
+  CreateNotificationChannelRequest,
   CreatePipelineRequest,
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
+  DeleteNotificationChannelResponse,
   EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
@@ -36,6 +38,8 @@ import type {
   ListBuildsResponse,
   ListInstallationsResponse,
   ListIntegrationsResponse,
+  ListNotificationChannelsResponse,
+  ListNotificationDeliveriesResponse,
   ListPipelineIosDevicesResponse,
   ListPipelinesResponse,
   ListProjectsResponse,
@@ -45,6 +49,7 @@ import type {
   LocalLoginRequest,
   LocalLoginResponse,
   LogoutResponse,
+  NotificationChannelResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
   PipelineAndroidSigningResponse,
@@ -69,10 +74,12 @@ import type {
   SetupTrustedProxyConfigureResponse,
   SyncInstallationsResponse,
   SyncPipelineIosSigningResponse,
+  TestNotificationChannelResponse,
   TrustedProxySettingsResponse,
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
+  UpdateNotificationChannelRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
@@ -1183,6 +1190,106 @@ export function registerPipelineIosDevice(
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },
+  )
+}
+
+// ── Notification channels ───────────────────────────────────────
+
+export function listNotificationChannels(
+  baseUrl: string,
+  token: string,
+): Promise<ListNotificationChannelsResponse> {
+  return request<ListNotificationChannelsResponse>(
+    baseUrl,
+    '/v1/settings/notification-channels',
+    { headers: authHeaders(token) },
+  )
+}
+
+export function createNotificationChannel(
+  baseUrl: string,
+  token: string,
+  data: CreateNotificationChannelRequest,
+): Promise<NotificationChannelResponse> {
+  return request<NotificationChannelResponse>(
+    baseUrl,
+    '/v1/settings/notification-channels',
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function getNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<NotificationChannelResponse> {
+  return request<NotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function updateNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+  data: UpdateNotificationChannelRequest,
+): Promise<NotificationChannelResponse> {
+  return request<NotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function deleteNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<DeleteNotificationChannelResponse> {
+  return request<DeleteNotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function testNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<TestNotificationChannelResponse> {
+  return request<TestNotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}/test`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function listNotificationDeliveries(
+  baseUrl: string,
+  token: string,
+  channelId: string,
+): Promise<ListNotificationDeliveriesResponse> {
+  return request<ListNotificationDeliveriesResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${channelId}/deliveries`,
+    { headers: authHeaders(token) },
   )
 }
 

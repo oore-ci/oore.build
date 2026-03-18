@@ -885,6 +885,76 @@ export interface SyncPipelineIosSigningResponse {
   warnings: Array<string>
 }
 
+// ── Notification channels ───────────────────────────────────────
+
+export type NotificationChannelType = 'webhook' | 'mattermost'
+export type NotificationDeliveryStatus = 'pending' | 'delivered' | 'failed'
+
+export interface NotificationChannel {
+  id: string
+  name: string
+  channel_type: NotificationChannelType
+  enabled: boolean
+  events: Array<string>
+  has_url: boolean
+  has_secret: boolean
+  created_by?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface CreateNotificationChannelRequest {
+  name: string
+  channel_type: NotificationChannelType
+  enabled?: boolean
+  events?: Array<string>
+  url: string
+  secret?: string
+}
+
+export interface UpdateNotificationChannelRequest {
+  name?: string
+  enabled?: boolean
+  events?: Array<string>
+  url?: string
+  secret?: string
+}
+
+export interface NotificationChannelResponse {
+  channel: NotificationChannel
+}
+
+export interface ListNotificationChannelsResponse {
+  channels: Array<NotificationChannel>
+  total: number
+}
+
+export interface DeleteNotificationChannelResponse {
+  deleted: boolean
+}
+
+export interface TestNotificationChannelResponse {
+  success: boolean
+  error?: string
+}
+
+export interface NotificationDelivery {
+  id: string
+  channel_id: string
+  build_id: string
+  event_type: string
+  status: NotificationDeliveryStatus
+  attempt_count: number
+  last_error?: string
+  created_at: number
+  delivered_at?: number
+}
+
+export interface ListNotificationDeliveriesResponse {
+  deliveries: Array<NotificationDelivery>
+  total: number
+}
+
 // ── Retention policy types ──────────────────────────────────────
 
 export type RetentionCleanupTarget = 'artifacts_only' | 'full'

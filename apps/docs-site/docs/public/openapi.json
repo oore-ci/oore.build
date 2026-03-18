@@ -3179,6 +3179,424 @@
         ]
       }
     },
+    "/v1/settings/notification-channels": {
+      "get": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "List notification channels",
+        "description": "Returns all configured notification channels.",
+        "operationId": "list_notification_channels",
+        "responses": {
+          "200": {
+            "description": "List of notification channels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListNotificationChannelsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "Create notification channel",
+        "description": "Creates a new webhook or Mattermost notification channel.",
+        "operationId": "create_notification_channel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNotificationChannelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Channel created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/notification-channels/{id}": {
+      "get": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "Get notification channel",
+        "description": "Returns details for a single notification channel.",
+        "operationId": "get_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Channel details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "Update notification channel",
+        "description": "Updates an existing notification channel. Omitted fields are preserved.",
+        "operationId": "update_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNotificationChannelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Channel updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationChannelResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "Delete notification channel",
+        "description": "Permanently deletes a notification channel and its delivery history.",
+        "operationId": "delete_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Channel deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteNotificationChannelResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/notification-channels/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "List notification deliveries",
+        "description": "Returns delivery history for a notification channel (most recent 100).",
+        "operationId": "list_notification_deliveries",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivery history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListNotificationDeliveriesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/notification-channels/{id}/test": {
+      "post": {
+        "tags": [
+          "Notification Channels"
+        ],
+        "summary": "Test notification channel",
+        "description": "Sends a test notification to verify the channel is configured correctly.",
+        "operationId": "test_notification_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Channel ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Test result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestNotificationChannelResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/settings/preferences": {
       "get": {
         "tags": [
@@ -5228,6 +5646,43 @@
           }
         }
       },
+      "CreateNotificationChannelRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "channel_type",
+          "url"
+        ],
+        "properties": {
+          "channel_type": {
+            "$ref": "#/components/schemas/NotificationChannelType"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Terminal build statuses to notify on. Empty or omitted means all terminal events."
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "HMAC secret for signing webhook payloads (webhook only, optional)."
+          },
+          "url": {
+            "type": "string",
+            "description": "Webhook/Mattermost incoming webhook URL (required)."
+          }
+        }
+      },
       "CreatePipelineRequest": {
         "type": "object",
         "required": [
@@ -5335,6 +5790,17 @@
         "properties": {
           "project": {
             "$ref": "#/components/schemas/Project"
+          }
+        }
+      },
+      "DeleteNotificationChannelResponse": {
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
           }
         }
       },
@@ -6045,6 +6511,44 @@
           }
         }
       },
+      "ListNotificationChannelsResponse": {
+        "type": "object",
+        "required": [
+          "channels",
+          "total"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationChannel"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListNotificationDeliveriesResponse": {
+        "type": "object",
+        "required": [
+          "deliveries",
+          "total"
+        ],
+        "properties": {
+          "deliveries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationDelivery"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ListPipelineIosDevicesResponse": {
         "type": "object",
         "required": [
@@ -6217,6 +6721,138 @@
             "type": "boolean"
           }
         }
+      },
+      "NotificationChannel": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "channel_type",
+          "enabled",
+          "has_url",
+          "has_secret",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "channel_type": {
+            "$ref": "#/components/schemas/NotificationChannelType"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Which terminal build statuses trigger this channel. Empty means all."
+          },
+          "has_secret": {
+            "type": "boolean",
+            "description": "True if the channel has an HMAC secret configured (webhook only)."
+          },
+          "has_url": {
+            "type": "boolean",
+            "description": "True if the channel has a URL configured (the actual URL is never exposed)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "NotificationChannelResponse": {
+        "type": "object",
+        "required": [
+          "channel"
+        ],
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/NotificationChannel"
+          }
+        }
+      },
+      "NotificationChannelType": {
+        "type": "string",
+        "enum": [
+          "webhook",
+          "mattermost"
+        ]
+      },
+      "NotificationDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "channel_id",
+          "build_id",
+          "event_type",
+          "status",
+          "attempt_count",
+          "created_at"
+        ],
+        "properties": {
+          "attempt_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "delivered_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/NotificationDeliveryStatus"
+          }
+        }
+      },
+      "NotificationDeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "delivered",
+          "failed"
+        ]
       },
       "OidcCallbackResponse": {
         "type": "object",
@@ -7461,6 +8097,23 @@
           }
         }
       },
+      "TestNotificationChannelResponse": {
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
       "TriggerConfig": {
         "type": "object",
         "properties": {
@@ -7652,6 +8305,46 @@
             "items": {
               "$ref": "#/components/schemas/StepResult"
             }
+          }
+        }
+      },
+      "UpdateNotificationChannelRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "events": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New HMAC secret. Omit to keep existing; pass empty string to clear."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New URL. Omit to keep existing."
           }
         }
       },
@@ -8194,6 +8887,10 @@
     {
       "name": "Artifacts",
       "description": "Build artifact management — upload, list, download via signed URLs."
+    },
+    {
+      "name": "Notification Channels",
+      "description": "Outbound notification channel configuration — webhook, Mattermost."
     },
     {
       "name": "Webhooks",
