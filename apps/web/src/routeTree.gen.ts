@@ -22,6 +22,7 @@ import { Route as SetupModeRouteImport } from './routes/setup/mode'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
+import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
 import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
@@ -102,6 +103,11 @@ const SettingsUsersRoute = SettingsUsersRouteImport.update({
 const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   id: '/settings/runners',
   path: '/settings/runners',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRetentionRoute = SettingsRetentionRouteImport.update({
+  id: '/settings/retention',
+  path: '/settings/retention',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsPreferencesRoute = SettingsPreferencesRouteImport.update({
@@ -204,6 +210,7 @@ export interface FileRoutesByFullPath {
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
+  '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
@@ -234,6 +241,7 @@ export interface FileRoutesByTo {
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
+  '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
@@ -266,6 +274,7 @@ export interface FileRoutesById {
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
+  '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
@@ -299,6 +308,7 @@ export interface FileRouteTypes {
     | '/builds/$buildId'
     | '/settings/artifacts'
     | '/settings/preferences'
+    | '/settings/retention'
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
@@ -329,6 +339,7 @@ export interface FileRouteTypes {
     | '/builds/$buildId'
     | '/settings/artifacts'
     | '/settings/preferences'
+    | '/settings/retention'
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
@@ -360,6 +371,7 @@ export interface FileRouteTypes {
     | '/builds/$buildId'
     | '/settings/artifacts'
     | '/settings/preferences'
+    | '/settings/retention'
     | '/settings/runners'
     | '/settings/users'
     | '/setup/complete'
@@ -392,6 +404,7 @@ export interface RootRouteChildren {
   BuildsBuildIdRoute: typeof BuildsBuildIdRoute
   SettingsArtifactsRoute: typeof SettingsArtifactsRoute
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
+  SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   BuildsIndexRoute: typeof BuildsIndexRoute
@@ -501,6 +514,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/runners'
       fullPath: '/settings/runners'
       preLoaderRoute: typeof SettingsRunnersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/retention': {
+      id: '/settings/retention'
+      path: '/settings/retention'
+      fullPath: '/settings/retention'
+      preLoaderRoute: typeof SettingsRetentionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/preferences': {
@@ -646,6 +666,7 @@ const rootRouteChildren: RootRouteChildren = {
   BuildsBuildIdRoute: BuildsBuildIdRoute,
   SettingsArtifactsRoute: SettingsArtifactsRoute,
   SettingsPreferencesRoute: SettingsPreferencesRoute,
+  SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   BuildsIndexRoute: BuildsIndexRoute,

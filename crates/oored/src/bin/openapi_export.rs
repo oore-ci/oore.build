@@ -64,6 +64,13 @@ use utoipa::OpenApi;
         paths::update_external_access_trusted_proxy_settings,
         paths::get_external_access_preflight,
         paths::configure_external_access_oidc,
+        // ── Retention Policy ──
+        paths::get_retention_policy,
+        paths::update_retention_policy,
+        paths::get_retention_last_cleanup,
+        paths::get_project_retention,
+        paths::update_project_retention,
+        paths::delete_project_retention,
         // ── Integrations ──
         paths::list_integrations,
         paths::get_integration,
@@ -310,6 +317,16 @@ use utoipa::OpenApi;
         oore_contract::InstancePreferences,
         oore_contract::InstancePreferencesResponse,
         oore_contract::UpdateInstancePreferencesRequest,
+        // Retention Policy
+        oore_contract::RetentionCleanupTarget,
+        oore_contract::RetentionPolicy,
+        oore_contract::RetentionPolicyResponse,
+        oore_contract::UpdateRetentionPolicyRequest,
+        oore_contract::ProjectRetentionOverride,
+        oore_contract::EffectiveProjectRetentionResponse,
+        oore_contract::UpdateProjectRetentionOverrideRequest,
+        oore_contract::RetentionCleanupSummary,
+        oore_contract::RetentionCleanupSummaryResponse,
         // Build Logs
         oore_contract::BuildLogChunk,
         oore_contract::AppendBuildLogsRequest,
@@ -334,6 +351,7 @@ use utoipa::OpenApi;
         (name = "Auth", description = "Mode-aware authentication and session management. Enabled only after setup is complete."),
         (name = "Users", description = "User management — invite, list, update roles, disable/re-enable."),
         (name = "Instance Settings", description = "Instance-wide configuration — artifact storage, key storage preferences."),
+        (name = "Retention Policy", description = "Build retention and cleanup — automatic cleanup of old builds and artifacts based on age, count, or size policies."),
         (name = "Integrations", description = "SCM integrations — local git, GitHub App, and GitLab."),
         (name = "Projects", description = "Project CRUD — each project groups one or more pipelines."),
         (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
@@ -828,6 +846,67 @@ mod paths {
         )
     )]
     pub(super) async fn configure_external_access_oidc() {}
+
+    // ── Retention Policy ──
+
+    /// Get global retention policy
+    #[utoipa::path(get, path = "/v1/settings/retention", tag = "Retention Policy",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Current retention policy", body = RetentionPolicyResponse),
+        )
+    )]
+    pub(super) async fn get_retention_policy() {}
+
+    /// Update global retention policy
+    #[utoipa::path(put, path = "/v1/settings/retention", tag = "Retention Policy",
+        request_body = UpdateRetentionPolicyRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Policy updated", body = RetentionPolicyResponse),
+        )
+    )]
+    pub(super) async fn update_retention_policy() {}
+
+    /// Get last cleanup summary
+    #[utoipa::path(get, path = "/v1/settings/retention/last-cleanup", tag = "Retention Policy",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Last cleanup summary", body = RetentionCleanupSummaryResponse),
+        )
+    )]
+    pub(super) async fn get_retention_last_cleanup() {}
+
+    /// Get project retention (effective policy merged with overrides)
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/retention", tag = "Retention Policy",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Effective project retention", body = EffectiveProjectRetentionResponse),
+        )
+    )]
+    pub(super) async fn get_project_retention() {}
+
+    /// Update project retention override
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/retention", tag = "Retention Policy",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = UpdateProjectRetentionOverrideRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Override updated", body = EffectiveProjectRetentionResponse),
+        )
+    )]
+    pub(super) async fn update_project_retention() {}
+
+    /// Delete project retention override (revert to global)
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/retention", tag = "Retention Policy",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Override removed", body = EffectiveProjectRetentionResponse),
+        )
+    )]
+    pub(super) async fn delete_project_retention() {}
 
     // ── Integrations ──
 
