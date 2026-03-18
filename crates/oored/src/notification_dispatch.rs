@@ -258,7 +258,7 @@ fn build_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "text": text,
         "username": "Oore CI",
-        "icon_url": "https://static.oore.build/logo192.png",
+        "icon_url": "https://static.oore.build/logo-avatar-192.png",
     })
 }
 
