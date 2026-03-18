@@ -358,10 +358,8 @@ async fn run_retention_cleanup(
                     let id: String = row.get("id");
                     let build_size: i64 = row.get("build_artifact_size");
                     if !effective_keep.contains(&status) {
-                        // Only count size reduction for builds not already marked by other criteria
-                        if candidate_ids.insert(id) {
-                            remaining -= build_size;
-                        }
+                        candidate_ids.insert(id);
+                        remaining -= build_size;
                     }
                 }
             }
