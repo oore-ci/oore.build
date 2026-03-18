@@ -12,6 +12,13 @@ Rules:
 
 ## 2026-03-17
 
+- Audit log read endpoint and frontend viewer ([OOR-135](https://linear.app/oorebuild/issue/OOR-135)):
+  - Backend: `GET /v1/audit-logs` with filtering (actor, action, resource type, date range) and pagination. RBAC: owner/admin only.
+  - Frontend: `/settings/audit-log` page with table, filters, pagination. Added to sidebar nav under Admin.
+  - Contract types: `AuditLogEntry`, `ListAuditLogsResponse` in `oore-contract`.
+  - RBAC: `audit_logs:read` permission for owner and admin roles.
+  - OpenAPI spec updated.
+
 - UX journey audit — multi-persona frontend fixes across `apps/web`:
   - Session expiry: added 5-minute warning toast + auto-redirect to login on expiry.
   - Build notifications: `document.title` updates with status emoji + browser Notification API on terminal state.

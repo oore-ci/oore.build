@@ -23,6 +23,7 @@ p, owner, runners, delete
 p, owner, integrations, read
 p, owner, integrations, write
 p, owner, integrations, delete
+p, owner, audit_logs, read
 
 p, admin, instance_settings, read
 p, admin, instance_settings, write
@@ -49,6 +50,7 @@ p, admin, runners, delete
 p, admin, integrations, read
 p, admin, integrations, write
 p, admin, integrations, delete
+p, admin, audit_logs, read
 
 p, developer, projects, read
 p, developer, projects, write

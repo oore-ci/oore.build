@@ -884,3 +884,21 @@ export interface SyncPipelineIosSigningResponse {
   synced_bundle_ids: Array<string>
   warnings: Array<string>
 }
+
+// ── Audit Logs ──────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: number
+  actor_id: string | null
+  actor_email: string | null
+  action: string
+  resource_type: string
+  resource_id: string | null
+  details: string | null
+  created_at: number
+}
+
+export interface ListAuditLogsResponse {
+  entries: Array<AuditLogEntry>
+  total: number
+}

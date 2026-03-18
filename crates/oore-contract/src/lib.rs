@@ -2032,6 +2032,26 @@ pub struct BuildLogsResponse {
     pub total: i64,
 }
 
+// ── Audit Logs ──────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub actor_id: Option<String>,
+    pub actor_email: Option<String>,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: Option<String>,
+    pub details: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListAuditLogsResponse {
+    pub entries: Vec<AuditLogEntry>,
+    pub total: i64,
+}
+
 // ── Tests ──────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -106,6 +106,8 @@ use utoipa::OpenApi;
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
+        // ── Audit Logs ──
+        paths::list_audit_logs,
         // ── Runners ──
         paths::register_runner,
         paths::list_runners,
@@ -294,6 +296,9 @@ use utoipa::OpenApi;
         oore_contract::AppendBuildLogsRequest,
         oore_contract::AppendBuildLogsResponse,
         oore_contract::BuildLogsResponse,
+        // Audit Logs
+        oore_contract::AuditLogEntry,
+        oore_contract::ListAuditLogsResponse,
     )),
     tags(
         (name = "Health", description = "Health check endpoint"),
@@ -309,6 +314,7 @@ use utoipa::OpenApi;
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
+        (name = "Audit Logs", description = "Read-only audit trail of all user and system actions."),
         (name = "Webhooks", description = "Incoming webhook receivers for GitHub and GitLab."),
     ),
     security(
@@ -1477,4 +1483,28 @@ mod paths {
         )
     )]
     pub(super) async fn gitlab_webhook() {}
+
+    // ── Audit Logs ──
+
+    /// List audit log entries
+    ///
+    /// Returns a paginated, filterable list of audit log entries recording
+    /// user and system actions. Owner and admin roles only.
+    #[utoipa::path(get, path = "/v1/audit-logs", tag = "Audit Logs",
+        params(
+            ("limit" = Option<i64>, Query, description = "Page size (default 50, max 200)"),
+            ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+            ("actor_id" = Option<String>, Query, description = "Filter by actor user ID"),
+            ("action" = Option<String>, Query, description = "Filter by action string"),
+            ("resource_type" = Option<String>, Query, description = "Filter by resource type"),
+            ("from_ts" = Option<i64>, Query, description = "Start of time range (unix timestamp)"),
+            ("to_ts" = Option<i64>, Query, description = "End of time range (unix timestamp)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Paginated audit log entries", body = ListAuditLogsResponse),
+            (status = 403, description = "Insufficient permissions", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_audit_logs() {}
 }
