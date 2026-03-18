@@ -16,6 +16,8 @@
 
 <p align="center">
   <a href="https://zerodha.tech"><img src="https://zerodha.tech/static/images/github-badge.svg" /></a>
+  <br />
+  <a href="https://github.com/devaryakjha/oore.build/actions/workflows/validate.yml"><img src="https://github.com/devaryakjha/oore.build/actions/workflows/validate.yml/badge.svg?branch=master" alt="CI" /></a>
 </p>
 
 > **Alpha** — Oore CI is under active development. APIs, config formats, and CLI flags will change without notice. Use at your own risk.
