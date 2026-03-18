@@ -4,6 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
 import { useMountEffect } from '@/hooks/use-mount-effect'
+import { useSetupStatus } from '@/hooks/use-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
@@ -84,14 +85,11 @@ function LoginPage() {
   const expiresAt = useAuthStore((s) => s.expiresAt)
   const hasValidToken =
     !!token && expiresAt != null && expiresAt > Math.floor(Date.now() / 1000)
+  const setupStatusQuery = useSetupStatus()
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [runtimeMode, setRuntimeMode] = useState<'local' | 'remote' | null>(
-    null,
-  )
-  const [remoteAuthMode, setRemoteAuthMode] = useState<
-    'oidc' | 'trusted_proxy' | null
-  >(null)
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? null
+  const remoteAuthMode = setupStatusQuery.data?.remote_auth_mode ?? null
   const [localEmail, setLocalEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [connectivityIssue, setConnectivityIssue] =
@@ -133,32 +131,6 @@ function LoginPage() {
     return unsub
   })
 
-  useMountEffect(() => {
-    if (!instance) {
-      setRuntimeMode(null)
-      return
-    }
-
-    let canceled = false
-    getSetupStatus(instance.url)
-      .then((status) => {
-        if (!canceled) {
-          setRuntimeMode(status.runtime_mode)
-          setRemoteAuthMode(status.remote_auth_mode)
-        }
-      })
-      .catch(() => {
-        if (!canceled) {
-          setRuntimeMode(null)
-          setRemoteAuthMode(null)
-        }
-      })
-
-    return () => {
-      canceled = true
-    }
-  })
-
   const handleLogin = async () => {
     if (!instance) return
     setLoading(true)
@@ -185,9 +157,6 @@ function LoginPage() {
         setLoading(false)
         return
       }
-      setRuntimeMode(status.runtime_mode)
-      setRemoteAuthMode(status.remote_auth_mode)
-
       const localUi = isLoopbackHostname(window.location.hostname)
       const localBackend = isLoopbackHostname(
         resolveBackendHostname(instance.url),

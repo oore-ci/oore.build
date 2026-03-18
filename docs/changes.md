@@ -10,6 +10,16 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-03-18
+
+- **Ban direct useEffect — useMountEffect + ESLint enforcement** ([OOR-145](https://linear.app/oorebuild/issue/OOR-145)):
+  - Frontend: Created `useMountEffect` hook as the only sanctioned wrapper for mount-only effects.
+  - Frontend: Created sanctioned hooks for common reactive patterns: `useBreadcrumbLabel`, `useAutoScroll`, `useBuildNotification`, `useIndexAuthGuard`.
+  - Frontend: Replaced all 58 direct `useEffect` calls across 35 files with proper patterns: derived state, react-hook-form `values` prop, `onOpenChange` callbacks, `useMountEffect`, event handlers, and named hooks.
+  - Frontend: Added ESLint `no-restricted-syntax` rule banning `useEffect` / `React.useEffect` with exemptions for sanctioned hook files.
+  - Frontend: Form resets now use react-hook-form `values` prop (runners, retention, notifications, project settings, setup/mode).
+  - Frontend: Login page runtime mode now derived from `useSetupStatus()` query instead of one-shot fetch.
+
 ## 2026-03-17
 
 - Audit log read endpoint and frontend viewer ([OOR-135](https://linear.app/oorebuild/issue/OOR-135)):

@@ -38,6 +38,7 @@ export default [
       '**/use-build-notification.ts',
       '**/use-session-countdown.ts',
       '**/use-log-stream.ts',
+      '**/use-index-auth-guard.ts',
     ],
     rules: {
       'no-restricted-syntax': 'off',

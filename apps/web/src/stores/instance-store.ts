@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Instance } from '@/lib/types'
 import { queryClient } from '@/lib/query-client'
-import { clearAuthStorageForInstance } from '@/stores/auth-store'
+import { clearAuthStorageForInstance, useAuthStore } from '@/stores/auth-store'
+import { useSetupStore } from '@/stores/setup-store'
 
 function generateInstanceId(): string {
   // crypto can be missing in some test environments / older runtimes
@@ -97,6 +98,8 @@ export const useInstanceStore = create<InstanceStoreState>()(
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
         if (state.instances[id]) {
           set({ activeInstanceId: id })
+          useSetupStore.getState().setInstanceContext(id)
+          useAuthStore.getState().setInstanceContext(id)
         }
       },
 

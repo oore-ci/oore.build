@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -13,7 +13,6 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import CreateProjectDialog from './-create-project-dialog'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -85,20 +84,21 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  useMountEffect(() => {
-    if (search.openCreate !== '1') return
-    if (projectsLoading) return
-
-    if (!projectsError && canWriteProjects) {
+  const openCreateRef = useRef(false)
+  if (
+    search.openCreate === '1' &&
+    !projectsLoading &&
+    !projectsError &&
+    canWriteProjects &&
+    !openCreateRef.current
+  ) {
+    openCreateRef.current = true
+    // Schedule state update for after render completes
+    queueMicrotask(() => {
       setCreateOpen(true)
-    }
-
-    void navigate({
-      to: '/projects',
-      search: {},
-      replace: true,
+      void navigate({ to: '/projects', search: {}, replace: true })
     })
-  })
+  }
 
   return (
     <PageLayout width="wide">

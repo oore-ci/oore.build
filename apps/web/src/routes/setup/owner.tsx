@@ -1,9 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -132,18 +131,15 @@ function OwnerStep() {
       })
     : null
 
-  useMountEffect(() => {
-    if (!status) return
+  const ownerStepDone = useRef(false)
+  if (status && !ownerStepDone.current) {
+    ownerStepDone.current = true
     setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-  })
-
-  useMountEffect(() => {
-    if (!status) return
     if (status.state === 'owner_created') {
       setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
-      void navigate({ to: '/setup/complete' })
+      queueMicrotask(() => void navigate({ to: '/setup/complete' }))
     }
-  })
+  }
 
   if (!status) {
     return (

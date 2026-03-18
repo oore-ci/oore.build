@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useRef } from 'react'
 import {
   Link,
   Outlet,
@@ -18,7 +18,6 @@ import {
   Search01Icon,
 } from '@hugeicons/core-free-icons'
 import type { ErrorComponentProps } from '@tanstack/react-router'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
@@ -186,10 +185,13 @@ function RootLayout() {
 
   useSessionMonitor()
 
-  useMountEffect(() => {
+  // Sync instance context on initial render (store action handles subsequent changes)
+  const instanceContextSynced = useRef(false)
+  if (activeInstanceId && !instanceContextSynced.current) {
+    instanceContextSynced.current = true
     useSetupStore.getState().setInstanceContext(activeInstanceId)
     useAuthStore.getState().setInstanceContext(activeInstanceId)
-  })
+  }
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
