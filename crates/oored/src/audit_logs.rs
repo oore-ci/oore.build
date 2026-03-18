@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use oore_contract::{AuditLogEntry, ApiError, ListAuditLogsResponse};
+use oore_contract::{ApiError, AuditLogEntry, ListAuditLogsResponse};
 use serde::Deserialize;
 use sqlx::Row;
 use tracing::error;

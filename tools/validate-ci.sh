@@ -4,9 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "[validate-ci] Linting Woodpecker workflow config"
-bash tools/lint-woodpecker.sh .woodpecker.yml
-
 run_lane() {
   local lane_name="$1"
   shift

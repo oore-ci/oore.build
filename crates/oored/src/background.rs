@@ -368,12 +368,11 @@ async fn run_retention_cleanup(
         // Process candidates
         for build_id in &candidate_ids {
             // Load artifacts for this build (needed for both dry-run counting and real deletion)
-            let artifacts = sqlx::query(
-                "SELECT id, file_path, file_size FROM artifacts WHERE build_id = ?1",
-            )
-            .bind(build_id)
-            .fetch_all(pool)
-            .await?;
+            let artifacts =
+                sqlx::query("SELECT id, file_path, file_size FROM artifacts WHERE build_id = ?1")
+                    .bind(build_id)
+                    .fetch_all(pool)
+                    .await?;
 
             if policy.dry_run {
                 // Count what *would* be cleaned up so dry-run can preview storage impact
@@ -419,11 +418,10 @@ async fn run_retention_cleanup(
             match effective.cleanup_target {
                 RetentionCleanupTarget::ArtifactsOnly => {
                     // Delete artifact rows (storage files already deleted above)
-                    if let Err(e) =
-                        sqlx::query("DELETE FROM artifacts WHERE build_id = ?1")
-                            .bind(build_id)
-                            .execute(pool)
-                            .await
+                    if let Err(e) = sqlx::query("DELETE FROM artifacts WHERE build_id = ?1")
+                        .bind(build_id)
+                        .execute(pool)
+                        .await
                     {
                         warn!(build_id = %build_id, error = %e, "retention_cleanup: failed to delete artifact rows");
                     }

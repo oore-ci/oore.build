@@ -1,6 +1,4 @@
-import type { AuditLogEntry } from '@/lib/types'
 import {
-  ago,
   BUILD_IDS,
   DEMO_USER_EMAIL,
   DEMO_USER_ID,
@@ -10,7 +8,9 @@ import {
   PROJECT_IDS,
   RUNNER_IDS,
   USER_IDS,
+  ago,
 } from '../seed'
+import type { AuditLogEntry } from '@/lib/types'
 
 export const demoAuditLogs: Array<AuditLogEntry> = [
   {

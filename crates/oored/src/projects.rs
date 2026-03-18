@@ -464,7 +464,11 @@ pub async fn list_projects(
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to list projects");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list projects")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to list projects",
+                )
             })?;
 
             (total, rows)
@@ -520,7 +524,11 @@ pub async fn list_projects(
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to list projects");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list projects")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to list projects",
+                )
             })?;
 
             (total, rows)

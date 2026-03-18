@@ -21,7 +21,7 @@ All common commands have `make` targets. Use `make <target>` from the repo root.
 
 ## Release Channels (Alpha/Beta/Stable)
 
-Release automation is Woodpecker-driven and tag-based. Branch merges cut tags automatically, which triggers the release pipeline and publishes GitHub Releases.
+Release automation is GitHub Actions-driven and tag-based. Branch merges cut tags automatically, which triggers the release pipeline and publishes GitHub Releases.
 
 - `alpha` -> `vX.Y.Z-alpha.N` prerelease tags (and prerelease GitHub Releases)
 - `beta` -> `vX.Y.Z-beta.N` prerelease tags (and prerelease GitHub Releases)

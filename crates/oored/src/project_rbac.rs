@@ -53,19 +53,20 @@ pub async fn resolve_effective_project_role(
         return Ok(EffectiveProjectRole::InstanceAdmin);
     }
 
-    let row = sqlx::query("SELECT role FROM project_members WHERE project_id = ?1 AND user_id = ?2")
-        .bind(project_id)
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to query project membership");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to check project membership",
-            )
-        })?;
+    let row =
+        sqlx::query("SELECT role FROM project_members WHERE project_id = ?1 AND user_id = ?2")
+            .bind(project_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to query project membership");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to check project membership",
+                )
+            })?;
 
     if let Some(row) = row {
         let role_str: String = row.get("role");

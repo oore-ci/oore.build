@@ -1,0 +1,101 @@
+name: Validate
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: [self-hosted, jarvis]
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      docs: ${{ steps.filter.outputs.docs }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'apps/web/**'
+              - 'bun.lock'
+              - 'package.json'
+            docs:
+              - 'apps/docs-site/**'
+              - 'docs/**'
+              - 'tools/docs-check.sh'
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+
+  frontend:
+    name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: [self-hosted, jarvis]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: make lint-web
+
+      - name: Test
+        run: make test-web
+
+      - name: Build
+        run: make build-web
+
+  docs:
+    name: Docs
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: [self-hosted, jarvis]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Docs check
+        run: make docs-check
+
+      - name: Lint
+        run: make lint-docs
+
+      - name: Test
+        run: make test-docs
+
+      - name: Build
+        run: make build-docs build-site
+
+  rust:
+    name: Rust
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: [self-hosted, jarvis]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check
+        run: cargo check --workspace

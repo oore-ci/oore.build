@@ -1,6 +1,6 @@
-pub mod audit_logs;
 pub mod apple_api;
 pub mod artifacts;
+pub mod audit_logs;
 pub mod auth;
 pub mod background;
 pub mod builds;
@@ -1954,7 +1954,11 @@ async fn build_router_inner(
     {
         let store_guard = shared_state.store.lock().await;
         let pool = store_guard.pool().clone();
-        background::start_background_tasks(pool.clone(), sched.clone(), shared_state.storage.clone());
+        background::start_background_tasks(
+            pool.clone(),
+            sched.clone(),
+            shared_state.storage.clone(),
+        );
         notification_dispatch::start_notification_dispatcher(
             pool,
             sched,
@@ -2174,8 +2178,7 @@ async fn build_router_inner(
         // Project member endpoints
         .route(
             "/v1/projects/{project_id}/members",
-            get(project_members::list_project_members)
-                .post(project_members::add_project_member),
+            get(project_members::list_project_members).post(project_members::add_project_member),
         )
         .route(
             "/v1/projects/{project_id}/members/{user_id}",

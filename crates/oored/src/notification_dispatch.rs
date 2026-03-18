@@ -326,13 +326,13 @@ async fn send_notification_with_client(
         .header("User-Agent", "oore-ci/1.0");
 
     // Add HMAC signature for webhook channels
-    if channel_type == NotificationChannelType::Webhook {
-        if let Some(secret) = secret {
-            let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
-            let signature = hmac::sign(&key, &body_bytes);
-            let sig_hex = hex::encode(signature.as_ref());
-            request = request.header("X-Oore-Signature", format!("sha256={sig_hex}"));
-        }
+    if channel_type == NotificationChannelType::Webhook
+        && let Some(secret) = secret
+    {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+        let signature = hmac::sign(&key, &body_bytes);
+        let sig_hex = hex::encode(signature.as_ref());
+        request = request.header("X-Oore-Signature", format!("sha256={sig_hex}"));
     }
 
     let response = request.body(body_bytes).send().await?;

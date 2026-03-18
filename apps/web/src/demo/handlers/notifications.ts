@@ -33,8 +33,8 @@ export const notificationHandlers = [
       id: `notif-demo-${crypto.randomUUID().slice(0, 8)}`,
       name: body.name as string,
       channel_type: body.channel_type as NotificationChannel['channel_type'],
-      enabled: (body.enabled as boolean) ?? true,
-      events: (body.events as Array<string>) ?? [],
+      enabled: (body.enabled as boolean | undefined) ?? true,
+      events: (body.events as Array<string> | undefined) ?? [],
       has_url: !!(body.url as string),
       has_secret: !!(body.secret as string),
       created_by: 'usr-demo-owner-001',
@@ -72,9 +72,9 @@ export const notificationHandlers = [
 
     const updated: NotificationChannel = {
       ...existing,
-      name: (body.name as string) ?? existing.name,
-      enabled: (body.enabled as boolean) ?? existing.enabled,
-      events: (body.events as Array<string>) ?? existing.events,
+      name: (body.name as string | undefined) ?? existing.name,
+      enabled: (body.enabled as boolean | undefined) ?? existing.enabled,
+      events: (body.events as Array<string> | undefined) ?? existing.events,
       has_url: body.url ? true : existing.has_url,
       has_secret: body.secret ? true : existing.has_secret,
       updated_at: now(),

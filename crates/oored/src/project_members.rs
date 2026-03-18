@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{
-    ProjectPermission, resolve_effective_project_role, require_project_permission,
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
 };
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -53,7 +53,8 @@ pub async fn list_project_members(
         store.pool().clone()
     };
 
-    let effective = resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective =
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
 
     let rows = sqlx::query(
@@ -92,7 +93,8 @@ pub async fn add_project_member(
         store.pool().clone()
     };
 
-    let effective = resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective =
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
 
     // Verify project exists
@@ -103,7 +105,11 @@ pub async fn add_project_member(
             .await
             .unwrap_or(false);
     if !project_exists {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
     }
 
     // Verify target user exists and is active
@@ -210,7 +216,8 @@ pub async fn update_project_member(
         store.pool().clone()
     };
 
-    let effective = resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective =
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
 
     let now = now_unix();
@@ -226,7 +233,11 @@ pub async fn update_project_member(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to check current member role");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to check member role")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to check member role",
+            )
         })?;
 
         if current_role.as_deref() == Some("maintainer") {
@@ -263,7 +274,11 @@ pub async fn update_project_member(
     })?;
 
     if result.rows_affected() == 0 {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Project member not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project member not found",
+        ));
     }
 
     let details = serde_json::json!({
@@ -302,7 +317,11 @@ pub async fn update_project_member(
     })?;
 
     let member = row_to_project_member(&row).map_err(|_| {
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "data_error", "Invalid project role in database")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "data_error",
+            "Invalid project role in database",
+        )
     })?;
 
     Ok(Json(UpdateProjectMemberResponse { member }))
@@ -319,7 +338,8 @@ pub async fn remove_project_member(
         store.pool().clone()
     };
 
-    let effective = resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective =
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
 
     // Prevent removing the last maintainer — would leave project unmanageable
@@ -332,7 +352,11 @@ pub async fn remove_project_member(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to check target member role");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to check member role")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to check member role",
+        )
     })?;
 
     if target_role.as_deref() == Some("maintainer") {
@@ -353,20 +377,26 @@ pub async fn remove_project_member(
         }
     }
 
-    let result = sqlx::query(
-        "DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2",
-    )
-    .bind(&project_id)
-    .bind(&user_id)
-    .execute(&pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to remove project member");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to remove project member")
-    })?;
+    let result = sqlx::query("DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2")
+        .bind(&project_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to remove project member");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to remove project member",
+            )
+        })?;
 
     if result.rows_affected() == 0 {
-        return Err(api_err(StatusCode::NOT_FOUND, "not_found", "Project member not found"));
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project member not found",
+        ));
     }
 
     let details = serde_json::json!({

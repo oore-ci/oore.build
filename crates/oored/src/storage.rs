@@ -306,9 +306,8 @@ impl LocalStorageClient {
         match tokio::fs::remove_file(&path).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => {
-                Err(e).with_context(|| format!("failed to delete local artifact: {}", path.display()))
-            }
+            Err(e) => Err(e)
+                .with_context(|| format!("failed to delete local artifact: {}", path.display())),
         }
     }
 

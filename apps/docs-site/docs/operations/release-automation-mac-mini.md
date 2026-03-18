@@ -1,61 +1,45 @@
 ---
 status: implemented
-description: "Automate Oore CI releases on a Mac mini using Woodpecker CI and GitHub Releases."
+description: "Automate Oore CI releases using GitHub Actions on a self-hosted Mac mini runner."
 ---
 
-# Release Automation on macOS
+# Release Automation
 
-Use this flow with a dedicated macOS host (for example, a Mac mini) that runs Woodpecker CI, builds release artifacts, deploys Cloudflare Pages sites, and publishes GitHub Releases.
+CI/CD is driven by GitHub Actions running on a self-hosted Mac mini runner (`jarvis`). All workflows — validation, autotagging, and release — run on the same machine with zero billable GitHub Actions minutes.
 
-## Prerequisites
+## Runner Setup
 
-- macOS host with Xcode command line tools
-- Rust toolchain installed
-- Bun installed (for web asset build + `oore-web` executable compile)
-- Woodpecker server + agent running on the macOS host
-  - Pin to stable release line (`v3.13.0` as of Feb 23, 2026), not `dev`
-  - Use `plugin-git v2.8.1` (or newer stable) for clone behavior parity
-- Cloudflare token configured in Woodpecker secrets (for `wrangler pages deploy`)
-- GitHub token configured in Woodpecker secrets (for pushing tags and creating releases)
+The GitHub Actions runner is installed at `~/actions-runner` on jarvis and runs as a launchd user agent (`actions.runner.devaryakjha-oore.build.jarvis`). It auto-starts on login.
+
+Toolchain installed via Homebrew: `rustup`, `bun`, `gh`.
+
+Runner labels: `self-hosted`, `macOS`, `ARM64`, `jarvis`.
 
 ## Workflow
 
-- Merge to `alpha`:
-  - CI auto-cuts prerelease tags `vX.Y.Z-alpha.N`.
-- Merge to `beta`:
-  - CI auto-cuts prerelease tags `vX.Y.Z-beta.N`.
-- Merge to `stable`:
-  - CI auto-cuts stable tags `vX.Y.Z`.
-- PR/push validation:
-  - CI installs dependencies and runs `make validate-ci` (full checks split into parallel lanes).
-  - CI lints `.woodpecker.yml` with pinned `woodpecker-cli` before running validation lanes.
-- Tag push (`v*`):
-  - CI builds release artifacts for:
-    - `aarch64-apple-darwin`
-    - `x86_64-apple-darwin`
-  - CI builds the web UI (`apps/web/dist`) and compiles `oore-web` for both macOS architectures.
-  - CI deploys Pages sites (site + docs + web in parallel, then demo) using `wrangler pages deploy`.
-  - CI creates/updates a GitHub Release and uploads artifacts + checksums + release notes.
+- PR/push validation (`validate.yml`):
+  - Two parallel jobs on jarvis: Frontend & Docs (bun), Rust (cargo)
+- Merge to `alpha` / `beta` / `stable` (`autotag.yml`):
+  - CI auto-cuts the appropriate semver tag
+- Tag push `v*` (`release.yml`):
+  - Single job on jarvis: build web, cross-compile Rust (arm64 + x86_64), package tarballs, generate release notes, deploy to Cloudflare Pages, create GitHub Release with artifacts
 
-## Required Woodpecker Secrets
+## Required Secrets
 
-Set these secrets in Woodpecker (repo/org/global as appropriate):
+Set these in GitHub repo settings (Settings > Secrets and variables > Actions):
 
-- `GITHUB_TOKEN`:
-  - Used to clone/push and to create GitHub Releases.
-  - Must have permission to push to the repo and create releases.
+- `RELEASE_PAT`:
+  - Fine-grained PAT with `contents: write` on this repo.
+  - Used by the autotag workflow to push tags that trigger the release workflow.
+  - (Tags pushed by the automatic `GITHUB_TOKEN` do not trigger downstream workflows.)
 - `CLOUDFLARE_API_TOKEN`:
   - Used by `wrangler pages deploy`.
 
-## Notes
+`GITHUB_TOKEN` is automatic and used for GitHub Releases and general CI operations.
 
-The legacy webhook/poller/R2-based release automation is replaced by Woodpecker pipelines and GitHub Releases.
-
-Before promoting to `stable`, run:
+## Before Promoting to Stable
 
 ```bash
 make validate
 make release-smoke
 ```
-
-Note: post-deploy Pages verification is currently disabled in tag pipelines because Cloudflare deployment list metadata has not been deterministic enough for a safe hard gate.

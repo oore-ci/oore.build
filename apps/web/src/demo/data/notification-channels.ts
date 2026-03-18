@@ -1,14 +1,14 @@
-import type {
-  NotificationChannel,
-  NotificationDelivery,
-} from '@/lib/types'
 import {
-  ago,
   BUILD_IDS,
   DEMO_USER_ID,
   NOTIFICATION_CHANNEL_IDS,
   USER_IDS,
+  ago,
 } from '../seed'
+import type {
+  NotificationChannel,
+  NotificationDelivery,
+} from '@/lib/types'
 
 export const demoNotificationChannels: Array<NotificationChannel> = [
   {

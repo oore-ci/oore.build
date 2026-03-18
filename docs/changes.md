@@ -12,6 +12,16 @@ Rules:
 
 ## 2026-03-18
 
+- **CI migration: Woodpecker → GitHub Actions**:
+  - Replaced `.woodpecker.yml` with 3 GitHub Actions workflows: `validate.yml`, `autotag.yml`, `release.yml`.
+  - Validation split into parallel jobs: frontend/docs on Linux (`ubuntu-latest`), Rust on macOS (`macos-latest`). Saves ~70% of billable CI minutes.
+  - Autotag runs on Linux (git+bash only, no macOS needed). Uses `RELEASE_PAT` secret to push tags that trigger the release workflow.
+  - Release workflow: 4-job DAG — `build-assets` (macOS), `generate-notes` (Linux), `deploy-pages` (Linux), `github-release` (Linux). Uses `actions/upload-artifact` to pass build outputs between jobs.
+  - Eliminated 50-line Python `gh` CLI download script — `gh` is pre-installed on GitHub Actions runners.
+  - Caching: `Swatinem/rust-cache` for Cargo, `actions/cache` for `node_modules`.
+  - Deleted: `.woodpecker.yml`, `tools/lint-woodpecker.sh`, `lint-woodpecker` Makefile target.
+  - Updated: `tools/validate-ci.sh` (removed woodpecker lint call), `Makefile` (removed woodpecker references).
+
 - **Ban direct useEffect — useMountEffect + ESLint enforcement** ([OOR-145](https://linear.app/oorebuild/issue/OOR-145)):
   - Frontend: Created `useMountEffect` hook as the only sanctioned wrapper for mount-only effects.
   - Frontend: Created sanctioned hooks for common reactive patterns: `useBreadcrumbLabel`, `useAutoScroll`, `useBuildNotification`, `useIndexAuthGuard`.
