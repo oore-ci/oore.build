@@ -296,6 +296,7 @@ async fn run_retention_cleanup(
         }
 
         // Criterion 2: max count per project
+        // Protected (keep_statuses) builds don't consume retention slots.
         if let Some(max_count) = effective.max_builds_per_project {
             let rows = sqlx::query(
                 "SELECT id, status FROM builds \
@@ -307,11 +308,17 @@ async fn run_retention_cleanup(
             .fetch_all(pool)
             .await?;
 
-            for row in rows.iter().skip(max_count as usize) {
-                let status: String = row.get("status");
-                if !effective_keep.contains(&status) {
-                    candidate_ids.insert(row.get("id"));
-                }
+            // Filter out protected builds so they don't count toward the limit
+            let non_protected: Vec<_> = rows
+                .iter()
+                .filter(|row| {
+                    let status: String = row.get("status");
+                    !effective_keep.contains(&status)
+                })
+                .collect();
+
+            for row in non_protected.iter().skip(max_count as usize) {
+                candidate_ids.insert(row.get("id"));
             }
         }
 
@@ -348,10 +355,13 @@ async fn run_retention_cleanup(
                         break;
                     }
                     let status: String = row.get("status");
+                    let id: String = row.get("id");
+                    let build_size: i64 = row.get("build_artifact_size");
                     if !effective_keep.contains(&status) {
-                        let build_size: i64 = row.get("build_artifact_size");
-                        candidate_ids.insert(row.get("id"));
-                        remaining -= build_size;
+                        // Only count size reduction for builds not already marked by other criteria
+                        if candidate_ids.insert(id) {
+                            remaining -= build_size;
+                        }
                     }
                 }
             }
@@ -359,13 +369,7 @@ async fn run_retention_cleanup(
 
         // Process candidates
         for build_id in &candidate_ids {
-            if policy.dry_run {
-                info!(build_id = %build_id, project_id = %project_id, "retention_cleanup: [DRY RUN] would clean up build");
-                total_builds_expired += 1;
-                continue;
-            }
-
-            // Load and delete artifacts
+            // Load artifacts for this build (needed for both dry-run counting and real deletion)
             let artifacts = sqlx::query(
                 "SELECT id, file_path, file_size FROM artifacts WHERE build_id = ?1",
             )
@@ -373,6 +377,21 @@ async fn run_retention_cleanup(
             .fetch_all(pool)
             .await?;
 
+            if policy.dry_run {
+                // Count what *would* be cleaned up so dry-run can preview storage impact
+                for artifact in &artifacts {
+                    let file_size: Option<i64> = artifact.get("file_size");
+                    total_bytes_reclaimed += file_size.unwrap_or(0);
+                    total_artifacts_deleted += 1;
+                }
+                info!(build_id = %build_id, project_id = %project_id, "retention_cleanup: [DRY RUN] would clean up build");
+                total_builds_expired += 1;
+                continue;
+            }
+
+            // Delete artifact files from storage first, then delete DB rows only on success.
+            // This prevents orphaned files when storage deletion fails.
+            let mut all_files_deleted = true;
             for artifact in &artifacts {
                 let file_path: String = artifact.get("file_path");
                 let file_size: Option<i64> = artifact.get("file_size");
@@ -383,17 +402,25 @@ async fn run_retention_cleanup(
                         build_id = %build_id,
                         file_path = %file_path,
                         error = %e,
-                        "retention_cleanup: failed to delete artifact file"
+                        "retention_cleanup: failed to delete artifact file, skipping DB cleanup for this build"
                     );
+                    all_files_deleted = false;
+                    break;
                 } else {
                     total_bytes_reclaimed += file_size.unwrap_or(0);
+                    total_artifacts_deleted += 1;
                 }
-                total_artifacts_deleted += 1;
+            }
+
+            if !all_files_deleted {
+                // Skip DB deletion for this build to avoid orphaned storage files
+                warn!(build_id = %build_id, "retention_cleanup: skipping build cleanup due to storage deletion failure");
+                continue;
             }
 
             match effective.cleanup_target {
                 RetentionCleanupTarget::ArtifactsOnly => {
-                    // Delete artifact rows
+                    // Delete artifact rows (storage files already deleted above)
                     if let Err(e) =
                         sqlx::query("DELETE FROM artifacts WHERE build_id = ?1")
                             .bind(build_id)

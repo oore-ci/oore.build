@@ -24,7 +24,7 @@ Rules:
   - Email channel deferred to [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
 - **OOR-137: Build retention and cleanup policies** — automatic cleanup of old builds and artifacts.
   - Backend: retention policy engine with three criteria (max age, max count, max artifact size per project).
-  - Global singleton settings table + per-project override table (migration 019).
+  - Global singleton settings table + per-project override table (migration 020).
   - Background cleanup job runs at configurable interval (default 1h), supports dry-run mode.
   - Two cleanup modes: `artifacts_only` (delete files, mark builds as Expired) or `full` (delete everything).
   - Storage deletion support added to `StorageBackend` (S3 + local).
