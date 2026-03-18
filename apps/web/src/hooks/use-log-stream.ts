@@ -107,7 +107,6 @@ export function useLogStream(
     stopPolling()
   }, [stopPolling])
 
-  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
     if (!enabled || !baseUrl || !token) {
       cleanup()

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Copy01Icon,
@@ -19,6 +19,8 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
+import { useBuildNotification } from '@/hooks/use-build-notification'
 import {
   isTerminalStatus,
   useArtifactDownloadLink,
@@ -70,14 +72,14 @@ function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
 function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const navigate = useNavigate()
-  const [knownTerminal, setKnownTerminal] = useState(false)
+  const knownTerminalRef = useRef(false)
   const [rerunOpen, setRerunOpen] = useState(false)
   const buildQuery = useBuild(buildId, {
-    refetchInterval: knownTerminal ? false : 3000,
+    refetchInterval: knownTerminalRef.current ? false : 3000,
   })
   const { data, isLoading, error, refetch: refetchBuild } = buildQuery
   const artifactsQuery = useArtifacts(buildId, {
-    refetchInterval: knownTerminal ? false : 3000,
+    refetchInterval: knownTerminalRef.current ? false : 3000,
   })
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
@@ -85,10 +87,7 @@ function BuildDetailPage() {
   const buildStatus = data?.build.status
   const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (isTerminal) setKnownTerminal(true)
-  }, [isTerminal])
+  if (isTerminal) knownTerminalRef.current = true
 
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
 
@@ -96,71 +95,10 @@ function BuildDetailPage() {
     ? `Build #${data.build.build_number}`
     : 'Build Details'
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (data?.build.build_number) {
-      setLabel('/builds/$buildId', `Build #${data.build.build_number}`)
-    }
-  }, [data?.build.build_number, setLabel])
+  useBreadcrumbLabel(setLabel, '/builds/$buildId', data?.build.build_number ? `Build #${data.build.build_number}` : undefined)
 
   // ── Build notifications (title + browser Notification) ──
-  const prevStatusRef = useRef<string | undefined>(undefined)
-
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (
-      typeof Notification !== 'undefined' &&
-      Notification.permission === 'default'
-    ) {
-      Notification.requestPermission()
-    }
-    return () => {
-      document.title = 'Oore CI'
-    }
-  }, [])
-
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (!data?.build) return
-
-    const { build_number, status, branch } = data.build
-
-    switch (status) {
-      case 'running':
-      case 'queued':
-        document.title = `\u23F3 Build #${build_number} | Oore CI`
-        break
-      case 'succeeded':
-        document.title = `\u2713 Build #${build_number} | Oore CI`
-        break
-      case 'failed':
-      case 'timed_out':
-      case 'expired':
-        document.title = `\u2717 Build #${build_number} | Oore CI`
-        break
-      case 'canceled':
-        document.title = `\u2298 Build #${build_number} | Oore CI`
-        break
-      default:
-        document.title = `Build #${build_number} | Oore CI`
-    }
-
-    const prevStatus = prevStatusRef.current
-    prevStatusRef.current = status
-
-    if (
-      prevStatus !== undefined &&
-      prevStatus !== status &&
-      isTerminal &&
-      document.hidden &&
-      typeof Notification !== 'undefined' &&
-      Notification.permission === 'granted'
-    ) {
-      new Notification(`Build #${build_number} ${status}`, {
-        body: `Branch: ${branch ?? 'n/a'}`,
-      })
-    }
-  }, [data?.build, isTerminal])
+  useBuildNotification(data?.build, isTerminal)
 
   // ── Log stream / fetch ───────────────────────────────────
 

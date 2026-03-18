@@ -5,9 +5,9 @@ import {
   redirect,
   useNavigate,
 } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Tick02Icon } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -139,13 +139,12 @@ function SetupLayout() {
         ? ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
         : ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (isExpired) {
       useSetupStore.getState().reset()
       void navigate({ to: '/setup' })
     }
-  }, [isExpired, navigate])
+  })
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">

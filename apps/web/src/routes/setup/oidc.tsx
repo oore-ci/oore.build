@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -193,8 +193,7 @@ function OidcConfigStep() {
     setCurrentStep(2)
   })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (!status) return
     if (
       status.runtime_mode !== 'remote' ||
@@ -202,7 +201,7 @@ function OidcConfigStep() {
     ) {
       void navigate({ to: '/setup/mode' })
     }
-  }, [status, navigate])
+  })
 
   function handleProviderChange(value: ProviderId) {
     setSelectedProvider(value)

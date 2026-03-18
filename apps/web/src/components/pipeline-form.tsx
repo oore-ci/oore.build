@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -232,16 +232,15 @@ export default function PipelineForm({
     return () => subscription.unsubscribe()
   })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  const isDirtyRef = useRef(isDirty)
+  isDirtyRef.current = isDirty
+  useMountEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
-      if (isDirty) {
-        e.preventDefault()
-      }
+      if (isDirtyRef.current) e.preventDefault()
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [isDirty])
+  })
 
   function toggleEvent(event: string) {
     setSelectedEvents((prev) =>

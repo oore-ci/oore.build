@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -72,11 +71,16 @@ function SetupModeStep() {
   const { data: status } = useSetupStatus()
   const setupModeMutation = useSetupPreferences()
 
+  const modeValues = status
+    ? { mode: toModeValue(status.runtime_mode, status.remote_auth_mode) }
+    : undefined
+
   const form = useForm<ModeForm>({
     resolver: zodResolver(modeSchema),
     defaultValues: {
       mode: toModeValue(status?.runtime_mode, status?.remote_auth_mode),
     },
+    values: modeValues,
     mode: 'onBlur',
   })
 
@@ -84,14 +88,7 @@ function SetupModeStep() {
     setCurrentStep(1)
   })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (!status) return
-    form.setValue(
-      'mode',
-      toModeValue(status.runtime_mode, status.remote_auth_mode),
-    )
-  }, [status, form])
+
 
   const errorMessage = setupModeMutation.error
     ? getApiErrorMessage(setupModeMutation.error, {

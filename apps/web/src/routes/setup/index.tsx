@@ -1,8 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -90,8 +90,7 @@ function BootstrapTokenStep() {
   })
 
   // Set step to 0 unless backend state + session indicate we should skip ahead
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (!status || !sessionToken) {
       setCurrentStep(0)
       return
@@ -113,7 +112,7 @@ function BootstrapTokenStep() {
     } else {
       setCurrentStep(0)
     }
-  }, [status, sessionToken, navigate, setCurrentStep])
+  })
 
   const errorMessage = verifyMutation.error
     ? getApiErrorMessage(verifyMutation.error, {

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { Suspense, lazy } from 'react'
 import {
   Link,
   Outlet,
@@ -18,6 +18,7 @@ import {
   Search01Icon,
 } from '@hugeicons/core-free-icons'
 import type { ErrorComponentProps } from '@tanstack/react-router'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
@@ -185,11 +186,10 @@ function RootLayout() {
 
   useSessionMonitor()
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     useSetupStore.getState().setInstanceContext(activeInstanceId)
     useAuthStore.getState().setInstanceContext(activeInstanceId)
-  }, [activeInstanceId])
+  })
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -12,6 +12,7 @@ import {
   CheckmarkCircle02Icon,
   Folder02Icon,
 } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
@@ -238,6 +239,40 @@ function PreferencesPage() {
   const updateStorageMutation = useUpdateArtifactStorageSettings()
   const updatePreferencesMutation = useUpdateInstancePreferences()
 
+  const storageSettings = settingsQuery.data?.settings
+  const storageValues = storageSettings
+    ? (() => {
+        const backend_kind =
+          storageSettings.provider === 'disabled'
+            ? 'disabled'
+            : storageSettings.provider === 'local'
+              ? 'local'
+              : 'object'
+        const object_service =
+          storageSettings.provider === 'r2'
+            ? 'cloudflare_r2'
+            : storageSettings.provider === 's3'
+              ? storageSettings.s3_endpoint
+                ? 'custom'
+                : 'aws_s3'
+              : 'aws_s3'
+        const region =
+          storageSettings.provider === 'r2'
+            ? (storageSettings.s3_region ?? 'auto')
+            : (storageSettings.s3_region ?? 'us-east-1')
+        return {
+          backend_kind,
+          object_service,
+          local_base_dir: storageSettings.local_base_dir ?? '',
+          s3_bucket: storageSettings.s3_bucket ?? '',
+          s3_region: region,
+          s3_endpoint: storageSettings.s3_endpoint ?? '',
+          access_key_id: '',
+          secret_access_key: '',
+        } as StorageFormValues
+      })()
+    : undefined
+
   const storageForm = useForm<StorageFormValues>({
     resolver: zodResolver(storageSchema),
     defaultValues: {
@@ -250,6 +285,7 @@ function PreferencesPage() {
       access_key_id: '',
       secret_access_key: '',
     },
+    values: storageValues,
     mode: 'onBlur',
   })
 
@@ -262,82 +298,47 @@ function PreferencesPage() {
     },
     mode: 'onBlur',
   })
+  const networkSettings = networkSettingsQuery.data?.settings
+  const networkValues = networkSettings
+    ? {
+        public_url: networkSettings.public_url ?? '',
+        allowed_origins: networkSettings.allowed_origins.join('\n'),
+      }
+    : undefined
+
   const externalAccessNetworkForm = useForm<ExternalAccessNetworkFormValues>({
     resolver: zodResolver(externalAccessNetworkSchema),
     defaultValues: {
       public_url: '',
       allowed_origins: '',
     },
+    values: networkValues,
     mode: 'onBlur',
   })
 
   const backendKind = storageForm.watch('backend_kind')
   const objectService = storageForm.watch('object_service')
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    const settings = settingsQuery.data?.settings
-    if (!settings) return
 
-    const backend_kind =
-      settings.provider === 'disabled'
-        ? 'disabled'
-        : settings.provider === 'local'
-          ? 'local'
-          : 'object'
 
-    const object_service =
-      settings.provider === 'r2'
-        ? 'cloudflare_r2'
-        : settings.provider === 's3'
-          ? settings.s3_endpoint
-            ? 'custom'
-            : 'aws_s3'
-          : 'aws_s3'
-
-    const region =
-      settings.provider === 'r2'
-        ? (settings.s3_region ?? 'auto')
-        : (settings.s3_region ?? 'us-east-1')
-
-    storageForm.reset({
-      backend_kind,
-      object_service,
-      local_base_dir: settings.local_base_dir ?? '',
-      s3_bucket: settings.s3_bucket ?? '',
-      s3_region: region,
-      s3_endpoint: settings.s3_endpoint ?? '',
-      access_key_id: '',
-      secret_access_key: '',
-    })
-  }, [settingsQuery.data, storageForm])
-
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (backendKind !== 'object') return
-    if (objectService === 'cloudflare_r2') {
-      if (storageForm.getValues('s3_region') !== 'auto') {
-        storageForm.setValue('s3_region', 'auto', { shouldDirty: true })
+  useMountEffect(() => {
+    const subscription = storageForm.watch((values, { name }) => {
+      if (name !== 'object_service' && name !== 'backend_kind') return
+      if (values.backend_kind !== 'object') return
+      if (values.object_service === 'cloudflare_r2') {
+        if (values.s3_region !== 'auto') {
+          storageForm.setValue('s3_region', 'auto', { shouldDirty: true })
+        }
+      } else if (values.object_service === 'aws_s3') {
+        if (values.s3_region === 'auto') {
+          storageForm.setValue('s3_region', 'us-east-1', { shouldDirty: true })
+        }
       }
-      return
-    }
-    if (objectService === 'aws_s3') {
-      if (storageForm.getValues('s3_region') === 'auto') {
-        storageForm.setValue('s3_region', 'us-east-1', { shouldDirty: true })
-      }
-    }
-  }, [backendKind, objectService, storageForm])
-
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    const network = networkSettingsQuery.data?.settings
-    if (!network) return
-
-    externalAccessNetworkForm.reset({
-      public_url: network.public_url ?? '',
-      allowed_origins: network.allowed_origins.join('\n'),
     })
-  }, [networkSettingsQuery.data, externalAccessNetworkForm])
+    return () => subscription.unsubscribe()
+  })
+
+
 
   function onSubmitStorage(values: StorageFormValues) {
     const provider =
@@ -513,7 +514,6 @@ function PreferencesPage() {
     }
   }, [settings?.source])
   const preferences = preferencesQuery.data?.preferences
-  const networkSettings = networkSettingsQuery.data?.settings
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
   const failedReadinessChecks = useMemo(
     () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],

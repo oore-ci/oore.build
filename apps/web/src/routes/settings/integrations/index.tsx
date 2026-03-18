@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -7,6 +6,7 @@ import {
   LinkSquare02Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
@@ -58,13 +58,12 @@ function IntegrationsPage() {
   const runtimeMode = preferences?.preferences.runtime_mode ?? 'local'
   const remoteEnabled = runtimeMode === 'remote'
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (search.github === 'success') {
       toast.success('GitHub App connected successfully')
       window.history.replaceState({}, '', '/settings/integrations')
     }
-  }, [search.github])
+  })
 
   function handleDisconnect(id: string, name: string) {
     deleteMutation.mutate(id, {

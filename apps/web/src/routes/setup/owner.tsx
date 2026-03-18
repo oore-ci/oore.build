@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -131,20 +132,18 @@ function OwnerStep() {
       })
     : null
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (!status) return
     setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-  }, [status, setCurrentStep])
+  })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (!status) return
     if (status.state === 'owner_created') {
       setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
       void navigate({ to: '/setup/complete' })
     }
-  }, [status, setCurrentStep, navigate])
+  })
 
   if (!status) {
     return (

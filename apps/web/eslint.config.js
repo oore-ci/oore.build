@@ -31,7 +31,14 @@ export default [
     },
   },
   {
-    files: ['**/use-mount-effect.ts'],
+    files: [
+      '**/use-mount-effect.ts',
+      '**/use-breadcrumb-label.ts',
+      '**/use-auto-scroll.ts',
+      '**/use-build-notification.ts',
+      '**/use-session-countdown.ts',
+      '**/use-log-stream.ts',
+    ],
     rules: {
       'no-restricted-syntax': 'off',
     },

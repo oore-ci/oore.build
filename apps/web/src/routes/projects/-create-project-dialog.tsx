@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -146,41 +146,14 @@ export default function CreateProjectDialog({
     mode: 'onBlur',
   })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (!open) return
-    setSourceKind(isRemoteMode ? 'repo' : 'local')
-    setSourceKindTouched(false)
-  }, [open, isRemoteMode])
+  // Derive effective sourceKind: fallback to 'local' if remote mode has no repos
+  const effectiveSourceKind =
+    isRemoteMode && sourceKind === 'repo' && !hasRepos && !sourceKindTouched && !reposLoading
+      ? 'local'
+      : sourceKind
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (!open) return
-    if (!isRemoteMode) return
-    if (sourceKind !== 'repo') return
-    if (sourceKindTouched) return
-    if (reposLoading) return
-    if (hasRepos) return
-
-    // Keep project creation unblocked if remote mode has no synced repos.
-    setSourceKind('local')
-  }, [
-    open,
-    isRemoteMode,
-    sourceKind,
-    sourceKindTouched,
-    reposLoading,
-    hasRepos,
-  ])
-
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (!open) return
-    if (sourceKind !== 'repo') return
-    if (!hasRepos) return
-    if (selectedRepoId) return
-    setSelectedRepoId(repos![0].id)
-  }, [open, sourceKind, hasRepos, repos, selectedRepoId])
+  // Derive effective selectedRepoId: auto-select first repo
+  const effectiveSelectedRepoId = selectedRepoId || repos?.[0]?.id || ''
 
   function applyLocalPath(path: string, closePicker = false) {
     form.setValue('local_repository_path', path, {
@@ -208,7 +181,7 @@ export default function CreateProjectDialog({
       return
     }
 
-    if (sourceKind === 'local') {
+    if (effectiveSourceKind === 'local') {
       const localRepositoryPath = data.local_repository_path?.trim()
       if (!localRepositoryPath) {
         toast.error('Path is required.')
@@ -240,7 +213,7 @@ export default function CreateProjectDialog({
       return
     }
 
-    if (!selectedRepoId) {
+    if (!effectiveSelectedRepoId) {
       toast.error('Select a source repository before creating a project.')
       return
     }
@@ -249,7 +222,7 @@ export default function CreateProjectDialog({
       {
         name,
         description: data.description?.trim() || undefined,
-        repository_id: selectedRepoId,
+        repository_id: effectiveSelectedRepoId,
         default_branch: data.default_branch?.trim() || undefined,
       },
       {
@@ -271,7 +244,11 @@ export default function CreateProjectDialog({
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen) {
+    if (nextOpen) {
+      setSourceKind(isRemoteMode ? 'repo' : 'local')
+      setSourceKindTouched(false)
+      setSelectedRepoId('')
+    } else {
       form.reset()
       setSelectedRepoId('')
       setSourceKind('local')
@@ -288,7 +265,7 @@ export default function CreateProjectDialog({
           <DialogHeader>
             <DialogTitle>Create Project</DialogTitle>
             <DialogDescription>
-              {sourceKind === 'local'
+              {effectiveSourceKind === 'local'
                 ? 'Create a project from a local repository path.'
                 : 'Create a project linked to a connected source repository.'}
             </DialogDescription>
@@ -333,7 +310,7 @@ export default function CreateProjectDialog({
               />
 
               <Tabs
-                value={sourceKind}
+                value={effectiveSourceKind}
                 onValueChange={(v) => {
                   setSourceKindTouched(true)
                   setSourceKind(v as 'local' | 'repo')
@@ -458,7 +435,7 @@ export default function CreateProjectDialog({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
-                    (sourceKind === 'repo' && (reposLoading || !hasRepos))
+                    (effectiveSourceKind === 'repo' && (reposLoading || !hasRepos))
                   }
                 >
                   {createMutation.isPending ? (
@@ -479,7 +456,7 @@ export default function CreateProjectDialog({
       <LocalFolderPickerDialog
         open={pickerOpen}
         onOpenChange={setPickerOpen}
-        enabled={open && sourceKind === 'local' && canBrowseLocalFs}
+        enabled={open && effectiveSourceKind === 'local' && canBrowseLocalFs}
         initialPath={form.getValues('local_repository_path')}
         title="Browse Local Folders"
         description="Select a Git repository folder and use it for this project."

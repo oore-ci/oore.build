@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
@@ -114,29 +115,31 @@ function LoginPage() {
   const localLoginAvailable = runtimeMode != null && loopbackLocalPath
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
     }
-  }, [hasValidToken, navigate])
+  })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    setError(null)
-    setConnectivityIssue(null)
-  }, [instance?.id])
+  useMountEffect(() => {
+    let prevId = useInstanceStore.getState().activeInstanceId
+    const unsub = useInstanceStore.subscribe((state) => {
+      if (state.activeInstanceId !== prevId) {
+        prevId = state.activeInstanceId
+        setError(null)
+        setConnectivityIssue(null)
+      }
+    })
+    return unsub
+  })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    let canceled = false
+  useMountEffect(() => {
     if (!instance) {
       setRuntimeMode(null)
-      return () => {
-        canceled = true
-      }
+      return
     }
 
+    let canceled = false
     getSetupStatus(instance.url)
       .then((status) => {
         if (!canceled) {
@@ -154,7 +157,7 @@ function LoginPage() {
     return () => {
       canceled = true
     }
-  }, [instance?.id, instance?.url])
+  })
 
   const handleLogin = async () => {
     if (!instance) return

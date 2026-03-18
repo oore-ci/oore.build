@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -57,10 +57,9 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
   const isLocalMode = status?.runtime_mode === 'local'
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     setCurrentStep(isLocalMode ? 3 : 4)
-  }, [isLocalMode, setCurrentStep])
+  })
 
   function handleComplete() {
     if (!sessionToken) return
@@ -69,13 +68,12 @@ function CompleteStep() {
 
   // Clean up session token after completion, but keep step at 4
   // so the indicator shows all steps as completed
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (isComplete) {
       setCurrentStep(isLocalMode ? 4 : 5)
       useSetupStore.getState().setSessionToken(null)
     }
-  }, [isComplete, isLocalMode, setCurrentStep])
+  })
 
   return (
     <div className="space-y-4">

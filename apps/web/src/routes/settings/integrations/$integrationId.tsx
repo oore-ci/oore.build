@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -9,12 +8,14 @@ import {
   Setting07Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import {
   useDeleteIntegration,
   useGitLabAuthorize,
@@ -99,18 +100,9 @@ function IntegrationDetailPage() {
     detail?.integration.provider ??
     'Source Details'
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (detail?.integration) {
-      setLabel(
-        '/settings/integrations/$integrationId',
-        detail.integration.display_name ?? detail.integration.provider,
-      )
-    }
-  }, [detail?.integration.display_name, detail?.integration.provider, setLabel])
+  useBreadcrumbLabel(setLabel, '/settings/integrations/$integrationId', detail?.integration.display_name ?? detail?.integration.provider)
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (search.installed === 'true') {
       toast.success('GitHub App installed successfully')
       window.history.replaceState(
@@ -127,7 +119,7 @@ function IntegrationDetailPage() {
         `/settings/integrations/${integrationId}`,
       )
     }
-  }, [search.installed, search.gitlab, integrationId])
+  })
 
   function handleSync() {
     syncMutation.mutate(integrationId, {

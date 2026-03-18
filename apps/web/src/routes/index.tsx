@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -9,6 +9,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { RuntimeMode } from '@/lib/types'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
@@ -112,8 +113,7 @@ function IndexPage() {
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const setAuth = useAuthStore((s) => s.setAuth)
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
     if (!isLoopbackHostname(window.location.hostname)) return
 
@@ -138,10 +138,9 @@ function IndexPage() {
       .finally(() => {
         setIsDetectingLocalInstance(false)
       })
-  }, [instance])
+  })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (!status || !instance) return
 
     if (status.setup_mode && status.runtime_mode !== 'local') {
@@ -206,7 +205,7 @@ function IndexPage() {
       clearAuth()
       void navigate({ to: '/login' })
     }
-  }, [status, instance, authToken, authExpiresAt, clearAuth, setAuth, navigate])
+  })
 
   if (!instance && isDetectingLocalInstance) {
     return (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -13,6 +13,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import CreateProjectDialog from './-create-project-dialog'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -84,8 +85,7 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
+  useMountEffect(() => {
     if (search.openCreate !== '1') return
     if (projectsLoading) return
 
@@ -98,13 +98,7 @@ function ProjectsListPage() {
       search: {},
       replace: true,
     })
-  }, [
-    canWriteProjects,
-    navigate,
-    projectsError,
-    projectsLoading,
-    search.openCreate,
-  ])
+  })
 
   return (
     <PageLayout width="wide">

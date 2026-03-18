@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -116,17 +116,14 @@ function ProjectSettingsForm({
       description: currentValues.description ?? '',
       default_branch: currentValues.default_branch ?? '',
     },
-    mode: 'onBlur',
-  })
-
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    form.reset({
+    values: {
       name: currentValues.name,
       description: currentValues.description ?? '',
       default_branch: currentValues.default_branch ?? '',
-    })
-  }, [currentValues, form])
+    },
+    mode: 'onBlur',
+  })
+
 
   function onSubmit(data: EditProjectForm) {
     updateMutation.mutate(

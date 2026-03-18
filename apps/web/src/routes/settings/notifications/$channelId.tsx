@@ -3,7 +3,6 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
-import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Delete02Icon, TestTube01Icon } from '@hugeicons/core-free-icons'
 
@@ -89,6 +88,16 @@ function NotificationChannelDetailPage() {
   const channel = channelsData?.channels.find((c) => c.id === channelId)
   const deliveries = deliveriesData?.deliveries ?? []
 
+  const channelValues = channel
+    ? {
+        name: channel.name,
+        enabled: channel.enabled,
+        url: '',
+        secret: '',
+        events: channel.events,
+      }
+    : undefined
+
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -98,21 +107,11 @@ function NotificationChannelDetailPage() {
       secret: '',
       events: [],
     },
+    values: channelValues,
     mode: 'onBlur',
   })
 
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    if (channel) {
-      form.reset({
-        name: channel.name,
-        enabled: channel.enabled,
-        url: '',
-        secret: '',
-        events: channel.events,
-      })
-    }
-  }, [channel, form])
+
 
   function onSubmit(values: FormValues) {
     updateMutation.mutate(
