@@ -9,31 +9,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-assets:
-    name: Build release assets
-    runs-on: macos-latest
+  release:
+    name: Build, deploy & publish
+    runs-on: [self-hosted, jarvis]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.10"
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: node_modules
-          key: release-deps-${{ hashFiles('bun.lock') }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -86,27 +70,7 @@ jobs:
           tar -C "$stage_x64" -czf "$out/$x64_asset" .
           (cd "$out" && shasum -a 256 "$arm_asset" "$x64_asset" > "$checksums")
 
-      - name: Upload release assets
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-assets
-          path: dist/releases/
-
-      - name: Upload web dist
-        uses: actions/upload-artifact@v7
-        with:
-          name: web-dist
-          path: apps/web/dist/
-
-  generate-notes:
-    name: Generate release notes
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Generate notes
+      - name: Generate release notes
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
@@ -129,7 +93,6 @@ jobs:
 
           repo="${GITHUB_REPOSITORY}"
           out="dist/releases/$tag/RELEASE_NOTES.md"
-          mkdir -p "$(dirname "$out")"
 
           {
             echo "# $tag"
@@ -150,41 +113,6 @@ jobs:
             fi
             echo
           } > "$out"
-
-      - name: Upload release notes
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-notes
-          path: dist/releases/
-
-  deploy-pages:
-    name: Deploy to Cloudflare Pages
-    runs-on: ubuntu-latest
-    needs: [build-assets]
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.10"
-
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: node_modules
-          key: deploy-deps-${{ hashFiles('bun.lock') }}
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Download web dist
-        uses: actions/download-artifact@v8
-        with:
-          name: web-dist
-          path: apps/web/dist/
-
-      - name: Build site and docs
-        run: make build-site build-docs
 
       - name: Deploy to Cloudflare Pages
         env:
@@ -215,6 +143,8 @@ jobs:
 
           echo "Deploy channel=$channel branch=$PAGES_BRANCH"
 
+          make build-site build-docs
+
           # Deploy site, docs, web in parallel
           status=0
 
@@ -240,25 +170,6 @@ jobs:
           make build-demo
           make deploy-demo-only
 
-  github-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: [build-assets, deploy-pages, generate-notes]
-    permissions:
-      contents: write
-    steps:
-      - name: Download release assets
-        uses: actions/download-artifact@v8
-        with:
-          name: release-assets
-          path: dist/releases/
-
-      - name: Download release notes
-        uses: actions/download-artifact@v8
-        with:
-          name: release-notes
-          path: dist/releases-notes/
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -274,7 +185,7 @@ jobs:
             prerelease_flag="--prerelease"
           fi
 
-          notes="dist/releases-notes/$tag/RELEASE_NOTES.md"
+          notes="dist/releases/$tag/RELEASE_NOTES.md"
           dir="dist/releases/$tag"
 
           # Create or update release

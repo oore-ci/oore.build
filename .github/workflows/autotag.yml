@@ -11,7 +11,7 @@ concurrency:
 jobs:
   autotag:
     name: Cut release tag
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, jarvis]
     # Only run after validate completes — but since validate is a separate workflow,
     # we rely on branch protection rules to enforce this ordering.
     steps:

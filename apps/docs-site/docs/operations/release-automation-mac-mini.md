@@ -1,28 +1,28 @@
 ---
 status: implemented
-description: "Automate Oore CI releases using GitHub Actions and GitHub Releases."
+description: "Automate Oore CI releases using GitHub Actions on a self-hosted Mac mini runner."
 ---
 
 # Release Automation
 
-CI/CD is driven by GitHub Actions. Validation runs on Linux (frontend) and macOS (Rust) in parallel. Release builds run on macOS runners for cross-compilation.
+CI/CD is driven by GitHub Actions running on a self-hosted Mac mini runner (`jarvis`). All workflows — validation, autotagging, and release — run on the same machine with zero billable GitHub Actions minutes.
+
+## Runner Setup
+
+The GitHub Actions runner is installed at `~/actions-runner` on jarvis and runs as a launchd user agent (`actions.runner.devaryakjha-oore.build.jarvis`). It auto-starts on login.
+
+Toolchain installed via Homebrew: `rustup`, `bun`, `gh`.
+
+Runner labels: `self-hosted`, `macOS`, `ARM64`, `jarvis`.
 
 ## Workflow
 
-- PR/push validation:
-  - Frontend & docs job (Linux): `make docs-check lint-web lint-docs test-web test-docs build-web build-docs build-site`
-  - Rust job (macOS): `cargo fmt --check`, `cargo test --workspace`, `cargo clippy`, `cargo check`
-- Merge to `alpha`:
-  - CI auto-cuts prerelease tags `vX.Y.Z-alpha.N`.
-- Merge to `beta`:
-  - CI auto-cuts prerelease tags `vX.Y.Z-beta.N`.
-- Merge to `stable`:
-  - CI auto-cuts stable tags `vX.Y.Z`.
-- Tag push (`v*`):
-  - CI builds release artifacts for `aarch64-apple-darwin` and `x86_64-apple-darwin`.
-  - CI builds the web UI (`apps/web/dist`) and compiles `oore-web` for both macOS architectures.
-  - CI deploys Pages sites (site + docs + web in parallel, then demo) using `wrangler pages deploy`.
-  - CI creates/updates a GitHub Release and uploads artifacts + checksums + release notes.
+- PR/push validation (`validate.yml`):
+  - Two parallel jobs on jarvis: Frontend & Docs (bun), Rust (cargo)
+- Merge to `alpha` / `beta` / `stable` (`autotag.yml`):
+  - CI auto-cuts the appropriate semver tag
+- Tag push `v*` (`release.yml`):
+  - Single job on jarvis: build web, cross-compile Rust (arm64 + x86_64), package tarballs, generate release notes, deploy to Cloudflare Pages, create GitHub Release with artifacts
 
 ## Required Secrets
 
