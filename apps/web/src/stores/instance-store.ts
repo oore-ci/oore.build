@@ -91,6 +91,8 @@ export const useInstanceStore = create<InstanceStoreState>()(
         }
 
         set({ instances: rest, activeInstanceId: nextActiveId })
+        useSetupStore.getState().setInstanceContext(nextActiveId)
+        useAuthStore.getState().setInstanceContext(nextActiveId)
       },
 
       setActiveInstance: (id) => {
