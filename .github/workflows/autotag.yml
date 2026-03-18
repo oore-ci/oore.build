@@ -15,7 +15,7 @@ jobs:
     # Only run after validate completes — but since validate is a separate workflow,
     # we rely on branch protection rules to enforce this ordering.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}

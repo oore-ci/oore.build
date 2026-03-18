@@ -13,7 +13,7 @@ jobs:
     name: Build release assets
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -30,7 +30,7 @@ jobs:
           shared-key: release
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: node_modules
           key: release-deps-${{ hashFiles('bun.lock') }}
@@ -87,13 +87,13 @@ jobs:
           (cd "$out" && shasum -a 256 "$arm_asset" "$x64_asset" > "$checksums")
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets
           path: dist/releases/
 
       - name: Upload web dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: apps/web/dist/
@@ -102,7 +102,7 @@ jobs:
     name: Generate release notes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -152,7 +152,7 @@ jobs:
           } > "$out"
 
       - name: Upload release notes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: dist/releases/
@@ -162,14 +162,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-assets]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.10"
 
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: node_modules
           key: deploy-deps-${{ hashFiles('bun.lock') }}
@@ -178,7 +178,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Download web dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: apps/web/dist/
@@ -248,13 +248,13 @@ jobs:
       contents: write
     steps:
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: dist/releases/
 
       - name: Download release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
           path: dist/releases-notes/
