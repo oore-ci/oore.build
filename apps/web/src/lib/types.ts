@@ -405,6 +405,7 @@ export interface Build {
   trigger_ref?: string
   commit_sha?: string
   branch?: string
+  source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
   step_results?: Array<StepResult>
@@ -448,6 +449,10 @@ export interface ListBuildsResponse {
 }
 
 export interface CancelBuildResponse {
+  build: Build
+}
+
+export interface RerunBuildResponse {
   build: Build
 }
 

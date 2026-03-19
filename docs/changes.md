@@ -21,6 +21,12 @@ Rules:
   - Added "API Tokens" nav item to sidebar in `apps/web/src/components/nav-main.tsx`.
 - **Fix: API token project-level role capping** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
   - `resolve_effective_project_role` now accepts `auth_source` and caps resolved project membership at the token's instance role when authenticated via API token. Prevents a downgraded token from inheriting the creator's full project permissions.
+- **Build re-run / retry with same parameters** ([OOR-139](https://linear.app/oorebuild/issue/OOR-139/build-re-run-retry-with-same-parameters)):
+  - Added `POST /v1/builds/{build_id}/rerun` endpoint that clones an existing build's `config_snapshot`, `branch`, `commit_sha`, and `pipeline_id` to enqueue a new build.
+  - Added `source_build_id` column to `builds` table (migration 022) to link re-runs to their source build.
+  - Added `RerunBuildResponse` contract type in `oore-contract`.
+  - Frontend: replaced dialog-based re-run with single-click "Re-run" button on build detail page; added source build link for re-runs.
+  - OpenAPI spec updated with new endpoint.
 - **Runner health monitoring and status endpoint (OOR-142)**:
   - Backend: Added `GET /v1/runners/{runner_id}` endpoint for individual runner details.
   - Backend: Added `RunnerStateEvent` broadcast channel to emit events when runners go offline.

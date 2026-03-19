@@ -947,6 +947,8 @@ pub struct Build {
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_build_id: Option<String>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1010,6 +1012,11 @@ pub struct ListBuildsResponse {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelBuildResponse {
+    pub build: Build,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RerunBuildResponse {
     pub build: Build,
 }
 

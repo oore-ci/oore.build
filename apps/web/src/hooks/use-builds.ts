@@ -19,6 +19,7 @@ import {
   getBuildLogs,
   listArtifacts,
   listBuilds,
+  rerunBuild,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
@@ -169,6 +170,29 @@ export function useCancelBuild() {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return cancelBuild(baseUrl, token, buildId)
+    },
+    onSuccess: (_data, buildId) => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'builds'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'build', buildId],
+      })
+    },
+  })
+}
+
+export function useRerunBuild() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (buildId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return rerunBuild(baseUrl, token, buildId)
     },
     onSuccess: (_data, buildId) => {
       void queryClient.invalidateQueries({
