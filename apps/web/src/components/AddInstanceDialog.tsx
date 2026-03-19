@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -113,22 +112,16 @@ export default function AddInstanceDialog({
     setValue,
   } = useForm<AddInstanceForm>({
     resolver: zodResolver(addInstanceSchema(frontendOrigin)),
-    defaultValues: { label: '', url: '', icon: DEFAULT_INSTANCE_ICON_KEY },
+    values:
+      isEditing && editInstance
+        ? {
+            label: editInstance.label,
+            url: editInstance.url,
+            icon: editInstance.icon ?? DEFAULT_INSTANCE_ICON_KEY,
+          }
+        : { label: '', url: '', icon: DEFAULT_INSTANCE_ICON_KEY },
     mode: 'onBlur',
   })
-
-  // Pre-fill form when editing
-  useEffect(() => {
-    if (isEditing && editInstance) {
-      reset({
-        label: editInstance.label,
-        url: editInstance.url,
-        icon: editInstance.icon ?? DEFAULT_INSTANCE_ICON_KEY,
-      })
-    } else {
-      reset({ label: '', url: '', icon: DEFAULT_INSTANCE_ICON_KEY })
-    }
-  }, [isEditing, editInstance, reset])
 
   const selectedIcon = watch('icon')
 

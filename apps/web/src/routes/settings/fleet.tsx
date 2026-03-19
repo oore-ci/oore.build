@@ -63,9 +63,7 @@ function FleetRegistryPage() {
   const canWrite = useHasPermission('fleet', 'write')
 
   const sortedInstances = useMemo(() => {
-    return Object.values(instances).sort(
-      (a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0),
-    )
+    return Object.values(instances).sort((a, b) => b.addedAt - a.addedAt)
   }, [instances])
 
   return (
