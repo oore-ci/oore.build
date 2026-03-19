@@ -35,7 +35,8 @@ pub fn start_background_tasks(
     tokio::spawn(lease_timeout_monitor(pool.clone()));
     tokio::spawn(build_timeout_monitor(pool.clone(), scheduler.clone()));
     tokio::spawn(runner_heartbeat_monitor(pool.clone(), scheduler));
-    tokio::spawn(retention_cleanup_monitor(pool, storage));
+    tokio::spawn(retention_cleanup_monitor(pool.clone(), storage.clone()));
+    tokio::spawn(expired_artifact_monitor(pool, storage));
 }
 
 /// Monitor assigned builds whose lease has expired.
@@ -501,6 +502,114 @@ async fn run_retention_cleanup(
     Ok(policy.cleanup_interval_secs)
 }
 
+/// Expired artifact and download token cleanup monitor.
+///
+/// Runs every 5 minutes. Deletes artifacts whose `expires_at` has passed
+/// (files from storage first, then DB rows). Also prunes expired/revoked
+/// download tokens.
+async fn expired_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageBackend>>) {
+    // Wait 60 seconds on startup before first check
+    tokio::time::sleep(Duration::from_secs(60)).await;
+
+    loop {
+        let now = now_unix();
+
+        // 1. Clean up expired artifacts
+        let expired_artifacts = match sqlx::query(
+            "SELECT a.id, a.file_path, a.file_size, a.build_id \
+             FROM artifacts a \
+             WHERE a.expires_at IS NOT NULL AND a.expires_at < ?1",
+        )
+        .bind(now)
+        .fetch_all(&pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                error!(error = %e, "expired_artifact_monitor: failed to query expired artifacts");
+                tokio::time::sleep(Duration::from_secs(300)).await;
+                continue;
+            }
+        };
+
+        let mut artifacts_deleted: i64 = 0;
+        let mut bytes_reclaimed: i64 = 0;
+
+        for row in &expired_artifacts {
+            let artifact_id: String = row.get("id");
+            let file_path: String = row.get("file_path");
+            let file_size: Option<i64> = row.get("file_size");
+
+            // Delete from storage first
+            let backend = storage.read().await;
+            if let Err(e) = backend.delete_object(&file_path).await {
+                warn!(
+                    artifact_id = %artifact_id,
+                    file_path = %file_path,
+                    error = %e,
+                    "expired_artifact_monitor: failed to delete artifact file, skipping"
+                );
+                continue;
+            }
+            drop(backend);
+
+            // Delete DB row (CASCADE deletes download tokens too)
+            if let Err(e) = sqlx::query("DELETE FROM artifacts WHERE id = ?1")
+                .bind(&artifact_id)
+                .execute(&pool)
+                .await
+            {
+                warn!(artifact_id = %artifact_id, error = %e, "expired_artifact_monitor: failed to delete artifact row");
+            } else {
+                artifacts_deleted += 1;
+                bytes_reclaimed += file_size.unwrap_or(0);
+            }
+        }
+
+        // 2. Clean up expired/revoked download tokens (belt-and-suspenders alongside CASCADE)
+        let tokens_deleted = match sqlx::query(
+            "DELETE FROM artifact_download_tokens \
+             WHERE expires_at < ?1 OR revoked_at IS NOT NULL",
+        )
+        .bind(now)
+        .execute(&pool)
+        .await
+        {
+            Ok(result) => result.rows_affected() as i64,
+            Err(e) => {
+                warn!(error = %e, "expired_artifact_monitor: failed to clean up expired download tokens");
+                0
+            }
+        };
+
+        if artifacts_deleted > 0 || tokens_deleted > 0 {
+            info!(
+                artifacts_deleted,
+                bytes_reclaimed, tokens_deleted, "expired_artifact_monitor: cleanup completed"
+            );
+
+            let summary = serde_json::json!({
+                "artifacts_deleted": artifacts_deleted,
+                "bytes_reclaimed": bytes_reclaimed,
+                "tokens_deleted": tokens_deleted,
+                "ran_at": now,
+            });
+
+            let _ = write_audit_log(
+                &pool,
+                None,
+                "artifact_expiry_cleanup_completed",
+                "artifact",
+                None,
+                Some(&summary.to_string()),
+            )
+            .await;
+        }
+
+        tokio::time::sleep(Duration::from_secs(300)).await;
+    }
+}
+
 /// Load the effective retention policy for a project (override merged with global).
 async fn load_effective_project_policy(
     pool: &SqlitePool,
@@ -540,6 +649,9 @@ async fn load_effective_project_policy(
             .unwrap_or_else(|| global.keep_statuses.clone()),
         dry_run: global.dry_run,
         cleanup_interval_secs: global.cleanup_interval_secs,
+        artifact_ttl_days: row
+            .get::<Option<i64>, _>("artifact_ttl_days")
+            .or(global.artifact_ttl_days),
         updated_at: Some(row.get::<i64, _>("updated_at")),
     })
 }

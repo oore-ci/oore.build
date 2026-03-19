@@ -12,6 +12,16 @@ Rules:
 
 ## 2026-03-19
 
+- **Artifact expiry and scoped download tokens** ([OOR-140](https://linear.app/oorebuild/issue/OOR-140/artifact-expiry-and-scoped-download-tokens)):
+  - Added `expires_at` column to `artifacts` table; computed at creation from `artifact_ttl_days` retention policy setting.
+  - Added `artifact_ttl_days` field to `RetentionPolicy`, `ProjectRetentionOverride`, and their update requests.
+  - New `artifact_download_tokens` table for DB-backed scoped download tokens (survives daemon restart).
+  - New backend module `artifact_tokens.rs` with 4 endpoints: `POST /v1/artifacts/{artifact_id}/scoped-token`, `GET /v1/artifacts/{artifact_id}/scoped-tokens`, `DELETE /v1/artifact-tokens/{token_id}`, `GET /v1/artifacts/dl/{token}`.
+  - `GET /v1/artifacts/dl/{token}` is unauthenticated — the scoped token IS the authorization. Supports single-use and time-limited tokens.
+  - Background `expired_artifact_monitor` task cleans up expired artifacts and download tokens every 5 minutes.
+  - Frontend: artifact rows show expiry badge, new "Share Link" button opens dialog to create scoped tokens with configurable TTL and single-use option.
+  - Migration `025_artifact_expiry_and_download_tokens.sql`.
+  - OpenAPI spec updated with new endpoints and schemas.
 - **API Tokens frontend** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
   - Added API token types (`CreateApiTokenRequest`, `CreateApiTokenResponse`, `ApiTokenSummary`, `ListApiTokensResponse`, `RevokeApiTokenResponse`) to `apps/web/src/lib/types.ts`.
   - Added `createApiToken`, `listApiTokens`, `revokeApiToken` API functions to `apps/web/src/lib/api.ts`.

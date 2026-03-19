@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
+use crate::retention::load_global_policy;
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -57,6 +58,7 @@ fn row_to_artifact(row: &sqlx::sqlite::SqliteRow) -> Artifact {
         checksum: row.get("checksum"),
         metadata,
         created_at: row.get("created_at"),
+        expires_at: row.get("expires_at"),
     }
 }
 
@@ -195,10 +197,19 @@ pub async fn create_artifact(
             .unwrap_or_default()
     };
 
+    // Compute artifact expiry from retention policy's artifact_ttl_days
+    let expires_at: Option<i64> = match load_global_policy(&pool).await {
+        Ok(policy) => policy.artifact_ttl_days.map(|days| now + days * 86400),
+        Err(e) => {
+            error!(error = %e, "failed to load retention policy for artifact TTL; defaulting to no expiry");
+            None
+        }
+    };
+
     // Insert artifact row only after URL generation succeeds
     let insert_result = sqlx::query(
-        "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, checksum, metadata, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, checksum, metadata, created_at, expires_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )
     .bind(&artifact_id)
     .bind(&build_id)
@@ -209,6 +220,7 @@ pub async fn create_artifact(
     .bind(&checksum)
     .bind(&metadata_str)
     .bind(now)
+    .bind(expires_at)
     .execute(&pool)
     .await;
 
@@ -272,6 +284,7 @@ pub async fn create_artifact(
         checksum,
         metadata: req.metadata,
         created_at: now,
+        expires_at,
     };
 
     Ok(Json(CreateArtifactResponse {
@@ -338,6 +351,18 @@ pub async fn generate_download_link(
             )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Artifact not found"))?;
+
+    // Reject downloads of expired artifacts
+    let artifact_expires_at: Option<i64> = row.get("expires_at");
+    if let Some(ea) = artifact_expires_at
+        && ea <= now_unix()
+    {
+        return Err(api_err(
+            StatusCode::GONE,
+            "artifact_expired",
+            "This artifact has expired",
+        ));
+    }
 
     let file_path: String = row.get("file_path");
 

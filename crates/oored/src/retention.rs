@@ -33,6 +33,7 @@ fn default_policy() -> RetentionPolicy {
         keep_statuses: Vec::new(),
         dry_run: false,
         cleanup_interval_secs: 3600,
+        artifact_ttl_days: None,
         updated_at: None,
     }
 }
@@ -57,6 +58,7 @@ pub async fn load_global_policy(pool: &sqlx::SqlitePool) -> Result<RetentionPoli
             .unwrap_or_default(),
         dry_run: row.get::<i32, _>("dry_run") != 0,
         cleanup_interval_secs: row.get("cleanup_interval_secs"),
+        artifact_ttl_days: row.get("artifact_ttl_days"),
         updated_at: Some(row.get::<i64, _>("updated_at")),
     })
 }
@@ -76,6 +78,7 @@ fn merge_override(global: &RetentionPolicy, ovr: &ProjectRetentionOverride) -> R
             .unwrap_or_else(|| global.keep_statuses.clone()),
         dry_run: global.dry_run,
         cleanup_interval_secs: global.cleanup_interval_secs,
+        artifact_ttl_days: ovr.artifact_ttl_days.or(global.artifact_ttl_days),
         updated_at: ovr.updated_at.or(global.updated_at),
     }
 }
@@ -145,6 +148,15 @@ pub async fn update_retention_policy(
             "max_artifact_size_bytes must be at least 1",
         ));
     }
+    if let Some(v) = req.artifact_ttl_days
+        && v < 1
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "artifact_ttl_days must be at least 1",
+        ));
+    }
 
     let now = now_unix();
     let keep_statuses_json =
@@ -156,12 +168,13 @@ pub async fn update_retention_policy(
     sqlx::query(
         "INSERT INTO retention_policy (id, enabled, max_age_days, max_builds_per_project, \
          max_artifact_size_bytes, cleanup_target, keep_statuses, dry_run, cleanup_interval_secs, \
-         updated_by, created_at, updated_at) \
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10) \
+         artifact_ttl_days, updated_by, created_at, updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11) \
          ON CONFLICT(id) DO UPDATE SET \
          enabled = ?1, max_age_days = ?2, max_builds_per_project = ?3, \
          max_artifact_size_bytes = ?4, cleanup_target = ?5, keep_statuses = ?6, \
-         dry_run = ?7, cleanup_interval_secs = ?8, updated_by = ?9, updated_at = ?10",
+         dry_run = ?7, cleanup_interval_secs = ?8, artifact_ttl_days = ?9, \
+         updated_by = ?10, updated_at = ?11",
     )
     .bind(req.enabled as i32)
     .bind(req.max_age_days)
@@ -171,6 +184,7 @@ pub async fn update_retention_policy(
     .bind(&keep_statuses_json)
     .bind(req.dry_run as i32)
     .bind(req.cleanup_interval_secs)
+    .bind(req.artifact_ttl_days)
     .bind(&auth.0.user_id)
     .bind(now)
     .execute(pool)
@@ -263,6 +277,7 @@ pub async fn get_project_retention(
             keep_statuses: row
                 .get::<Option<String>, _>("keep_statuses")
                 .and_then(|s| serde_json::from_str(&s).ok()),
+            artifact_ttl_days: row.get("artifact_ttl_days"),
             updated_at: Some(row.get::<i64, _>("updated_at")),
         };
 
@@ -302,12 +317,12 @@ pub async fn update_project_retention(
     sqlx::query(
         "INSERT INTO project_retention_overrides \
          (project_id, enabled, max_age_days, max_builds_per_project, max_artifact_size_bytes, \
-          cleanup_target, keep_statuses, updated_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9) \
+          cleanup_target, keep_statuses, artifact_ttl_days, updated_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10) \
          ON CONFLICT(project_id) DO UPDATE SET \
          enabled = ?2, max_age_days = ?3, max_builds_per_project = ?4, \
          max_artifact_size_bytes = ?5, cleanup_target = ?6, keep_statuses = ?7, \
-         updated_by = ?8, updated_at = ?9",
+         artifact_ttl_days = ?8, updated_by = ?9, updated_at = ?10",
     )
     .bind(&project_id)
     .bind(req.enabled.map(|v| v as i32))
@@ -316,6 +331,7 @@ pub async fn update_project_retention(
     .bind(req.max_artifact_size_bytes)
     .bind(&cleanup_target_str)
     .bind(&keep_statuses_json)
+    .bind(req.artifact_ttl_days)
     .bind(&auth.0.user_id)
     .bind(now)
     .execute(pool)
