@@ -76,7 +76,14 @@ fn row_to_delivery(row: &sqlx::sqlite::SqliteRow) -> NotificationDelivery {
 
 // ── Validation ──────────────────────────────────────────────────
 
-const VALID_EVENTS: &[&str] = &["succeeded", "failed", "canceled", "timed_out", "expired", "runner_offline"];
+const VALID_EVENTS: &[&str] = &[
+    "succeeded",
+    "failed",
+    "canceled",
+    "timed_out",
+    "expired",
+    "runner_offline",
+];
 
 fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<ApiError>)> {
     for event in events {
