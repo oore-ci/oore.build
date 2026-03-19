@@ -6,6 +6,13 @@ use crate::util::now_unix;
 /// Default session time-to-live: 24 hours in seconds.
 pub const DEFAULT_SESSION_TTL: i64 = 86400;
 
+/// How the current request was authenticated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthSource {
+    Session,
+    ApiToken,
+}
+
 /// Information about a validated session, including the user's identity and role.
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
@@ -14,6 +21,7 @@ pub struct SessionInfo {
     pub oidc_subject: String,
     pub role: String,
     pub expires_at: i64,
+    pub auth_source: AuthSource,
 }
 
 /// SQLite-backed session store.
@@ -81,6 +89,7 @@ impl SessionStore {
             oidc_subject: r.get("oidc_subject"),
             role: r.get("role"),
             expires_at: r.get("expires_at"),
+            auth_source: AuthSource::Session,
         }))
     }
 

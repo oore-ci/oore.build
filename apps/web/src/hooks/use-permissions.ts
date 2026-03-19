@@ -31,6 +31,9 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'integrations:read',
     'integrations:write',
     'integrations:delete',
+    'api_tokens:read',
+    'api_tokens:write',
+    'api_tokens:delete',
     'audit_logs:read',
   ]),
   admin: new Set([
@@ -59,6 +62,9 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'integrations:read',
     'integrations:write',
     'integrations:delete',
+    'api_tokens:read',
+    'api_tokens:write',
+    'api_tokens:delete',
     'audit_logs:read',
   ]),
   developer: new Set([
@@ -73,6 +79,9 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'artifacts:write',
     'runners:read',
     'integrations:read',
+    'api_tokens:read',
+    'api_tokens:write',
+    'api_tokens:delete',
   ]),
   qa_viewer: new Set([
     'projects:read',

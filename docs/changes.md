@@ -12,6 +12,14 @@ Rules:
 
 ## 2026-03-19
 
+- **API Tokens frontend** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
+  - Added API token types (`CreateApiTokenRequest`, `CreateApiTokenResponse`, `ApiTokenSummary`, `ListApiTokensResponse`, `RevokeApiTokenResponse`) to `apps/web/src/lib/types.ts`.
+  - Added `createApiToken`, `listApiTokens`, `revokeApiToken` API functions to `apps/web/src/lib/api.ts`.
+  - Created `apps/web/src/hooks/use-api-tokens.ts` with `useApiTokens`, `useCreateApiToken`, `useRevokeApiToken` hooks.
+  - Added `api_tokens:read/write/delete` permissions to RBAC matrix for owner, admin, and developer roles in `apps/web/src/hooks/use-permissions.ts`.
+  - Created `apps/web/src/routes/settings/api-tokens.tsx` settings page with create dialog, token-revealed dialog, token table, and revoke confirmation.
+  - Added "API Tokens" nav item to sidebar in `apps/web/src/components/nav-main.tsx`.
+
 - **Documentation & CI maintenance fixes**:
   - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
   - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).

@@ -69,3 +69,13 @@ p, qa_viewer, pipelines, read
 p, qa_viewer, builds, read
 p, qa_viewer, artifacts, read
 p, qa_viewer, integrations, read
+
+p, owner, api_tokens, read
+p, owner, api_tokens, write
+p, owner, api_tokens, delete
+p, admin, api_tokens, read
+p, admin, api_tokens, write
+p, admin, api_tokens, delete
+p, developer, api_tokens, read
+p, developer, api_tokens, write
+p, developer, api_tokens, delete

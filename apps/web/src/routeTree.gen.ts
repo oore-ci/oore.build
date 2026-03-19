@@ -26,6 +26,7 @@ import { Route as SettingsRetentionRouteImport } from './routes/settings/retenti
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
+import { Route as SettingsApiTokensRouteImport } from './routes/settings/api-tokens'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as SettingsNotificationsIndexRouteImport } from './routes/settings/notifications/index'
@@ -126,6 +127,11 @@ const SettingsArtifactsRoute = SettingsArtifactsRouteImport.update({
   path: '/settings/artifacts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsApiTokensRoute = SettingsApiTokensRouteImport.update({
+  id: '/settings/api-tokens',
+  path: '/settings/api-tokens',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BuildsBuildIdRoute = BuildsBuildIdRouteImport.update({
   id: '/builds/$buildId',
   path: '/builds/$buildId',
@@ -214,6 +220,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
@@ -246,6 +253,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
@@ -280,6 +288,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
@@ -315,6 +324,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
     | '/settings/preferences'
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
     | '/settings/preferences'
@@ -380,6 +391,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
     | '/settings/preferences'
@@ -414,6 +426,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
   BuildsBuildIdRoute: typeof BuildsBuildIdRoute
+  SettingsApiTokensRoute: typeof SettingsApiTokensRoute
   SettingsArtifactsRoute: typeof SettingsArtifactsRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
@@ -557,6 +570,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsArtifactsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/api-tokens': {
+      id: '/settings/api-tokens'
+      path: '/settings/api-tokens'
+      fullPath: '/settings/api-tokens'
+      preLoaderRoute: typeof SettingsApiTokensRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/builds/$buildId': {
       id: '/builds/$buildId'
       path: '/builds/$buildId'
@@ -684,6 +704,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
   BuildsBuildIdRoute: BuildsBuildIdRoute,
+  SettingsApiTokensRoute: SettingsApiTokensRoute,
   SettingsArtifactsRoute: SettingsArtifactsRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
   SettingsPreferencesRoute: SettingsPreferencesRoute,

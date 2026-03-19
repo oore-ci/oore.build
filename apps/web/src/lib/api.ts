@@ -9,6 +9,8 @@ import type {
   CancelBuildResponse,
   ConfigureExternalAccessOidcRequest,
   ConfigureExternalAccessOidcResponse,
+  CreateApiTokenRequest,
+  CreateApiTokenResponse,
   CreateBuildRequest,
   CreateBuildResponse,
   CreateLocalGitIntegrationRequest,
@@ -34,6 +36,7 @@ import type {
   IntegrationDetailResponse,
   InviteUserRequest,
   InviteUserResponse,
+  ListApiTokensResponse,
   ListArtifactsResponse,
   ListAuditLogsResponse,
   ListBuildsResponse,
@@ -62,6 +65,7 @@ import type {
   RegisterIosDeviceResponse,
   RetentionCleanupSummaryResponse,
   RetentionPolicyResponse,
+  RevokeApiTokenResponse,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
@@ -1401,4 +1405,38 @@ export function listAuditLogs(
     `/v1/audit-logs${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(token) },
   )
+}
+
+// ── API Tokens ──────────────────────────────────────────────────
+
+export function createApiToken(
+  baseUrl: string,
+  token: string,
+  data: CreateApiTokenRequest,
+): Promise<CreateApiTokenResponse> {
+  return request<CreateApiTokenResponse>(baseUrl, '/v1/api-tokens', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
+}
+
+export function listApiTokens(
+  baseUrl: string,
+  token: string,
+): Promise<ListApiTokensResponse> {
+  return request<ListApiTokensResponse>(baseUrl, '/v1/api-tokens', {
+    headers: authHeaders(token),
+  })
+}
+
+export function revokeApiToken(
+  baseUrl: string,
+  token: string,
+  tokenId: string,
+): Promise<RevokeApiTokenResponse> {
+  return request<RevokeApiTokenResponse>(baseUrl, `/v1/api-tokens/${tokenId}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
 }
