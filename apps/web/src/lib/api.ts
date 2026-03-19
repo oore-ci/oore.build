@@ -22,6 +22,7 @@ import type {
   EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
+  GetExternalAccessOidcResponse,
   GitHubAppCompleteRequest,
   GitHubAppCompleteResponse,
   GitHubAppStartRequest,
@@ -77,6 +78,8 @@ import type {
   SyncInstallationsResponse,
   SyncPipelineIosSigningResponse,
   TestNotificationChannelResponse,
+  TestOidcConnectionRequest,
+  TestOidcConnectionResponse,
   TrustedProxySettingsResponse,
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
@@ -750,6 +753,17 @@ export function updateExternalAccessTrustedProxySettings(
   )
 }
 
+export function getExternalAccessOidc(
+  baseUrl: string,
+  token: string,
+): Promise<GetExternalAccessOidcResponse> {
+  return request<GetExternalAccessOidcResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc',
+    { headers: authHeaders(token) },
+  )
+}
+
 export function configureExternalAccessOidc(
   baseUrl: string,
   token: string,
@@ -760,6 +774,22 @@ export function configureExternalAccessOidc(
     '/v1/settings/external-access/oidc',
     {
       method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function testOidcConnection(
+  baseUrl: string,
+  token: string,
+  data: TestOidcConnectionRequest,
+): Promise<TestOidcConnectionResponse> {
+  return request<TestOidcConnectionResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc/test-connection',
+    {
+      method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },

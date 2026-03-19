@@ -3337,6 +3337,51 @@
       }
     },
     "/v1/settings/external-access/oidc": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get current OIDC configuration for External Access",
+        "description": "Returns the current runtime OIDC provider configuration (issuer, client ID,\ndiscovered endpoints). Never exposes the client secret.",
+        "operationId": "get_external_access_oidc",
+        "responses": {
+          "200": {
+            "description": "Current OIDC configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetExternalAccessOidcResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "OIDC not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "put": {
         "tags": [
           "Instance Settings"
@@ -3387,6 +3432,63 @@
           },
           "409": {
             "description": "Setup state does not allow runtime OIDC configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/external-access/oidc/test-connection": {
+      "post": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Test OIDC provider connection",
+        "description": "Owner-only endpoint to test OIDC provider discovery without committing changes.\nValidates that the issuer URL is reachable and returns discovered endpoints.",
+        "operationId": "test_oidc_connection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestOidcConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connection test succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestOidcConnectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or OIDC discovery failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only operation",
             "content": {
               "application/json": {
                 "schema": {
@@ -6342,6 +6444,48 @@
           }
         }
       },
+      "GetExternalAccessOidcResponse": {
+        "type": "object",
+        "required": [
+          "issuer_url",
+          "client_id",
+          "has_client_secret",
+          "authorization_endpoint",
+          "token_endpoint",
+          "jwks_uri",
+          "configured_at"
+        ],
+        "properties": {
+          "authorization_endpoint": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "configured_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_client_secret": {
+            "type": "boolean"
+          },
+          "issuer_url": {
+            "type": "string"
+          },
+          "jwks_uri": {
+            "type": "string"
+          },
+          "token_endpoint": {
+            "type": "string"
+          },
+          "userinfo_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "GitHubAppCompleteRequest": {
         "type": "object",
         "required": [
@@ -8623,6 +8767,57 @@
           },
           "success": {
             "type": "boolean"
+          }
+        }
+      },
+      "TestOidcConnectionRequest": {
+        "type": "object",
+        "required": [
+          "issuer_url"
+        ],
+        "properties": {
+          "issuer_url": {
+            "type": "string"
+          }
+        }
+      },
+      "TestOidcConnectionResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "discovered_issuer",
+          "authorization_endpoint",
+          "token_endpoint",
+          "jwks_uri",
+          "scopes_supported"
+        ],
+        "properties": {
+          "authorization_endpoint": {
+            "type": "string"
+          },
+          "discovered_issuer": {
+            "type": "string"
+          },
+          "jwks_uri": {
+            "type": "string"
+          },
+          "scopes_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "token_endpoint": {
+            "type": "string"
+          },
+          "userinfo_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
