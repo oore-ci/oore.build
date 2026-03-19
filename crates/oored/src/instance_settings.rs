@@ -1591,7 +1591,6 @@ pub async fn configure_external_access_oidc(
     }
 
     let now = now_unix();
-    let has_client_secret = client_secret.is_some();
 
     #[derive(Debug)]
     struct OidcConfigFromDiscovery {
@@ -1661,6 +1660,7 @@ pub async fn configure_external_access_oidc(
         store.pool().clone()
     };
 
+    let has_client_secret;
     {
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
@@ -1680,6 +1680,25 @@ pub async fn configure_external_access_oidc(
             ));
         }
 
+        // Update secret: if provided, encrypt and store; if omitted, preserve existing
+        if let Some(secret) = client_secret {
+            let encrypted = crypto::encrypt(&secret, &state.encryption_key).map_err(|e| {
+                error!(error = %e, "failed to encrypt External Access OIDC client secret");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption_error",
+                    "Failed to encrypt OIDC client secret",
+                )
+            })?;
+            sf.oidc_secret = Some(OidcSecretRecord {
+                encrypted_client_secret: encrypted,
+                stored_at: now,
+            });
+        }
+        // When client_secret is None, sf.oidc_secret retains whatever was loaded
+
+        has_client_secret = sf.oidc_secret.is_some();
+
         sf.oidc_config = Some(OidcConfigRecord {
             issuer_url: discovered.issuer.clone(),
             client_id: client_id.to_string(),
@@ -1690,23 +1709,6 @@ pub async fn configure_external_access_oidc(
             jwks_uri: discovered.jwks_uri.clone(),
             configured_at: now,
         });
-
-        sf.oidc_secret = if let Some(secret) = client_secret {
-            let encrypted = crypto::encrypt(&secret, &state.encryption_key).map_err(|e| {
-                error!(error = %e, "failed to encrypt External Access OIDC client secret");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "encryption_error",
-                    "Failed to encrypt OIDC client secret",
-                )
-            })?;
-            Some(OidcSecretRecord {
-                encrypted_client_secret: encrypted,
-                stored_at: now,
-            })
-        } else {
-            None
-        };
 
         sf.updated_at = now;
 
