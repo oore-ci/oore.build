@@ -60,7 +60,11 @@ fn project_role_level(role: &ProjectRole) -> u8 {
 
 /// Return the lesser of two project roles.
 fn min_project_role(a: ProjectRole, b: ProjectRole) -> ProjectRole {
-    if project_role_level(&a) <= project_role_level(&b) { a } else { b }
+    if project_role_level(&a) <= project_role_level(&b) {
+        a
+    } else {
+        b
+    }
 }
 
 /// Resolve the effective project role for a user on a given project.

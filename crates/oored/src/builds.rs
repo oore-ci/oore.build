@@ -447,8 +447,14 @@ pub async fn create_build(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    let effective =
-        resolve_effective_project_role(pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
     require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
 
     let requested_branch = normalize_optional(req.branch);

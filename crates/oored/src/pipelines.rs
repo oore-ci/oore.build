@@ -377,8 +377,14 @@ pub async fn create_pipeline(
         store.pool().clone()
     };
 
-    let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
     require_project_permission(&effective, ProjectPermission::ManagePipelines)?;
 
     let name = req.name.trim();
@@ -537,8 +543,14 @@ pub async fn list_pipelines(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    let effective =
-        resolve_effective_project_role(pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
 
     // Validate project exists
