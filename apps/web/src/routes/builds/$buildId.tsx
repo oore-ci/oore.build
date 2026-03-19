@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Copy01Icon,
@@ -73,6 +73,9 @@ function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const navigate = useNavigate()
   const knownTerminalRef = useRef(false)
+  useEffect(() => {
+    knownTerminalRef.current = false
+  }, [buildId])
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: knownTerminalRef.current ? false : 3000,

@@ -763,6 +763,64 @@
         }
       }
     },
+    "/v1/builds/{build_id}/rerun": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Re-run build",
+        "description": "Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.",
+        "operationId": "rerun_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Source build ID to re-run",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Re-run build queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunBuildResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Source build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source build is not in a terminal state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/stream-token": {
       "post": {
         "tags": [
@@ -5751,6 +5809,12 @@
               "null"
             ]
           },
+          "source_build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "started_at": {
             "type": [
               "integer",
@@ -8154,6 +8218,17 @@
           "oidc",
           "trusted_proxy"
         ]
+      },
+      "RerunBuildResponse": {
+        "type": "object",
+        "required": [
+          "build"
+        ],
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/Build"
+          }
+        }
       },
       "RetentionCleanupSummary": {
         "type": "object",
