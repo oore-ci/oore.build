@@ -18,6 +18,17 @@ Rules:
   - Added `RerunBuildResponse` contract type in `oore-contract`.
   - Frontend: replaced dialog-based re-run with single-click "Re-run" button on build detail page; added source build link for re-runs.
   - OpenAPI spec updated with new endpoint.
+- **Runner health monitoring and status endpoint (OOR-142)**:
+  - Backend: Added `GET /v1/runners/{runner_id}` endpoint for individual runner details.
+  - Backend: Added `RunnerStateEvent` broadcast channel to emit events when runners go offline.
+  - Backend: Notification dispatch now sends runner offline alerts to configured notification channels.
+  - Backend: DB migration `022` extends `notification_deliveries` for runner event tracking (`runner_id`, `event_category`).
+  - Frontend: Runner status dashboard now auto-refreshes every 15s via `refetchInterval`.
+  - Frontend: Replaced "Rename policy" stat card with "Offline runners" count card with destructive badge.
+  - Frontend: Added pulsing status dot indicators and stale heartbeat (>60s) warning highlighting.
+  - OpenAPI spec updated with new `GET /v1/runners/{runner_id}` endpoint.
+  - Linear: https://linear.app/oorebuild/issue/OOR-142/runner-health-monitoring-and-status-endpoint
+
 - **SSO/OIDC provider management post-setup** ([OOR-141](https://linear.app/oorebuild/issue/OOR-141/ssooidc-provider-management-post-setup)):
   - Added `GET /v1/settings/external-access/oidc` endpoint to read current OIDC provider config (issuer, client ID, endpoints, configured_at). Never exposes client secret.
   - Added `POST /v1/settings/external-access/oidc/test-connection` endpoint for dry-run OIDC discovery validation without committing changes.

@@ -625,6 +625,16 @@ export function listRunners(
   })
 }
 
+export function getRunner(
+  baseUrl: string,
+  token: string,
+  runnerId: string,
+): Promise<UpdateRunnerResponse> {
+  return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
+    headers: authHeaders(token),
+  })
+}
+
 export function updateRunner(
   baseUrl: string,
   token: string,
