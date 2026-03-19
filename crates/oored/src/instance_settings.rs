@@ -11,8 +11,9 @@ use oore_contract::{
     ConfigureExternalAccessOidcRequest, ConfigureExternalAccessOidcResponse,
     ExternalAccessNetworkSettings, ExternalAccessNetworkSettingsResponse,
     ExternalAccessNetworkSource, ExternalAccessPreflightCheck, ExternalAccessPreflightResponse,
-    InstancePreferences, InstancePreferencesResponse, KeyStorageMode, OidcConfigRecord,
-    OidcSecretRecord, RemoteAuthMode, RuntimeMode, SetupState, TrustedProxySettingsPublic,
+    GetExternalAccessOidcResponse, InstancePreferences, InstancePreferencesResponse,
+    KeyStorageMode, OidcConfigRecord, OidcSecretRecord, RemoteAuthMode, RuntimeMode, SetupState,
+    TestOidcConnectionRequest, TestOidcConnectionResponse, TrustedProxySettingsPublic,
     TrustedProxySettingsResponse, UpdateArtifactStorageSettingsRequest,
     UpdateExternalAccessNetworkSettingsRequest, UpdateInstancePreferencesRequest,
     UpdateTrustedProxySettingsRequest,
@@ -1407,6 +1408,137 @@ pub async fn get_external_access_preflight(
     Ok(Json(result))
 }
 
+pub async fn get_external_access_oidc(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> ApiResult<GetExternalAccessOidcResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
+
+    let store = state.store.lock().await;
+    let sf = store.load().await.map_err(|e| {
+        error!(error = %e, "failed to load setup state for External Access OIDC read");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load setup state",
+        )
+    })?;
+
+    if sf.setup_state != SetupState::Ready {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "invalid_state",
+            "External Access OIDC settings are only available after setup is ready",
+        ));
+    }
+
+    let oidc = sf.oidc_config.ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "oidc_not_configured",
+            "No OIDC provider is configured",
+        )
+    })?;
+
+    Ok(Json(GetExternalAccessOidcResponse {
+        issuer_url: oidc.issuer_url,
+        client_id: oidc.client_id,
+        has_client_secret: oidc.has_client_secret,
+        authorization_endpoint: oidc.authorization_endpoint,
+        token_endpoint: oidc.token_endpoint,
+        userinfo_endpoint: oidc.userinfo_endpoint,
+        jwks_uri: oidc.jwks_uri,
+        configured_at: oidc.configured_at,
+    }))
+}
+
+pub async fn test_oidc_connection(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<TestOidcConnectionRequest>,
+) -> ApiResult<TestOidcConnectionResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "instance_settings", "write").await?;
+
+    if auth.0.role != "owner" {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "external_access_owner_required",
+            "Only the owner can test OIDC connections",
+        ));
+    }
+
+    let issuer_url = req.issuer_url.trim();
+    if issuer_url.is_empty() || issuer_url.len() > 2048 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "issuer_url must be between 1 and 2048 characters",
+        ));
+    }
+    if url::Url::parse(issuer_url).is_err() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "issuer_url is not a valid URL",
+        ));
+    }
+
+    let discovered = {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            if state.skip_oidc_discovery {
+                let base = issuer_url.trim_end_matches('/').to_string();
+                crate::oidc::DiscoveredProvider {
+                    issuer: issuer_url.to_string(),
+                    authorization_endpoint: format!("{base}/o/oauth2/v2/auth"),
+                    token_endpoint: format!("{base}/token"),
+                    userinfo_endpoint: Some(format!("{base}/userinfo")),
+                    jwks_uri: format!("{base}/jwks"),
+                    scopes_supported: vec![
+                        "openid".to_string(),
+                        "email".to_string(),
+                        "profile".to_string(),
+                    ],
+                }
+            } else {
+                crate::oidc::discover_provider(issuer_url)
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "OIDC test-connection discovery failed");
+                        api_err(
+                            StatusCode::BAD_REQUEST,
+                            "oidc_discovery_failed",
+                            "Failed to discover OIDC provider",
+                        )
+                    })?
+            }
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            crate::oidc::discover_provider(issuer_url)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "OIDC test-connection discovery failed");
+                    api_err(
+                        StatusCode::BAD_REQUEST,
+                        "oidc_discovery_failed",
+                        "Failed to discover OIDC provider",
+                    )
+                })?
+        }
+    };
+
+    Ok(Json(TestOidcConnectionResponse {
+        success: true,
+        discovered_issuer: discovered.issuer,
+        authorization_endpoint: discovered.authorization_endpoint,
+        token_endpoint: discovered.token_endpoint,
+        userinfo_endpoint: discovered.userinfo_endpoint,
+        jwks_uri: discovered.jwks_uri,
+        scopes_supported: discovered.scopes_supported,
+    }))
+}
+
 pub async fn configure_external_access_oidc(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1586,6 +1718,13 @@ pub async fn configure_external_access_oidc(
                 "Failed to update OIDC configuration",
             )
         })?;
+    }
+
+    // Clear pending OIDC auth entries — any in-flight auth flows are now invalid
+    // because the provider config just changed.
+    {
+        let mut pending = state.pending_auth.lock().await;
+        pending.clear();
     }
 
     let details = serde_json::json!({

@@ -1427,6 +1427,36 @@ pub struct ConfigureExternalAccessOidcResponse {
     pub configured_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetExternalAccessOidcResponse {
+    pub issuer_url: String,
+    pub client_id: String,
+    pub has_client_secret: bool,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub userinfo_endpoint: Option<String>,
+    pub jwks_uri: String,
+    pub configured_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestOidcConnectionRequest {
+    pub issuer_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestOidcConnectionResponse {
+    pub success: bool,
+    pub discovered_issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub userinfo_endpoint: Option<String>,
+    pub jwks_uri: String,
+    pub scopes_supported: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TrustedProxySettingsPublic {
     pub user_email_header: String,

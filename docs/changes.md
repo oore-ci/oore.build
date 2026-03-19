@@ -12,6 +12,14 @@ Rules:
 
 ## 2026-03-19
 
+- **SSO/OIDC provider management post-setup** ([OOR-141](https://linear.app/oorebuild/issue/OOR-141/ssooidc-provider-management-post-setup)):
+  - Added `GET /v1/settings/external-access/oidc` endpoint to read current OIDC provider config (issuer, client ID, endpoints, configured_at). Never exposes client secret.
+  - Added `POST /v1/settings/external-access/oidc/test-connection` endpoint for dry-run OIDC discovery validation without committing changes.
+  - Fixed bug: `PUT /v1/settings/external-access/oidc` now clears pending auth entries on reconfigure, invalidating stale in-flight OIDC flows.
+  - Frontend: OIDC identity card now displays current provider info (issuer, client ID, secret status).
+  - Frontend: OIDC reconfigure dialog pre-populates from current config and includes "Test Connection" button.
+  - Updated OpenAPI spec with new endpoints.
+
 - **Documentation & CI maintenance fixes**:
   - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
   - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).

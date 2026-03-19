@@ -63,7 +63,9 @@ use utoipa::OpenApi;
         paths::get_external_access_trusted_proxy_settings,
         paths::update_external_access_trusted_proxy_settings,
         paths::get_external_access_preflight,
+        paths::get_external_access_oidc,
         paths::configure_external_access_oidc,
+        paths::test_oidc_connection,
         // ── Retention Policy ──
         paths::get_retention_policy,
         paths::update_retention_policy,
@@ -316,6 +318,9 @@ use utoipa::OpenApi;
         oore_contract::ExternalAccessPreflightResponse,
         oore_contract::ConfigureExternalAccessOidcRequest,
         oore_contract::ConfigureExternalAccessOidcResponse,
+        oore_contract::GetExternalAccessOidcResponse,
+        oore_contract::TestOidcConnectionRequest,
+        oore_contract::TestOidcConnectionResponse,
         oore_contract::InstancePreferences,
         oore_contract::InstancePreferencesResponse,
         oore_contract::UpdateInstancePreferencesRequest,
@@ -837,6 +842,20 @@ mod paths {
     )]
     pub(super) async fn get_external_access_preflight() {}
 
+    /// Get current OIDC configuration for External Access
+    ///
+    /// Returns the current runtime OIDC provider configuration (issuer, client ID,
+    /// discovered endpoints). Never exposes the client secret.
+    #[utoipa::path(get, path = "/v1/settings/external-access/oidc", tag = "Instance Settings",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Current OIDC configuration", body = GetExternalAccessOidcResponse),
+            (status = 404, description = "OIDC not configured", body = ApiError),
+            (status = 409, description = "Setup not ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_external_access_oidc() {}
+
     /// Configure OIDC for External Access
     ///
     /// Owner-only endpoint to configure runtime OIDC after setup is complete.
@@ -852,6 +871,21 @@ mod paths {
         )
     )]
     pub(super) async fn configure_external_access_oidc() {}
+
+    /// Test OIDC provider connection
+    ///
+    /// Owner-only endpoint to test OIDC provider discovery without committing changes.
+    /// Validates that the issuer URL is reachable and returns discovered endpoints.
+    #[utoipa::path(post, path = "/v1/settings/external-access/oidc/test-connection", tag = "Instance Settings",
+        request_body = TestOidcConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Connection test succeeded", body = TestOidcConnectionResponse),
+            (status = 400, description = "Invalid input or OIDC discovery failure", body = ApiError),
+            (status = 403, description = "Owner-only operation", body = ApiError),
+        )
+    )]
+    pub(super) async fn test_oidc_connection() {}
 
     // ── Retention Policy ──
 

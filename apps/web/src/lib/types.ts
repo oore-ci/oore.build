@@ -569,6 +569,31 @@ export interface ConfigureExternalAccessOidcResponse {
   configured_at: number
 }
 
+export interface GetExternalAccessOidcResponse {
+  issuer_url: string
+  client_id: string
+  has_client_secret: boolean
+  authorization_endpoint: string
+  token_endpoint: string
+  userinfo_endpoint?: string
+  jwks_uri: string
+  configured_at: number
+}
+
+export interface TestOidcConnectionRequest {
+  issuer_url: string
+}
+
+export interface TestOidcConnectionResponse {
+  success: boolean
+  discovered_issuer: string
+  authorization_endpoint: string
+  token_endpoint: string
+  userinfo_endpoint?: string
+  jwks_uri: string
+  scopes_supported: Array<string>
+}
+
 export interface TrustedProxySettingsPublic {
   user_email_header: string
   trusted_proxy_cidrs: Array<string>
