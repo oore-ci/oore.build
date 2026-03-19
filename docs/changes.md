@@ -19,6 +19,13 @@ Rules:
   - Added `api_tokens:read/write/delete` permissions to RBAC matrix for owner, admin, and developer roles in `apps/web/src/hooks/use-permissions.ts`.
   - Created `apps/web/src/routes/settings/api-tokens.tsx` settings page with create dialog, token-revealed dialog, token table, and revoke confirmation.
   - Added "API Tokens" nav item to sidebar in `apps/web/src/components/nav-main.tsx`.
+- **SSO/OIDC provider management post-setup** ([OOR-141](https://linear.app/oorebuild/issue/OOR-141/ssooidc-provider-management-post-setup)):
+  - Added `GET /v1/settings/external-access/oidc` endpoint to read current OIDC provider config (issuer, client ID, endpoints, configured_at). Never exposes client secret.
+  - Added `POST /v1/settings/external-access/oidc/test-connection` endpoint for dry-run OIDC discovery validation without committing changes.
+  - Fixed bug: `PUT /v1/settings/external-access/oidc` now clears pending auth entries on reconfigure, invalidating stale in-flight OIDC flows.
+  - Frontend: OIDC identity card now displays current provider info (issuer, client ID, secret status).
+  - Frontend: OIDC reconfigure dialog pre-populates from current config and includes "Test Connection" button.
+  - Updated OpenAPI spec with new endpoints.
 
 - **Documentation & CI maintenance fixes**:
   - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
