@@ -7440,7 +7440,6 @@
         "required": [
           "id",
           "channel_id",
-          "build_id",
           "event_type",
           "status",
           "attempt_count",
@@ -7452,7 +7451,10 @@
             "format": "int64"
           },
           "build_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "channel_id": {
             "type": "string"

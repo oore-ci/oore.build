@@ -64,7 +64,7 @@ fn row_to_delivery(row: &sqlx::sqlite::SqliteRow) -> NotificationDelivery {
     NotificationDelivery {
         id: row.get("id"),
         channel_id: row.get("channel_id"),
-        build_id: row.get("build_id"),
+        build_id: row.try_get("build_id").ok().flatten(),
         event_type: row.get("event_type"),
         status,
         attempt_count: row.get("attempt_count"),
@@ -76,7 +76,7 @@ fn row_to_delivery(row: &sqlx::sqlite::SqliteRow) -> NotificationDelivery {
 
 // ── Validation ──────────────────────────────────────────────────
 
-const VALID_EVENTS: &[&str] = &["succeeded", "failed", "canceled", "timed_out", "expired"];
+const VALID_EVENTS: &[&str] = &["succeeded", "failed", "canceled", "timed_out", "expired", "runner_offline"];
 
 fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<ApiError>)> {
     for event in events {

@@ -2682,7 +2682,8 @@ pub struct TestNotificationChannelResponse {
 pub struct NotificationDelivery {
     pub id: String,
     pub channel_id: String,
-    pub build_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
     pub event_type: String,
     pub status: NotificationDeliveryStatus,
     pub attempt_count: i64,
