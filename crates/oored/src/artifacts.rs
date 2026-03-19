@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
-use crate::retention::load_global_policy;
+use crate::retention::load_effective_policy;
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -108,7 +108,7 @@ pub async fn create_artifact(
     };
 
     // Verify build exists and is assigned to this runner
-    let build_row = sqlx::query("SELECT id, runner_id FROM builds WHERE id = ?1")
+    let build_row = sqlx::query("SELECT id, runner_id, project_id FROM builds WHERE id = ?1")
         .bind(&job_id)
         .fetch_optional(&pool)
         .await
@@ -132,6 +132,7 @@ pub async fn create_artifact(
     }
 
     let build_id: String = build_row.get("id");
+    let project_id: String = build_row.get("project_id");
     let checksum = req
         .checksum
         .as_deref()
@@ -197,8 +198,8 @@ pub async fn create_artifact(
             .unwrap_or_default()
     };
 
-    // Compute artifact expiry from retention policy's artifact_ttl_days
-    let expires_at: Option<i64> = match load_global_policy(&pool).await {
+    // Compute artifact expiry from effective retention policy (project override > global)
+    let expires_at: Option<i64> = match load_effective_policy(&pool, &project_id).await {
         Ok(policy) => policy.artifact_ttl_days.map(|days| now + days * 86400),
         Err(e) => {
             error!(error = %e, "failed to load retention policy for artifact TTL; defaulting to no expiry");

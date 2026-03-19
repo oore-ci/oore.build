@@ -63,6 +63,44 @@ pub async fn load_global_policy(pool: &sqlx::SqlitePool) -> Result<RetentionPoli
     })
 }
 
+/// Load the effective retention policy for a project (global merged with project override).
+///
+/// Used by artifact creation to compute per-artifact expiry and by the background
+/// cleanup task.  Falls back to the global policy when no project override exists.
+pub async fn load_effective_policy(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<RetentionPolicy, sqlx::Error> {
+    let global = load_global_policy(pool).await?;
+
+    let row = sqlx::query("SELECT * FROM project_retention_overrides WHERE project_id = ?1")
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(global);
+    };
+
+    let ovr = ProjectRetentionOverride {
+        project_id: project_id.to_string(),
+        enabled: row.get::<Option<i32>, _>("enabled").map(|v| v != 0),
+        max_age_days: row.get("max_age_days"),
+        max_builds_per_project: row.get("max_builds_per_project"),
+        max_artifact_size_bytes: row.get("max_artifact_size_bytes"),
+        cleanup_target: row
+            .get::<Option<String>, _>("cleanup_target")
+            .and_then(|s| RetentionCleanupTarget::from_str(&s).ok()),
+        keep_statuses: row
+            .get::<Option<String>, _>("keep_statuses")
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        artifact_ttl_days: row.get("artifact_ttl_days"),
+        updated_at: Some(row.get::<i64, _>("updated_at")),
+    };
+
+    Ok(merge_override(&global, &ovr))
+}
+
 fn merge_override(global: &RetentionPolicy, ovr: &ProjectRetentionOverride) -> RetentionPolicy {
     RetentionPolicy {
         enabled: ovr.enabled.unwrap_or(global.enabled),

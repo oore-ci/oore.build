@@ -108,16 +108,25 @@ pub async fn validate_download_token(
     }))
 }
 
-pub async fn mark_token_used(pool: &SqlitePool, token_hash: &str) {
+/// Atomically claim a single-use token.  Returns `true` if this call won the
+/// race (i.e. `used_at` was `NULL` and is now set).  A concurrent second call
+/// will see `rows_affected == 0` and return `false`.
+pub async fn claim_single_use_token(pool: &SqlitePool, token_hash: &str) -> bool {
     let now = now_unix();
-    if let Err(e) =
-        sqlx::query("UPDATE artifact_download_tokens SET used_at = ?1 WHERE token_hash = ?2")
-            .bind(now)
-            .bind(token_hash)
-            .execute(pool)
-            .await
+    match sqlx::query(
+        "UPDATE artifact_download_tokens SET used_at = ?1 \
+         WHERE token_hash = ?2 AND used_at IS NULL",
+    )
+    .bind(now)
+    .bind(token_hash)
+    .execute(pool)
+    .await
     {
-        error!(error = %e, "failed to mark download token as used");
+        Ok(result) => result.rows_affected() > 0,
+        Err(e) => {
+            error!(error = %e, "failed to mark download token as used");
+            false
+        }
     }
 }
 
@@ -439,9 +448,13 @@ pub async fn download_via_scoped_token(
         }
     }
 
-    // Mark token as used if single-use
-    if validated.single_use {
-        mark_token_used(&pool, &validated.token_hash).await;
+    // Atomically claim single-use tokens — reject if another request already consumed it
+    if validated.single_use && !claim_single_use_token(&pool, &validated.token_hash).await {
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_token",
+            "Download token is invalid, expired, or already used",
+        ));
     }
 
     // Serve the file via storage backend

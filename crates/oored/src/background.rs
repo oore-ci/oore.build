@@ -2,7 +2,6 @@
 //! and retention cleanup.
 
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +10,7 @@ use sqlx::{Row, SqlitePool};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
-use crate::retention::load_global_policy;
+use crate::retention::{load_effective_policy, load_global_policy};
 use crate::scheduler::{BuildStateEvent, RunnerStateEvent, Scheduler};
 use crate::storage::StorageBackend;
 use crate::store::write_audit_log;
@@ -273,7 +272,9 @@ async fn run_retention_cleanup(
         let project_id: String = project_row.get("id");
 
         // Load project override if any, merge with global
-        let effective = load_effective_project_policy(pool, &policy, &project_id).await?;
+        let effective = load_effective_policy(pool, &project_id)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
 
         if !effective.enabled {
             continue;
@@ -608,50 +609,4 @@ async fn expired_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageB
 
         tokio::time::sleep(Duration::from_secs(300)).await;
     }
-}
-
-/// Load the effective retention policy for a project (override merged with global).
-async fn load_effective_project_policy(
-    pool: &SqlitePool,
-    global: &oore_contract::RetentionPolicy,
-    project_id: &str,
-) -> Result<oore_contract::RetentionPolicy, anyhow::Error> {
-    let row = sqlx::query("SELECT * FROM project_retention_overrides WHERE project_id = ?1")
-        .bind(project_id)
-        .fetch_optional(pool)
-        .await?;
-
-    let Some(row) = row else {
-        return Ok(global.clone());
-    };
-
-    Ok(oore_contract::RetentionPolicy {
-        enabled: row
-            .get::<Option<i32>, _>("enabled")
-            .map(|v| v != 0)
-            .unwrap_or(global.enabled),
-        max_age_days: row
-            .get::<Option<i64>, _>("max_age_days")
-            .or(global.max_age_days),
-        max_builds_per_project: row
-            .get::<Option<i64>, _>("max_builds_per_project")
-            .or(global.max_builds_per_project),
-        max_artifact_size_bytes: row
-            .get::<Option<i64>, _>("max_artifact_size_bytes")
-            .or(global.max_artifact_size_bytes),
-        cleanup_target: row
-            .get::<Option<String>, _>("cleanup_target")
-            .and_then(|s| RetentionCleanupTarget::from_str(&s).ok())
-            .unwrap_or(global.cleanup_target),
-        keep_statuses: row
-            .get::<Option<String>, _>("keep_statuses")
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| global.keep_statuses.clone()),
-        dry_run: global.dry_run,
-        cleanup_interval_secs: global.cleanup_interval_secs,
-        artifact_ttl_days: row
-            .get::<Option<i64>, _>("artifact_ttl_days")
-            .or(global.artifact_ttl_days),
-        updated_at: Some(row.get::<i64, _>("updated_at")),
-    })
 }
