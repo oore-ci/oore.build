@@ -118,6 +118,7 @@ use utoipa::OpenApi;
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
+        paths::rerun_build,
         // ── Audit Logs ──
         paths::list_audit_logs,
         // ── Runners ──
@@ -276,6 +277,7 @@ use utoipa::OpenApi;
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
+        oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
         // Runners
         oore_contract::RunnerStatus,
@@ -1430,6 +1432,20 @@ mod paths {
         )
     )]
     pub(super) async fn cancel_build() {}
+
+    /// Re-run build
+    ///
+    /// Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/rerun", tag = "Builds",
+        params(("build_id" = String, Path, description = "Source build ID to re-run")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Re-run build queued", body = RerunBuildResponse),
+            (status = 404, description = "Source build not found", body = ApiError),
+            (status = 409, description = "Source build is not in a terminal state", body = ApiError),
+        )
+    )]
+    pub(super) async fn rerun_build() {}
 
     // ── Runners ──
 

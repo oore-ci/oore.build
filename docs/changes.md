@@ -12,6 +12,13 @@ Rules:
 
 ## 2026-03-19
 
+- **Build re-run / retry with same parameters** ([OOR-139](https://linear.app/oorebuild/issue/OOR-139/build-re-run-retry-with-same-parameters)):
+  - Added `POST /v1/builds/{build_id}/rerun` endpoint that clones an existing build's `config_snapshot`, `branch`, `commit_sha`, and `pipeline_id` to enqueue a new build.
+  - Added `source_build_id` column to `builds` table (migration 022) to link re-runs to their source build.
+  - Added `RerunBuildResponse` contract type in `oore-contract`.
+  - Frontend: replaced dialog-based re-run with single-click "Re-run" button on build detail page; added source build link for re-runs.
+  - OpenAPI spec updated with new endpoint.
+
 - **Documentation & CI maintenance fixes**:
   - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
   - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).

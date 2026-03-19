@@ -60,6 +60,7 @@ import type {
   ReEnableUserResponse,
   RegisterIosDeviceRequest,
   RegisterIosDeviceResponse,
+  RerunBuildResponse,
   RetentionCleanupSummaryResponse,
   RetentionPolicyResponse,
   SetupCompleteResponse,
@@ -843,6 +844,17 @@ export function cancelBuild(
   buildId: string,
 ): Promise<CancelBuildResponse> {
   return request<CancelBuildResponse>(baseUrl, `/v1/builds/${buildId}/cancel`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+}
+
+export function rerunBuild(
+  baseUrl: string,
+  token: string,
+  buildId: string,
+): Promise<RerunBuildResponse> {
+  return request<RerunBuildResponse>(baseUrl, `/v1/builds/${buildId}/rerun`, {
     method: 'POST',
     headers: authHeaders(token),
   })

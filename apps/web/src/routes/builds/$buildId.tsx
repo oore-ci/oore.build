@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useCallback, useMemo, useRef } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Copy01Icon,
@@ -28,6 +28,7 @@ import {
   useBuild,
   useBuildLogs,
   useCancelBuild,
+  useRerunBuild,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -39,7 +40,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import {
   formatDuration,
   formatFileSize,
@@ -73,7 +73,7 @@ function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const navigate = useNavigate()
   const knownTerminalRef = useRef(false)
-  const [rerunOpen, setRerunOpen] = useState(false)
+  const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: knownTerminalRef.current ? false : 3000,
   })
@@ -182,6 +182,15 @@ function BuildDetailPage() {
               {build.status}
             </Badge>
             <Badge variant="outline">{build.trigger_type}</Badge>
+            {build.source_build_id ? (
+              <Link
+                to="/builds/$buildId"
+                params={{ buildId: build.source_build_id }}
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Re-run of a previous build
+              </Link>
+            ) : null}
             {build.branch ? (
               <span className="inline-flex items-center gap-1 font-mono text-[11px]">
                 <HugeiconsIcon icon={GitBranchIcon} size={12} />
@@ -218,10 +227,24 @@ function BuildDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setRerunOpen(true)}
+                onClick={() => {
+                  rerunMutation.mutate(build.id, {
+                    onSuccess: (result) => {
+                      toast.success(`Re-run queued as build #${result.build.build_number}`)
+                      void navigate({
+                        to: '/builds/$buildId',
+                        params: { buildId: result.build.id },
+                      })
+                    },
+                    onError: (err) => {
+                      toast.error(`Failed to re-run: ${err.message}`)
+                    },
+                  })
+                }}
+                disabled={rerunMutation.isPending}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                Re-run
+                {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
             {canCancel ? (
@@ -262,22 +285,6 @@ function BuildDetailPage() {
         </aside>
       </div>
 
-      {/* Re-run dialog */}
-      <TriggerBuildDialog
-        open={rerunOpen}
-        onOpenChange={setRerunOpen}
-        fixedProjectId={build.project_id}
-        fixedPipelineId={build.pipeline_id}
-        defaultBranch={build.branch ?? undefined}
-        title="Re-run Build"
-        description={`Re-run build #${build.build_number} with the same pipeline and branch.`}
-        onBuildCreated={(newBuildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId: newBuildId },
-          })
-        }}
-      />
     </PageLayout>
   )
 }
