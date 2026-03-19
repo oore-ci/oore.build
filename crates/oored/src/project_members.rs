@@ -54,7 +54,7 @@ pub async fn list_project_members(
     };
 
     let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
 
     let rows = sqlx::query(
@@ -94,7 +94,7 @@ pub async fn add_project_member(
     };
 
     let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
 
     // Verify project exists
@@ -217,7 +217,7 @@ pub async fn update_project_member(
     };
 
     let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
 
     let now = now_unix();
@@ -339,7 +339,7 @@ pub async fn remove_project_member(
     };
 
     let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id, &auth.0.auth_source).await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
 
     // Prevent removing the last maintainer — would leave project unmanageable
