@@ -3007,6 +3007,52 @@
       }
     },
     "/v1/runners/{runner_id}": {
+      "get": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Get runner",
+        "description": "Retrieves a single runner by ID, including its current status and health information.",
+        "operationId": "get_runner",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Runner details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRunnerResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Runner not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "patch": {
         "tags": [
           "Runners"
@@ -7708,7 +7754,6 @@
         "required": [
           "id",
           "channel_id",
-          "build_id",
           "event_type",
           "status",
           "attempt_count",
@@ -7720,7 +7765,10 @@
             "format": "int64"
           },
           "build_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "channel_id": {
             "type": "string"

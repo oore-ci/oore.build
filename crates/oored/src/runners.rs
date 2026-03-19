@@ -576,6 +576,36 @@ pub async fn get_job_status(
     Ok(Json(JobStatusResponse { status }))
 }
 
+/// `GET /v1/runners/{runner_id}` — get a single runner (admin/owner only).
+pub async fn get_runner(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(runner_id): Path<String>,
+) -> ApiResult<UpdateRunnerResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "runners", "read").await?;
+
+    let store = state.store.lock().await;
+    let pool = store.pool();
+
+    let row = sqlx::query("SELECT * FROM runners WHERE id = ?1")
+        .bind(&runner_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch runner",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+
+    Ok(Json(UpdateRunnerResponse {
+        runner: row_to_runner(&row),
+    }))
+}
+
 /// `GET /v1/runners` — list all runners (admin/owner only).
 pub async fn list_runners(
     State(state): State<Arc<AppState>>,

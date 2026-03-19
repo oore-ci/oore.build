@@ -21,6 +21,16 @@ Rules:
   - Added "API Tokens" nav item to sidebar in `apps/web/src/components/nav-main.tsx`.
 - **Fix: API token project-level role capping** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
   - `resolve_effective_project_role` now accepts `auth_source` and caps resolved project membership at the token's instance role when authenticated via API token. Prevents a downgraded token from inheriting the creator's full project permissions.
+- **Runner health monitoring and status endpoint (OOR-142)**:
+  - Backend: Added `GET /v1/runners/{runner_id}` endpoint for individual runner details.
+  - Backend: Added `RunnerStateEvent` broadcast channel to emit events when runners go offline.
+  - Backend: Notification dispatch now sends runner offline alerts to configured notification channels.
+  - Backend: DB migration `022` extends `notification_deliveries` for runner event tracking (`runner_id`, `event_category`).
+  - Frontend: Runner status dashboard now auto-refreshes every 15s via `refetchInterval`.
+  - Frontend: Replaced "Rename policy" stat card with "Offline runners" count card with destructive badge.
+  - Frontend: Added pulsing status dot indicators and stale heartbeat (>60s) warning highlighting.
+  - OpenAPI spec updated with new `GET /v1/runners/{runner_id}` endpoint.
+  - Linear: https://linear.app/oorebuild/issue/OOR-142/runner-health-monitoring-and-status-endpoint
 - **SSO/OIDC provider management post-setup** ([OOR-141](https://linear.app/oorebuild/issue/OOR-141/ssooidc-provider-management-post-setup)):
   - Added `GET /v1/settings/external-access/oidc` endpoint to read current OIDC provider config (issuer, client ID, endpoints, configured_at). Never exposes client secret.
   - Added `POST /v1/settings/external-access/oidc/test-connection` endpoint for dry-run OIDC discovery validation without committing changes.
