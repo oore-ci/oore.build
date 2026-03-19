@@ -878,7 +878,11 @@ pub async fn rerun_build(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch source build for rerun");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch build")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch build",
+        )
     })?
     .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
@@ -906,11 +910,12 @@ pub async fn rerun_build(
     require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
 
     // Verify project still exists
-    let project_exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
-        .bind(&project_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false);
+    let project_exists: bool =
+        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
+            .bind(&project_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
     if !project_exists {
         return Err(api_err(
             StatusCode::NOT_FOUND,
