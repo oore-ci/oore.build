@@ -2237,6 +2237,7 @@ async fn build_router_inner(
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
+        .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
         // Runner endpoints

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, Build, BuildDetailResponse, BuildEvent, BuildStatus, CancelBuildResponse,
     ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, ListBuildsResponse,
-    PipelineExecutionConfig, TriggerConfig,
+    PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -46,6 +46,7 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         trigger_ref: row.get("trigger_ref"),
         commit_sha: row.get("commit_sha"),
         branch: row.get("branch"),
+        source_build_id: row.get("source_build_id"),
         config_snapshot,
         runner_id: row.get("runner_id"),
         step_results,
@@ -333,6 +334,7 @@ struct BuildInsertBinds<'a> {
     webhook_id: Option<&'a str>,
     now: i64,
     trigger_type: &'a str,
+    source_build_id: Option<&'a str>,
 }
 
 async fn execute_build_insert(
@@ -343,10 +345,10 @@ async fn execute_build_insert(
     sqlx::query(
         "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, \
          trigger_type, trigger_actor, trigger_event, trigger_ref, commit_sha, branch, \
-         config_snapshot, webhook_id, queued_at, created_at, updated_at) \
+         config_snapshot, webhook_id, source_build_id, queued_at, created_at, updated_at) \
          VALUES (?1, ?2, ?3, \
                  (SELECT COALESCE(MAX(build_number), 0) + 1 FROM builds WHERE project_id = ?2), \
-                 'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?12)",
+                 'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?13)",
     )
     .bind(b.build_id)
     .bind(b.project_id)
@@ -359,6 +361,7 @@ async fn execute_build_insert(
     .bind(b.branch)
     .bind(b.config_snapshot)
     .bind(b.webhook_id)
+    .bind(b.source_build_id)
     .bind(b.now)
     .execute(pool)
     .await?;
@@ -606,6 +609,7 @@ pub async fn create_build(
             webhook_id: None,
             now,
             trigger_type: "manual",
+            source_build_id: None,
         },
     )
     .await?;
@@ -665,6 +669,7 @@ pub async fn create_build(
         trigger_ref,
         commit_sha,
         branch,
+        source_build_id: None,
         config_snapshot,
         runner_id: None,
         step_results: None,
@@ -853,6 +858,180 @@ pub async fn cancel_build(
     Ok(Json(CancelBuildResponse { build }))
 }
 
+/// `POST /v1/builds/{build_id}/rerun` — re-run a build with the same parameters.
+pub async fn rerun_build(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(build_id): Path<String>,
+) -> ApiResult<RerunBuildResponse> {
+    let store = state.store.lock().await;
+    let pool = store.pool();
+
+    // Fetch source build
+    let source_row = sqlx::query(
+        "SELECT id, project_id, pipeline_id, build_number, status, \
+         trigger_ref, commit_sha, branch, config_snapshot \
+         FROM builds WHERE id = ?1",
+    )
+    .bind(&build_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch source build for rerun");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch build",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+
+    // Verify source build is terminal
+    let source_status: String = source_row.get("status");
+    let is_terminal = matches!(
+        source_status.as_str(),
+        "succeeded" | "failed" | "canceled" | "timed_out" | "expired"
+    );
+    if !is_terminal {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "build_not_terminal",
+            "Cannot re-run a build that is still in progress",
+        ));
+    }
+
+    let project_id: String = source_row.get("project_id");
+    let pipeline_id: String = source_row.get("pipeline_id");
+    let source_build_number: i64 = source_row.get("build_number");
+
+    // Check project-level TriggerBuild permission
+    let effective =
+        resolve_effective_project_role(pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
+
+    // Verify project still exists
+    let project_exists: bool =
+        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
+            .bind(&project_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+    if !project_exists {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project no longer exists",
+        ));
+    }
+
+    // Clone parameters from source build
+    let config_snapshot_str: String = source_row.get("config_snapshot");
+    let branch: Option<String> = source_row.get("branch");
+    let commit_sha: Option<String> = source_row.get("commit_sha");
+    let trigger_ref: Option<String> = source_row.get("trigger_ref");
+
+    let now = now_unix();
+    let new_build_id = Uuid::new_v4().to_string();
+
+    // Insert new build (skip concurrency policy — explicit user action)
+    insert_build_with_retry(
+        pool,
+        &BuildInsertBinds {
+            build_id: &new_build_id,
+            project_id: &project_id,
+            pipeline_id: &pipeline_id,
+            actor: Some(&auth.0.email),
+            event_type: Some("rerun"),
+            trigger_ref: trigger_ref.as_deref(),
+            commit_sha: commit_sha.as_deref(),
+            branch: branch.as_deref(),
+            config_snapshot: &config_snapshot_str,
+            webhook_id: None,
+            now,
+            trigger_type: "manual",
+            source_build_id: Some(&build_id),
+        },
+    )
+    .await?;
+
+    let build_number = fetch_build_number(pool, &new_build_id).await?;
+
+    // Insert initial build event
+    let reason = format!("re-run of build #{}", source_build_number);
+    sqlx::query(
+        "INSERT INTO build_events (id, build_id, from_status, to_status, actor, reason, created_at) \
+         VALUES (?1, ?2, NULL, 'queued', ?3, ?4, ?5)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&new_build_id)
+    .bind(&auth.0.email)
+    .bind(&reason)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to insert build event for rerun");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to record build event")
+    })?;
+
+    // Audit log
+    let details = serde_json::json!({
+        "project_id": project_id,
+        "pipeline_id": pipeline_id,
+        "build_number": build_number,
+        "trigger_type": "manual",
+        "source_build_id": build_id,
+        "created_by": auth.0.email,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "build_rerun",
+        "build",
+        Some(&new_build_id),
+        Some(&details),
+    )
+    .await;
+
+    info!(
+        build_id = %new_build_id,
+        build_number = build_number,
+        source_build_id = %build_id,
+        project_id = %project_id,
+        "build re-run created"
+    );
+
+    let config_snapshot: serde_json::Value =
+        serde_json::from_str(&config_snapshot_str).unwrap_or(serde_json::json!({}));
+
+    let build = Build {
+        id: new_build_id,
+        project_id,
+        pipeline_id,
+        build_number,
+        status: "queued".to_string(),
+        trigger_type: "manual".to_string(),
+        trigger_actor: Some(auth.0.email),
+        trigger_event: Some("rerun".to_string()),
+        trigger_ref,
+        commit_sha,
+        branch,
+        source_build_id: Some(build_id),
+        config_snapshot,
+        runner_id: None,
+        step_results: None,
+        exit_code: None,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    Ok(Json(RerunBuildResponse { build }))
+}
+
 /// Trigger builds from a webhook event.
 ///
 /// Called from webhooks.rs after webhook normalization.
@@ -1029,6 +1208,7 @@ pub async fn trigger_build_from_webhook(
                     webhook_id: Some(webhook_id),
                     now,
                     trigger_type: "webhook",
+                    source_build_id: None,
                 },
             )
             .await?;
@@ -1072,6 +1252,7 @@ pub async fn trigger_build_from_webhook(
                 trigger_ref: branch.map(String::from),
                 commit_sha: commit_sha.map(String::from),
                 branch: branch.map(String::from),
+                source_build_id: None,
                 config_snapshot,
                 runner_id: None,
                 step_results: None,
