@@ -39,6 +39,186 @@
         }
       }
     },
+    "/v1/api-tokens": {
+      "get": {
+        "tags": [
+          "API Tokens"
+        ],
+        "summary": "List API tokens",
+        "description": "Returns all API tokens visible to the caller. Admins and owners see all\ntokens; other roles see only their own.",
+        "operationId": "list_api_tokens",
+        "responses": {
+          "200": {
+            "description": "List of API tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListApiTokensResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "API Tokens"
+        ],
+        "summary": "Create API token",
+        "description": "Creates a new API token. The plaintext token is returned only in this\nresponse and cannot be retrieved again.",
+        "operationId": "create_api_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateApiTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden or role escalation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/api-tokens/{token_id}": {
+      "delete": {
+        "tags": [
+          "API Tokens"
+        ],
+        "summary": "Revoke API token",
+        "description": "Revokes an API token by ID. Non-admin users can only revoke their own\ntokens.",
+        "operationId": "revoke_api_token",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "API token ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeApiTokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/artifacts/{artifact_id}/download-link": {
       "post": {
         "tags": [
@@ -5467,6 +5647,64 @@
           }
         }
       },
+      "ApiTokenSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "role",
+          "created_by",
+          "created_by_email",
+          "created_at",
+          "is_expired",
+          "is_revoked"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_by_email": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_expired": {
+            "type": "boolean"
+          },
+          "is_revoked": {
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
       "AppendBuildLogsRequest": {
         "type": "object",
         "required": [
@@ -6153,6 +6391,68 @@
           },
           "has_client_secret": {
             "type": "boolean"
+          }
+        }
+      },
+      "CreateApiTokenRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "role"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateApiTokenResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "role",
+          "created_at",
+          "token"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "description": "The plaintext token. Only returned on creation, never again."
           }
         }
       },
@@ -7114,6 +7414,20 @@
           "keychain",
           "file"
         ]
+      },
+      "ListApiTokensResponse": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiTokenSummary"
+            }
+          }
+        }
       },
       "ListArtifactsResponse": {
         "type": "object",
@@ -8397,6 +8711,17 @@
         "properties": {
           "policy": {
             "$ref": "#/components/schemas/RetentionPolicy"
+          }
+        }
+      },
+      "RevokeApiTokenResponse": {
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "boolean"
           }
         }
       },
@@ -9751,6 +10076,10 @@
     {
       "name": "Audit Logs",
       "description": "Read-only audit trail of all user and system actions."
+    },
+    {
+      "name": "API Tokens",
+      "description": "API token management — create, list, and revoke tokens for programmatic access."
     },
     {
       "name": "Webhooks",

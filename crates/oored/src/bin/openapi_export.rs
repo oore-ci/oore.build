@@ -123,6 +123,10 @@ use utoipa::OpenApi;
         paths::rerun_build,
         // ── Audit Logs ──
         paths::list_audit_logs,
+        // ── API Tokens ──
+        paths::list_api_tokens,
+        paths::create_api_token,
+        paths::revoke_api_token,
         // ── Runners ──
         paths::register_runner,
         paths::list_runners,
@@ -357,6 +361,12 @@ use utoipa::OpenApi;
         // Audit Logs
         oore_contract::AuditLogEntry,
         oore_contract::ListAuditLogsResponse,
+        // API Tokens
+        oore_contract::CreateApiTokenRequest,
+        oore_contract::CreateApiTokenResponse,
+        oore_contract::ApiTokenSummary,
+        oore_contract::ListApiTokensResponse,
+        oore_contract::RevokeApiTokenResponse,
     )),
     tags(
         (name = "Health", description = "Health check endpoint"),
@@ -376,6 +386,7 @@ use utoipa::OpenApi;
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
         (name = "Notification Channels", description = "Outbound notification channel configuration — webhook, Mattermost."),
         (name = "Audit Logs", description = "Read-only audit trail of all user and system actions."),
+        (name = "API Tokens", description = "API token management — create, list, and revoke tokens for programmatic access."),
         (name = "Webhooks", description = "Incoming webhook receivers for GitHub and GitLab."),
     ),
     security(
@@ -1741,6 +1752,54 @@ mod paths {
         )
     )]
     pub(super) async fn list_audit_logs() {}
+
+    // ── API Tokens ──
+
+    /// List API tokens
+    ///
+    /// Returns all API tokens visible to the caller. Admins and owners see all
+    /// tokens; other roles see only their own.
+    #[utoipa::path(get, path = "/v1/api-tokens", tag = "API Tokens",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of API tokens", body = ListApiTokensResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_api_tokens() {}
+
+    /// Create API token
+    ///
+    /// Creates a new API token. The plaintext token is returned only in this
+    /// response and cannot be retrieved again.
+    #[utoipa::path(post, path = "/v1/api-tokens", tag = "API Tokens",
+        request_body = CreateApiTokenRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token created", body = CreateApiTokenResponse),
+            (status = 400, description = "Invalid request", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden or role escalation", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_api_token() {}
+
+    /// Revoke API token
+    ///
+    /// Revokes an API token by ID. Non-admin users can only revoke their own
+    /// tokens.
+    #[utoipa::path(delete, path = "/v1/api-tokens/{token_id}", tag = "API Tokens",
+        params(("token_id" = String, Path, description = "API token ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token revoked", body = RevokeApiTokenResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+            (status = 404, description = "Token not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn revoke_api_token() {}
 
     // ── Notification Channels ──
 

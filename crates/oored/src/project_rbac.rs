@@ -4,6 +4,7 @@ use oore_contract::{ApiError, ProjectRole};
 use sqlx::Row;
 use tracing::error;
 
+use crate::session::AuthSource;
 use crate::util::api_err;
 
 // ── Effective project role ──────────────────────────────────────
@@ -37,17 +38,51 @@ pub enum ProjectPermission {
 
 // ── Resolution ──────────────────────────────────────────────────
 
+/// Map an instance role to the maximum project role it may exercise.
+///
+/// `owner` and `admin` are handled earlier (they get `InstanceAdmin`), so this
+/// only matters for downgraded instance roles like `developer` or `qa_viewer`.
+fn max_project_role_for_instance_role(instance_role: &str) -> ProjectRole {
+    match instance_role {
+        "developer" => ProjectRole::Developer,
+        // qa_viewer (and any unknown role) caps at Viewer
+        _ => ProjectRole::Viewer,
+    }
+}
+
+fn project_role_level(role: &ProjectRole) -> u8 {
+    match role {
+        ProjectRole::Maintainer => 3,
+        ProjectRole::Developer => 2,
+        ProjectRole::Viewer => 1,
+    }
+}
+
+/// Return the lesser of two project roles.
+fn min_project_role(a: ProjectRole, b: ProjectRole) -> ProjectRole {
+    if project_role_level(&a) <= project_role_level(&b) {
+        a
+    } else {
+        b
+    }
+}
+
 /// Resolve the effective project role for a user on a given project.
 ///
 /// Rules:
 /// 1. Instance `owner` / `admin` → `InstanceAdmin` (bypass membership).
 /// 2. Explicit `project_members` row → `Member(role)`.
 /// 3. Otherwise → `None`.
+///
+/// When `auth_source` is `ApiToken`, the resolved project role is capped at
+/// the maximum implied by the token's instance role. This prevents a
+/// downgraded token from inheriting the creator's full project membership.
 pub async fn resolve_effective_project_role(
     pool: &sqlx::SqlitePool,
     user_id: &str,
     instance_role: &str,
     project_id: &str,
+    auth_source: &AuthSource,
 ) -> Result<EffectiveProjectRole, (StatusCode, Json<ApiError>)> {
     if instance_role == "owner" || instance_role == "admin" {
         return Ok(EffectiveProjectRole::InstanceAdmin);
@@ -77,7 +112,16 @@ pub async fn resolve_effective_project_role(
                 "Invalid project role in database",
             )
         })?;
-        return Ok(EffectiveProjectRole::Member(role));
+
+        // For API tokens, cap the project role at the token's instance role
+        let effective = if *auth_source == AuthSource::ApiToken {
+            let cap = max_project_role_for_instance_role(instance_role);
+            min_project_role(role, cap)
+        } else {
+            role
+        };
+
+        return Ok(EffectiveProjectRole::Member(effective));
     }
 
     Ok(EffectiveProjectRole::None)

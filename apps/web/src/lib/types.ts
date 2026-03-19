@@ -1071,3 +1071,43 @@ export interface ListAuditLogsResponse {
   entries: Array<AuditLogEntry>
   total: number
 }
+
+// ── API Token types ─────────────────────────────────────────────
+
+export interface CreateApiTokenRequest {
+  name: string
+  role: string
+  expires_at?: number
+}
+
+export interface CreateApiTokenResponse {
+  id: string
+  name: string
+  prefix: string
+  role: string
+  created_at: number
+  expires_at: number | null
+  token: string
+}
+
+export interface ApiTokenSummary {
+  id: string
+  name: string
+  prefix: string
+  role: string
+  created_by: string
+  created_by_email: string
+  created_at: number
+  expires_at: number | null
+  last_used_at: number | null
+  is_expired: boolean
+  is_revoked: boolean
+}
+
+export interface ListApiTokensResponse {
+  tokens: Array<ApiTokenSummary>
+}
+
+export interface RevokeApiTokenResponse {
+  revoked: boolean
+}

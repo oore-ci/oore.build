@@ -2706,3 +2706,50 @@ pub struct ListNotificationDeliveriesResponse {
     pub deliveries: Vec<NotificationDelivery>,
     pub total: i64,
 }
+
+// ── API Tokens ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateApiTokenRequest {
+    pub name: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateApiTokenResponse {
+    pub id: String,
+    pub name: String,
+    pub prefix: String,
+    pub role: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+    /// The plaintext token. Only returned on creation, never again.
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ApiTokenSummary {
+    pub id: String,
+    pub name: String,
+    pub prefix: String,
+    pub role: String,
+    pub created_by: String,
+    pub created_by_email: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+    pub is_expired: bool,
+    pub is_revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListApiTokensResponse {
+    pub tokens: Vec<ApiTokenSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RevokeApiTokenResponse {
+    pub revoked: bool,
+}

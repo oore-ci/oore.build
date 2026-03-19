@@ -583,8 +583,14 @@ pub async fn get_project(
         store.pool().clone()
     };
 
-    let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
 
     let project_row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
@@ -636,8 +642,14 @@ pub async fn update_project(
         store.pool().clone()
     };
 
-    let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
     require_project_permission(&effective, ProjectPermission::Write)?;
 
     // Verify project exists
@@ -800,8 +812,14 @@ pub async fn delete_project(
         store.pool().clone()
     };
 
-    let effective =
-        resolve_effective_project_role(&pool, &auth.0.user_id, &auth.0.role, &project_id).await?;
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
     require_project_permission(&effective, ProjectPermission::Delete)?;
 
     // Use a transaction so the active-build check, terminal-build cleanup,
