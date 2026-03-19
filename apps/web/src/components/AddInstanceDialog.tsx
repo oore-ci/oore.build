@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -81,11 +82,13 @@ type AddInstanceForm = z.infer<ReturnType<typeof addInstanceSchema>>
 interface AddInstanceDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  editInstanceId?: string
 }
 
 export default function AddInstanceDialog({
   open,
   onOpenChange,
+  editInstanceId,
 }: AddInstanceDialogProps) {
   const frontendOrigin =
     typeof window === 'undefined'
@@ -93,8 +96,13 @@ export default function AddInstanceDialog({
       : window.location.origin
   const hostedUi = isHostedUiOrigin(frontendOrigin)
   const localLauncher = isLocalLauncherOrigin(frontendOrigin)
+  const instances = useInstanceStore((s) => s.instances)
   const addInstance = useInstanceStore((s) => s.addInstance)
+  const updateInstance = useInstanceStore((s) => s.updateInstance)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
+
+  const isEditing = !!editInstanceId
+  const editInstance = editInstanceId ? instances[editInstanceId] : null
 
   const {
     register,
@@ -109,11 +117,32 @@ export default function AddInstanceDialog({
     mode: 'onBlur',
   })
 
+  // Pre-fill form when editing
+  useEffect(() => {
+    if (isEditing && editInstance) {
+      reset({
+        label: editInstance.label,
+        url: editInstance.url,
+        icon: editInstance.icon ?? DEFAULT_INSTANCE_ICON_KEY,
+      })
+    } else {
+      reset({ label: '', url: '', icon: DEFAULT_INSTANCE_ICON_KEY })
+    }
+  }, [isEditing, editInstance, reset])
+
   const selectedIcon = watch('icon')
 
   function onSubmit(data: AddInstanceForm) {
-    const id = addInstance(data.label.trim(), data.url, data.icon)
-    setActiveInstance(id)
+    if (isEditing && editInstanceId) {
+      updateInstance(editInstanceId, {
+        label: data.label.trim(),
+        url: data.url,
+        icon: data.icon,
+      })
+    } else {
+      const id = addInstance(data.label.trim(), data.url, data.icon)
+      setActiveInstance(id)
+    }
     reset()
     onOpenChange(false)
   }
@@ -129,13 +158,15 @@ export default function AddInstanceDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add Instance</DialogTitle>
+          <DialogTitle>{isEditing ? 'Edit Instance' : 'Add Instance'}</DialogTitle>
           <DialogDescription>
-            {hostedUi
-              ? 'Connect to an HTTPS-reachable Oore backend (tunnel or reverse proxy).'
-              : localLauncher
-                ? 'Leave Backend URL empty to use the local oore-web proxy to your daemon.'
-                : 'Connect to an Oore backend. Leave URL empty to use the local dev proxy.'}
+            {isEditing
+              ? 'Update details for this instance.'
+              : hostedUi
+                ? 'Connect to an HTTPS-reachable Oore backend (tunnel or reverse proxy).'
+                : localLauncher
+                  ? 'Leave Backend URL empty to use the local oore-web proxy to your daemon.'
+                  : 'Connect to an Oore backend. Leave URL empty to use the local dev proxy.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -218,7 +249,7 @@ export default function AddInstanceDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!isValid}>
-              Add
+              {isEditing ? 'Save' : 'Add'}
             </Button>
           </DialogFooter>
         </form>

@@ -24,6 +24,7 @@ import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
 import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
+import { Route as SettingsFleetRouteImport } from './routes/settings/fleet'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
@@ -114,6 +115,11 @@ const SettingsRetentionRoute = SettingsRetentionRouteImport.update({
 const SettingsPreferencesRoute = SettingsPreferencesRouteImport.update({
   id: '/settings/preferences',
   path: '/settings/preferences',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsFleetRoute = SettingsFleetRouteImport.update({
+  id: '/settings/fleet',
+  path: '/settings/fleet',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
@@ -216,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/fleet': typeof SettingsFleetRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
@@ -248,6 +255,7 @@ export interface FileRoutesByTo {
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/fleet': typeof SettingsFleetRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
@@ -282,6 +290,7 @@ export interface FileRoutesById {
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
+  '/settings/fleet': typeof SettingsFleetRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
@@ -317,6 +326,7 @@ export interface FileRouteTypes {
     | '/builds/$buildId'
     | '/settings/artifacts'
     | '/settings/audit-log'
+    | '/settings/fleet'
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
@@ -349,6 +359,7 @@ export interface FileRouteTypes {
     | '/builds/$buildId'
     | '/settings/artifacts'
     | '/settings/audit-log'
+    | '/settings/fleet'
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
@@ -382,6 +393,7 @@ export interface FileRouteTypes {
     | '/builds/$buildId'
     | '/settings/artifacts'
     | '/settings/audit-log'
+    | '/settings/fleet'
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
@@ -416,6 +428,7 @@ export interface RootRouteChildren {
   BuildsBuildIdRoute: typeof BuildsBuildIdRoute
   SettingsArtifactsRoute: typeof SettingsArtifactsRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
+  SettingsFleetRoute: typeof SettingsFleetRoute
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
   SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
@@ -541,6 +554,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/preferences'
       fullPath: '/settings/preferences'
       preLoaderRoute: typeof SettingsPreferencesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/fleet': {
+      id: '/settings/fleet'
+      path: '/settings/fleet'
+      fullPath: '/settings/fleet'
+      preLoaderRoute: typeof SettingsFleetRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/audit-log': {
@@ -686,6 +706,7 @@ const rootRouteChildren: RootRouteChildren = {
   BuildsBuildIdRoute: BuildsBuildIdRoute,
   SettingsArtifactsRoute: SettingsArtifactsRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
+  SettingsFleetRoute: SettingsFleetRoute,
   SettingsPreferencesRoute: SettingsPreferencesRoute,
   SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,

@@ -32,6 +32,8 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'integrations:write',
     'integrations:delete',
     'audit_logs:read',
+    'fleet:read',
+    'fleet:write',
   ]),
   admin: new Set([
     'instance_settings:read',
@@ -60,6 +62,8 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'integrations:write',
     'integrations:delete',
     'audit_logs:read',
+    'fleet:read',
+    'fleet:write',
   ]),
   developer: new Set([
     'projects:read',

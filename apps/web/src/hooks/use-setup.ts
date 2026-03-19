@@ -34,7 +34,9 @@ export function useSetupStatus() {
   return useQuery({
     queryKey,
     queryFn: () => getSetupStatus(requireInstance(instance)),
-    refetchInterval: 3000,
+    refetchInterval: (query) => (query.state.error ? false : 3000),
+    retry: false,
+    refetchOnWindowFocus: false,
     enabled: !!instance,
   })
 }

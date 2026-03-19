@@ -1,4 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -6,6 +7,8 @@ import {
   ArrowRight01Icon,
   Loading03Icon,
   PlayIcon,
+  Refresh01Icon,
+  WifiDisconnected04Icon,
 } from '@hugeicons/core-free-icons'
 
 import type { RuntimeMode } from '@/lib/types'
@@ -215,19 +218,66 @@ function IndexPage() {
   }
 
   if (error) {
+    const queryClient = useQueryClient()
     return (
-      <div className="flex flex-1 items-center justify-center p-6">
-        <PageMeta />
-        <div className="w-full max-w-md">
+      <div className="flex flex-1 flex-col items-center justify-center p-6">
+        <PageMeta title="Connection Failed" />
+        <div className="w-full max-w-md space-y-6">
+          <div className="space-y-2 text-center text-destructive">
+            <HugeiconsIcon
+              icon={WifiDisconnected04Icon}
+              size={48}
+              className="mx-auto"
+            />
+            <h1 className="text-2xl font-bold tracking-tight">
+              Backend Unreachable
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Oore UI cannot connect to the daemon at:
+            </p>
+            <code className="block bg-destructive/10 px-3 py-2 text-sm font-mono tracking-tight text-destructive">
+              {instance.url}
+            </code>
+          </div>
+
           <Alert variant="destructive">
             <AlertTitle>Connection failed</AlertTitle>
-            <AlertDescription>
-              Unable to reach the oore daemon. Make sure{' '}
-              <code className="bg-muted px-1 py-0.5 text-xs">oored</code> is
-              running.
+            <AlertDescription className="space-y-3">
+              <p>
+                Unable to reach the oore daemon. Make sure{' '}
+                <code className="bg-muted px-1 py-0.5 text-xs">oored</code> is
+                running.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    void queryClient.invalidateQueries({
+                      queryKey: [instance.id, 'setup-status'],
+                    })
+                  }}
+                  className="bg-background text-foreground hover:bg-muted"
+                >
+                  <HugeiconsIcon icon={Refresh01Icon} size={14} />
+                  Retry Connection
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAddInstance(true)}
+                >
+                  Edit Instances
+                </Button>
+              </div>
             </AlertDescription>
           </Alert>
         </div>
+
+        <AddInstanceDialog
+          open={showAddInstance}
+          onOpenChange={setShowAddInstance}
+        />
       </div>
     )
   }

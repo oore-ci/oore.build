@@ -20,6 +20,15 @@ Rules:
   - Tests: Added `clean-reinstall.md` and `issue-report-checklist.md` to documentation sanity test suite.
   - Hygiene: Added missing trailing newline to `.gitignore`.
 
+- **Industrial UI Transformation (Mission Control Polish)**:
+  - **Fleet Registry Implementation**: Created `/settings/fleet` as the centralized command hub for mission-critical instance management.
+  - **Node Calibration**: Integrated an recursive **Edit Node** protocol into the Fleet Inventory, allowing for live refinement of labels, endpoints, and icons.
+  - **Navigation Optimization**: Streamlined the sidebar **Instance Switcher** to a dedicated "rapid-switch" mode, relocating administrative workflows to the Fleet Registry.
+  - **Enhanced Fleet Connectivity**: Upgraded the "Backend Unreachable" screen with robust **Retry Connection** and **Edit Instances** controls for continuous operational command.
+  - **Auto-Detection Stabilization**: Hardened local daemon detection with an optimized 900ms mission-critical timeout.
+  - **Mission-Control Aesthetics**: Applied a high-density, industrial inventory layout to the Fleet Registry, replacing legacy card components.
+
+
 ## 2026-03-18
 
 

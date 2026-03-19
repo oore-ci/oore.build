@@ -2,6 +2,7 @@ import { Link, useLocation, useMatches } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Audit01Icon,
+  CloudServerIcon,
   CommandLineIcon,
   CpuIcon,
   DashboardSquare01Icon,
@@ -84,6 +85,11 @@ const ADMIN_ITEMS: Array<NavItem> = [
     to: '/settings/audit-log',
     icon: Audit01Icon,
     adminOnly: true,
+  },
+  {
+    title: 'Fleet Registry',
+    to: '/settings/fleet',
+    icon: CloudServerIcon,
   },
 ]
 
