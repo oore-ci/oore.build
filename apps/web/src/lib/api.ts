@@ -20,6 +20,8 @@ import type {
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
+  CreateScopedDownloadTokenRequest,
+  CreateScopedDownloadTokenResponse,
   DeleteNotificationChannelResponse,
   EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
@@ -38,6 +40,7 @@ import type {
   InviteUserRequest,
   InviteUserResponse,
   ListApiTokensResponse,
+  ListArtifactDownloadTokensResponse,
   ListArtifactsResponse,
   ListAuditLogsResponse,
   ListBuildsResponse,
@@ -961,6 +964,47 @@ export function getArtifactDownloadLink(
     baseUrl,
     `/v1/artifacts/${artifactId}/download-link`,
     { method: 'POST', headers: authHeaders(token) },
+  )
+}
+
+export function createScopedDownloadToken(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+  data: CreateScopedDownloadTokenRequest,
+): Promise<CreateScopedDownloadTokenResponse> {
+  return request<CreateScopedDownloadTokenResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/scoped-token`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function listScopedDownloadTokens(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+): Promise<ListArtifactDownloadTokensResponse> {
+  return request<ListArtifactDownloadTokensResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/scoped-tokens`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function revokeScopedDownloadToken(
+  baseUrl: string,
+  token: string,
+  tokenId: string,
+): Promise<{ revoked: boolean }> {
+  return request<{ revoked: boolean }>(
+    baseUrl,
+    `/v1/artifact-tokens/${tokenId}`,
+    { method: 'DELETE', headers: authHeaders(token) },
   )
 }
 

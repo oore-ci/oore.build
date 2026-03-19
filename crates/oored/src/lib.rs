@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod apple_api;
+pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
@@ -2320,6 +2321,23 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/local-download/{token}",
             get(artifacts::download_local_artifact),
+        )
+        // ── Scoped download tokens (OOR-140) ──────────────────
+        .route(
+            "/v1/artifacts/{artifact_id}/scoped-token",
+            post(artifact_tokens::create_scoped_token_handler),
+        )
+        .route(
+            "/v1/artifacts/{artifact_id}/scoped-tokens",
+            get(artifact_tokens::list_scoped_tokens_handler),
+        )
+        .route(
+            "/v1/artifact-tokens/{token_id}",
+            axum::routing::delete(artifact_tokens::revoke_scoped_token_handler),
+        )
+        .route(
+            "/v1/artifacts/dl/{token}",
+            get(artifact_tokens::download_via_scoped_token),
         )
         // ── Retention policy ────────────────────────────────────
         .route(
