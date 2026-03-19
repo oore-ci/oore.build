@@ -123,6 +123,7 @@ use utoipa::OpenApi;
         // ── Runners ──
         paths::register_runner,
         paths::list_runners,
+        paths::get_runner,
         paths::update_runner,
         paths::runner_heartbeat,
         paths::claim_job,
@@ -1453,6 +1454,19 @@ mod paths {
         )
     )]
     pub(super) async fn list_runners() {}
+
+    /// Get runner
+    ///
+    /// Retrieves a single runner by ID, including its current status and health information.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}", tag = "Runners",
+        params(("runner_id" = String, Path, description = "Runner ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Runner details", body = UpdateRunnerResponse),
+            (status = 404, description = "Runner not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_runner() {}
 
     /// Update runner
     #[utoipa::path(patch, path = "/v1/runners/{runner_id}", tag = "Runners",

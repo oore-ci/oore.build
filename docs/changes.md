@@ -12,6 +12,17 @@ Rules:
 
 ## 2026-03-19
 
+- **Runner health monitoring and status endpoint (OOR-142)**:
+  - Backend: Added `GET /v1/runners/{runner_id}` endpoint for individual runner details.
+  - Backend: Added `RunnerStateEvent` broadcast channel to emit events when runners go offline.
+  - Backend: Notification dispatch now sends runner offline alerts to configured notification channels.
+  - Backend: DB migration `022` extends `notification_deliveries` for runner event tracking (`runner_id`, `event_category`).
+  - Frontend: Runner status dashboard now auto-refreshes every 15s via `refetchInterval`.
+  - Frontend: Replaced "Rename policy" stat card with "Offline runners" count card with destructive badge.
+  - Frontend: Added pulsing status dot indicators and stale heartbeat (>60s) warning highlighting.
+  - OpenAPI spec updated with new `GET /v1/runners/{runner_id}` endpoint.
+  - Linear: https://linear.app/oorebuild/issue/OOR-142/runner-health-monitoring-and-status-endpoint
+
 - **Documentation & CI maintenance fixes**:
   - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
   - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).

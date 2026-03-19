@@ -2238,7 +2238,7 @@ async fn build_router_inner(
         .route("/v1/runners/register", post(runners::register_runner))
         .route(
             "/v1/runners/{runner_id}",
-            axum::routing::patch(runners::update_runner),
+            get(runners::get_runner).patch(runners::update_runner),
         )
         .route(
             "/v1/runners/{runner_id}/heartbeat",

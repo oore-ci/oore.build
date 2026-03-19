@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::retention::load_global_policy;
-use crate::scheduler::{BuildStateEvent, Scheduler};
+use crate::scheduler::{BuildStateEvent, RunnerStateEvent, Scheduler};
 use crate::storage::StorageBackend;
 use crate::store::write_audit_log;
 use crate::util::now_unix;
@@ -33,8 +33,8 @@ pub fn start_background_tasks(
     storage: Arc<RwLock<StorageBackend>>,
 ) {
     tokio::spawn(lease_timeout_monitor(pool.clone()));
-    tokio::spawn(build_timeout_monitor(pool.clone(), scheduler));
-    tokio::spawn(runner_heartbeat_monitor(pool.clone()));
+    tokio::spawn(build_timeout_monitor(pool.clone(), scheduler.clone()));
+    tokio::spawn(runner_heartbeat_monitor(pool.clone(), scheduler));
     tokio::spawn(retention_cleanup_monitor(pool, storage));
 }
 
@@ -158,7 +158,7 @@ async fn build_timeout_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
 /// Runs every 60 seconds. Finds runners with status 'online', 'busy', or
 /// 'draining' whose last_heartbeat_at is older than HEARTBEAT_STALE_SECS
 /// and updates their status to 'offline'.
-async fn runner_heartbeat_monitor(pool: SqlitePool) {
+async fn runner_heartbeat_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;
 
@@ -200,6 +200,14 @@ async fn runner_heartbeat_monitor(pool: SqlitePool) {
                             prev_status = %prev_status,
                             "runner_heartbeat_monitor: marked runner as offline (stale heartbeat)"
                         );
+
+                        scheduler.publish_runner_event(RunnerStateEvent {
+                            runner_id: runner_id.clone(),
+                            runner_name: runner_name.clone(),
+                            from_status: prev_status.clone(),
+                            to_status: "offline".to_string(),
+                            timestamp: now,
+                        });
                     }
                 }
                 Err(e) => {
