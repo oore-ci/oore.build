@@ -5,6 +5,7 @@ on:
     branches: [master]
   push:
     branches: [master]
+  workflow_dispatch:
 
 concurrency:
   group: validate-${{ github.ref }}
@@ -13,7 +14,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changes
-    runs-on: [self-hosted, jarvis]
+    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -41,9 +42,12 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
-    runs-on: [self-hosted, jarvis]
+    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -61,9 +65,12 @@ jobs:
     name: Docs
     needs: changes
     if: needs.changes.outputs.docs == 'true'
-    runs-on: [self-hosted, jarvis]
+    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -84,7 +91,7 @@ jobs:
     name: Rust
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, jarvis]
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v6
 

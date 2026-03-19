@@ -35,9 +35,10 @@ Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and mac
 
 ## Screenshots
 
-| Dashboard | Builds |
+| Dashboards | Builds |
 | --- | --- |
-| ![Oore CI demo dashboard screenshot](apps/site/public/product/demo-dashboard.png) | ![Oore CI demo builds list screenshot](apps/site/public/product/demo-builds.png) |
+| ![Oore CI demo dashboard screenshot](apps/site/public/product/demo-dashboard-720.webp) | ![Oore CI demo builds list screenshot](apps/site/public/product/demo-builds-720.webp) |
+
 
 Try the live demo first: [demo.oore.build](https://demo.oore.build)
 
@@ -58,6 +59,7 @@ curl -fsSL https://oore.build/install | bash
 Public alpha onboarding guide (common first-time blockers + fastest paths):
 
 - [Public alpha onboarding guide](https://docs.oore.build/getting-started/public-alpha)
+- [Alpha feedback playbook (testers start here)](https://docs.oore.build/getting-started/alpha-feedback-playbook)
 - [Known alpha limitations (v0.1.x)](https://docs.oore.build/getting-started/known-limitations)
 - [Live demo (no install)](https://demo.oore.build)
 
@@ -160,7 +162,10 @@ Major/minor bumps are done by updating `Cargo.toml` `workspace.package.version` 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SUPPORT.md](SUPPORT.md).
+- **Guidelines**: See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit PRs, code style, and testing.
+- **Code of Conduct**: Review [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+- **Support & Reporting**: Use [SUPPORT.md](SUPPORT.md) for troubleshooting, bug reports, and feature requests.
+- **Known Alpha Limitations**: Refer to the [Known Alpha Limitations](https://docs.oore.build/getting-started/known-limitations) page for current constraints.
 
 ## License
 

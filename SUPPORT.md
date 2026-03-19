@@ -17,6 +17,8 @@ Use this guide to choose the right support path for Oore CI.
 
 ## Alpha testing feedback
 
+- Follow the [Issue Report Checklist](https://docs.oore.build/getting-started/issue-report-checklist) for reproducible reports.
+- Follow the [Alpha Feedback Playbook](https://docs.oore.build/getting-started/alpha-feedback-playbook) for recommended test flows.
 - Use the **Alpha Test Report** issue template.
 - Share onboarding friction, setup blockers, and reliability feedback.
 

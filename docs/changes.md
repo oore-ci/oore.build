@@ -10,7 +10,26 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-03-19
+
+- **Documentation & CI maintenance fixes**:
+  - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
+  - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).
+  - Docs: Consolidated README screenshots in `apps/site/public/product/` to reflect renamed assets, while retaining local WebP assets in `apps/docs-site/docs/public` for documentation build reliability.
+  - Docs: Added 'Auth-mode decision table' to the Public Alpha guide to clarify Local-only vs Remote (OIDC/Proxy) authentication requirements.
+  - Tests: Added `clean-reinstall.md` and `issue-report-checklist.md` to documentation sanity test suite.
+  - Hygiene: Added missing trailing newline to `.gitignore`.
+
 ## 2026-03-18
+
+
+- **Doc improvements for early testers** ([#49](https://github.com/devaryakjha/oore.build/issues/49), [#44](https://github.com/devaryakjha/oore.build/issues/44), [#40](https://github.com/devaryakjha/oore.build/issues/40), [#48](https://github.com/devaryakjha/oore.build/issues/48), [#41](https://github.com/devaryakjha/oore.build/issues/41), [#42](https://github.com/devaryakjha/oore.build/issues/42), [#43](https://github.com/devaryakjha/oore.build/issues/43)):
+  - Added "Alpha Feedback Playbook" with 10-minute test flow and templates.
+  - Added "Issue Report Checklist" page and linked from SUPPORT.md.
+  - Added screenshots with modern `.webp` formatting to the Public Alpha guide.
+  - Added Cloudflared tunnel troubleshooting section to Public Alpha guide.
+  - Added onboarding path decision table and release-channel reference table.
+  - Linked playbook from README.md and SUPPORT.md.
 
 - **CI migration: Woodpecker → GitHub Actions**:
   - Replaced `.woodpecker.yml` with 3 GitHub Actions workflows: `validate.yml`, `autotag.yml`, `release.yml`.
