@@ -26,8 +26,10 @@ import {
   useArtifactStorageSettings,
   useConfigureExternalAccessOidc,
   useExternalAccessNetworkSettings,
+  useExternalAccessOidc,
   useExternalAccessPreflight,
   useInstancePreferences,
+  useTestOidcConnection,
   useUpdateArtifactStorageSettings,
   useUpdateExternalAccessNetworkSettings,
   useUpdateInstancePreferences,
@@ -234,7 +236,9 @@ function PreferencesPage() {
   const preferencesQuery = useInstancePreferences()
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
+  const oidcConfigQuery = useExternalAccessOidc()
   const configureExternalAccessOidcMutation = useConfigureExternalAccessOidc()
+  const testOidcConnectionMutation = useTestOidcConnection()
   const updateNetworkSettingsMutation = useUpdateExternalAccessNetworkSettings()
   const updateStorageMutation = useUpdateArtifactStorageSettings()
   const updatePreferencesMutation = useUpdateInstancePreferences()
@@ -288,6 +292,7 @@ function PreferencesPage() {
     mode: 'onBlur',
   })
 
+  const oidcConfig = oidcConfigQuery.data
   const externalAccessOidcForm = useForm<ExternalAccessOidcFormValues>({
     resolver: zodResolver(externalAccessOidcSchema),
     defaultValues: {
@@ -295,6 +300,13 @@ function PreferencesPage() {
       client_id: '',
       client_secret: '',
     },
+    values: oidcConfig
+      ? {
+          issuer_url: oidcConfig.issuer_url,
+          client_id: oidcConfig.client_id,
+          client_secret: '',
+        }
+      : undefined,
     mode: 'onBlur',
   })
   const networkSettings = networkSettingsQuery.data?.settings
@@ -716,8 +728,36 @@ function PreferencesPage() {
                         {oidcReady ? 'Ready' : 'Setup'}
                       </Badge>
                     </div>
+                    {oidcConfig ? (
+                      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Issuer:
+                          </span>{' '}
+                          <span className="font-mono">
+                            {oidcConfig.issuer_url}
+                          </span>
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Client ID:
+                          </span>{' '}
+                          <span className="font-mono">
+                            {oidcConfig.client_id}
+                          </span>
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Secret:
+                          </span>{' '}
+                          {oidcConfig.has_client_secret
+                            ? 'Stored'
+                            : 'None (public client)'}
+                        </p>
+                      </div>
+                    ) : null}
                     <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
-                      Configure
+                      {oidcReady ? 'Reconfigure' : 'Configure'}
                       <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
                     </p>
                   </button>
@@ -973,13 +1013,26 @@ function PreferencesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={oidcDialogOpen} onOpenChange={setOidcDialogOpen}>
+      <Dialog
+        open={oidcDialogOpen}
+        onOpenChange={(open) => {
+          setOidcDialogOpen(open)
+          if (!open) testOidcConnectionMutation.reset()
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Configure OIDC for External Access</DialogTitle>
+            <DialogTitle>
+              {oidcConfig
+                ? 'Update OIDC Provider'
+                : 'Configure OIDC for External Access'}
+            </DialogTitle>
             <DialogDescription>
               Owner-only. This updates runtime OIDC settings used by External
               Access sign-in.
+              {oidcConfig?.has_client_secret ? (
+                <> Leave the secret field empty to keep the existing secret.</>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
 
@@ -1042,18 +1095,47 @@ function PreferencesPage() {
                     <FormControl>
                       <Input
                         type="password"
-                        placeholder="Leave empty for public clients"
+                        placeholder={
+                          oidcConfig?.has_client_secret
+                            ? 'Leave empty to keep existing secret'
+                            : 'Leave empty for public clients'
+                        }
                         {...field}
                         disabled={configureExternalAccessOidcMutation.isPending}
                       />
                     </FormControl>
                     <FormDescription>
-                      If omitted, any existing stored client secret is removed.
+                      {oidcConfig?.has_client_secret
+                        ? 'Leave empty to keep the existing secret. Enter a new value to rotate.'
+                        : 'If omitted, any existing stored client secret is removed.'}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+              {testOidcConnectionMutation.isSuccess ? (
+                <Alert>
+                  <HugeiconsIcon
+                    icon={CheckmarkCircle02Icon}
+                    size={16}
+                    className="text-emerald-500"
+                  />
+                  <AlertDescription>
+                    Connection successful.{' '}
+                    <span className="font-mono text-xs">
+                      {testOidcConnectionMutation.data.discovered_issuer}
+                    </span>
+                  </AlertDescription>
+                </Alert>
+              ) : testOidcConnectionMutation.isError ? (
+                <Alert variant="destructive">
+                  <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                  <AlertDescription>
+                    Connection failed. Verify the issuer URL and try again.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
               <DialogFooter>
                 <Button
@@ -1063,6 +1145,46 @@ function PreferencesPage() {
                   disabled={configureExternalAccessOidcMutation.isPending}
                 >
                   Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={
+                    !isOwner ||
+                    testOidcConnectionMutation.isPending ||
+                    configureExternalAccessOidcMutation.isPending ||
+                    !externalAccessOidcForm.watch('issuer_url').trim()
+                  }
+                  onClick={() => {
+                    const issuerUrl =
+                      externalAccessOidcForm.getValues('issuer_url').trim()
+                    if (issuerUrl) {
+                      testOidcConnectionMutation.mutate(
+                        { issuer_url: issuerUrl },
+                        {
+                          onError: (error) => {
+                            toast.error(
+                              getApiErrorMessage(error, {
+                                oidc_discovery_failed:
+                                  'OIDC discovery failed. Verify issuer URL and provider availability.',
+                                invalid_input:
+                                  'Invalid issuer URL. Enter a valid URL.',
+                              }),
+                            )
+                          },
+                        },
+                      )
+                    }
+                  }}
+                >
+                  {testOidcConnectionMutation.isPending ? (
+                    <>
+                      <Spinner className="size-4" />
+                      Testing...
+                    </>
+                  ) : (
+                    'Test Connection'
+                  )}
                 </Button>
                 <Button
                   type="submit"
@@ -1076,7 +1198,7 @@ function PreferencesPage() {
                       Saving...
                     </>
                   ) : (
-                    'Save OIDC Settings'
+                    'Update OIDC Provider'
                   )}
                 </Button>
               </DialogFooter>

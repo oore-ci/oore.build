@@ -2,15 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiClientError,
   completeSetup,
+  configureExternalAccessOidc,
   configureOidc,
   createPipeline,
   getApiErrorMessage,
   getArtifactStorageSettings,
+  getExternalAccessOidc,
   getInstancePreferences,
   getPipeline,
   getSetupStatus,
   listPipelines,
   listRunners,
+  testOidcConnection,
   updateArtifactStorageSettings,
   updateInstancePreferences,
   updatePipeline,
@@ -411,6 +414,140 @@ describe('instance preferences api', () => {
         body: JSON.stringify({
           key_storage_mode: 'file',
           runtime_mode: 'remote',
+        }),
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+})
+
+describe('external access oidc api', () => {
+  it('calls GET /v1/settings/external-access/oidc with auth header', async () => {
+    const payload = {
+      issuer_url: 'https://accounts.google.com',
+      client_id: 'my-client-id',
+      has_client_secret: true,
+      authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+      token_endpoint: 'https://oauth2.googleapis.com/token',
+      userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+      jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs',
+      configured_at: 1700000000,
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await getExternalAccessOidc(
+      'https://ci.example.com',
+      'session-token',
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/external-access/oidc',
+      {
+        headers: {
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+
+  it('calls PUT /v1/settings/external-access/oidc with payload', async () => {
+    const payload = {
+      discovered_issuer: 'https://accounts.google.com',
+      has_client_secret: true,
+      configured_at: 1700000000,
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await configureExternalAccessOidc(
+      'https://ci.example.com',
+      'session-token',
+      {
+        issuer_url: 'https://accounts.google.com',
+        client_id: 'my-client-id',
+        client_secret: 'my-secret',
+      },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/external-access/oidc',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          issuer_url: 'https://accounts.google.com',
+          client_id: 'my-client-id',
+          client_secret: 'my-secret',
+        }),
+      },
+    )
+    expect(result).toEqual(payload)
+  })
+
+  it('calls PUT without client_secret when omitted (preserve existing)', async () => {
+    const payload = {
+      discovered_issuer: 'https://accounts.google.com',
+      has_client_secret: true,
+      configured_at: 1700000000,
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    await configureExternalAccessOidc(
+      'https://ci.example.com',
+      'session-token',
+      {
+        issuer_url: 'https://accounts.google.com',
+        client_id: 'my-client-id',
+      },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/external-access/oidc',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          issuer_url: 'https://accounts.google.com',
+          client_id: 'my-client-id',
+        }),
+      },
+    )
+  })
+
+  it('calls POST /v1/settings/external-access/oidc/test-connection', async () => {
+    const payload = {
+      success: true,
+      discovered_issuer: 'https://accounts.google.com',
+      authorization_endpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+      token_endpoint: 'https://oauth2.googleapis.com/token',
+      userinfo_endpoint: 'https://openidconnect.googleapis.com/v1/userinfo',
+      jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs',
+      scopes_supported: ['openid', 'email', 'profile'],
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await testOidcConnection(
+      'https://ci.example.com',
+      'session-token',
+      { issuer_url: 'https://accounts.google.com' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/settings/external-access/oidc/test-connection',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({
+          issuer_url: 'https://accounts.google.com',
         }),
       },
     )

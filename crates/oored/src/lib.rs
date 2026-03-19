@@ -2098,7 +2098,12 @@ async fn build_router_inner(
         )
         .route(
             "/v1/settings/external-access/oidc",
-            axum::routing::put(instance_settings::configure_external_access_oidc),
+            get(instance_settings::get_external_access_oidc)
+                .put(instance_settings::configure_external_access_oidc),
+        )
+        .route(
+            "/v1/settings/external-access/oidc/test-connection",
+            post(instance_settings::test_oidc_connection),
         )
         // Notification channel settings
         .route(

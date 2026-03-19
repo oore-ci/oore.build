@@ -215,10 +215,35 @@ export const settingsHandlers = [
     },
   ),
 
+  http.get('/v1/settings/external-access/oidc', async () => {
+    await delay(150)
+    if (!oidcConfigured) {
+      return new HttpResponse(
+        JSON.stringify({
+          code: 'oidc_not_configured',
+          message: 'No OIDC provider is configured',
+        }),
+        { status: 404 },
+      )
+    }
+    const base = oidcIssuer.replace(/\/$/, '')
+    return HttpResponse.json({
+      issuer_url: oidcIssuer,
+      client_id: 'demo-client-id',
+      has_client_secret: oidcHasClientSecret,
+      authorization_endpoint: `${base}/o/oauth2/v2/auth`,
+      token_endpoint: `${base}/token`,
+      userinfo_endpoint: `${base}/userinfo`,
+      jwks_uri: `${base}/jwks`,
+      configured_at: oidcConfiguredAt,
+    })
+  }),
+
   http.put('/v1/settings/external-access/oidc', async ({ request }) => {
     await delay(250)
     const body = (await request.json()) as {
       issuer_url?: string
+      client_id?: string
       client_secret?: string
     }
 
@@ -233,4 +258,22 @@ export const settingsHandlers = [
       configured_at: oidcConfiguredAt,
     })
   }),
+
+  http.post(
+    '/v1/settings/external-access/oidc/test-connection',
+    async ({ request }) => {
+      await delay(500)
+      const body = (await request.json()) as { issuer_url?: string }
+      const issuer = (body.issuer_url ?? DEMO_OIDC_ISSUER).replace(/\/$/, '')
+      return HttpResponse.json({
+        success: true,
+        discovered_issuer: issuer,
+        authorization_endpoint: `${issuer}/o/oauth2/v2/auth`,
+        token_endpoint: `${issuer}/token`,
+        userinfo_endpoint: `${issuer}/userinfo`,
+        jwks_uri: `${issuer}/jwks`,
+        scopes_supported: ['openid', 'email', 'profile'],
+      })
+    },
+  ),
 ]

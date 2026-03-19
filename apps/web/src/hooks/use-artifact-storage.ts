@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type {
   ConfigureExternalAccessOidcRequest,
+  TestOidcConnectionRequest,
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
@@ -10,8 +11,10 @@ import {
   configureExternalAccessOidc,
   getArtifactStorageSettings,
   getExternalAccessNetworkSettings,
+  getExternalAccessOidc,
   getExternalAccessPreflight,
   getInstancePreferences,
+  testOidcConnection,
   updateArtifactStorageSettings,
   updateExternalAccessNetworkSettings,
   updateInstancePreferences,
@@ -101,6 +104,18 @@ export function useUpdateInstancePreferences() {
   })
 }
 
+export function useExternalAccessOidc() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-oidc'],
+    queryFn: () => getExternalAccessOidc(baseUrl!, token!),
+    enabled: !!baseUrl && !!token,
+  })
+}
+
 export function useConfigureExternalAccessOidc() {
   const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
@@ -118,6 +133,23 @@ export function useConfigureExternalAccessOidc() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
       })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-oidc'],
+      })
+    },
+  })
+}
+
+export function useTestOidcConnection() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+
+  return useMutation({
+    mutationFn: (data: TestOidcConnectionRequest) => {
+      if (!baseUrl || !token) {
+        return Promise.reject(new Error('Not authenticated'))
+      }
+      return testOidcConnection(baseUrl, token, data)
     },
   })
 }
