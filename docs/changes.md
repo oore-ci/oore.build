@@ -12,6 +12,49 @@ Rules:
 
 ## 2026-03-19
 
+- **Artifact expiry and scoped download tokens** ([OOR-140](https://linear.app/oorebuild/issue/OOR-140/artifact-expiry-and-scoped-download-tokens)):
+  - Added `expires_at` column to `artifacts` table; computed at creation from `artifact_ttl_days` retention policy setting.
+  - Added `artifact_ttl_days` field to `RetentionPolicy`, `ProjectRetentionOverride`, and their update requests.
+  - New `artifact_download_tokens` table for DB-backed scoped download tokens (survives daemon restart).
+  - New backend module `artifact_tokens.rs` with 4 endpoints: `POST /v1/artifacts/{artifact_id}/scoped-token`, `GET /v1/artifacts/{artifact_id}/scoped-tokens`, `DELETE /v1/artifact-tokens/{token_id}`, `GET /v1/artifacts/dl/{token}`.
+  - `GET /v1/artifacts/dl/{token}` is unauthenticated — the scoped token IS the authorization. Supports single-use and time-limited tokens.
+  - Background `expired_artifact_monitor` task cleans up expired artifacts and download tokens every 5 minutes.
+  - Frontend: artifact rows show expiry badge, new "Share Link" button opens dialog to create scoped tokens with configurable TTL and single-use option.
+  - Migration `025_artifact_expiry_and_download_tokens.sql`.
+  - OpenAPI spec updated with new endpoints and schemas.
+- **API Tokens frontend** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
+  - Added API token types (`CreateApiTokenRequest`, `CreateApiTokenResponse`, `ApiTokenSummary`, `ListApiTokensResponse`, `RevokeApiTokenResponse`) to `apps/web/src/lib/types.ts`.
+  - Added `createApiToken`, `listApiTokens`, `revokeApiToken` API functions to `apps/web/src/lib/api.ts`.
+  - Created `apps/web/src/hooks/use-api-tokens.ts` with `useApiTokens`, `useCreateApiToken`, `useRevokeApiToken` hooks.
+  - Added `api_tokens:read/write/delete` permissions to RBAC matrix for owner, admin, and developer roles in `apps/web/src/hooks/use-permissions.ts`.
+  - Created `apps/web/src/routes/settings/api-tokens.tsx` settings page with create dialog, token-revealed dialog, token table, and revoke confirmation.
+  - Added "API Tokens" nav item to sidebar in `apps/web/src/components/nav-main.tsx`.
+- **Fix: API token project-level role capping** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
+  - `resolve_effective_project_role` now accepts `auth_source` and caps resolved project membership at the token's instance role when authenticated via API token. Prevents a downgraded token from inheriting the creator's full project permissions.
+- **Build re-run / retry with same parameters** ([OOR-139](https://linear.app/oorebuild/issue/OOR-139/build-re-run-retry-with-same-parameters)):
+  - Added `POST /v1/builds/{build_id}/rerun` endpoint that clones an existing build's `config_snapshot`, `branch`, `commit_sha`, and `pipeline_id` to enqueue a new build.
+  - Added `source_build_id` column to `builds` table (migration 022) to link re-runs to their source build.
+  - Added `RerunBuildResponse` contract type in `oore-contract`.
+  - Frontend: replaced dialog-based re-run with single-click "Re-run" button on build detail page; added source build link for re-runs.
+  - OpenAPI spec updated with new endpoint.
+- **Runner health monitoring and status endpoint (OOR-142)**:
+  - Backend: Added `GET /v1/runners/{runner_id}` endpoint for individual runner details.
+  - Backend: Added `RunnerStateEvent` broadcast channel to emit events when runners go offline.
+  - Backend: Notification dispatch now sends runner offline alerts to configured notification channels.
+  - Backend: DB migration `022` extends `notification_deliveries` for runner event tracking (`runner_id`, `event_category`).
+  - Frontend: Runner status dashboard now auto-refreshes every 15s via `refetchInterval`.
+  - Frontend: Replaced "Rename policy" stat card with "Offline runners" count card with destructive badge.
+  - Frontend: Added pulsing status dot indicators and stale heartbeat (>60s) warning highlighting.
+  - OpenAPI spec updated with new `GET /v1/runners/{runner_id}` endpoint.
+  - Linear: https://linear.app/oorebuild/issue/OOR-142/runner-health-monitoring-and-status-endpoint
+- **SSO/OIDC provider management post-setup** ([OOR-141](https://linear.app/oorebuild/issue/OOR-141/ssooidc-provider-management-post-setup)):
+  - Added `GET /v1/settings/external-access/oidc` endpoint to read current OIDC provider config (issuer, client ID, endpoints, configured_at). Never exposes client secret.
+  - Added `POST /v1/settings/external-access/oidc/test-connection` endpoint for dry-run OIDC discovery validation without committing changes.
+  - Fixed bug: `PUT /v1/settings/external-access/oidc` now clears pending auth entries on reconfigure, invalidating stale in-flight OIDC flows.
+  - Frontend: OIDC identity card now displays current provider info (issuer, client ID, secret status).
+  - Frontend: OIDC reconfigure dialog pre-populates from current config and includes "Test Connection" button.
+  - Updated OpenAPI spec with new endpoints.
+
 - **Documentation & CI maintenance fixes**:
   - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
   - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).

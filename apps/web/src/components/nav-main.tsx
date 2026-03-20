@@ -8,6 +8,7 @@ import {
   DashboardSquare01Icon,
   Delete02Icon,
   Folder02Icon,
+  Key01Icon,
   Link04Icon,
   Notification03Icon,
   Settings01Icon,
@@ -55,6 +56,12 @@ const ADMIN_ITEMS: Array<NavItem> = [
     to: '/settings/runners',
     icon: CpuIcon,
     adminOnly: true,
+  },
+  {
+    title: 'API Tokens',
+    to: '/settings/api-tokens',
+    icon: Key01Icon,
+    adminOnly: false,
   },
   {
     title: 'Sources',
@@ -105,6 +112,8 @@ export default function NavMain() {
   const location = useLocation()
   const authUser = useAuthStore((s) => s.user)
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
+  const isDeveloperOrAbove =
+    isAdmin || authUser?.role === 'developer'
   const recentProjects = useRecentProjectsStore((s) => s.projects)
 
   function isActive(item: NavItem) {
@@ -113,9 +122,10 @@ export default function NavMain() {
       : matches.some((m) => m.fullPath.startsWith(item.to))
   }
 
-  const visibleAdminItems = ADMIN_ITEMS.filter(
-    (item) => !item.adminOnly || isAdmin,
-  )
+  const visibleAdminItems = ADMIN_ITEMS.filter((item) => {
+    if (item.to === '/settings/api-tokens') return isDeveloperOrAbove
+    return !item.adminOnly || isAdmin
+  })
 
   return (
     <>

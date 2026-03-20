@@ -405,6 +405,7 @@ export interface Build {
   trigger_ref?: string
   commit_sha?: string
   branch?: string
+  source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
   step_results?: Array<StepResult>
@@ -451,6 +452,10 @@ export interface CancelBuildResponse {
   build: Build
 }
 
+export interface RerunBuildResponse {
+  build: Build
+}
+
 // ── Build Log types ─────────────────────────────────────────
 export interface BuildLogChunk {
   sequence: number
@@ -482,6 +487,7 @@ export interface Artifact {
   checksum?: string
   metadata: Record<string, unknown>
   created_at: number
+  expires_at?: number
 }
 
 export interface ListArtifactsResponse {
@@ -491,6 +497,42 @@ export interface ListArtifactsResponse {
 export interface ArtifactDownloadLinkResponse {
   download_url: string
   expires_at: number
+}
+
+// ── Scoped download token types ────────────────────────────
+
+export interface CreateScopedDownloadTokenRequest {
+  ttl_secs?: number
+  single_use?: boolean
+}
+
+export interface CreateScopedDownloadTokenResponse {
+  id: string
+  download_url: string
+  token: string
+  prefix: string
+  expires_at: number
+  single_use: boolean
+}
+
+export interface ArtifactDownloadTokenSummary {
+  id: string
+  artifact_id: string
+  prefix: string
+  created_by: string
+  created_by_email: string
+  expires_at: number
+  single_use: boolean
+  used_at?: number
+  revoked_at?: number
+  is_expired: boolean
+  is_used: boolean
+  is_revoked: boolean
+  created_at: number
+}
+
+export interface ListArtifactDownloadTokensResponse {
+  tokens: Array<ArtifactDownloadTokenSummary>
 }
 
 export type ArtifactStorageProvider = 'disabled' | 'local' | 's3' | 'r2'
@@ -567,6 +609,31 @@ export interface ConfigureExternalAccessOidcResponse {
   discovered_issuer: string
   has_client_secret: boolean
   configured_at: number
+}
+
+export interface GetExternalAccessOidcResponse {
+  issuer_url: string
+  client_id: string
+  has_client_secret: boolean
+  authorization_endpoint: string
+  token_endpoint: string
+  userinfo_endpoint?: string
+  jwks_uri: string
+  configured_at: number
+}
+
+export interface TestOidcConnectionRequest {
+  issuer_url: string
+}
+
+export interface TestOidcConnectionResponse {
+  success: boolean
+  discovered_issuer: string
+  authorization_endpoint: string
+  token_endpoint: string
+  userinfo_endpoint?: string
+  jwks_uri: string
+  scopes_supported: Array<string>
 }
 
 export interface TrustedProxySettingsPublic {
@@ -968,6 +1035,7 @@ export interface RetentionPolicy {
   keep_statuses: Array<string>
   dry_run: boolean
   cleanup_interval_secs: number
+  artifact_ttl_days?: number
   updated_at?: number
 }
 
@@ -984,6 +1052,7 @@ export interface UpdateRetentionPolicyRequest {
   keep_statuses: Array<string>
   dry_run: boolean
   cleanup_interval_secs: number
+  artifact_ttl_days?: number
 }
 
 export interface ProjectRetentionOverride {
@@ -994,6 +1063,7 @@ export interface ProjectRetentionOverride {
   max_artifact_size_bytes?: number
   cleanup_target?: RetentionCleanupTarget
   keep_statuses?: Array<string>
+  artifact_ttl_days?: number
   updated_at?: number
 }
 
@@ -1010,6 +1080,7 @@ export interface UpdateProjectRetentionOverrideRequest {
   max_artifact_size_bytes?: number
   cleanup_target?: RetentionCleanupTarget
   keep_statuses?: Array<string>
+  artifact_ttl_days?: number
 }
 
 export interface RetentionCleanupSummary {
@@ -1040,4 +1111,44 @@ export interface AuditLogEntry {
 export interface ListAuditLogsResponse {
   entries: Array<AuditLogEntry>
   total: number
+}
+
+// ── API Token types ─────────────────────────────────────────────
+
+export interface CreateApiTokenRequest {
+  name: string
+  role: string
+  expires_at?: number
+}
+
+export interface CreateApiTokenResponse {
+  id: string
+  name: string
+  prefix: string
+  role: string
+  created_at: number
+  expires_at: number | null
+  token: string
+}
+
+export interface ApiTokenSummary {
+  id: string
+  name: string
+  prefix: string
+  role: string
+  created_by: string
+  created_by_email: string
+  created_at: number
+  expires_at: number | null
+  last_used_at: number | null
+  is_expired: boolean
+  is_revoked: boolean
+}
+
+export interface ListApiTokensResponse {
+  tokens: Array<ApiTokenSummary>
+}
+
+export interface RevokeApiTokenResponse {
+  revoked: boolean
 }

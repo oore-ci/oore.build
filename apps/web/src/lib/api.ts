@@ -9,6 +9,8 @@ import type {
   CancelBuildResponse,
   ConfigureExternalAccessOidcRequest,
   ConfigureExternalAccessOidcResponse,
+  CreateApiTokenRequest,
+  CreateApiTokenResponse,
   CreateBuildRequest,
   CreateBuildResponse,
   CreateLocalGitIntegrationRequest,
@@ -18,10 +20,13 @@ import type {
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
+  CreateScopedDownloadTokenRequest,
+  CreateScopedDownloadTokenResponse,
   DeleteNotificationChannelResponse,
   EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
+  GetExternalAccessOidcResponse,
   GitHubAppCompleteRequest,
   GitHubAppCompleteResponse,
   GitHubAppStartRequest,
@@ -34,6 +39,8 @@ import type {
   IntegrationDetailResponse,
   InviteUserRequest,
   InviteUserResponse,
+  ListApiTokensResponse,
+  ListArtifactDownloadTokensResponse,
   ListArtifactsResponse,
   ListAuditLogsResponse,
   ListBuildsResponse,
@@ -60,8 +67,10 @@ import type {
   ReEnableUserResponse,
   RegisterIosDeviceRequest,
   RegisterIosDeviceResponse,
+  RerunBuildResponse,
   RetentionCleanupSummaryResponse,
   RetentionPolicyResponse,
+  RevokeApiTokenResponse,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
@@ -76,6 +85,8 @@ import type {
   SyncInstallationsResponse,
   SyncPipelineIosSigningResponse,
   TestNotificationChannelResponse,
+  TestOidcConnectionRequest,
+  TestOidcConnectionResponse,
   TrustedProxySettingsResponse,
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
@@ -621,6 +632,16 @@ export function listRunners(
   })
 }
 
+export function getRunner(
+  baseUrl: string,
+  token: string,
+  runnerId: string,
+): Promise<UpdateRunnerResponse> {
+  return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
+    headers: authHeaders(token),
+  })
+}
+
 export function updateRunner(
   baseUrl: string,
   token: string,
@@ -749,6 +770,17 @@ export function updateExternalAccessTrustedProxySettings(
   )
 }
 
+export function getExternalAccessOidc(
+  baseUrl: string,
+  token: string,
+): Promise<GetExternalAccessOidcResponse> {
+  return request<GetExternalAccessOidcResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc',
+    { headers: authHeaders(token) },
+  )
+}
+
 export function configureExternalAccessOidc(
   baseUrl: string,
   token: string,
@@ -759,6 +791,22 @@ export function configureExternalAccessOidc(
     '/v1/settings/external-access/oidc',
     {
       method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function testOidcConnection(
+  baseUrl: string,
+  token: string,
+  data: TestOidcConnectionRequest,
+): Promise<TestOidcConnectionResponse> {
+  return request<TestOidcConnectionResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc/test-connection',
+    {
+      method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },
@@ -848,6 +896,17 @@ export function cancelBuild(
   })
 }
 
+export function rerunBuild(
+  baseUrl: string,
+  token: string,
+  buildId: string,
+): Promise<RerunBuildResponse> {
+  return request<RerunBuildResponse>(baseUrl, `/v1/builds/${buildId}/rerun`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+}
+
 // ── Stream Token API ────────────────────────────────────────
 
 export function createStreamToken(
@@ -905,6 +964,47 @@ export function getArtifactDownloadLink(
     baseUrl,
     `/v1/artifacts/${artifactId}/download-link`,
     { method: 'POST', headers: authHeaders(token) },
+  )
+}
+
+export function createScopedDownloadToken(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+  data: CreateScopedDownloadTokenRequest,
+): Promise<CreateScopedDownloadTokenResponse> {
+  return request<CreateScopedDownloadTokenResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/scoped-token`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function listScopedDownloadTokens(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+): Promise<ListArtifactDownloadTokensResponse> {
+  return request<ListArtifactDownloadTokensResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/scoped-tokens`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function revokeScopedDownloadToken(
+  baseUrl: string,
+  token: string,
+  tokenId: string,
+): Promise<{ revoked: boolean }> {
+  return request<{ revoked: boolean }>(
+    baseUrl,
+    `/v1/artifact-tokens/${tokenId}`,
+    { method: 'DELETE', headers: authHeaders(token) },
   )
 }
 
@@ -1401,4 +1501,38 @@ export function listAuditLogs(
     `/v1/audit-logs${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(token) },
   )
+}
+
+// ── API Tokens ──────────────────────────────────────────────────
+
+export function createApiToken(
+  baseUrl: string,
+  token: string,
+  data: CreateApiTokenRequest,
+): Promise<CreateApiTokenResponse> {
+  return request<CreateApiTokenResponse>(baseUrl, '/v1/api-tokens', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
+}
+
+export function listApiTokens(
+  baseUrl: string,
+  token: string,
+): Promise<ListApiTokensResponse> {
+  return request<ListApiTokensResponse>(baseUrl, '/v1/api-tokens', {
+    headers: authHeaders(token),
+  })
+}
+
+export function revokeApiToken(
+  baseUrl: string,
+  token: string,
+  tokenId: string,
+): Promise<RevokeApiTokenResponse> {
+  return request<RevokeApiTokenResponse>(baseUrl, `/v1/api-tokens/${tokenId}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
 }

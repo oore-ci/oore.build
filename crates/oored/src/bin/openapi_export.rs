@@ -63,7 +63,9 @@ use utoipa::OpenApi;
         paths::get_external_access_trusted_proxy_settings,
         paths::update_external_access_trusted_proxy_settings,
         paths::get_external_access_preflight,
+        paths::get_external_access_oidc,
         paths::configure_external_access_oidc,
+        paths::test_oidc_connection,
         // ── Retention Policy ──
         paths::get_retention_policy,
         paths::update_retention_policy,
@@ -118,11 +120,17 @@ use utoipa::OpenApi;
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
+        paths::rerun_build,
         // ── Audit Logs ──
         paths::list_audit_logs,
+        // ── API Tokens ──
+        paths::list_api_tokens,
+        paths::create_api_token,
+        paths::revoke_api_token,
         // ── Runners ──
         paths::register_runner,
         paths::list_runners,
+        paths::get_runner,
         paths::update_runner,
         paths::runner_heartbeat,
         paths::claim_job,
@@ -137,6 +145,11 @@ use utoipa::OpenApi;
         paths::create_artifact,
         paths::list_artifacts,
         paths::generate_download_link,
+        // ── Scoped Download Tokens (OOR-140) ──
+        paths::create_scoped_download_token,
+        paths::list_scoped_download_tokens,
+        paths::revoke_scoped_download_token,
+        paths::download_via_scoped_token,
         // ── Notification Channels ──
         paths::list_notification_channels,
         paths::create_notification_channel,
@@ -276,6 +289,7 @@ use utoipa::OpenApi;
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
+        oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
         // Runners
         oore_contract::RunnerStatus,
@@ -299,6 +313,11 @@ use utoipa::OpenApi;
         oore_contract::CreateArtifactResponse,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
+        oore_contract::CreateScopedDownloadTokenRequest,
+        oore_contract::CreateScopedDownloadTokenResponse,
+        oore_contract::ArtifactDownloadTokenSummary,
+        oore_contract::ListArtifactDownloadTokensResponse,
+        oore_contract::RevokeArtifactDownloadTokenResponse,
         oore_contract::ArtifactStorageSettingsResponse,
         oore_contract::UpdateArtifactStorageSettingsRequest,
         // Instance Settings
@@ -316,6 +335,9 @@ use utoipa::OpenApi;
         oore_contract::ExternalAccessPreflightResponse,
         oore_contract::ConfigureExternalAccessOidcRequest,
         oore_contract::ConfigureExternalAccessOidcResponse,
+        oore_contract::GetExternalAccessOidcResponse,
+        oore_contract::TestOidcConnectionRequest,
+        oore_contract::TestOidcConnectionResponse,
         oore_contract::InstancePreferences,
         oore_contract::InstancePreferencesResponse,
         oore_contract::UpdateInstancePreferencesRequest,
@@ -349,6 +371,12 @@ use utoipa::OpenApi;
         // Audit Logs
         oore_contract::AuditLogEntry,
         oore_contract::ListAuditLogsResponse,
+        // API Tokens
+        oore_contract::CreateApiTokenRequest,
+        oore_contract::CreateApiTokenResponse,
+        oore_contract::ApiTokenSummary,
+        oore_contract::ListApiTokensResponse,
+        oore_contract::RevokeApiTokenResponse,
     )),
     tags(
         (name = "Health", description = "Health check endpoint"),
@@ -368,6 +396,7 @@ use utoipa::OpenApi;
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
         (name = "Notification Channels", description = "Outbound notification channel configuration — webhook, Mattermost."),
         (name = "Audit Logs", description = "Read-only audit trail of all user and system actions."),
+        (name = "API Tokens", description = "API token management — create, list, and revoke tokens for programmatic access."),
         (name = "Webhooks", description = "Incoming webhook receivers for GitHub and GitLab."),
     ),
     security(
@@ -837,6 +866,20 @@ mod paths {
     )]
     pub(super) async fn get_external_access_preflight() {}
 
+    /// Get current OIDC configuration for External Access
+    ///
+    /// Returns the current runtime OIDC provider configuration (issuer, client ID,
+    /// discovered endpoints). Never exposes the client secret.
+    #[utoipa::path(get, path = "/v1/settings/external-access/oidc", tag = "Instance Settings",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Current OIDC configuration", body = GetExternalAccessOidcResponse),
+            (status = 404, description = "OIDC not configured", body = ApiError),
+            (status = 409, description = "Setup not ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_external_access_oidc() {}
+
     /// Configure OIDC for External Access
     ///
     /// Owner-only endpoint to configure runtime OIDC after setup is complete.
@@ -852,6 +895,21 @@ mod paths {
         )
     )]
     pub(super) async fn configure_external_access_oidc() {}
+
+    /// Test OIDC provider connection
+    ///
+    /// Owner-only endpoint to test OIDC provider discovery without committing changes.
+    /// Validates that the issuer URL is reachable and returns discovered endpoints.
+    #[utoipa::path(post, path = "/v1/settings/external-access/oidc/test-connection", tag = "Instance Settings",
+        request_body = TestOidcConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Connection test succeeded", body = TestOidcConnectionResponse),
+            (status = 400, description = "Invalid input or OIDC discovery failure", body = ApiError),
+            (status = 403, description = "Owner-only operation", body = ApiError),
+        )
+    )]
+    pub(super) async fn test_oidc_connection() {}
 
     // ── Retention Policy ──
 
@@ -1431,6 +1489,20 @@ mod paths {
     )]
     pub(super) async fn cancel_build() {}
 
+    /// Re-run build
+    ///
+    /// Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/rerun", tag = "Builds",
+        params(("build_id" = String, Path, description = "Source build ID to re-run")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Re-run build queued", body = RerunBuildResponse),
+            (status = 404, description = "Source build not found", body = ApiError),
+            (status = 409, description = "Source build is not in a terminal state", body = ApiError),
+        )
+    )]
+    pub(super) async fn rerun_build() {}
+
     // ── Runners ──
 
     /// Register runner
@@ -1453,6 +1525,19 @@ mod paths {
         )
     )]
     pub(super) async fn list_runners() {}
+
+    /// Get runner
+    ///
+    /// Retrieves a single runner by ID, including its current status and health information.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}", tag = "Runners",
+        params(("runner_id" = String, Path, description = "Runner ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Runner details", body = UpdateRunnerResponse),
+            (status = 404, description = "Runner not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_runner() {}
 
     /// Update runner
     #[utoipa::path(patch, path = "/v1/runners/{runner_id}", tag = "Runners",
@@ -1626,6 +1711,63 @@ mod paths {
     )]
     pub(super) async fn generate_download_link() {}
 
+    // ── Scoped Download Tokens (OOR-140) ──
+
+    /// Create scoped download token
+    ///
+    /// Generates a scoped, time-limited download token for a specific artifact.
+    /// The token can be shared with external users who don't have an account.
+    #[utoipa::path(post, path = "/v1/artifacts/{artifact_id}/scoped-token", tag = "Scoped Download Tokens",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        request_body = CreateScopedDownloadTokenRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Scoped download token created", body = CreateScopedDownloadTokenResponse),
+            (status = 404, description = "Artifact not found", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_scoped_download_token() {}
+
+    /// List scoped download tokens
+    ///
+    /// Lists all scoped download tokens for a specific artifact, including expired and revoked ones.
+    #[utoipa::path(get, path = "/v1/artifacts/{artifact_id}/scoped-tokens", tag = "Scoped Download Tokens",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of scoped download tokens", body = ListArtifactDownloadTokensResponse),
+        )
+    )]
+    pub(super) async fn list_scoped_download_tokens() {}
+
+    /// Revoke scoped download token
+    ///
+    /// Revokes a scoped download token so it can no longer be used.
+    #[utoipa::path(delete, path = "/v1/artifact-tokens/{token_id}", tag = "Scoped Download Tokens",
+        params(("token_id" = String, Path, description = "Download token ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token revoked", body = RevokeArtifactDownloadTokenResponse),
+            (status = 404, description = "Token not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn revoke_scoped_download_token() {}
+
+    /// Download via scoped token
+    ///
+    /// Downloads an artifact using a scoped download token. No session auth required —
+    /// the token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.
+    #[utoipa::path(get, path = "/v1/artifacts/dl/{token}", tag = "Scoped Download Tokens",
+        params(("token" = String, Path, description = "Scoped download token")),
+        responses(
+            (status = 302, description = "Redirect to presigned download URL"),
+            (status = 401, description = "Invalid or expired token", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+        )
+    )]
+    pub(super) async fn download_via_scoped_token() {}
+
     // ── Webhooks ──
 
     /// GitHub webhook receiver
@@ -1677,6 +1819,54 @@ mod paths {
         )
     )]
     pub(super) async fn list_audit_logs() {}
+
+    // ── API Tokens ──
+
+    /// List API tokens
+    ///
+    /// Returns all API tokens visible to the caller. Admins and owners see all
+    /// tokens; other roles see only their own.
+    #[utoipa::path(get, path = "/v1/api-tokens", tag = "API Tokens",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of API tokens", body = ListApiTokensResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_api_tokens() {}
+
+    /// Create API token
+    ///
+    /// Creates a new API token. The plaintext token is returned only in this
+    /// response and cannot be retrieved again.
+    #[utoipa::path(post, path = "/v1/api-tokens", tag = "API Tokens",
+        request_body = CreateApiTokenRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token created", body = CreateApiTokenResponse),
+            (status = 400, description = "Invalid request", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden or role escalation", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_api_token() {}
+
+    /// Revoke API token
+    ///
+    /// Revokes an API token by ID. Non-admin users can only revoke their own
+    /// tokens.
+    #[utoipa::path(delete, path = "/v1/api-tokens/{token_id}", tag = "API Tokens",
+        params(("token_id" = String, Path, description = "API token ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token revoked", body = RevokeApiTokenResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+            (status = 404, description = "Token not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn revoke_api_token() {}
 
     // ── Notification Channels ──
 

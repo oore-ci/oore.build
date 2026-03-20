@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -9,11 +9,12 @@ import {
   GitCommitIcon,
   InformationCircleIcon,
   Refresh01Icon,
+  Share08Icon,
   TimeQuarterPassIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import type { Artifact, BuildLogChunk } from '@/lib/types'
+import type { Artifact, BuildLogChunk, CreateScopedDownloadTokenResponse } from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -28,6 +29,8 @@ import {
   useBuild,
   useBuildLogs,
   useCancelBuild,
+  useCreateScopedDownloadToken,
+  useRerunBuild,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -36,10 +39,27 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
+import { Spinner } from '@/components/ui/spinner'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import {
   formatDuration,
   formatFileSize,
@@ -53,7 +73,7 @@ export const Route = createFileRoute('/builds/$buildId')({
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
   },
-  component: BuildDetailPage,
+  component: BuildDetailPageWrapper,
 })
 
 function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
@@ -69,11 +89,16 @@ function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
   }
 }
 
+function BuildDetailPageWrapper() {
+  const { buildId } = Route.useParams()
+  return <BuildDetailPage key={buildId} />
+}
+
 function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const navigate = useNavigate()
   const knownTerminalRef = useRef(false)
-  const [rerunOpen, setRerunOpen] = useState(false)
+  const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: knownTerminalRef.current ? false : 3000,
   })
@@ -182,6 +207,15 @@ function BuildDetailPage() {
               {build.status}
             </Badge>
             <Badge variant="outline">{build.trigger_type}</Badge>
+            {build.source_build_id ? (
+              <Link
+                to="/builds/$buildId"
+                params={{ buildId: build.source_build_id }}
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Re-run of a previous build
+              </Link>
+            ) : null}
             {build.branch ? (
               <span className="inline-flex items-center gap-1 font-mono text-[11px]">
                 <HugeiconsIcon icon={GitBranchIcon} size={12} />
@@ -218,10 +252,24 @@ function BuildDetailPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setRerunOpen(true)}
+                onClick={() => {
+                  rerunMutation.mutate(build.id, {
+                    onSuccess: (result) => {
+                      toast.success(`Re-run queued as build #${result.build.build_number}`)
+                      void navigate({
+                        to: '/builds/$buildId',
+                        params: { buildId: result.build.id },
+                      })
+                    },
+                    onError: (err) => {
+                      toast.error(`Failed to re-run: ${err.message}`)
+                    },
+                  })
+                }}
+                disabled={rerunMutation.isPending}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                Re-run
+                {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
             {canCancel ? (
@@ -262,25 +310,28 @@ function BuildDetailPage() {
         </aside>
       </div>
 
-      {/* Re-run dialog */}
-      <TriggerBuildDialog
-        open={rerunOpen}
-        onOpenChange={setRerunOpen}
-        fixedProjectId={build.project_id}
-        fixedPipelineId={build.pipeline_id}
-        defaultBranch={build.branch ?? undefined}
-        title="Re-run Build"
-        description={`Re-run build #${build.build_number} with the same pipeline and branch.`}
-        onBuildCreated={(newBuildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId: newBuildId },
-          })
-        }}
-      />
     </PageLayout>
   )
 }
+
+function isArtifactExpired(artifact: Artifact): boolean {
+  if (artifact.expires_at == null) return false
+  return artifact.expires_at <= Math.floor(Date.now() / 1000)
+}
+
+function artifactExpiryLabel(artifact: Artifact): string | null {
+  if (artifact.expires_at == null) return null
+  const now = Math.floor(Date.now() / 1000)
+  if (artifact.expires_at <= now) return 'Expired'
+  return `Expires ${relativeTime(artifact.expires_at)}`
+}
+
+const TTL_OPTIONS = [
+  { value: '3600', label: '1 hour' },
+  { value: '21600', label: '6 hours' },
+  { value: '86400', label: '24 hours' },
+  { value: '604800', label: '7 days' },
+] as const
 
 function ArtifactsPanel({
   artifacts,
@@ -292,6 +343,12 @@ function ArtifactsPanel({
   buildStatus: string
 }) {
   const downloadMutation = useArtifactDownloadLink()
+  const createTokenMutation = useCreateScopedDownloadToken()
+
+  const [shareArtifact, setShareArtifact] = useState<Artifact | null>(null)
+  const [ttlSecs, setTtlSecs] = useState('86400')
+  const [singleUse, setSingleUse] = useState(false)
+  const [createdToken, setCreatedToken] = useState<CreateScopedDownloadTokenResponse | null>(null)
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {
@@ -318,86 +375,229 @@ function ArtifactsPanel({
     })
   }
 
+  function handleShareLink(artifact: Artifact) {
+    setShareArtifact(artifact)
+    setCreatedToken(null)
+    setTtlSecs('86400')
+    setSingleUse(false)
+  }
+
+  function handleCreateToken() {
+    if (!shareArtifact) return
+    createTokenMutation.mutate(
+      {
+        artifactId: shareArtifact.id,
+        data: {
+          ttl_secs: Number(ttlSecs),
+          single_use: singleUse,
+        },
+      },
+      {
+        onSuccess: (res) => {
+          setCreatedToken(res)
+        },
+        onError: (err) => {
+          toast.error(`Failed to create share link: ${err.message}`)
+        },
+      },
+    )
+  }
+
+  function handleCopyShareUrl() {
+    if (!createdToken) return
+    void navigator.clipboard.writeText(createdToken.download_url).then(
+      () => toast.success('Share link copied to clipboard'),
+      () => toast.error('Failed to copy link'),
+    )
+  }
+
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          <HugeiconsIcon icon={File01Icon} size={14} />
-          Artifacts
-          {artifacts.length > 0 ? (
-            <Badge variant="secondary" className="text-[10px]">
-              {artifacts.length}
-            </Badge>
-          ) : null}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-          </div>
-        ) : !artifacts.length ? (
-          <p className="text-xs text-muted-foreground">
-            {buildStatus === 'succeeded' || buildStatus === 'failed'
-              ? 'No artifacts were produced. Check that your pipeline has artifact patterns configured.'
-              : 'Artifacts will appear here once the build produces them.'}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {artifacts.map((artifact) => (
-              <div
-                key={artifact.id}
-                className="flex items-center gap-2 border p-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">
-                    {artifact.name}
-                  </p>
-                  <div className="mt-0.5 flex items-center gap-1.5">
-                    <Badge
-                      variant={artifactTypeBadgeVariant(artifact.artifact_type)}
-                      className="text-[10px]"
-                    >
-                      {artifact.artifact_type}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground">
-                      {artifact.file_size != null
-                        ? formatFileSize(artifact.file_size)
-                        : '—'}
-                    </span>
+    <>
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            <HugeiconsIcon icon={File01Icon} size={14} />
+            Artifacts
+            {artifacts.length > 0 ? (
+              <Badge variant="secondary" className="text-[10px]">
+                {artifacts.length}
+              </Badge>
+            ) : null}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : !artifacts.length ? (
+            <p className="text-xs text-muted-foreground">
+              {buildStatus === 'succeeded' || buildStatus === 'failed'
+                ? 'No artifacts were produced. Check that your pipeline has artifact patterns configured.'
+                : 'Artifacts will appear here once the build produces them.'}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {artifacts.map((artifact) => {
+                const expired = isArtifactExpired(artifact)
+                const expiryLabel = artifactExpiryLabel(artifact)
+
+                return (
+                  <div
+                    key={artifact.id}
+                    className={`flex items-center gap-2 border p-2 ${expired ? 'opacity-50' : ''}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium">
+                        {artifact.name}
+                      </p>
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        <Badge
+                          variant={artifactTypeBadgeVariant(artifact.artifact_type)}
+                          className="text-[10px]"
+                        >
+                          {artifact.artifact_type}
+                        </Badge>
+                        <span className="text-[10px] text-muted-foreground">
+                          {artifact.file_size != null
+                            ? formatFileSize(artifact.file_size)
+                            : '—'}
+                        </span>
+                        {expiryLabel ? (
+                          <span className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}>
+                            {expiryLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0"
+                        title="Share link"
+                        aria-label={`Share link for ${artifact.name}`}
+                        onClick={() => handleShareLink(artifact)}
+                        disabled={expired}
+                      >
+                        <HugeiconsIcon icon={Share08Icon} size={14} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0"
+                        title="Copy download link"
+                        aria-label={`Copy link for ${artifact.name}`}
+                        onClick={() => handleCopyLink(artifact.id, artifact.name)}
+                        disabled={downloadMutation.isPending || expired}
+                      >
+                        <HugeiconsIcon icon={Copy01Icon} size={14} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0"
+                        title="Download"
+                        aria-label={`Download ${artifact.name}`}
+                        onClick={() => handleDownload(artifact.id, artifact.name)}
+                        disabled={downloadMutation.isPending || expired}
+                      >
+                        <HugeiconsIcon icon={Download04Icon} size={14} />
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-0.5">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 shrink-0"
-                    title="Copy download link"
-                    aria-label={`Copy link for ${artifact.name}`}
-                    onClick={() => handleCopyLink(artifact.id, artifact.name)}
-                    disabled={downloadMutation.isPending}
-                  >
-                    <HugeiconsIcon icon={Copy01Icon} size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 shrink-0"
-                    title="Download"
-                    aria-label={`Download ${artifact.name}`}
-                    onClick={() => handleDownload(artifact.id, artifact.name)}
-                    disabled={downloadMutation.isPending}
-                  >
-                    <HugeiconsIcon icon={Download04Icon} size={14} />
-                  </Button>
-                </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Share Link Dialog */}
+      <Dialog open={shareArtifact !== null} onOpenChange={(open) => { if (!open) setShareArtifact(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {createdToken ? 'Share Link Created' : 'Create Share Link'}
+            </DialogTitle>
+            <DialogDescription>
+              {createdToken
+                ? 'Copy this link to share. It will not be shown again.'
+                : `Generate a scoped download link for "${shareArtifact?.name}".`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {createdToken ? (
+            <div className="space-y-3">
+              <Alert>
+                <AlertDescription className="break-all text-xs font-mono">
+                  {createdToken.download_url}
+                </AlertDescription>
+              </Alert>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>Expires {relativeTime(createdToken.expires_at)}</span>
+                {createdToken.single_use ? (
+                  <Badge variant="secondary" className="text-[10px]">Single use</Badge>
+                ) : null}
               </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setShareArtifact(null)}>
+                  Close
+                </Button>
+                <Button onClick={handleCopyShareUrl}>
+                  <HugeiconsIcon icon={Copy01Icon} size={14} className="mr-1.5" />
+                  Copy Link
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="ttl-select">Expires after</Label>
+                <Select value={ttlSecs} onValueChange={(v) => { if (v != null) setTtlSecs(v) }}>
+                  <SelectTrigger id="ttl-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TTL_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="single-use"
+                  checked={singleUse}
+                  onCheckedChange={(checked) => setSingleUse(checked === true)}
+                />
+                <Label htmlFor="single-use" className="text-sm font-normal">
+                  Single use (consumed after first download)
+                </Label>
+              </div>
+              <DialogFooter>
+                <Button variant="secondary" onClick={() => setShareArtifact(null)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateToken} disabled={createTokenMutation.isPending}>
+                  {createTokenMutation.isPending ? (
+                    <>
+                      <Spinner className="mr-1.5" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create Link'
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

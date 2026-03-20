@@ -1,4 +1,6 @@
+pub mod api_tokens;
 pub mod apple_api;
+pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
@@ -2098,7 +2100,12 @@ async fn build_router_inner(
         )
         .route(
             "/v1/settings/external-access/oidc",
-            axum::routing::put(instance_settings::configure_external_access_oidc),
+            get(instance_settings::get_external_access_oidc)
+                .put(instance_settings::configure_external_access_oidc),
+        )
+        .route(
+            "/v1/settings/external-access/oidc/test-connection",
+            post(instance_settings::test_oidc_connection),
         )
         // Notification channel settings
         .route(
@@ -2232,13 +2239,23 @@ async fn build_router_inner(
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
+        .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
+        // API token endpoints
+        .route(
+            "/v1/api-tokens",
+            get(api_tokens::list_api_tokens_handler).post(api_tokens::create_api_token_handler),
+        )
+        .route(
+            "/v1/api-tokens/{token_id}",
+            axum::routing::delete(api_tokens::revoke_api_token_handler),
+        )
         // Runner endpoints
         .route("/v1/runners/register", post(runners::register_runner))
         .route(
             "/v1/runners/{runner_id}",
-            axum::routing::patch(runners::update_runner),
+            get(runners::get_runner).patch(runners::update_runner),
         )
         .route(
             "/v1/runners/{runner_id}/heartbeat",
@@ -2304,6 +2321,23 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/local-download/{token}",
             get(artifacts::download_local_artifact),
+        )
+        // ── Scoped download tokens (OOR-140) ──────────────────
+        .route(
+            "/v1/artifacts/{artifact_id}/scoped-token",
+            post(artifact_tokens::create_scoped_token_handler),
+        )
+        .route(
+            "/v1/artifacts/{artifact_id}/scoped-tokens",
+            get(artifact_tokens::list_scoped_tokens_handler),
+        )
+        .route(
+            "/v1/artifact-tokens/{token_id}",
+            axum::routing::delete(artifact_tokens::revoke_scoped_token_handler),
+        )
+        .route(
+            "/v1/artifacts/dl/{token}",
+            get(artifact_tokens::download_via_scoped_token),
         )
         // ── Retention policy ────────────────────────────────────
         .route(

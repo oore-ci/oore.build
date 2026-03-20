@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import type { UpdateRunnerRequest } from '@/lib/types'
-import { listRunners, updateRunner } from '@/lib/api'
+import type { CreateApiTokenRequest } from '@/lib/types'
+import { createApiToken, listApiTokens, revokeApiToken } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -18,41 +18,55 @@ function useBaseUrl(): string | null {
   return instance?.url ?? null
 }
 
-export function useRunners() {
+export function useApiTokens() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'runners'],
-    queryFn: () => listRunners(baseUrl!, token!),
+    queryKey: [instance?.id ?? '__none__', 'api-tokens'],
+    queryFn: () => listApiTokens(baseUrl!, token!),
     enabled: !!baseUrl && !!token,
-    refetchInterval: 15_000,
   })
 }
 
-export function useUpdateRunner() {
+export function useCreateApiToken() {
   const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useMutation({
-    mutationFn: ({
-      runnerId,
-      data,
-    }: {
-      runnerId: string
-      data: UpdateRunnerRequest
-    }) => {
+    mutationFn: (data: CreateApiTokenRequest) => {
       if (!baseUrl || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
-      return updateRunner(baseUrl, token, runnerId, data)
+      return createApiToken(baseUrl, token, data)
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'runners'],
+        queryKey: [instance?.id ?? '__none__', 'api-tokens'],
+      })
+    },
+  })
+}
+
+export function useRevokeApiToken() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (tokenId: string) => {
+      if (!baseUrl || !token) {
+        return Promise.reject(new Error('Not authenticated'))
+      }
+      return revokeApiToken(baseUrl, token, tokenId)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'api-tokens'],
       })
     },
   })

@@ -39,6 +39,280 @@
         }
       }
     },
+    "/v1/api-tokens": {
+      "get": {
+        "tags": [
+          "API Tokens"
+        ],
+        "summary": "List API tokens",
+        "description": "Returns all API tokens visible to the caller. Admins and owners see all\ntokens; other roles see only their own.",
+        "operationId": "list_api_tokens",
+        "responses": {
+          "200": {
+            "description": "List of API tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListApiTokensResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "API Tokens"
+        ],
+        "summary": "Create API token",
+        "description": "Creates a new API token. The plaintext token is returned only in this\nresponse and cannot be retrieved again.",
+        "operationId": "create_api_token",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Token created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateApiTokenResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden or role escalation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/api-tokens/{token_id}": {
+      "delete": {
+        "tags": [
+          "API Tokens"
+        ],
+        "summary": "Revoke API token",
+        "description": "Revokes an API token by ID. Non-admin users can only revoke their own\ntokens.",
+        "operationId": "revoke_api_token",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "API token ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeApiTokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifact-tokens/{token_id}": {
+      "delete": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Revoke scoped download token",
+        "description": "Revokes a scoped download token so it can no longer be used.",
+        "operationId": "revoke_scoped_download_token",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Download token ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeArtifactDownloadTokenResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/dl/{token}": {
+      "get": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Download via scoped token",
+        "description": "Downloads an artifact using a scoped download token. No session auth required —\nthe token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.",
+        "operationId": "download_via_scoped_token",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Scoped download token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to presigned download URL"
+          },
+          "401": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{artifact_id}/download-link": {
       "post": {
         "tags": [
@@ -75,6 +349,112 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/scoped-token": {
+      "post": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Create scoped download token",
+        "description": "Generates a scoped, time-limited download token for a specific artifact.\nThe token can be shared with external users who don't have an account.",
+        "operationId": "create_scoped_download_token",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "description": "Artifact ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScopedDownloadTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped download token created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateScopedDownloadTokenResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Artifact not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/scoped-tokens": {
+      "get": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "List scoped download tokens",
+        "description": "Lists all scoped download tokens for a specific artifact, including expired and revoked ones.",
+        "operationId": "list_scoped_download_tokens",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "description": "Artifact ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of scoped download tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactDownloadTokensResponse"
                 }
               }
             }
@@ -761,6 +1141,64 @@
             }
           }
         }
+      }
+    },
+    "/v1/builds/{build_id}/rerun": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Re-run build",
+        "description": "Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.",
+        "operationId": "rerun_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Source build ID to re-run",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Re-run build queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunBuildResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Source build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source build is not in a terminal state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/v1/builds/{build_id}/stream-token": {
@@ -2827,6 +3265,52 @@
       }
     },
     "/v1/runners/{runner_id}": {
+      "get": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Get runner",
+        "description": "Retrieves a single runner by ID, including its current status and health information.",
+        "operationId": "get_runner",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Runner details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRunnerResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Runner not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "patch": {
         "tags": [
           "Runners"
@@ -3337,6 +3821,51 @@
       }
     },
     "/v1/settings/external-access/oidc": {
+      "get": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Get current OIDC configuration for External Access",
+        "description": "Returns the current runtime OIDC provider configuration (issuer, client ID,\ndiscovered endpoints). Never exposes the client secret.",
+        "operationId": "get_external_access_oidc",
+        "responses": {
+          "200": {
+            "description": "Current OIDC configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetExternalAccessOidcResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "OIDC not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Setup not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
       "put": {
         "tags": [
           "Instance Settings"
@@ -3387,6 +3916,63 @@
           },
           "409": {
             "description": "Setup state does not allow runtime OIDC configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/external-access/oidc/test-connection": {
+      "post": {
+        "tags": [
+          "Instance Settings"
+        ],
+        "summary": "Test OIDC provider connection",
+        "description": "Owner-only endpoint to test OIDC provider discovery without committing changes.\nValidates that the issuer URL is reachable and returns discovered endpoints.",
+        "operationId": "test_oidc_connection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestOidcConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connection test succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestOidcConnectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or OIDC discovery failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner-only operation",
             "content": {
               "application/json": {
                 "schema": {
@@ -5261,6 +5847,64 @@
           }
         }
       },
+      "ApiTokenSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "role",
+          "created_by",
+          "created_by_email",
+          "created_at",
+          "is_expired",
+          "is_revoked"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_by_email": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_expired": {
+            "type": "boolean"
+          },
+          "is_revoked": {
+            "type": "boolean"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
       "AppendBuildLogsRequest": {
         "type": "object",
         "required": [
@@ -5315,6 +5959,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "file_path": {
             "type": "string"
           },
@@ -5348,6 +5999,73 @@
           },
           "expires_at": {
             "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ArtifactDownloadTokenSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "artifact_id",
+          "prefix",
+          "created_by",
+          "created_by_email",
+          "expires_at",
+          "single_use",
+          "is_expired",
+          "is_used",
+          "is_revoked",
+          "created_at"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_by_email": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_expired": {
+            "type": "boolean"
+          },
+          "is_revoked": {
+            "type": "boolean"
+          },
+          "is_used": {
+            "type": "boolean"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "single_use": {
+            "type": "boolean"
+          },
+          "used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           }
         }
@@ -5649,6 +6367,12 @@
               "null"
             ]
           },
+          "source_build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "started_at": {
             "type": [
               "integer",
@@ -5944,6 +6668,68 @@
           }
         }
       },
+      "CreateApiTokenRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "role"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateApiTokenResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "role",
+          "created_at",
+          "token"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "description": "The plaintext token. Only returned on creation, never again."
+          }
+        }
+      },
       "CreateArtifactRequest": {
         "type": "object",
         "required": [
@@ -6209,6 +6995,55 @@
           }
         }
       },
+      "CreateScopedDownloadTokenRequest": {
+        "type": "object",
+        "properties": {
+          "single_use": {
+            "type": "boolean",
+            "description": "If true, token is consumed after first download."
+          },
+          "ttl_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "TTL in seconds (default: 86400 = 24 hours, max: 604800 = 7 days)."
+          }
+        }
+      },
+      "CreateScopedDownloadTokenResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "download_url",
+          "token",
+          "prefix",
+          "expires_at",
+          "single_use"
+        ],
+        "properties": {
+          "download_url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "single_use": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "DeleteNotificationChannelResponse": {
         "type": "object",
         "required": [
@@ -6339,6 +7174,48 @@
           },
           "ready": {
             "type": "boolean"
+          }
+        }
+      },
+      "GetExternalAccessOidcResponse": {
+        "type": "object",
+        "required": [
+          "issuer_url",
+          "client_id",
+          "has_client_secret",
+          "authorization_endpoint",
+          "token_endpoint",
+          "jwks_uri",
+          "configured_at"
+        ],
+        "properties": {
+          "authorization_endpoint": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "configured_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_client_secret": {
+            "type": "boolean"
+          },
+          "issuer_url": {
+            "type": "string"
+          },
+          "jwks_uri": {
+            "type": "string"
+          },
+          "token_endpoint": {
+            "type": "string"
+          },
+          "userinfo_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -6861,6 +7738,34 @@
           "file"
         ]
       },
+      "ListApiTokensResponse": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiTokenSummary"
+            }
+          }
+        }
+      },
+      "ListArtifactDownloadTokensResponse": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactDownloadTokenSummary"
+            }
+          }
+        }
+      },
       "ListArtifactsResponse": {
         "type": "object",
         "required": [
@@ -7250,7 +8155,6 @@
         "required": [
           "id",
           "channel_id",
-          "build_id",
           "event_type",
           "status",
           "attempt_count",
@@ -7262,7 +8166,10 @@
             "format": "int64"
           },
           "build_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "channel_id": {
             "type": "string"
@@ -7813,6 +8720,13 @@
           "project_id"
         ],
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_target": {
             "oneOf": [
               {
@@ -8011,6 +8925,17 @@
           "trusted_proxy"
         ]
       },
+      "RerunBuildResponse": {
+        "type": "object",
+        "required": [
+          "build"
+        ],
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/Build"
+          }
+        }
+      },
       "RetentionCleanupSummary": {
         "type": "object",
         "required": [
@@ -8073,6 +8998,13 @@
           "cleanup_interval_secs"
         ],
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_interval_secs": {
             "type": "integer",
             "format": "int64"
@@ -8130,6 +9062,28 @@
         "properties": {
           "policy": {
             "$ref": "#/components/schemas/RetentionPolicy"
+          }
+        }
+      },
+      "RevokeApiTokenResponse": {
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RevokeArtifactDownloadTokenResponse": {
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "boolean"
           }
         }
       },
@@ -8626,6 +9580,57 @@
           }
         }
       },
+      "TestOidcConnectionRequest": {
+        "type": "object",
+        "required": [
+          "issuer_url"
+        ],
+        "properties": {
+          "issuer_url": {
+            "type": "string"
+          }
+        }
+      },
+      "TestOidcConnectionResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "discovered_issuer",
+          "authorization_endpoint",
+          "token_endpoint",
+          "jwks_uri",
+          "scopes_supported"
+        ],
+        "properties": {
+          "authorization_endpoint": {
+            "type": "string"
+          },
+          "discovered_issuer": {
+            "type": "string"
+          },
+          "jwks_uri": {
+            "type": "string"
+          },
+          "scopes_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "token_endpoint": {
+            "type": "string"
+          },
+          "userinfo_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "TriggerConfig": {
         "type": "object",
         "properties": {
@@ -9056,6 +10061,13 @@
       "UpdateProjectRetentionOverrideRequest": {
         "type": "object",
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_target": {
             "oneOf": [
               {
@@ -9111,6 +10123,13 @@
           "cleanup_target"
         ],
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_interval_secs": {
             "type": "integer",
             "format": "int64"
@@ -9433,6 +10452,10 @@
     {
       "name": "Audit Logs",
       "description": "Read-only audit trail of all user and system actions."
+    },
+    {
+      "name": "API Tokens",
+      "description": "API token management — create, list, and revoke tokens for programmatic access."
     },
     {
       "name": "Webhooks",
