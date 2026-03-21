@@ -6852,8 +6852,7 @@
         "type": "object",
         "required": [
           "name",
-          "channel_type",
-          "url"
+          "channel_type"
         ],
         "properties": {
           "channel_type": {
@@ -6879,9 +6878,23 @@
             ],
             "description": "HMAC secret for signing webhook payloads (webhook only, optional)."
           },
+          "smtp_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpConfig",
+                "description": "SMTP configuration (required for email channel type)."
+              }
+            ]
+          },
           "url": {
-            "type": "string",
-            "description": "Webhook/Mattermost incoming webhook URL (required)."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Webhook/Mattermost incoming webhook URL (required for webhook/mattermost)."
           }
         }
       },
@@ -8085,6 +8098,7 @@
           "enabled",
           "has_url",
           "has_secret",
+          "has_smtp_config",
           "created_at",
           "updated_at"
         ],
@@ -8115,6 +8129,10 @@
           "has_secret": {
             "type": "boolean",
             "description": "True if the channel has an HMAC secret configured (webhook only)."
+          },
+          "has_smtp_config": {
+            "type": "boolean",
+            "description": "True if the channel has SMTP configuration (email only)."
           },
           "has_url": {
             "type": "boolean",
@@ -8147,7 +8165,8 @@
         "type": "string",
         "enum": [
           "webhook",
-          "mattermost"
+          "mattermost",
+          "email"
         ]
       },
       "NotificationDelivery": {
@@ -9469,6 +9488,54 @@
           }
         }
       },
+      "SmtpConfig": {
+        "type": "object",
+        "required": [
+          "host",
+          "port",
+          "username",
+          "password",
+          "tls_mode",
+          "from_address",
+          "recipients"
+        ],
+        "properties": {
+          "from_address": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tls_mode": {
+            "$ref": "#/components/schemas/SmtpTlsMode"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpTlsMode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "start_tls",
+          "tls"
+        ]
+      },
       "StepResult": {
         "type": "object",
         "required": [
@@ -9856,6 +9923,17 @@
             ],
             "description": "New HMAC secret. Omit to keep existing; pass empty string to clear."
           },
+          "smtp_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UpdateSmtpConfig",
+                "description": "Partial SMTP configuration update (email only). Omit fields to keep existing."
+              }
+            ]
+          },
           "url": {
             "type": [
               "string",
@@ -10191,6 +10269,62 @@
         "properties": {
           "runner": {
             "$ref": "#/components/schemas/Runner"
+          }
+        }
+      },
+      "UpdateSmtpConfig": {
+        "type": "object",
+        "properties": {
+          "from_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "recipients": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "tls_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpTlsMode"
+              }
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

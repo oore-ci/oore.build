@@ -12,6 +12,14 @@ Rules:
 
 ## 2026-03-19
 
+- **Email notification channel (SMTP)** ([OOR-144](https://linear.app/oorebuild/issue/OOR-144)):
+  - Added `email` as third notification channel type with SMTP provider config
+  - New `encrypted_config` column for AES-256-GCM encrypted SMTP JSON blob
+  - `lettre` crate for async SMTP with rustls TLS
+  - HTML email templates for build status and runner-offline notifications
+  - Frontend SMTP configuration form (create + partial edit)
+  - `runner_offline` event filter exposed in UI
+  - `SmtpConfig`, `UpdateSmtpConfig`, `SmtpTlsMode` contract types + OpenAPI
 - **Artifact expiry and scoped download tokens** ([OOR-140](https://linear.app/oorebuild/issue/OOR-140/artifact-expiry-and-scoped-download-tokens)):
   - Added `expires_at` column to `artifacts` table; computed at creation from `artifact_ttl_days` retention policy setting.
   - Added `artifact_ttl_days` field to `RetentionPolicy`, `ProjectRetentionOverride`, and their update requests.
@@ -125,7 +133,7 @@ Rules:
   - Frontend: Settings UI for notification channels — list, create, edit, delete, test, delivery history.
   - Frontend: Sidebar nav entry under Admin section.
   - OpenAPI spec updated with Notification Channels tag and all new endpoints/schemas.
-  - Email channel deferred to [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
+  - Email channel implemented in [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
 - **OOR-137: Build retention and cleanup policies** — automatic cleanup of old builds and artifacts.
   - Backend: retention policy engine with three criteria (max age, max count, max artifact size per project).
   - Global singleton settings table + per-project override table (migration 020).

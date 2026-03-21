@@ -53,6 +53,8 @@ function channelTypeLabel(type: string): string {
       return 'Webhook'
     case 'mattermost':
       return 'Mattermost'
+    case 'email':
+      return 'Email (SMTP)'
     default:
       return type
   }

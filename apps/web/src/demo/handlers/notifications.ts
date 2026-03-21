@@ -37,6 +37,7 @@ export const notificationHandlers = [
       events: (body.events as Array<string> | undefined) ?? [],
       has_url: !!(body.url as string),
       has_secret: !!(body.secret as string),
+      has_smtp_config: !!(body.smtp_config as Record<string, unknown> | undefined),
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),
@@ -77,6 +78,7 @@ export const notificationHandlers = [
       events: (body.events as Array<string> | undefined) ?? existing.events,
       has_url: body.url ? true : existing.has_url,
       has_secret: body.secret ? true : existing.has_secret,
+      has_smtp_config: body.smtp_config ? true : existing.has_smtp_config,
       updated_at: now(),
     }
 

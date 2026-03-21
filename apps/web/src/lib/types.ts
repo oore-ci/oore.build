@@ -954,8 +954,29 @@ export interface SyncPipelineIosSigningResponse {
 
 // ── Notification channels ───────────────────────────────────────
 
-export type NotificationChannelType = 'webhook' | 'mattermost'
+export type NotificationChannelType = 'webhook' | 'mattermost' | 'email'
 export type NotificationDeliveryStatus = 'pending' | 'delivered' | 'failed'
+export type SmtpTlsMode = 'none' | 'start_tls' | 'tls'
+
+export interface SmtpConfig {
+  host: string
+  port: number
+  username: string
+  password: string
+  tls_mode: SmtpTlsMode
+  from_address: string
+  recipients: Array<string>
+}
+
+export interface UpdateSmtpConfig {
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  tls_mode?: SmtpTlsMode
+  from_address?: string
+  recipients?: Array<string>
+}
 
 export interface NotificationChannel {
   id: string
@@ -965,6 +986,7 @@ export interface NotificationChannel {
   events: Array<string>
   has_url: boolean
   has_secret: boolean
+  has_smtp_config: boolean
   created_by?: string
   created_at: number
   updated_at: number
@@ -975,8 +997,9 @@ export interface CreateNotificationChannelRequest {
   channel_type: NotificationChannelType
   enabled?: boolean
   events?: Array<string>
-  url: string
+  url?: string
   secret?: string
+  smtp_config?: SmtpConfig
 }
 
 export interface UpdateNotificationChannelRequest {
@@ -985,6 +1008,7 @@ export interface UpdateNotificationChannelRequest {
   events?: Array<string>
   url?: string
   secret?: string
+  smtp_config?: UpdateSmtpConfig
 }
 
 export interface NotificationChannelResponse {
@@ -1008,7 +1032,7 @@ export interface TestNotificationChannelResponse {
 export interface NotificationDelivery {
   id: string
   channel_id: string
-  build_id: string
+  build_id?: string
   event_type: string
   status: NotificationDeliveryStatus
   attempt_count: number

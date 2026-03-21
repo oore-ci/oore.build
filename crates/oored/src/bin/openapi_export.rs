@@ -358,6 +358,9 @@ use utoipa::OpenApi;
         oore_contract::BuildLogsResponse,
         // Notification Channels
         oore_contract::NotificationChannelType,
+        oore_contract::SmtpTlsMode,
+        oore_contract::SmtpConfig,
+        oore_contract::UpdateSmtpConfig,
         oore_contract::NotificationDeliveryStatus,
         oore_contract::NotificationChannel,
         oore_contract::CreateNotificationChannelRequest,

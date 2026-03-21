@@ -7,7 +7,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oore_contract::NotificationChannelType;
+use lettre::message::{Mailbox, header::ContentType};
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use oore_contract::{NotificationChannelType, SmtpConfig, SmtpTlsMode};
 use ring::hmac;
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
@@ -151,37 +154,6 @@ async fn dispatch_event(
             }
         }
 
-        let encrypted_url: Option<String> = channel_row.get("encrypted_url");
-        let encrypted_secret: Option<String> = channel_row.get("encrypted_secret");
-
-        let url = match encrypted_url
-            .as_deref()
-            .map(|eu| crypto::decrypt(eu, encryption_key))
-            .transpose()
-        {
-            Ok(Some(u)) => u,
-            Ok(None) => {
-                warn!(channel_id = %channel_id, "channel has no URL, skipping");
-                continue;
-            }
-            Err(e) => {
-                error!(channel_id = %channel_id, error = %e, "failed to decrypt channel URL");
-                continue;
-            }
-        };
-
-        let secret = match encrypted_secret
-            .as_deref()
-            .map(|es| crypto::decrypt(es, encryption_key))
-            .transpose()
-        {
-            Ok(s) => s,
-            Err(e) => {
-                error!(channel_id = %channel_id, error = %e, "failed to decrypt HMAC secret, skipping channel");
-                continue;
-            }
-        };
-
         let channel_type = channel_type_str
             .parse::<NotificationChannelType>()
             .unwrap_or(NotificationChannelType::Webhook);
@@ -202,10 +174,31 @@ async fn dispatch_event(
         .execute(pool)
         .await;
 
-        // Attempt delivery
-        let result =
-            send_notification_with_client(client, &url, secret.as_deref(), channel_type, &payload)
-                .await;
+        // Attempt delivery — branch by channel type
+        let result = match channel_type {
+            NotificationChannelType::Email => {
+                dispatch_email(channel_row, encryption_key, &channel_id, || {
+                    let p = &payload;
+                    build_email_html(p)
+                })
+                .await
+            }
+            _ => {
+                let effective_payload = match channel_type {
+                    NotificationChannelType::Mattermost => build_mattermost_payload(&payload),
+                    _ => payload.clone(),
+                };
+                dispatch_http(
+                    client,
+                    channel_row,
+                    encryption_key,
+                    &channel_id,
+                    channel_type,
+                    &effective_payload,
+                )
+                .await
+            }
+        };
 
         match result {
             Ok(()) => {
@@ -284,34 +277,6 @@ async fn dispatch_runner_event(
             }
         }
 
-        let encrypted_url: Option<String> = channel_row.get("encrypted_url");
-        let encrypted_secret: Option<String> = channel_row.get("encrypted_secret");
-
-        let url = match encrypted_url
-            .as_deref()
-            .map(|eu| crypto::decrypt(eu, encryption_key))
-            .transpose()
-        {
-            Ok(Some(u)) => u,
-            Ok(None) => continue,
-            Err(e) => {
-                error!(channel_id = %channel_id, error = %e, "failed to decrypt channel URL");
-                continue;
-            }
-        };
-
-        let secret = match encrypted_secret
-            .as_deref()
-            .map(|es| crypto::decrypt(es, encryption_key))
-            .transpose()
-        {
-            Ok(s) => s,
-            Err(e) => {
-                error!(channel_id = %channel_id, error = %e, "failed to decrypt HMAC secret");
-                continue;
-            }
-        };
-
         let channel_type = channel_type_str
             .parse::<NotificationChannelType>()
             .unwrap_or(NotificationChannelType::Webhook);
@@ -332,20 +297,31 @@ async fn dispatch_runner_event(
         .execute(pool)
         .await;
 
-        // For Mattermost channels, use the runner-specific message format
-        let effective_payload = match channel_type {
-            NotificationChannelType::Mattermost => runner_mattermost_payload(&payload),
-            NotificationChannelType::Webhook => payload.clone(),
+        // Attempt delivery — branch by channel type
+        let result = match channel_type {
+            NotificationChannelType::Email => {
+                dispatch_email(channel_row, encryption_key, &channel_id, || {
+                    let p = &payload;
+                    runner_email_html(p)
+                })
+                .await
+            }
+            _ => {
+                let effective_payload = match channel_type {
+                    NotificationChannelType::Mattermost => runner_mattermost_payload(&payload),
+                    _ => payload.clone(),
+                };
+                dispatch_http(
+                    client,
+                    channel_row,
+                    encryption_key,
+                    &channel_id,
+                    channel_type,
+                    &effective_payload,
+                )
+                .await
+            }
         };
-
-        let result = send_raw_payload(
-            client,
-            &url,
-            secret.as_deref(),
-            channel_type,
-            &effective_payload,
-        )
-        .await;
 
         match result {
             Ok(()) => {
@@ -527,14 +503,84 @@ async fn send_notification_with_client(
     payload: &serde_json::Value,
 ) -> anyhow::Result<()> {
     let body = match channel_type {
-        NotificationChannelType::Webhook => payload.clone(),
+        NotificationChannelType::Webhook | NotificationChannelType::Email => payload.clone(),
         NotificationChannelType::Mattermost => build_mattermost_payload(payload),
     };
-    send_raw_payload(client, url, secret, channel_type, &body).await
+    send_raw_http_payload(client, url, secret, channel_type, &body).await
 }
 
-/// Send a pre-formatted payload to a notification channel.
-async fn send_raw_payload(
+/// Dispatch an HTTP-based notification (webhook/mattermost) from within a dispatch loop.
+async fn dispatch_http(
+    client: &reqwest::Client,
+    channel_row: &sqlx::sqlite::SqliteRow,
+    encryption_key: &[u8],
+    channel_id: &str,
+    channel_type: NotificationChannelType,
+    payload: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let encrypted_url: Option<String> = channel_row.get("encrypted_url");
+    let encrypted_secret: Option<String> = channel_row.get("encrypted_secret");
+
+    let url = match encrypted_url
+        .as_deref()
+        .map(|eu| crypto::decrypt(eu, encryption_key))
+        .transpose()
+    {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            anyhow::bail!("channel {channel_id} has no URL configured");
+        }
+        Err(e) => {
+            anyhow::bail!("failed to decrypt channel {channel_id} URL: {e}");
+        }
+    };
+
+    let secret = match encrypted_secret
+        .as_deref()
+        .map(|es| crypto::decrypt(es, encryption_key))
+        .transpose()
+    {
+        Ok(s) => s,
+        Err(e) => {
+            anyhow::bail!("failed to decrypt channel {channel_id} HMAC secret: {e}");
+        }
+    };
+
+    send_raw_http_payload(client, &url, secret.as_deref(), channel_type, payload).await
+}
+
+/// Dispatch an email notification from within a dispatch loop.
+async fn dispatch_email<F>(
+    channel_row: &sqlx::sqlite::SqliteRow,
+    encryption_key: &[u8],
+    channel_id: &str,
+    build_html: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> (String, String),
+{
+    let encrypted_config: Option<String> = channel_row.get("encrypted_config");
+    let config_json = match encrypted_config
+        .as_deref()
+        .map(|ec| crypto::decrypt(ec, encryption_key))
+        .transpose()
+    {
+        Ok(Some(j)) => j,
+        Ok(None) => {
+            anyhow::bail!("email channel {channel_id} has no SMTP config");
+        }
+        Err(e) => {
+            anyhow::bail!("failed to decrypt email channel {channel_id} config: {e}");
+        }
+    };
+
+    let smtp_config: SmtpConfig = serde_json::from_str(&config_json)?;
+    let (subject, html_body) = build_html();
+    send_email_notification(&smtp_config, &subject, &html_body).await
+}
+
+/// Send a pre-formatted payload to an HTTP notification channel.
+async fn send_raw_http_payload(
     client: &reqwest::Client,
     url: &str,
     secret: Option<&str>,
@@ -571,4 +617,171 @@ async fn send_raw_payload(
     }
 
     Ok(())
+}
+
+// ── Email notification functions ─────────────────────────────────
+
+/// Send an email notification via SMTP.
+async fn send_email_notification(
+    config: &SmtpConfig,
+    subject: &str,
+    html_body: &str,
+) -> anyhow::Result<()> {
+    let from: Mailbox = config
+        .from_address
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid from address '{}': {e}", config.from_address))?;
+
+    let creds = Credentials::new(config.username.clone(), config.password.clone());
+
+    let transport = match config.tls_mode {
+        SmtpTlsMode::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
+            .port(config.port)
+            .credentials(creds)
+            .build(),
+        SmtpTlsMode::StartTls => {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)?
+                .port(config.port)
+                .credentials(creds)
+                .build()
+        }
+        SmtpTlsMode::None => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
+            .port(config.port)
+            .credentials(creds)
+            .build(),
+    };
+
+    for recipient in &config.recipients {
+        let to: Mailbox = recipient
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid recipient '{recipient}': {e}"))?;
+
+        let email = Message::builder()
+            .from(from.clone())
+            .to(to)
+            .subject(subject)
+            .header(ContentType::TEXT_HTML)
+            .body(html_body.to_string())?;
+
+        tokio::time::timeout(Duration::from_secs(30), transport.send(email))
+            .await
+            .map_err(|_| anyhow::anyhow!("SMTP send timed out after 30s"))??;
+    }
+
+    Ok(())
+}
+
+/// Send a test email to verify SMTP configuration.
+pub async fn send_test_email(config: &SmtpConfig) -> anyhow::Result<()> {
+    send_email_notification(config, "Oore CI — Test Notification", &test_email_html()).await
+}
+
+fn test_email_html() -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
+<div style="background: #16a34a; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+  <h2 style="margin: 0;">Oore CI — Test Notification</h2>
+</div>
+<div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+  <p>This is a test notification from Oore CI. If you received this email, your SMTP configuration is working correctly.</p>
+  <p style="color: #6b7280; font-size: 14px;">Sent at {}</p>
+</div>
+</body></html>"#,
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    )
+}
+
+/// Escape HTML special characters to prevent injection in email templates.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+fn build_email_html(payload: &serde_json::Value) -> (String, String) {
+    let project_name = html_escape(
+        payload["project_name"]
+            .as_str()
+            .unwrap_or("Unknown Project"),
+    );
+    let pipeline_name = html_escape(
+        payload["pipeline_name"]
+            .as_str()
+            .unwrap_or("Unknown Pipeline"),
+    );
+    let build_number = payload["build"]["build_number"].as_i64().unwrap_or(0);
+    let status_raw = payload["build"]["status"].as_str().unwrap_or("unknown");
+    let branch = html_escape(payload["build"]["branch"].as_str().unwrap_or("—"));
+
+    let (color, emoji) = match status_raw {
+        "succeeded" => ("#16a34a", "\u{2705}"),
+        "failed" => ("#dc2626", "\u{274C}"),
+        "canceled" => ("#6b7280", "\u{1F6AB}"),
+        "timed_out" => ("#d97706", "\u{23F3}"),
+        "expired" => ("#9333ea", "\u{1F552}"),
+        _ => ("#6b7280", "\u{1F514}"),
+    };
+
+    let status = html_escape(status_raw);
+    let project_name_raw = payload["project_name"]
+        .as_str()
+        .unwrap_or("Unknown Project");
+    let pipeline_name_raw = payload["pipeline_name"]
+        .as_str()
+        .unwrap_or("Unknown Pipeline");
+
+    let subject = format!(
+        "{} {} / {} — Build #{} {}",
+        emoji, project_name_raw, pipeline_name_raw, build_number, status_raw
+    );
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
+<div style="background: {color}; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+  <h2 style="margin: 0;">Build #{build_number} — {status}</h2>
+</div>
+<div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+  <table style="width: 100%; border-collapse: collapse;">
+    <tr><td style="padding: 8px 0; color: #6b7280;">Project</td><td style="padding: 8px 0; font-weight: 600;">{project_name}</td></tr>
+    <tr><td style="padding: 8px 0; color: #6b7280;">Pipeline</td><td style="padding: 8px 0; font-weight: 600;">{pipeline_name}</td></tr>
+    <tr><td style="padding: 8px 0; color: #6b7280;">Branch</td><td style="padding: 8px 0;"><code>{branch}</code></td></tr>
+    <tr><td style="padding: 8px 0; color: #6b7280;">Status</td><td style="padding: 8px 0; font-weight: 600; color: {color};">{status}</td></tr>
+  </table>
+</div>
+<p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
+</body></html>"#
+    );
+
+    (subject, html)
+}
+
+fn runner_email_html(payload: &serde_json::Value) -> (String, String) {
+    let runner_name_raw = payload["runner"]["name"].as_str().unwrap_or("Unknown");
+    let from_status_raw = payload["runner"]["from_status"]
+        .as_str()
+        .unwrap_or("unknown");
+    let runner_name = html_escape(runner_name_raw);
+    let from_status = html_escape(from_status_raw);
+
+    let subject = format!("\u{26A0}\u{FE0F} Runner {} went offline", runner_name_raw);
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
+<div style="background: #d97706; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+  <h2 style="margin: 0;">⚠️ Runner Offline</h2>
+</div>
+<div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+  <p>Runner <strong>{runner_name}</strong> went offline (was <em>{from_status}</em>).</p>
+  <p>Please check the runner status in the Oore CI dashboard.</p>
+</div>
+<p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
+</body></html>"#
+    );
+
+    (subject, html)
 }
