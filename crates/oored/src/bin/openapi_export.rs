@@ -145,6 +145,11 @@ use utoipa::OpenApi;
         paths::create_artifact,
         paths::list_artifacts,
         paths::generate_download_link,
+        // ── Scoped Download Tokens (OOR-140) ──
+        paths::create_scoped_download_token,
+        paths::list_scoped_download_tokens,
+        paths::revoke_scoped_download_token,
+        paths::download_via_scoped_token,
         // ── Notification Channels ──
         paths::list_notification_channels,
         paths::create_notification_channel,
@@ -308,6 +313,11 @@ use utoipa::OpenApi;
         oore_contract::CreateArtifactResponse,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
+        oore_contract::CreateScopedDownloadTokenRequest,
+        oore_contract::CreateScopedDownloadTokenResponse,
+        oore_contract::ArtifactDownloadTokenSummary,
+        oore_contract::ListArtifactDownloadTokensResponse,
+        oore_contract::RevokeArtifactDownloadTokenResponse,
         oore_contract::ArtifactStorageSettingsResponse,
         oore_contract::UpdateArtifactStorageSettingsRequest,
         // Instance Settings
@@ -1703,6 +1713,63 @@ mod paths {
         )
     )]
     pub(super) async fn generate_download_link() {}
+
+    // ── Scoped Download Tokens (OOR-140) ──
+
+    /// Create scoped download token
+    ///
+    /// Generates a scoped, time-limited download token for a specific artifact.
+    /// The token can be shared with external users who don't have an account.
+    #[utoipa::path(post, path = "/v1/artifacts/{artifact_id}/scoped-token", tag = "Scoped Download Tokens",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        request_body = CreateScopedDownloadTokenRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Scoped download token created", body = CreateScopedDownloadTokenResponse),
+            (status = 404, description = "Artifact not found", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_scoped_download_token() {}
+
+    /// List scoped download tokens
+    ///
+    /// Lists all scoped download tokens for a specific artifact, including expired and revoked ones.
+    #[utoipa::path(get, path = "/v1/artifacts/{artifact_id}/scoped-tokens", tag = "Scoped Download Tokens",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of scoped download tokens", body = ListArtifactDownloadTokensResponse),
+        )
+    )]
+    pub(super) async fn list_scoped_download_tokens() {}
+
+    /// Revoke scoped download token
+    ///
+    /// Revokes a scoped download token so it can no longer be used.
+    #[utoipa::path(delete, path = "/v1/artifact-tokens/{token_id}", tag = "Scoped Download Tokens",
+        params(("token_id" = String, Path, description = "Download token ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token revoked", body = RevokeArtifactDownloadTokenResponse),
+            (status = 404, description = "Token not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn revoke_scoped_download_token() {}
+
+    /// Download via scoped token
+    ///
+    /// Downloads an artifact using a scoped download token. No session auth required —
+    /// the token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.
+    #[utoipa::path(get, path = "/v1/artifacts/dl/{token}", tag = "Scoped Download Tokens",
+        params(("token" = String, Path, description = "Scoped download token")),
+        responses(
+            (status = 302, description = "Redirect to presigned download URL"),
+            (status = 401, description = "Invalid or expired token", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+        )
+    )]
+    pub(super) async fn download_via_scoped_token() {}
 
     // ── Webhooks ──
 

@@ -487,6 +487,7 @@ export interface Artifact {
   checksum?: string
   metadata: Record<string, unknown>
   created_at: number
+  expires_at?: number
 }
 
 export interface ListArtifactsResponse {
@@ -496,6 +497,42 @@ export interface ListArtifactsResponse {
 export interface ArtifactDownloadLinkResponse {
   download_url: string
   expires_at: number
+}
+
+// ── Scoped download token types ────────────────────────────
+
+export interface CreateScopedDownloadTokenRequest {
+  ttl_secs?: number
+  single_use?: boolean
+}
+
+export interface CreateScopedDownloadTokenResponse {
+  id: string
+  download_url: string
+  token: string
+  prefix: string
+  expires_at: number
+  single_use: boolean
+}
+
+export interface ArtifactDownloadTokenSummary {
+  id: string
+  artifact_id: string
+  prefix: string
+  created_by: string
+  created_by_email: string
+  expires_at: number
+  single_use: boolean
+  used_at?: number
+  revoked_at?: number
+  is_expired: boolean
+  is_used: boolean
+  is_revoked: boolean
+  created_at: number
+}
+
+export interface ListArtifactDownloadTokensResponse {
+  tokens: Array<ArtifactDownloadTokenSummary>
 }
 
 export type ArtifactStorageProvider = 'disabled' | 'local' | 's3' | 'r2'
@@ -1022,6 +1059,7 @@ export interface RetentionPolicy {
   keep_statuses: Array<string>
   dry_run: boolean
   cleanup_interval_secs: number
+  artifact_ttl_days?: number
   updated_at?: number
 }
 
@@ -1038,6 +1076,7 @@ export interface UpdateRetentionPolicyRequest {
   keep_statuses: Array<string>
   dry_run: boolean
   cleanup_interval_secs: number
+  artifact_ttl_days?: number
 }
 
 export interface ProjectRetentionOverride {
@@ -1048,6 +1087,7 @@ export interface ProjectRetentionOverride {
   max_artifact_size_bytes?: number
   cleanup_target?: RetentionCleanupTarget
   keep_statuses?: Array<string>
+  artifact_ttl_days?: number
   updated_at?: number
 }
 
@@ -1064,6 +1104,7 @@ export interface UpdateProjectRetentionOverrideRequest {
   max_artifact_size_bytes?: number
   cleanup_target?: RetentionCleanupTarget
   keep_statuses?: Array<string>
+  artifact_ttl_days?: number
 }
 
 export interface RetentionCleanupSummary {

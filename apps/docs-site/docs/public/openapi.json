@@ -219,6 +219,100 @@
         ]
       }
     },
+    "/v1/artifact-tokens/{token_id}": {
+      "delete": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Revoke scoped download token",
+        "description": "Revokes a scoped download token so it can no longer be used.",
+        "operationId": "revoke_scoped_download_token",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "description": "Download token ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeArtifactDownloadTokenResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/dl/{token}": {
+      "get": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Download via scoped token",
+        "description": "Downloads an artifact using a scoped download token. No session auth required —\nthe token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.",
+        "operationId": "download_via_scoped_token",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Scoped download token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to presigned download URL"
+          },
+          "401": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{artifact_id}/download-link": {
       "post": {
         "tags": [
@@ -255,6 +349,112 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/scoped-token": {
+      "post": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Create scoped download token",
+        "description": "Generates a scoped, time-limited download token for a specific artifact.\nThe token can be shared with external users who don't have an account.",
+        "operationId": "create_scoped_download_token",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "description": "Artifact ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScopedDownloadTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped download token created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateScopedDownloadTokenResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Artifact not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/scoped-tokens": {
+      "get": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "List scoped download tokens",
+        "description": "Lists all scoped download tokens for a specific artifact, including expired and revoked ones.",
+        "operationId": "list_scoped_download_tokens",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "description": "Artifact ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of scoped download tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactDownloadTokensResponse"
                 }
               }
             }
@@ -5759,6 +5959,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "file_path": {
             "type": "string"
           },
@@ -5792,6 +5999,73 @@
           },
           "expires_at": {
             "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ArtifactDownloadTokenSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "artifact_id",
+          "prefix",
+          "created_by",
+          "created_by_email",
+          "expires_at",
+          "single_use",
+          "is_expired",
+          "is_used",
+          "is_revoked",
+          "created_at"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_by_email": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_expired": {
+            "type": "boolean"
+          },
+          "is_revoked": {
+            "type": "boolean"
+          },
+          "is_used": {
+            "type": "boolean"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "single_use": {
+            "type": "boolean"
+          },
+          "used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           }
         }
@@ -6734,6 +7008,55 @@
           }
         }
       },
+      "CreateScopedDownloadTokenRequest": {
+        "type": "object",
+        "properties": {
+          "single_use": {
+            "type": "boolean",
+            "description": "If true, token is consumed after first download."
+          },
+          "ttl_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "TTL in seconds (default: 86400 = 24 hours, max: 604800 = 7 days)."
+          }
+        }
+      },
+      "CreateScopedDownloadTokenResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "download_url",
+          "token",
+          "prefix",
+          "expires_at",
+          "single_use"
+        ],
+        "properties": {
+          "download_url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "single_use": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "DeleteNotificationChannelResponse": {
         "type": "object",
         "required": [
@@ -7438,6 +7761,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ApiTokenSummary"
+            }
+          }
+        }
+      },
+      "ListArtifactDownloadTokensResponse": {
+        "type": "object",
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactDownloadTokenSummary"
             }
           }
         }
@@ -8402,6 +8739,13 @@
           "project_id"
         ],
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_target": {
             "oneOf": [
               {
@@ -8673,6 +9017,13 @@
           "cleanup_interval_secs"
         ],
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_interval_secs": {
             "type": "integer",
             "format": "int64"
@@ -8734,6 +9085,17 @@
         }
       },
       "RevokeApiTokenResponse": {
+        "type": "object",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RevokeArtifactDownloadTokenResponse": {
         "type": "object",
         "required": [
           "revoked"
@@ -9777,6 +10139,13 @@
       "UpdateProjectRetentionOverrideRequest": {
         "type": "object",
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_target": {
             "oneOf": [
               {
@@ -9832,6 +10201,13 @@
           "cleanup_target"
         ],
         "properties": {
+          "artifact_ttl_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "cleanup_interval_secs": {
             "type": "integer",
             "format": "int64"

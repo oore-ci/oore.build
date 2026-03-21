@@ -1173,6 +1173,8 @@ pub struct Artifact {
     #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1203,6 +1205,57 @@ pub struct ListArtifactsResponse {
 pub struct ArtifactDownloadLinkResponse {
     pub download_url: String,
     pub expires_at: i64,
+}
+
+// ── Scoped download token types ─────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateScopedDownloadTokenRequest {
+    /// TTL in seconds (default: 86400 = 24 hours, max: 604800 = 7 days).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<i64>,
+    /// If true, token is consumed after first download.
+    #[serde(default)]
+    pub single_use: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateScopedDownloadTokenResponse {
+    pub id: String,
+    pub download_url: String,
+    pub token: String,
+    pub prefix: String,
+    pub expires_at: i64,
+    pub single_use: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ArtifactDownloadTokenSummary {
+    pub id: String,
+    pub artifact_id: String,
+    pub prefix: String,
+    pub created_by: String,
+    pub created_by_email: String,
+    pub expires_at: i64,
+    pub single_use: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<i64>,
+    pub is_expired: bool,
+    pub is_used: bool,
+    pub is_revoked: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListArtifactDownloadTokensResponse {
+    pub tokens: Vec<ArtifactDownloadTokenSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RevokeArtifactDownloadTokenResponse {
+    pub revoked: bool,
 }
 
 // ── Artifact storage settings types ─────────────────────────────
@@ -2192,6 +2245,8 @@ pub struct RetentionPolicy {
     pub dry_run: bool,
     pub cleanup_interval_secs: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
 }
 
@@ -2216,6 +2271,8 @@ pub struct UpdateRetentionPolicyRequest {
     pub dry_run: bool,
     #[serde(default = "default_cleanup_interval")]
     pub cleanup_interval_secs: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
 }
 
 fn default_cleanup_interval() -> i64 {
@@ -2237,6 +2294,8 @@ pub struct ProjectRetentionOverride {
     pub cleanup_target: Option<RetentionCleanupTarget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_statuses: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
 }
@@ -2263,6 +2322,8 @@ pub struct UpdateProjectRetentionOverrideRequest {
     pub cleanup_target: Option<RetentionCleanupTarget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_statuses: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
