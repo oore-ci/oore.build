@@ -197,16 +197,28 @@ pub async fn create_notification_channel(
     let (encrypted_url, encrypted_secret, encrypted_config) = match req.channel_type {
         NotificationChannelType::Webhook | NotificationChannelType::Mattermost => {
             let url = req.url.as_deref().ok_or_else(|| {
-                api_err(StatusCode::BAD_REQUEST, "invalid_input", "url is required for webhook/mattermost channels")
+                api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "url is required for webhook/mattermost channels",
+                )
             })?;
             if req.smtp_config.is_some() {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "smtp_config is not allowed for webhook/mattermost channels"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "smtp_config is not allowed for webhook/mattermost channels",
+                ));
             }
             validate_url(url)?;
 
             let enc_url = crypto::encrypt(url, &state.encryption_key).map_err(|e| {
                 error!(error = %e, "failed to encrypt notification channel URL");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt channel URL")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption_error",
+                    "Failed to encrypt channel URL",
+                )
             })?;
 
             let enc_secret = req
@@ -217,27 +229,47 @@ pub async fn create_notification_channel(
                 .transpose()
                 .map_err(|e| {
                     error!(error = %e, "failed to encrypt notification channel secret");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt channel secret")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "encryption_error",
+                        "Failed to encrypt channel secret",
+                    )
                 })?;
 
             (Some(enc_url), enc_secret, None)
         }
         NotificationChannelType::Email => {
             let smtp_config = req.smtp_config.as_ref().ok_or_else(|| {
-                api_err(StatusCode::BAD_REQUEST, "invalid_input", "smtp_config is required for email channels")
+                api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "smtp_config is required for email channels",
+                )
             })?;
             if req.url.is_some() {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "url is not allowed for email channels"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "url is not allowed for email channels",
+                ));
             }
             validate_smtp_config(smtp_config)?;
 
             let config_json = serde_json::to_string(smtp_config).map_err(|e| {
                 error!(error = %e, "failed to serialize SMTP config");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "serialization_error", "Failed to serialize SMTP config")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "serialization_error",
+                    "Failed to serialize SMTP config",
+                )
             })?;
             let enc_config = crypto::encrypt(&config_json, &state.encryption_key).map_err(|e| {
                 error!(error = %e, "failed to encrypt SMTP config");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt SMTP config")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption_error",
+                    "Failed to encrypt SMTP config",
+                )
             })?;
 
             (None, None, Some(enc_config))
@@ -443,14 +475,22 @@ pub async fn update_notification_channel(
     let (encrypted_url, encrypted_secret, encrypted_config) = match channel_type {
         NotificationChannelType::Webhook | NotificationChannelType::Mattermost => {
             if req.smtp_config.is_some() {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "smtp_config is not allowed for webhook/mattermost channels"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "smtp_config is not allowed for webhook/mattermost channels",
+                ));
             }
 
             let enc_url = if let Some(ref url) = req.url {
                 validate_url(url)?;
                 Some(crypto::encrypt(url, &state.encryption_key).map_err(|e| {
                     error!(error = %e, "failed to encrypt URL");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt URL")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "encryption_error",
+                        "Failed to encrypt URL",
+                    )
                 })?)
             } else {
                 existing.get::<Option<String>, _>("encrypted_url")
@@ -462,21 +502,37 @@ pub async fn update_notification_channel(
                 } else {
                     Some(crypto::encrypt(secret, &state.encryption_key).map_err(|e| {
                         error!(error = %e, "failed to encrypt secret");
-                        api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt secret")
+                        api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "encryption_error",
+                            "Failed to encrypt secret",
+                        )
                     })?)
                 }
             } else {
                 existing.get::<Option<String>, _>("encrypted_secret")
             };
 
-            (enc_url, enc_secret, existing.get::<Option<String>, _>("encrypted_config"))
+            (
+                enc_url,
+                enc_secret,
+                existing.get::<Option<String>, _>("encrypted_config"),
+            )
         }
         NotificationChannelType::Email => {
             if req.url.is_some() {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "url is not allowed for email channels"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "url is not allowed for email channels",
+                ));
             }
             if req.secret.is_some() {
-                return Err(api_err(StatusCode::BAD_REQUEST, "invalid_input", "secret is not allowed for email channels"));
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_input",
+                    "secret is not allowed for email channels",
+                ));
             }
 
             let enc_config = if let Some(ref update_smtp) = req.smtp_config {
@@ -485,40 +541,80 @@ pub async fn update_notification_channel(
                 let mut config: SmtpConfig = if let Some(ref enc) = existing_config_enc {
                     let json = crypto::decrypt(enc, &state.encryption_key).map_err(|e| {
                         error!(error = %e, "failed to decrypt existing SMTP config");
-                        api_err(StatusCode::INTERNAL_SERVER_ERROR, "decryption_error", "Failed to decrypt existing SMTP config")
+                        api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "decryption_error",
+                            "Failed to decrypt existing SMTP config",
+                        )
                     })?;
                     serde_json::from_str(&json).map_err(|e| {
                         error!(error = %e, "failed to deserialize existing SMTP config");
-                        api_err(StatusCode::INTERNAL_SERVER_ERROR, "deserialization_error", "Failed to parse existing SMTP config")
+                        api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "deserialization_error",
+                            "Failed to parse existing SMTP config",
+                        )
                     })?
                 } else {
-                    return Err(api_err(StatusCode::BAD_REQUEST, "invalid_state", "Email channel has no existing SMTP config"));
+                    return Err(api_err(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_state",
+                        "Email channel has no existing SMTP config",
+                    ));
                 };
 
                 // Apply partial updates
-                if let Some(ref host) = update_smtp.host { config.host = host.clone(); }
-                if let Some(port) = update_smtp.port { config.port = port; }
-                if let Some(ref username) = update_smtp.username { config.username = username.clone(); }
-                if let Some(ref password) = update_smtp.password { config.password = password.clone(); }
-                if let Some(tls_mode) = update_smtp.tls_mode { config.tls_mode = tls_mode; }
-                if let Some(ref from_address) = update_smtp.from_address { config.from_address = from_address.clone(); }
-                if let Some(ref recipients) = update_smtp.recipients { config.recipients = recipients.clone(); }
+                if let Some(ref host) = update_smtp.host {
+                    config.host = host.clone();
+                }
+                if let Some(port) = update_smtp.port {
+                    config.port = port;
+                }
+                if let Some(ref username) = update_smtp.username {
+                    config.username = username.clone();
+                }
+                if let Some(ref password) = update_smtp.password {
+                    config.password = password.clone();
+                }
+                if let Some(tls_mode) = update_smtp.tls_mode {
+                    config.tls_mode = tls_mode;
+                }
+                if let Some(ref from_address) = update_smtp.from_address {
+                    config.from_address = from_address.clone();
+                }
+                if let Some(ref recipients) = update_smtp.recipients {
+                    config.recipients = recipients.clone();
+                }
 
                 validate_smtp_config(&config)?;
 
                 let config_json = serde_json::to_string(&config).map_err(|e| {
                     error!(error = %e, "failed to serialize SMTP config");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "serialization_error", "Failed to serialize SMTP config")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "serialization_error",
+                        "Failed to serialize SMTP config",
+                    )
                 })?;
-                Some(crypto::encrypt(&config_json, &state.encryption_key).map_err(|e| {
-                    error!(error = %e, "failed to encrypt SMTP config");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "encryption_error", "Failed to encrypt SMTP config")
-                })?)
+                Some(
+                    crypto::encrypt(&config_json, &state.encryption_key).map_err(|e| {
+                        error!(error = %e, "failed to encrypt SMTP config");
+                        api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "encryption_error",
+                            "Failed to encrypt SMTP config",
+                        )
+                    })?,
+                )
             } else {
                 existing.get::<Option<String>, _>("encrypted_config")
             };
 
-            (existing.get::<Option<String>, _>("encrypted_url"), existing.get::<Option<String>, _>("encrypted_secret"), enc_config)
+            (
+                existing.get::<Option<String>, _>("encrypted_url"),
+                existing.get::<Option<String>, _>("encrypted_secret"),
+                enc_config,
+            )
         }
     };
 
@@ -670,15 +766,27 @@ pub async fn test_notification_channel(
                 .transpose()
                 .map_err(|e| {
                     error!(error = %e, "failed to decrypt SMTP config");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "decryption_error", "Failed to decrypt SMTP config")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "decryption_error",
+                        "Failed to decrypt SMTP config",
+                    )
                 })?
                 .ok_or_else(|| {
-                    api_err(StatusCode::BAD_REQUEST, "invalid_state", "Email channel has no SMTP config")
+                    api_err(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_state",
+                        "Email channel has no SMTP config",
+                    )
                 })?;
 
             let smtp_config: SmtpConfig = serde_json::from_str(&config_json).map_err(|e| {
                 error!(error = %e, "failed to deserialize SMTP config");
-                api_err(StatusCode::INTERNAL_SERVER_ERROR, "deserialization_error", "Failed to parse SMTP config")
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "deserialization_error",
+                    "Failed to parse SMTP config",
+                )
             })?;
 
             crate::notification_dispatch::send_test_email(&smtp_config).await
@@ -693,10 +801,18 @@ pub async fn test_notification_channel(
                 .transpose()
                 .map_err(|e| {
                     error!(error = %e, "failed to decrypt notification channel URL");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "decryption_error", "Failed to decrypt channel URL")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "decryption_error",
+                        "Failed to decrypt channel URL",
+                    )
                 })?
                 .ok_or_else(|| {
-                    api_err(StatusCode::BAD_REQUEST, "invalid_state", "Channel has no URL configured")
+                    api_err(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_state",
+                        "Channel has no URL configured",
+                    )
                 })?;
 
             let secret = encrypted_secret
@@ -705,7 +821,11 @@ pub async fn test_notification_channel(
                 .transpose()
                 .map_err(|e| {
                     error!(error = %e, "failed to decrypt notification channel secret");
-                    api_err(StatusCode::INTERNAL_SERVER_ERROR, "decryption_error", "Failed to decrypt channel secret")
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "decryption_error",
+                        "Failed to decrypt channel secret",
+                    )
                 })?;
 
             crate::notification_dispatch::send_notification(

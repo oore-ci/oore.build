@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lettre::message::{header::ContentType, Mailbox};
+use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use oore_contract::{NotificationChannelType, SmtpConfig, SmtpTlsMode};
@@ -188,7 +188,15 @@ async fn dispatch_event(
                     NotificationChannelType::Mattermost => build_mattermost_payload(&payload),
                     _ => payload.clone(),
                 };
-                dispatch_http(client, channel_row, encryption_key, &channel_id, channel_type, &effective_payload).await
+                dispatch_http(
+                    client,
+                    channel_row,
+                    encryption_key,
+                    &channel_id,
+                    channel_type,
+                    &effective_payload,
+                )
+                .await
             }
         };
 
@@ -303,7 +311,15 @@ async fn dispatch_runner_event(
                     NotificationChannelType::Mattermost => runner_mattermost_payload(&payload),
                     _ => payload.clone(),
                 };
-                dispatch_http(client, channel_row, encryption_key, &channel_id, channel_type, &effective_payload).await
+                dispatch_http(
+                    client,
+                    channel_row,
+                    encryption_key,
+                    &channel_id,
+                    channel_type,
+                    &effective_payload,
+                )
+                .await
             }
         };
 
@@ -619,24 +635,20 @@ async fn send_email_notification(
     let creds = Credentials::new(config.username.clone(), config.password.clone());
 
     let transport = match config.tls_mode {
-        SmtpTlsMode::Tls => {
-            AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
-                .port(config.port)
-                .credentials(creds)
-                .build()
-        }
+        SmtpTlsMode::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
+            .port(config.port)
+            .credentials(creds)
+            .build(),
         SmtpTlsMode::StartTls => {
             AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)?
                 .port(config.port)
                 .credentials(creds)
                 .build()
         }
-        SmtpTlsMode::None => {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
-                .port(config.port)
-                .credentials(creds)
-                .build()
-        }
+        SmtpTlsMode::None => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
+            .port(config.port)
+            .credentials(creds)
+            .build(),
     };
 
     for recipient in &config.recipients {
@@ -661,12 +673,7 @@ async fn send_email_notification(
 
 /// Send a test email to verify SMTP configuration.
 pub async fn send_test_email(config: &SmtpConfig) -> anyhow::Result<()> {
-    send_email_notification(
-        config,
-        "Oore CI — Test Notification",
-        &test_email_html(),
-    )
-    .await
+    send_email_notification(config, "Oore CI — Test Notification", &test_email_html()).await
 }
 
 fn test_email_html() -> String {
