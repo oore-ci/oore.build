@@ -10,14 +10,69 @@ WEB_PID_FILE="$OORE_INSTALL_ROOT/oore-web.pid"
 DATA_DIR="$HOME/Library/Application Support/oore"
 WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
 WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
+UI_RESET=""
+UI_BOLD=""
+UI_DIM=""
+UI_ACCENT=""
+UI_WARNING=""
+UI_ERROR=""
 
 log() {
-  printf '[oore-uninstall] %s\n' "$*"
+  printf '%b[oore-uninstall]%b %s\n' "$UI_BOLD$UI_ACCENT" "$UI_RESET" "$*"
 }
 
 die() {
-  printf '[oore-uninstall] ERROR: %s\n' "$*" >&2
+  printf '%b[oore-uninstall] ERROR:%b %s\n' "$UI_BOLD$UI_ERROR" "$UI_RESET" "$*" >&2
   exit 1
+}
+
+has_prompt_tty() {
+  if [[ ! -r /dev/tty || ! -w /dev/tty ]]; then
+    return 1
+  fi
+
+  if ! (: >/dev/tty) 2>/dev/null; then
+    return 1
+  fi
+
+  return 0
+}
+
+init_ui_theme() {
+  if [[ -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
+    return 0
+  fi
+
+  if [[ -t 1 ]] || [[ -t 2 ]] || has_prompt_tty; then
+    UI_RESET=$'\033[0m'
+    UI_BOLD=$'\033[1m'
+    UI_DIM=$'\033[2m\033[38;2;120;113;108m'
+    UI_ACCENT=$'\033[38;2;217;119;6m'
+    UI_WARNING=$'\033[38;2;251;191;36m'
+    UI_ERROR=$'\033[38;2;220;38;38m'
+  fi
+}
+
+print_ascii_banner() {
+  printf '%b' "$UI_BOLD$UI_ACCENT"
+  cat <<'EOF'
+   ____   ____  ____  ______      _________
+  / __ \ / __ \/ __ \/ ____/     / ____/  _/
+ / / / // / / / /_/ / __/       / /    / /  
+/ /_/ // /_/ / _, _/ /___      / /____/ /   
+\____/ \____/_/ |_/_____/      \____/___/   CI
+EOF
+  printf '%b\n' "$UI_RESET"
+}
+
+print_uninstall_intro() {
+  printf '\n'
+  print_ascii_banner
+  printf '%bOore CI Uninstaller%b\n' "$UI_BOLD$UI_ACCENT" "$UI_RESET"
+  printf '%b----------------------------------------%b\n' "$UI_DIM" "$UI_RESET"
+  printf '  Install dir:   %s\n' "$OORE_INSTALL_ROOT"
+  printf '  Data dir:      %s\n' "$DATA_DIR"
+  printf '%b----------------------------------------%b\n' "$UI_DIM" "$UI_RESET"
 }
 
 normalize_bool() {
@@ -35,33 +90,100 @@ is_noninteractive() {
 prompt_yes_no() {
   local question="$1"
   local default="${2:-n}"
-  local prompt=""
-  local answer=""
+  local selected=""
 
   if [[ "$default" == "y" ]]; then
-    prompt='[Y/n]'
+    selected="$(prompt_select "$question" "yes" "yes:Yes" "no:No")"
   else
-    prompt='[y/N]'
+    selected="$(prompt_select "$question" "no" "yes:Yes" "no:No")"
   fi
 
-  if is_noninteractive || [[ ! -r /dev/tty ]]; then
-    [[ "$default" == "y" ]]
-    return
+  [[ "$selected" == "yes" ]]
+}
+
+prompt_select() {
+  local question="$1"
+  local default_key="$2"
+  shift 2
+
+  local options=("$@")
+  local option_count="${#options[@]}"
+  local i=0
+  local key=""
+  local label=""
+  local selected=""
+  local default_index=1
+  local answer=""
+
+  [[ "$option_count" -gt 0 ]] || die "prompt_select requires at least one option."
+
+  for ((i = 0; i < option_count; i++)); do
+    key="${options[$i]%%:*}"
+    label="${options[$i]#*:}"
+    [[ "$label" != "$key" ]] || label="$key"
+
+    if [[ -z "$default_key" ]]; then
+      default_key="$key"
+      default_index=$((i + 1))
+      continue
+    fi
+
+    if [[ "$key" == "$default_key" ]]; then
+      default_index=$((i + 1))
+    fi
+  done
+
+  if is_noninteractive || ! has_prompt_tty; then
+    printf '%s' "$default_key"
+    return 0
   fi
 
   while true; do
-    printf '%s %s ' "$question" "$prompt" > /dev/tty
+    printf '\n%b%s%b\n' "$UI_BOLD" "$question" "$UI_RESET" > /dev/tty
+    for ((i = 0; i < option_count; i++)); do
+      key="${options[$i]%%:*}"
+      label="${options[$i]#*:}"
+      [[ "$label" != "$key" ]] || label="$key"
+      if [[ "$key" == "$default_key" ]]; then
+        printf '  %b%d)%b %s %b(default)%b\n' \
+          "$UI_ACCENT" "$((i + 1))" "$UI_RESET" "$label" "$UI_DIM" "$UI_RESET" > /dev/tty
+      else
+        printf '  %b%d)%b %s\n' "$UI_ACCENT" "$((i + 1))" "$UI_RESET" "$label" > /dev/tty
+      fi
+    done
+    printf '%bSelect an option [%d]:%b ' "$UI_DIM" "$default_index" "$UI_RESET" > /dev/tty
+
     if ! read -r answer < /dev/tty; then
-      [[ "$default" == "y" ]]
-      return
+      printf '%s' "$default_key"
+      return 0
     fi
 
-    case "$answer" in
-      [Yy]|[Yy][Ee][Ss]) return 0 ;;
-      [Nn]|[Nn][Oo]) return 1 ;;
-      "") [[ "$default" == "y" ]]; return ;;
-      *) printf 'Please answer yes or no.\n' > /dev/tty ;;
-    esac
+    if [[ -z "$answer" ]]; then
+      printf '%s' "$default_key"
+      return 0
+    fi
+
+    if [[ "$answer" =~ ^[0-9]+$ ]]; then
+      if ((answer >= 1 && answer <= option_count)); then
+        selected="${options[$((answer - 1))]%%:*}"
+        printf '%s' "$selected"
+        return 0
+      fi
+      printf '%bPlease enter a number between 1 and %d.%b\n' "$UI_WARNING" "$option_count" "$UI_RESET" > /dev/tty
+      continue
+    fi
+
+    for ((i = 0; i < option_count; i++)); do
+      key="${options[$i]%%:*}"
+      if [[ "$answer" == "$key" ]] \
+        || [[ "$key" == "yes" && "$answer" =~ ^([Yy]|[Yy][Ee][Ss])$ ]] \
+        || [[ "$key" == "no" && "$answer" =~ ^([Nn]|[Nn][Oo])$ ]]; then
+        printf '%s' "$key"
+        return 0
+      fi
+    done
+
+    printf '%bPlease enter a valid option number.%b\n' "$UI_WARNING" "$UI_RESET" > /dev/tty
   done
 }
 
@@ -154,6 +276,8 @@ remove_install_dir() {
 }
 
 remove_data_dir() {
+  local data_choice=""
+
   if [[ ! -d "$DATA_DIR" ]]; then
     return 0
   fi
@@ -161,25 +285,39 @@ remove_data_dir() {
   if is_noninteractive; then
     log "Removing data directory: $DATA_DIR"
     rm -rf "$DATA_DIR"
-  elif prompt_yes_no "Remove application data ($DATA_DIR)? This includes your database." 'n'; then
-    log "Removing data directory: $DATA_DIR"
-    rm -rf "$DATA_DIR"
   else
-    log "Keeping data directory: $DATA_DIR"
+    data_choice="$(
+      prompt_select \
+        "Application data found at $DATA_DIR. What do you want to do?" \
+        "keep" \
+        "keep:Keep data (recommended if you may reinstall)" \
+        "remove:Remove all app data (includes database)"
+    )"
+
+    if [[ "$data_choice" == "remove" ]]; then
+      log "Removing data directory: $DATA_DIR"
+      rm -rf "$DATA_DIR"
+    else
+      log "Keeping data directory: $DATA_DIR"
+    fi
   fi
 }
 
 main() {
+  init_ui_theme
+
   if [[ ! -d "$OORE_INSTALL_ROOT" ]] && ! grep -rqF "$BIN_DIR" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" 2>/dev/null; then
     log "Oore CI does not appear to be installed."
     exit 0
   fi
 
-  log "This will uninstall Oore CI from your system."
-  log ""
-  log "  Install dir: $OORE_INSTALL_ROOT"
-  log "  Data dir:    $DATA_DIR"
-  log ""
+  if ! is_noninteractive; then
+    print_uninstall_intro
+  else
+    log "This will uninstall Oore CI from your system."
+    log "Install dir: $OORE_INSTALL_ROOT"
+    log "Data dir:    $DATA_DIR"
+  fi
 
   if ! is_noninteractive; then
     if ! prompt_yes_no "Continue with uninstall?" 'n'; then

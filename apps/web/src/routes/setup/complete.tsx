@@ -1,5 +1,5 @@
+import { useRef } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -57,23 +57,22 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
   const isLocalMode = status?.runtime_mode === 'local'
 
-  useEffect(() => {
+  // Set the current step when status becomes available (once)
+  const stepSetRef = useRef(false)
+  if (status && !stepSetRef.current) {
+    stepSetRef.current = true
     setCurrentStep(isLocalMode ? 3 : 4)
-  }, [isLocalMode, setCurrentStep])
+  }
 
   function handleComplete() {
     if (!sessionToken) return
-    completeMutation.mutate(sessionToken)
+    completeMutation.mutate(sessionToken, {
+      onSuccess: () => {
+        setCurrentStep(isLocalMode ? 4 : 5)
+        useSetupStore.getState().setSessionToken(null)
+      },
+    })
   }
-
-  // Clean up session token after completion, but keep step at 4
-  // so the indicator shows all steps as completed
-  useEffect(() => {
-    if (isComplete) {
-      setCurrentStep(isLocalMode ? 4 : 5)
-      useSetupStore.getState().setSessionToken(null)
-    }
-  }, [isComplete, isLocalMode, setCurrentStep])
 
   return (
     <div className="space-y-4">
@@ -90,8 +89,8 @@ function CompleteStep() {
           <Alert>
             <AlertTitle>Setup complete</AlertTitle>
             <AlertDescription>
-              Your Oore instance is ready. Setup endpoints have been
-              permanently disabled.
+              Your Oore instance is ready. Setup endpoints have been permanently
+              disabled.
             </AlertDescription>
           </Alert>
 
@@ -147,15 +146,15 @@ function CompleteStep() {
             </div>
           ) : null}
 
-          <Alert variant="destructive">
-            <AlertTitle>Warning — Irreversible action</AlertTitle>
+          <Alert>
+            <AlertTitle>Finalize setup</AlertTitle>
             <AlertDescription>
-              Completing setup will permanently lock down all setup endpoints.
-              This cannot be undone. Make sure your owner details
-              {isLocalMode
-                ? ''
-                : ' and remote authentication configuration'}{' '}
-              are correct before proceeding.
+              This will lock down the initial setup wizard so it cannot be
+              re-run. You can still change settings (authentication,
+              preferences, users) from the admin panel after setup is complete.
+              {!isLocalMode
+                ? ' Verify your OIDC or proxy configuration is correct before proceeding.'
+                : ''}
             </AlertDescription>
           </Alert>
 

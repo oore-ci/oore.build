@@ -65,7 +65,7 @@ Treat those as the source of truth.
 
 ## Release Channels (Alpha/Beta/Stable)
 
-Release automation is branch + tag driven via Woodpecker:
+Release automation is branch + tag driven via GitHub Actions:
 
 - Merge to `alpha` -> cuts `vX.Y.Z-alpha.N` prerelease tags
 - Merge to `beta` -> cuts `vX.Y.Z-beta.N` prerelease tags

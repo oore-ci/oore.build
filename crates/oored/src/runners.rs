@@ -508,6 +508,20 @@ pub async fn update_job_status(
 
     let events = event_rows.iter().map(row_to_build_event).collect();
 
+    // Publish event for notification dispatch on terminal statuses
+    if target_status.is_terminal() {
+        state
+            .scheduler
+            .publish_event(crate::scheduler::BuildStateEvent {
+                build_id: job_id.clone(),
+                from_status: None,
+                to_status: target_status.to_string(),
+                actor: Some(actor_str.clone()),
+                reason: Some(reason.to_string()),
+                timestamp: crate::util::now_unix(),
+            });
+    }
+
     info!(
         build_id = %job_id,
         runner_id = %runner_id,
@@ -560,6 +574,36 @@ pub async fn get_job_status(
 
     let status: String = row.get("status");
     Ok(Json(JobStatusResponse { status }))
+}
+
+/// `GET /v1/runners/{runner_id}` — get a single runner (admin/owner only).
+pub async fn get_runner(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(runner_id): Path<String>,
+) -> ApiResult<UpdateRunnerResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "runners", "read").await?;
+
+    let store = state.store.lock().await;
+    let pool = store.pool();
+
+    let row = sqlx::query("SELECT * FROM runners WHERE id = ?1")
+        .bind(&runner_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch runner",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+
+    Ok(Json(UpdateRunnerResponse {
+        runner: row_to_runner(&row),
+    }))
 }
 
 /// `GET /v1/runners` — list all runners (admin/owner only).

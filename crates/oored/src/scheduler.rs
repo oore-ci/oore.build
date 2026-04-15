@@ -35,20 +35,35 @@ pub struct BuildStateEvent {
     pub timestamp: i64,
 }
 
-/// Central scheduler managing the build event bus.
+/// A runner state change event broadcast to all subscribers.
+#[derive(Debug, Clone)]
+pub struct RunnerStateEvent {
+    pub runner_id: String,
+    pub runner_name: String,
+    pub from_status: String,
+    pub to_status: String,
+    pub timestamp: i64,
+}
+
+/// Central scheduler managing the build and runner event buses.
 ///
 /// Job dispatch uses SQLite directly (via `runners::claim_job`) with optimistic
-/// locking to prevent double-claims. The broadcast channel provides fan-out of
-/// build state change events for SSE subscribers (Phase 4).
+/// locking to prevent double-claims. The broadcast channels provide fan-out of
+/// state change events for SSE subscribers and notification dispatch.
 pub struct Scheduler {
     event_tx: broadcast::Sender<BuildStateEvent>,
+    runner_event_tx: broadcast::Sender<RunnerStateEvent>,
 }
 
 impl Scheduler {
     /// Create a new scheduler with the given event bus capacity.
     pub fn new(capacity: usize) -> Arc<Self> {
         let (event_tx, _) = broadcast::channel(capacity);
-        Arc::new(Self { event_tx })
+        let (runner_event_tx, _) = broadcast::channel(16);
+        Arc::new(Self {
+            event_tx,
+            runner_event_tx,
+        })
     }
 
     /// Subscribe to build state events.
@@ -60,6 +75,16 @@ impl Scheduler {
     pub fn publish_event(&self, event: BuildStateEvent) {
         // Ignore send errors (no active subscribers is OK)
         let _ = self.event_tx.send(event);
+    }
+
+    /// Subscribe to runner state events.
+    pub fn subscribe_runner_events(&self) -> broadcast::Receiver<RunnerStateEvent> {
+        self.runner_event_tx.subscribe()
+    }
+
+    /// Publish a runner state event to all subscribers.
+    pub fn publish_runner_event(&self, event: RunnerStateEvent) {
+        let _ = self.runner_event_tx.send(event);
     }
 
     /// Recover stale builds on daemon startup.

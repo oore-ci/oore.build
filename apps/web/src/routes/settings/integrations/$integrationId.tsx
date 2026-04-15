@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -9,12 +8,14 @@ import {
   Setting07Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import {
   useDeleteIntegration,
   useGitLabAuthorize,
@@ -67,6 +68,19 @@ export const Route = createFileRoute('/settings/integrations/$integrationId')({
   component: IntegrationDetailPage,
 })
 
+function humanizeAuthMode(mode: string): string {
+  const labels: Record<string, string> = {
+    github_app_manifest: 'GitHub App (Manifest)',
+    github_app: 'GitHub App',
+    oauth_app: 'OAuth App',
+    pat: 'Personal Access Token',
+  }
+  return (
+    labels[mode] ??
+    mode.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  )
+}
+
 function IntegrationDetailPage() {
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
@@ -86,16 +100,9 @@ function IntegrationDetailPage() {
     detail?.integration.provider ??
     'Source Details'
 
-  useEffect(() => {
-    if (detail?.integration) {
-      setLabel(
-        '/settings/integrations/$integrationId',
-        detail.integration.display_name ?? detail.integration.provider,
-      )
-    }
-  }, [detail?.integration.display_name, detail?.integration.provider, setLabel])
+  useBreadcrumbLabel(setLabel, '/settings/integrations/$integrationId', detail?.integration.display_name ?? detail?.integration.provider)
 
-  useEffect(() => {
+  useMountEffect(() => {
     if (search.installed === 'true') {
       toast.success('GitHub App installed successfully')
       window.history.replaceState(
@@ -112,7 +119,7 @@ function IntegrationDetailPage() {
         `/settings/integrations/${integrationId}`,
       )
     }
-  }, [search.installed, search.gitlab, integrationId])
+  })
 
   function handleSync() {
     syncMutation.mutate(integrationId, {
@@ -194,34 +201,40 @@ function IntegrationDetailPage() {
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Installations</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Installations
+            </p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {installations.length}
             </p>
-            <p className="text-xs text-muted-foreground">Connected accounts</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Connected accounts
+            </p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Repositories</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Repositories
+            </p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
               {repositories.length}
             </p>
-            <p className="text-xs text-muted-foreground">Synced repositories</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Synced repositories
+            </p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Auth mode</CardTitle>
-          </CardHeader>
           <CardContent>
-            <p className="text-sm font-medium">{integration.auth_mode}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Auth mode
+            </p>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
+              {humanizeAuthMode(integration.auth_mode)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
               Host: {integration.host_url}
             </p>
           </CardContent>
@@ -230,7 +243,9 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Connection details</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Connection details
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -251,7 +266,7 @@ function IntegrationDetailPage() {
                 <TableCell className="text-muted-foreground">
                   Auth mode
                 </TableCell>
-                <TableCell>{integration.auth_mode}</TableCell>
+                <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
               </TableRow>
               {integration.app_id ? (
                 <TableRow>
@@ -276,7 +291,9 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Actions</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Actions
+          </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {integration.provider === 'gitlab' &&
@@ -363,7 +380,7 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
             Installations ({installations.length})
           </CardTitle>
         </CardHeader>
@@ -402,7 +419,7 @@ function IntegrationDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
             Repositories ({repositories.length})
           </CardTitle>
         </CardHeader>

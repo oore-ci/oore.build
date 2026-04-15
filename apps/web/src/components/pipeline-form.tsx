@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -9,6 +9,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -151,7 +152,9 @@ function SectionHeader({
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-2">
-        <CardTitle>{title}</CardTitle>
+        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          {title}
+        </CardTitle>
         {errorCount && errorCount > 0 ? (
           <Badge variant="destructive" className="text-[10px]">
             {errorCount} {errorCount === 1 ? 'error' : 'errors'}
@@ -224,20 +227,20 @@ export default function PipelineForm({
     () => !!initialValues.ios_signing_enabled,
   )
 
-  useEffect(() => {
+  useMountEffect(() => {
     const subscription = form.watch(() => setIsDirty(true))
     return () => subscription.unsubscribe()
-  }, [form])
+  })
 
-  useEffect(() => {
+  const isDirtyRef = useRef(isDirty)
+  isDirtyRef.current = isDirty
+  useMountEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
-      if (isDirty) {
-        e.preventDefault()
-      }
+      if (isDirtyRef.current) e.preventDefault()
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [isDirty])
+  })
 
   function toggleEvent(event: string) {
     setSelectedEvents((prev) =>
@@ -450,6 +453,10 @@ export default function PipelineForm({
                       )}
                     />
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Select the platforms you want to build for. You can change
+                    this later.
+                  </p>
                 </div>
 
                 <FormField
@@ -480,7 +487,7 @@ export default function PipelineForm({
                 />
 
                 {previewDefaults.length > 0 ? (
-                  <div className="space-y-1 rounded-md border p-3">
+                  <div className="space-y-1 border p-3">
                     <p className="text-xs font-medium text-muted-foreground">
                       Default build commands
                     </p>
@@ -520,7 +527,9 @@ export default function PipelineForm({
                   <Alert>
                     <HugeiconsIcon icon={AlertCircleIcon} size={16} />
                     <AlertDescription>
-                      This repository uses manual-only pipeline triggers.
+                      This repository uses local Git — builds can only be
+                      triggered manually from the UI or API. Webhook triggers
+                      require a connected GitHub or GitLab source.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -984,12 +993,19 @@ export default function PipelineForm({
                               : 'No stored release keystore'}
                           </p>
                         ) : null}
+                        {!values.android_signing_release_enabled &&
+                        !values.android_signing_debug_enabled ? (
+                          <p className="text-xs text-muted-foreground">
+                            Signing is optional for debug builds. Enable it when
+                            you're ready to distribute release builds.
+                          </p>
+                        ) : null}
                       </FormItem>
                     )}
                   />
 
                   {values.android_signing_release_enabled ? (
-                    <div className="grid gap-3 rounded-md border p-3">
+                    <div className="grid gap-3 border p-3">
                       <FormItem>
                         <FormLabel>Release keystore (.jks)</FormLabel>
                         <FormControl>
@@ -1105,7 +1121,7 @@ export default function PipelineForm({
                   />
 
                   {values.android_signing_debug_enabled ? (
-                    <div className="grid gap-3 rounded-md border p-3">
+                    <div className="grid gap-3 border p-3">
                       <FormItem>
                         <FormLabel>Debug keystore (.jks)</FormLabel>
                         <FormControl>
@@ -1239,6 +1255,13 @@ export default function PipelineForm({
                             {iosSigningData.has_api_key ? 'present' : 'missing'}
                           </p>
                         ) : null}
+                        {!values.ios_signing_enabled ? (
+                          <p className="text-xs text-muted-foreground">
+                            Required for installing on physical iOS devices.
+                            You'll need a distribution certificate (.p12) and
+                            provisioning profiles.
+                          </p>
+                        ) : null}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1322,7 +1345,7 @@ export default function PipelineForm({
 
                       {iosSigningMode === 'manual' ||
                       iosSigningMode === 'hybrid' ? (
-                        <div className="grid gap-3 rounded-md border p-3">
+                        <div className="grid gap-3 border p-3">
                           <FormItem>
                             <FormLabel>
                               Distribution certificate (.p12)
@@ -1373,7 +1396,7 @@ export default function PipelineForm({
 
                       {iosSigningMode === 'api' ||
                       iosSigningMode === 'hybrid' ? (
-                        <div className="grid gap-3 rounded-md border p-3">
+                        <div className="grid gap-3 border p-3">
                           <FormField
                             control={form.control}
                             name="ios_signing_api_key_id"
@@ -1433,7 +1456,7 @@ export default function PipelineForm({
 
                       {iosSigningMode === 'manual' ||
                       iosSigningMode === 'hybrid' ? (
-                        <div className="space-y-3 rounded-md border p-3">
+                        <div className="space-y-3 border p-3">
                           <p className="text-sm font-medium">
                             Provisioning profiles by bundle ID
                           </p>
@@ -1444,12 +1467,12 @@ export default function PipelineForm({
                             </p>
                           ) : (
                             <div className="space-y-3">
-	                              {iosBundleIds.map((bundleId) => {
-	                                const existing =
-	                                  iosProfilesByBundle.get(bundleId)
-	                                const selectedFile = iosProfileFiles[bundleId]
-	                                return (
-	                                  <FormItem key={bundleId}>
+                              {iosBundleIds.map((bundleId) => {
+                                const existing =
+                                  iosProfilesByBundle.get(bundleId)
+                                const selectedFile = iosProfileFiles[bundleId]
+                                return (
+                                  <FormItem key={bundleId}>
                                     <FormLabel className="font-mono text-xs">
                                       {bundleId}
                                     </FormLabel>
@@ -1466,17 +1489,17 @@ export default function PipelineForm({
                                           }))
                                         }}
                                       />
-	                                    </FormControl>
-	                                    <p className="text-xs text-muted-foreground">
-	                                      {selectedFile
-	                                        ? `Selected: ${selectedFile.name}`
-	                                        : existing?.has_profile
-	                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
-	                                          : 'Upload .mobileprovision for this bundle ID'}
-	                                    </p>
-	                                  </FormItem>
-	                                )
-	                              })}
+                                    </FormControl>
+                                    <p className="text-xs text-muted-foreground">
+                                      {selectedFile
+                                        ? `Selected: ${selectedFile.name}`
+                                        : existing?.has_profile
+                                          ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
+                                          : 'Upload .mobileprovision for this bundle ID'}
+                                    </p>
+                                  </FormItem>
+                                )
+                              })}
                             </div>
                           )}
                         </div>

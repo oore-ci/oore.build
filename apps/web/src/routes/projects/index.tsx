@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -35,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/projects/')({
@@ -50,18 +51,6 @@ export const Route = createFileRoute('/projects/')({
   },
   component: ProjectsListPage,
 })
-
-function relativeTime(epochSecs: number): string {
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSecs
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
 
 function ProjectsListPage() {
   const search = useSearch({ from: '/projects/' })
@@ -95,26 +84,21 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  useEffect(() => {
-    if (search.openCreate !== '1') return
-    if (projectsLoading) return
-
-    if (!projectsError && canWriteProjects) {
+  const openCreateRef = useRef(false)
+  if (
+    search.openCreate === '1' &&
+    !projectsLoading &&
+    !projectsError &&
+    canWriteProjects &&
+    !openCreateRef.current
+  ) {
+    openCreateRef.current = true
+    // Schedule state update for after render completes
+    queueMicrotask(() => {
       setCreateOpen(true)
-    }
-
-    void navigate({
-      to: '/projects',
-      search: {},
-      replace: true,
+      void navigate({ to: '/projects', search: {}, replace: true })
     })
-  }, [
-    canWriteProjects,
-    navigate,
-    projectsError,
-    projectsLoading,
-    search.openCreate,
-  ])
+  }
 
   return (
     <PageLayout width="wide">
@@ -226,12 +210,23 @@ function ProjectsListPage() {
                   <TableRow
                     key={project.id}
                     className="group cursor-pointer"
+                    role="link"
+                    tabIndex={0}
                     onClick={() =>
                       void navigate({
                         to: '/projects/$projectId',
                         params: { projectId: project.id },
                       })
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void navigate({
+                          to: '/projects/$projectId',
+                          params: { projectId: project.id },
+                        })
+                      }
+                    }}
                   >
                     <TableCell>
                       <div>

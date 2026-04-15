@@ -751,8 +751,9 @@ impl BuildStatus {
                 Self::Canceled,
                 Self::TimedOut,
             ],
-            // Terminal states have no valid transitions
-            Self::Succeeded | Self::Failed | Self::Canceled | Self::TimedOut | Self::Expired => &[],
+            // Terminal states can transition to Expired via retention cleanup
+            Self::Succeeded | Self::Failed | Self::Canceled | Self::TimedOut => &[Self::Expired],
+            Self::Expired => &[],
         }
     }
 
@@ -946,6 +947,8 @@ pub struct Build {
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_build_id: Option<String>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1009,6 +1012,11 @@ pub struct ListBuildsResponse {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelBuildResponse {
+    pub build: Build,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RerunBuildResponse {
     pub build: Build,
 }
 
@@ -1165,6 +1173,8 @@ pub struct Artifact {
     #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1195,6 +1205,57 @@ pub struct ListArtifactsResponse {
 pub struct ArtifactDownloadLinkResponse {
     pub download_url: String,
     pub expires_at: i64,
+}
+
+// ── Scoped download token types ─────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateScopedDownloadTokenRequest {
+    /// TTL in seconds (default: 86400 = 24 hours, max: 604800 = 7 days).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<i64>,
+    /// If true, token is consumed after first download.
+    #[serde(default)]
+    pub single_use: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateScopedDownloadTokenResponse {
+    pub id: String,
+    pub download_url: String,
+    pub token: String,
+    pub prefix: String,
+    pub expires_at: i64,
+    pub single_use: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ArtifactDownloadTokenSummary {
+    pub id: String,
+    pub artifact_id: String,
+    pub prefix: String,
+    pub created_by: String,
+    pub created_by_email: String,
+    pub expires_at: i64,
+    pub single_use: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub used_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<i64>,
+    pub is_expired: bool,
+    pub is_used: bool,
+    pub is_revoked: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListArtifactDownloadTokensResponse {
+    pub tokens: Vec<ArtifactDownloadTokenSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RevokeArtifactDownloadTokenResponse {
+    pub revoked: bool,
 }
 
 // ── Artifact storage settings types ─────────────────────────────
@@ -1426,6 +1487,36 @@ pub struct ConfigureExternalAccessOidcResponse {
     pub configured_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GetExternalAccessOidcResponse {
+    pub issuer_url: String,
+    pub client_id: String,
+    pub has_client_secret: bool,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub userinfo_endpoint: Option<String>,
+    pub jwks_uri: String,
+    pub configured_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestOidcConnectionRequest {
+    pub issuer_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestOidcConnectionResponse {
+    pub success: bool,
+    pub discovered_issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub userinfo_endpoint: Option<String>,
+    pub jwks_uri: String,
+    pub scopes_supported: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct TrustedProxySettingsPublic {
     pub user_email_header: String,
@@ -1531,12 +1622,89 @@ pub struct ProjectDetailResponse {
     pub project: Project,
     pub pipeline_count: i64,
     pub build_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_user_role: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListProjectsResponse {
     pub projects: Vec<Project>,
     pub total: i64,
+}
+
+// ── Project member / per-project RBAC types ─────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRole {
+    Maintainer,
+    Developer,
+    Viewer,
+}
+
+impl fmt::Display for ProjectRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Maintainer => "maintainer",
+            Self::Developer => "developer",
+            Self::Viewer => "viewer",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for ProjectRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "maintainer" => Ok(Self::Maintainer),
+            "developer" => Ok(Self::Developer),
+            "viewer" => Ok(Self::Viewer),
+            other => Err(format!("unknown project role: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectMember {
+    pub id: String,
+    pub project_id: String,
+    pub user_id: String,
+    pub role: ProjectRole,
+    pub user_email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_avatar_url: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AddProjectMemberRequest {
+    pub user_id: String,
+    pub role: ProjectRole,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AddProjectMemberResponse {
+    pub member: ProjectMember,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectMemberRequest {
+    pub role: ProjectRole,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectMemberResponse {
+    pub member: ProjectMember,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListProjectMembersResponse {
+    pub members: Vec<ProjectMember>,
 }
 
 // ── Pipeline API types ──────────────────────────────────────────
@@ -2032,6 +2200,167 @@ pub struct BuildLogsResponse {
     pub total: i64,
 }
 
+// ── Retention policy types ───────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetentionCleanupTarget {
+    ArtifactsOnly,
+    Full,
+}
+
+impl fmt::Display for RetentionCleanupTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::ArtifactsOnly => "artifacts_only",
+            Self::Full => "full",
+        };
+        f.write_str(s)
+    }
+}
+
+impl FromStr for RetentionCleanupTarget {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "artifacts_only" => Ok(Self::ArtifactsOnly),
+            "full" => Ok(Self::Full),
+            other => Err(format!("unknown retention cleanup target: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RetentionPolicy {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    pub cleanup_target: RetentionCleanupTarget,
+    #[serde(default)]
+    pub keep_statuses: Vec<String>,
+    pub dry_run: bool,
+    pub cleanup_interval_secs: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RetentionPolicyResponse {
+    pub policy: RetentionPolicy,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateRetentionPolicyRequest {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    pub cleanup_target: RetentionCleanupTarget,
+    #[serde(default)]
+    pub keep_statuses: Vec<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default = "default_cleanup_interval")]
+    pub cleanup_interval_secs: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
+}
+
+fn default_cleanup_interval() -> i64 {
+    3600
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectRetentionOverride {
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_target: Option<RetentionCleanupTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_statuses: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct EffectiveProjectRetentionResponse {
+    pub effective: RetentionPolicy,
+    pub has_override: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_fields: Option<ProjectRetentionOverride>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectRetentionOverrideRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_builds_per_project: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_artifact_size_bytes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_target: Option<RetentionCleanupTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_statuses: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_ttl_days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RetentionCleanupSummary {
+    pub builds_expired: i64,
+    pub artifacts_deleted: i64,
+    pub bytes_reclaimed: i64,
+    pub dry_run: bool,
+    pub ran_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RetentionCleanupSummaryResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_cleanup: Option<RetentionCleanupSummary>,
+}
+
+// ── Audit Logs ──────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub actor_id: Option<String>,
+    pub actor_email: Option<String>,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: Option<String>,
+    pub details: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListAuditLogsResponse {
+    pub entries: Vec<AuditLogEntry>,
+    pub total: i64,
+}
+
 // ── Tests ──────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2290,4 +2619,247 @@ mod tests {
         let api = parsed.api_credentials.expect("api credentials");
         assert_eq!(api.key_id.as_deref(), Some("ABC123XYZ"));
     }
+}
+
+// ── Notification channel types ──────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationChannelType {
+    Webhook,
+    Mattermost,
+    Email,
+}
+
+impl fmt::Display for NotificationChannelType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Webhook => f.write_str("webhook"),
+            Self::Mattermost => f.write_str("mattermost"),
+            Self::Email => f.write_str("email"),
+        }
+    }
+}
+
+impl FromStr for NotificationChannelType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "webhook" => Ok(Self::Webhook),
+            "mattermost" => Ok(Self::Mattermost),
+            "email" => Ok(Self::Email),
+            other => Err(format!("unknown notification channel type: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SmtpTlsMode {
+    None,
+    StartTls,
+    Tls,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SmtpConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub tls_mode: SmtpTlsMode,
+    pub from_address: String,
+    pub recipients: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateSmtpConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_mode: Option<SmtpTlsMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipients: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationDeliveryStatus {
+    Pending,
+    Delivered,
+    Failed,
+}
+
+impl fmt::Display for NotificationDeliveryStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending => f.write_str("pending"),
+            Self::Delivered => f.write_str("delivered"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NotificationChannel {
+    pub id: String,
+    pub name: String,
+    pub channel_type: NotificationChannelType,
+    pub enabled: bool,
+    /// Which terminal build statuses trigger this channel. Empty means all.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// True if the channel has a URL configured (the actual URL is never exposed).
+    pub has_url: bool,
+    /// True if the channel has an HMAC secret configured (webhook only).
+    pub has_secret: bool,
+    /// True if the channel has SMTP configuration (email only).
+    pub has_smtp_config: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateNotificationChannelRequest {
+    pub name: String,
+    pub channel_type: NotificationChannelType,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Terminal build statuses to notify on. Empty or omitted means all terminal events.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Webhook/Mattermost incoming webhook URL (required for webhook/mattermost).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// HMAC secret for signing webhook payloads (webhook only, optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+    /// SMTP configuration (required for email channel type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smtp_config: Option<SmtpConfig>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct UpdateNotificationChannelRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<String>>,
+    /// New URL. Omit to keep existing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// New HMAC secret. Omit to keep existing; pass empty string to clear.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+    /// Partial SMTP configuration update (email only). Omit fields to keep existing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smtp_config: Option<UpdateSmtpConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct NotificationChannelResponse {
+    pub channel: NotificationChannel,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListNotificationChannelsResponse {
+    pub channels: Vec<NotificationChannel>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DeleteNotificationChannelResponse {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TestNotificationChannelResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NotificationDelivery {
+    pub id: String,
+    pub channel_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+    pub event_type: String,
+    pub status: NotificationDeliveryStatus,
+    pub attempt_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListNotificationDeliveriesResponse {
+    pub deliveries: Vec<NotificationDelivery>,
+    pub total: i64,
+}
+
+// ── API Tokens ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateApiTokenRequest {
+    pub name: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateApiTokenResponse {
+    pub id: String,
+    pub name: String,
+    pub prefix: String,
+    pub role: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+    /// The plaintext token. Only returned on creation, never again.
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ApiTokenSummary {
+    pub id: String,
+    pub name: String,
+    pub prefix: String,
+    pub role: String,
+    pub created_by: String,
+    pub created_by_email: String,
+    pub created_at: i64,
+    pub expires_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+    pub is_expired: bool,
+    pub is_revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListApiTokensResponse {
+    pub tokens: Vec<ApiTokenSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RevokeApiTokenResponse {
+    pub revoked: bool,
 }

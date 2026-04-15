@@ -1,8 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -71,24 +71,24 @@ function SetupModeStep() {
   const { data: status } = useSetupStatus()
   const setupModeMutation = useSetupPreferences()
 
+  const modeValues = status
+    ? { mode: toModeValue(status.runtime_mode, status.remote_auth_mode) }
+    : undefined
+
   const form = useForm<ModeForm>({
     resolver: zodResolver(modeSchema),
     defaultValues: {
       mode: toModeValue(status?.runtime_mode, status?.remote_auth_mode),
     },
+    values: modeValues,
+    mode: 'onBlur',
   })
 
-  useEffect(() => {
+  useMountEffect(() => {
     setCurrentStep(1)
-  }, [setCurrentStep])
+  })
 
-  useEffect(() => {
-    if (!status) return
-    form.setValue(
-      'mode',
-      toModeValue(status.runtime_mode, status.remote_auth_mode),
-    )
-  }, [status, form])
+
 
   const errorMessage = setupModeMutation.error
     ? getApiErrorMessage(setupModeMutation.error, {
@@ -171,6 +171,13 @@ function SetupModeStep() {
                     </SelectContent>
                   </Select>
                 </FormControl>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  {field.value === 'local'
+                    ? 'Best for solo developers. Only accessible from this machine \u2014 no external auth needed.'
+                    : field.value === 'remote_oidc'
+                      ? 'Best for teams. Users authenticate via an identity provider (Google, Okta, etc.).'
+                      : 'Best for zero-trust setups. A reverse proxy (e.g., Warpgate) handles authentication.'}
+                </p>
                 <FormMessage />
               </FormItem>
             )}

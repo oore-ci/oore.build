@@ -21,7 +21,7 @@ All common commands have `make` targets. Use `make <target>` from the repo root.
 
 ## Release Channels (Alpha/Beta/Stable)
 
-Release automation is Woodpecker-driven and tag-based. Branch merges cut tags automatically, which triggers the release pipeline and publishes GitHub Releases.
+Release automation is GitHub Actions-driven and tag-based. Branch merges cut tags automatically, which triggers the release pipeline and publishes GitHub Releases.
 
 - `alpha` -> `vX.Y.Z-alpha.N` prerelease tags (and prerelease GitHub Releases)
 - `beta` -> `vX.Y.Z-beta.N` prerelease tags (and prerelease GitHub Releases)
@@ -33,8 +33,8 @@ https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woo
 
 | Target | What it does |
 |---|---|
-| `make dev-web` | Web app dev server (port 3000) |
-| `make dev-docs` | VitePress dev server (port 4173) |
+| `make dev-web` | Web app dev server (web.oore.localhost via portless) |
+| `make dev-docs` | VitePress dev server (docs.oore.localhost via portless) |
 | `make build-web` | Production build (web) |
 | `make build-docs` | VitePress production build |
 | `make test-web` | Run web app tests (Vitest) |
@@ -49,6 +49,9 @@ https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woo
 | `make build` | build-web + build-docs + cargo-check |
 | `make check` | lint-web + cargo-check |
 | `make validate` | Full pre-handoff validation (docs-check + builds + cargo-check) |
+| `make portless-proxy` | Start the portless reverse proxy daemon |
+| `make portless-alias-api` | Alias oored daemon as api.oore.localhost:1355 |
+| `make portless-list` | Show active portless routes |
 
 ### Validation Checklist (run before handoff)
 

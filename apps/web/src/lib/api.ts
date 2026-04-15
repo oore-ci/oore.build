@@ -9,16 +9,24 @@ import type {
   CancelBuildResponse,
   ConfigureExternalAccessOidcRequest,
   ConfigureExternalAccessOidcResponse,
+  CreateApiTokenRequest,
+  CreateApiTokenResponse,
   CreateBuildRequest,
   CreateBuildResponse,
   CreateLocalGitIntegrationRequest,
   CreateLocalGitIntegrationResponse,
+  CreateNotificationChannelRequest,
   CreatePipelineRequest,
   CreatePipelineResponse,
   CreateProjectRequest,
   CreateProjectResponse,
+  CreateScopedDownloadTokenRequest,
+  CreateScopedDownloadTokenResponse,
+  DeleteNotificationChannelResponse,
+  EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
+  GetExternalAccessOidcResponse,
   GitHubAppCompleteRequest,
   GitHubAppCompleteResponse,
   GitHubAppStartRequest,
@@ -31,10 +39,15 @@ import type {
   IntegrationDetailResponse,
   InviteUserRequest,
   InviteUserResponse,
+  ListApiTokensResponse,
+  ListArtifactDownloadTokensResponse,
   ListArtifactsResponse,
+  ListAuditLogsResponse,
   ListBuildsResponse,
   ListInstallationsResponse,
   ListIntegrationsResponse,
+  ListNotificationChannelsResponse,
+  ListNotificationDeliveriesResponse,
   ListPipelineIosDevicesResponse,
   ListPipelinesResponse,
   ListProjectsResponse,
@@ -44,6 +57,7 @@ import type {
   LocalLoginRequest,
   LocalLoginResponse,
   LogoutResponse,
+  NotificationChannelResponse,
   OidcConfigureRequest,
   OidcConfigureResponse,
   PipelineAndroidSigningResponse,
@@ -53,6 +67,10 @@ import type {
   ReEnableUserResponse,
   RegisterIosDeviceRequest,
   RegisterIosDeviceResponse,
+  RerunBuildResponse,
+  RetentionCleanupSummaryResponse,
+  RetentionPolicyResponse,
+  RevokeApiTokenResponse,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
@@ -66,14 +84,20 @@ import type {
   SetupTrustedProxyConfigureResponse,
   SyncInstallationsResponse,
   SyncPipelineIosSigningResponse,
+  TestNotificationChannelResponse,
+  TestOidcConnectionRequest,
+  TestOidcConnectionResponse,
   TrustedProxySettingsResponse,
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
+  UpdateNotificationChannelRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
+  UpdateProjectRetentionOverrideRequest,
+  UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
   UpdateTrustedProxySettingsRequest,
@@ -608,6 +632,16 @@ export function listRunners(
   })
 }
 
+export function getRunner(
+  baseUrl: string,
+  token: string,
+  runnerId: string,
+): Promise<UpdateRunnerResponse> {
+  return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
+    headers: authHeaders(token),
+  })
+}
+
 export function updateRunner(
   baseUrl: string,
   token: string,
@@ -736,6 +770,17 @@ export function updateExternalAccessTrustedProxySettings(
   )
 }
 
+export function getExternalAccessOidc(
+  baseUrl: string,
+  token: string,
+): Promise<GetExternalAccessOidcResponse> {
+  return request<GetExternalAccessOidcResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc',
+    { headers: authHeaders(token) },
+  )
+}
+
 export function configureExternalAccessOidc(
   baseUrl: string,
   token: string,
@@ -746,6 +791,22 @@ export function configureExternalAccessOidc(
     '/v1/settings/external-access/oidc',
     {
       method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function testOidcConnection(
+  baseUrl: string,
+  token: string,
+  data: TestOidcConnectionRequest,
+): Promise<TestOidcConnectionResponse> {
+  return request<TestOidcConnectionResponse>(
+    baseUrl,
+    '/v1/settings/external-access/oidc/test-connection',
+    {
+      method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },
@@ -835,6 +896,17 @@ export function cancelBuild(
   })
 }
 
+export function rerunBuild(
+  baseUrl: string,
+  token: string,
+  buildId: string,
+): Promise<RerunBuildResponse> {
+  return request<RerunBuildResponse>(baseUrl, `/v1/builds/${buildId}/rerun`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+}
+
 // ── Stream Token API ────────────────────────────────────────
 
 export function createStreamToken(
@@ -892,6 +964,47 @@ export function getArtifactDownloadLink(
     baseUrl,
     `/v1/artifacts/${artifactId}/download-link`,
     { method: 'POST', headers: authHeaders(token) },
+  )
+}
+
+export function createScopedDownloadToken(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+  data: CreateScopedDownloadTokenRequest,
+): Promise<CreateScopedDownloadTokenResponse> {
+  return request<CreateScopedDownloadTokenResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/scoped-token`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function listScopedDownloadTokens(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+): Promise<ListArtifactDownloadTokensResponse> {
+  return request<ListArtifactDownloadTokensResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/scoped-tokens`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function revokeScopedDownloadToken(
+  baseUrl: string,
+  token: string,
+  tokenId: string,
+): Promise<{ revoked: boolean }> {
+  return request<{ revoked: boolean }>(
+    baseUrl,
+    `/v1/artifact-tokens/${tokenId}`,
+    { method: 'DELETE', headers: authHeaders(token) },
   )
 }
 
@@ -1179,4 +1292,247 @@ export function registerPipelineIosDevice(
       body: JSON.stringify(data),
     },
   )
+}
+
+// ── Notification channels ───────────────────────────────────────
+
+export function listNotificationChannels(
+  baseUrl: string,
+  token: string,
+): Promise<ListNotificationChannelsResponse> {
+  return request<ListNotificationChannelsResponse>(
+    baseUrl,
+    '/v1/settings/notification-channels',
+    { headers: authHeaders(token) },
+  )
+}
+
+export function createNotificationChannel(
+  baseUrl: string,
+  token: string,
+  data: CreateNotificationChannelRequest,
+): Promise<NotificationChannelResponse> {
+  return request<NotificationChannelResponse>(
+    baseUrl,
+    '/v1/settings/notification-channels',
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function getNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<NotificationChannelResponse> {
+  return request<NotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function updateNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+  data: UpdateNotificationChannelRequest,
+): Promise<NotificationChannelResponse> {
+  return request<NotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function deleteNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<DeleteNotificationChannelResponse> {
+  return request<DeleteNotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function testNotificationChannel(
+  baseUrl: string,
+  token: string,
+  id: string,
+): Promise<TestNotificationChannelResponse> {
+  return request<TestNotificationChannelResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${id}/test`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  )
+}
+
+export function listNotificationDeliveries(
+  baseUrl: string,
+  token: string,
+  channelId: string,
+): Promise<ListNotificationDeliveriesResponse> {
+  return request<ListNotificationDeliveriesResponse>(
+    baseUrl,
+    `/v1/settings/notification-channels/${channelId}/deliveries`,
+    { headers: authHeaders(token) },
+  )
+}
+
+// ── Retention Policy API ────────────────────────────────────────
+
+export function getRetentionPolicy(
+  baseUrl: string,
+  token: string,
+): Promise<RetentionPolicyResponse> {
+  return request<RetentionPolicyResponse>(baseUrl, '/v1/settings/retention', {
+    headers: authHeaders(token),
+  })
+}
+
+export function updateRetentionPolicy(
+  baseUrl: string,
+  token: string,
+  data: UpdateRetentionPolicyRequest,
+): Promise<RetentionPolicyResponse> {
+  return request<RetentionPolicyResponse>(baseUrl, '/v1/settings/retention', {
+    method: 'PUT',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
+}
+
+export function getRetentionLastCleanup(
+  baseUrl: string,
+  token: string,
+): Promise<RetentionCleanupSummaryResponse> {
+  return request<RetentionCleanupSummaryResponse>(
+    baseUrl,
+    '/v1/settings/retention/last-cleanup',
+    { headers: authHeaders(token) },
+  )
+}
+
+export function getProjectRetention(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+): Promise<EffectiveProjectRetentionResponse> {
+  return request<EffectiveProjectRetentionResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/retention`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function updateProjectRetention(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  data: UpdateProjectRetentionOverrideRequest,
+): Promise<EffectiveProjectRetentionResponse> {
+  return request<EffectiveProjectRetentionResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/retention`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export async function deleteProjectRetention(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+): Promise<EffectiveProjectRetentionResponse> {
+  return request<EffectiveProjectRetentionResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/retention`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    },
+  )
+}
+
+// ── Audit Logs ──────────────────────────────────────────────────
+
+export function listAuditLogs(
+  baseUrl: string,
+  token: string,
+  params?: {
+    limit?: number
+    offset?: number
+    actor_id?: string
+    action?: string
+    resource_type?: string
+    from_ts?: number
+    to_ts?: number
+  },
+): Promise<ListAuditLogsResponse> {
+  const query = new URLSearchParams()
+  if (params?.limit) query.set('limit', String(params.limit))
+  if (params?.offset) query.set('offset', String(params.offset))
+  if (params?.actor_id) query.set('actor_id', params.actor_id)
+  if (params?.action) query.set('action', params.action)
+  if (params?.resource_type) query.set('resource_type', params.resource_type)
+  if (params?.from_ts) query.set('from_ts', String(params.from_ts))
+  if (params?.to_ts) query.set('to_ts', String(params.to_ts))
+  const qs = query.toString()
+  return request<ListAuditLogsResponse>(
+    baseUrl,
+    `/v1/audit-logs${qs ? `?${qs}` : ''}`,
+    { headers: authHeaders(token) },
+  )
+}
+
+// ── API Tokens ──────────────────────────────────────────────────
+
+export function createApiToken(
+  baseUrl: string,
+  token: string,
+  data: CreateApiTokenRequest,
+): Promise<CreateApiTokenResponse> {
+  return request<CreateApiTokenResponse>(baseUrl, '/v1/api-tokens', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+  })
+}
+
+export function listApiTokens(
+  baseUrl: string,
+  token: string,
+): Promise<ListApiTokensResponse> {
+  return request<ListApiTokensResponse>(baseUrl, '/v1/api-tokens', {
+    headers: authHeaders(token),
+  })
+}
+
+export function revokeApiToken(
+  baseUrl: string,
+  token: string,
+  tokenId: string,
+): Promise<RevokeApiTokenResponse> {
+  return request<RevokeApiTokenResponse>(baseUrl, `/v1/api-tokens/${tokenId}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
 }

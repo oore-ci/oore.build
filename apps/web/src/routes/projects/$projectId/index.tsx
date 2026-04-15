@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -116,16 +116,14 @@ function ProjectSettingsForm({
       description: currentValues.description ?? '',
       default_branch: currentValues.default_branch ?? '',
     },
-    mode: 'onBlur',
-  })
-
-  useEffect(() => {
-    form.reset({
+    values: {
       name: currentValues.name,
       description: currentValues.description ?? '',
       default_branch: currentValues.default_branch ?? '',
-    })
-  }, [currentValues, form])
+    },
+    mode: 'onBlur',
+  })
+
 
   function onSubmit(data: EditProjectForm) {
     updateMutation.mutate(
@@ -332,13 +330,23 @@ function ProjectDetailPage() {
           canTriggerBuild || canDeleteProjects ? (
             <>
               {canTriggerBuild ? (
-                <Button
-                  onClick={() => openTriggerBuild()}
-                  disabled={pipelines.length === 0 || !projectHasSource}
+                <span
+                  title={
+                    pipelines.length === 0
+                      ? 'Add a pipeline first before running builds'
+                      : !projectHasSource
+                        ? 'Connect a source repository first'
+                        : undefined
+                  }
                 >
-                  <HugeiconsIcon icon={PlayIcon} size={16} />
-                  Run Build
-                </Button>
+                  <Button
+                    onClick={() => openTriggerBuild()}
+                    disabled={pipelines.length === 0 || !projectHasSource}
+                  >
+                    <HugeiconsIcon icon={PlayIcon} size={16} />
+                    Run Build
+                  </Button>
+                </span>
               ) : null}
               {canDeleteProjects ? (
                 <Button
@@ -396,7 +404,9 @@ function ProjectDetailPage() {
 
             {pipelines.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
-                No pipelines yet. Add one to start building.
+                {canWritePipelines
+                  ? 'No pipelines yet. Add one to start building.'
+                  : 'No pipelines yet. Ask a developer or admin to add one.'}
               </p>
             ) : (
               pipelines.map((pipeline) => {
@@ -423,10 +433,36 @@ function ProjectDetailPage() {
           <div className="pt-2">
             <Card>
               <CardContent>
+                {(() => {
+                  const latestSucceeded = builds.find(
+                    (b) => b.status === 'succeeded',
+                  )
+                  if (!latestSucceeded) return null
+                  return (
+                    <div className="mb-3 flex items-center gap-2 text-sm">
+                      <Badge variant="default" className="text-[10px]">
+                        Latest
+                      </Badge>
+                      <Link
+                        to="/builds/$buildId"
+                        params={{ buildId: latestSucceeded.id }}
+                        className="font-mono text-xs text-primary hover:underline"
+                      >
+                        Build #{latestSucceeded.build_number}
+                      </Link>
+                      <span className="text-xs text-muted-foreground">
+                        on {latestSucceeded.branch ?? 'n/a'} ·{' '}
+                        {relativeTime(latestSucceeded.queued_at)}
+                      </span>
+                    </div>
+                  )
+                })()}
                 {builds.length === 0 ? (
                   <div className="space-y-2 py-6 text-center">
                     <p className="text-sm text-muted-foreground">
-                      No builds yet.
+                      {canTriggerBuild
+                        ? 'No builds yet.'
+                        : 'No builds yet. Builds will appear here once triggered by a developer.'}
                     </p>
                     {canTriggerBuild &&
                     pipelines.length > 0 &&
@@ -454,12 +490,23 @@ function ProjectDetailPage() {
                         <TableRow
                           key={build.id}
                           className="group cursor-pointer"
+                          role="link"
+                          tabIndex={0}
                           onClick={() =>
                             void navigate({
                               to: '/builds/$buildId',
                               params: { buildId: build.id },
                             })
                           }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              void navigate({
+                                to: '/builds/$buildId',
+                                params: { buildId: build.id },
+                              })
+                            }
+                          }}
                         >
                           <TableCell className="font-mono text-sm group-hover:underline">
                             #{build.build_number}

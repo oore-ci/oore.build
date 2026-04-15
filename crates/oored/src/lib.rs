@@ -1,5 +1,8 @@
+pub mod api_tokens;
 pub mod apple_api;
+pub mod artifact_tokens;
 pub mod artifacts;
+pub mod audit_logs;
 pub mod auth;
 pub mod background;
 pub mod builds;
@@ -9,13 +12,18 @@ pub mod extractors;
 pub mod instance_settings;
 pub mod integrations;
 pub mod logs;
+pub mod notification_channels;
+pub mod notification_dispatch;
 pub mod observability;
 pub mod oidc;
 pub mod pipeline_ios_signing;
 pub mod pipeline_signing;
 pub mod pipelines;
+pub mod project_members;
+pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod retention;
 pub mod runners;
 pub mod scheduler;
 pub mod session;
@@ -1948,7 +1956,16 @@ async fn build_router_inner(
     {
         let store_guard = shared_state.store.lock().await;
         let pool = store_guard.pool().clone();
-        background::start_background_tasks(pool, sched);
+        background::start_background_tasks(
+            pool.clone(),
+            sched.clone(),
+            shared_state.storage.clone(),
+        );
+        notification_dispatch::start_notification_dispatcher(
+            pool,
+            sched,
+            shared_state.encryption_key.to_vec(),
+        );
     }
 
     let allowed_origins_for_cors = allowed_origins_state.clone();
@@ -2083,7 +2100,32 @@ async fn build_router_inner(
         )
         .route(
             "/v1/settings/external-access/oidc",
-            axum::routing::put(instance_settings::configure_external_access_oidc),
+            get(instance_settings::get_external_access_oidc)
+                .put(instance_settings::configure_external_access_oidc),
+        )
+        .route(
+            "/v1/settings/external-access/oidc/test-connection",
+            post(instance_settings::test_oidc_connection),
+        )
+        // Notification channel settings
+        .route(
+            "/v1/settings/notification-channels",
+            get(notification_channels::list_notification_channels)
+                .post(notification_channels::create_notification_channel),
+        )
+        .route(
+            "/v1/settings/notification-channels/{id}",
+            get(notification_channels::get_notification_channel)
+                .put(notification_channels::update_notification_channel)
+                .delete(notification_channels::delete_notification_channel),
+        )
+        .route(
+            "/v1/settings/notification-channels/{id}/test",
+            post(notification_channels::test_notification_channel),
+        )
+        .route(
+            "/v1/settings/notification-channels/{id}/deliveries",
+            get(notification_channels::list_deliveries),
         )
         // Integration management endpoints
         .route("/v1/integrations", get(integrations::list_integrations))
@@ -2140,6 +2182,16 @@ async fn build_router_inner(
                 .patch(projects::update_project)
                 .delete(projects::delete_project),
         )
+        // Project member endpoints
+        .route(
+            "/v1/projects/{project_id}/members",
+            get(project_members::list_project_members).post(project_members::add_project_member),
+        )
+        .route(
+            "/v1/projects/{project_id}/members/{user_id}",
+            axum::routing::patch(project_members::update_project_member)
+                .delete(project_members::remove_project_member),
+        )
         // Pipeline endpoints
         .route(
             "/v1/projects/{project_id}/pipelines",
@@ -2187,11 +2239,23 @@ async fn build_router_inner(
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
+        .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
+        // Audit log endpoints
+        .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
+        // API token endpoints
+        .route(
+            "/v1/api-tokens",
+            get(api_tokens::list_api_tokens_handler).post(api_tokens::create_api_token_handler),
+        )
+        .route(
+            "/v1/api-tokens/{token_id}",
+            axum::routing::delete(api_tokens::revoke_api_token_handler),
+        )
         // Runner endpoints
         .route("/v1/runners/register", post(runners::register_runner))
         .route(
             "/v1/runners/{runner_id}",
-            axum::routing::patch(runners::update_runner),
+            get(runners::get_runner).patch(runners::update_runner),
         )
         .route(
             "/v1/runners/{runner_id}/heartbeat",
@@ -2257,6 +2321,38 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/local-download/{token}",
             get(artifacts::download_local_artifact),
+        )
+        // ── Scoped download tokens (OOR-140) ──────────────────
+        .route(
+            "/v1/artifacts/{artifact_id}/scoped-token",
+            post(artifact_tokens::create_scoped_token_handler),
+        )
+        .route(
+            "/v1/artifacts/{artifact_id}/scoped-tokens",
+            get(artifact_tokens::list_scoped_tokens_handler),
+        )
+        .route(
+            "/v1/artifact-tokens/{token_id}",
+            axum::routing::delete(artifact_tokens::revoke_scoped_token_handler),
+        )
+        .route(
+            "/v1/artifacts/dl/{token}",
+            get(artifact_tokens::download_via_scoped_token),
+        )
+        // ── Retention policy ────────────────────────────────────
+        .route(
+            "/v1/settings/retention",
+            get(retention::get_retention_policy).put(retention::update_retention_policy),
+        )
+        .route(
+            "/v1/settings/retention/last-cleanup",
+            get(retention::get_last_cleanup),
+        )
+        .route(
+            "/v1/projects/{project_id}/retention",
+            get(retention::get_project_retention)
+                .put(retention::update_project_retention)
+                .delete(retention::delete_project_retention),
         )
         .layer(cors)
         .with_state(shared_state)

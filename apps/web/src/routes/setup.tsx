@@ -5,9 +5,9 @@ import {
   redirect,
   useNavigate,
 } from '@tanstack/react-router'
-import { useEffect } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Tick02Icon } from '@hugeicons/core-free-icons'
+import { useRef } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -139,12 +139,13 @@ function SetupLayout() {
         ? ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
         : ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
 
-  useEffect(() => {
-    if (isExpired) {
-      useSetupStore.getState().reset()
-      void navigate({ to: '/setup' })
-    }
-  }, [isExpired, navigate])
+  // Redirect when session expires — runs once when isExpired flips
+  const expiredHandled = useRef(false)
+  if (isExpired && !expiredHandled.current) {
+    expiredHandled.current = true
+    useSetupStore.getState().reset()
+    queueMicrotask(() => void navigate({ to: '/setup' }))
+  }
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">

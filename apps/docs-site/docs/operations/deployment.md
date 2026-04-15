@@ -7,6 +7,9 @@ description: "Deploy Oore CI in production including launchd, reverse proxy, and
 
 Checklist and guidance for deploying Oore CI in a production environment.
 
+For an internal-only macOS rollout behind NetBird + Warpgate, see
+[Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate).
+
 ## Prerequisites
 
 - macOS host with [all prerequisites](/getting-started/prerequisites) installed
@@ -39,15 +42,22 @@ export RUST_LOG=info
 
 ### 3. Set up a reverse proxy
 
-Place a reverse proxy (nginx, Caddy, etc.) in front of the daemon to handle TLS termination:
+Place a reverse proxy (nginx, Caddy, etc.) in front of the daemon to handle TLS termination and serve the built web UI. Keep the daemon on loopback and expose only the HTTPS proxy to users.
 
 ```nginx
 server {
     listen 443 ssl;
     server_name ci.mycompany.com;
 
+    root /absolute/path/to/oore.build/apps/web/dist;
+    index index.html;
+
     ssl_certificate /etc/ssl/certs/ci.mycompany.com.pem;
     ssl_certificate_key /etc/ssl/private/ci.mycompany.com.key;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
 
     location /v1/ {
         proxy_pass http://127.0.0.1:8787;
@@ -55,6 +65,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Warpgate-Username $http_x_warpgate_username;
     }
 
     location /healthz {
@@ -77,6 +88,8 @@ server {
 ./target/release/oore setup --daemon-url http://127.0.0.1:8787
 ```
 
+If your browser reaches the UI through an identity-aware proxy such as Warpgate, choose `Remote (Trusted Proxy / Warpgate)` during setup instead of OIDC.
+
 ### 5. Configure artifact storage
 
 For production, use S3 or R2 instead of local storage. See [Configure Storage](/guides/artifacts/configure-storage).
@@ -90,7 +103,7 @@ curl https://ci.mycompany.com/healthz
 
 ## Security hardening
 
-- **TLS**: Always use HTTPS for production. The daemon itself doesn't handle TLS.
+- **TLS**: Always use HTTPS for the browser-visible origin. Internal-only VPN HTTPS is fine; it does not need to be public internet reachable.
 - **CORS**: Set `OORE_CORS_ORIGINS` to your production domain only.
 - **Firewall**: The daemon should only be accessible through the reverse proxy.
 - **Backups**: Schedule regular database backups (see [Backup and Restore](/operations/backup-restore)).

@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -7,6 +6,7 @@ import {
   LinkSquare02Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
@@ -58,12 +58,12 @@ function IntegrationsPage() {
   const runtimeMode = preferences?.preferences.runtime_mode ?? 'local'
   const remoteEnabled = runtimeMode === 'remote'
 
-  useEffect(() => {
+  useMountEffect(() => {
     if (search.github === 'success') {
       toast.success('GitHub App connected successfully')
       window.history.replaceState({}, '', '/settings/integrations')
     }
-  }, [search.github])
+  })
 
   function handleDisconnect(id: string, name: string) {
     deleteMutation.mutate(id, {
@@ -209,12 +209,12 @@ function IntegrationsPage() {
                 {integrations.map((integration) => (
                   <div
                     key={integration.id}
-                    className="group flex items-start justify-between gap-3 rounded-md border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
+                    className="group flex items-start justify-between gap-3 border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
                   >
                     <Link
                       to="/settings/integrations/$integrationId"
                       params={{ integrationId: integration.id }}
-                      className="min-w-0 flex-1 rounded-sm p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      className="min-w-0 flex-1 p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                     >
                       <div className="space-y-2">
                         <div>
@@ -283,8 +283,11 @@ function IntegrationsPage() {
                                     integration.provider,
                                 )
                               }
+                              disabled={deleteMutation.isPending}
                             >
-                              Disconnect
+                              {deleteMutation.isPending
+                                ? 'Disconnecting...'
+                                : 'Disconnect'}
                             </AlertDialogAction>
                           </AlertDialogFooter>
                         </AlertDialogContent>

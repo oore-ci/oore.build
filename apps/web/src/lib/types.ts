@@ -405,6 +405,7 @@ export interface Build {
   trigger_ref?: string
   commit_sha?: string
   branch?: string
+  source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
   step_results?: Array<StepResult>
@@ -451,6 +452,10 @@ export interface CancelBuildResponse {
   build: Build
 }
 
+export interface RerunBuildResponse {
+  build: Build
+}
+
 // ── Build Log types ─────────────────────────────────────────
 export interface BuildLogChunk {
   sequence: number
@@ -482,6 +487,7 @@ export interface Artifact {
   checksum?: string
   metadata: Record<string, unknown>
   created_at: number
+  expires_at?: number
 }
 
 export interface ListArtifactsResponse {
@@ -491,6 +497,42 @@ export interface ListArtifactsResponse {
 export interface ArtifactDownloadLinkResponse {
   download_url: string
   expires_at: number
+}
+
+// ── Scoped download token types ────────────────────────────
+
+export interface CreateScopedDownloadTokenRequest {
+  ttl_secs?: number
+  single_use?: boolean
+}
+
+export interface CreateScopedDownloadTokenResponse {
+  id: string
+  download_url: string
+  token: string
+  prefix: string
+  expires_at: number
+  single_use: boolean
+}
+
+export interface ArtifactDownloadTokenSummary {
+  id: string
+  artifact_id: string
+  prefix: string
+  created_by: string
+  created_by_email: string
+  expires_at: number
+  single_use: boolean
+  used_at?: number
+  revoked_at?: number
+  is_expired: boolean
+  is_used: boolean
+  is_revoked: boolean
+  created_at: number
+}
+
+export interface ListArtifactDownloadTokensResponse {
+  tokens: Array<ArtifactDownloadTokenSummary>
 }
 
 export type ArtifactStorageProvider = 'disabled' | 'local' | 's3' | 'r2'
@@ -567,6 +609,31 @@ export interface ConfigureExternalAccessOidcResponse {
   discovered_issuer: string
   has_client_secret: boolean
   configured_at: number
+}
+
+export interface GetExternalAccessOidcResponse {
+  issuer_url: string
+  client_id: string
+  has_client_secret: boolean
+  authorization_endpoint: string
+  token_endpoint: string
+  userinfo_endpoint?: string
+  jwks_uri: string
+  configured_at: number
+}
+
+export interface TestOidcConnectionRequest {
+  issuer_url: string
+}
+
+export interface TestOidcConnectionResponse {
+  success: boolean
+  discovered_issuer: string
+  authorization_endpoint: string
+  token_endpoint: string
+  userinfo_endpoint?: string
+  jwks_uri: string
+  scopes_supported: Array<string>
 }
 
 export interface TrustedProxySettingsPublic {
@@ -883,4 +950,229 @@ export interface SyncPipelineIosSigningResponse {
   updated_profiles: number
   synced_bundle_ids: Array<string>
   warnings: Array<string>
+}
+
+// ── Notification channels ───────────────────────────────────────
+
+export type NotificationChannelType = 'webhook' | 'mattermost' | 'email'
+export type NotificationDeliveryStatus = 'pending' | 'delivered' | 'failed'
+export type SmtpTlsMode = 'none' | 'start_tls' | 'tls'
+
+export interface SmtpConfig {
+  host: string
+  port: number
+  username: string
+  password: string
+  tls_mode: SmtpTlsMode
+  from_address: string
+  recipients: Array<string>
+}
+
+export interface UpdateSmtpConfig {
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  tls_mode?: SmtpTlsMode
+  from_address?: string
+  recipients?: Array<string>
+}
+
+export interface NotificationChannel {
+  id: string
+  name: string
+  channel_type: NotificationChannelType
+  enabled: boolean
+  events: Array<string>
+  has_url: boolean
+  has_secret: boolean
+  has_smtp_config: boolean
+  created_by?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface CreateNotificationChannelRequest {
+  name: string
+  channel_type: NotificationChannelType
+  enabled?: boolean
+  events?: Array<string>
+  url?: string
+  secret?: string
+  smtp_config?: SmtpConfig
+}
+
+export interface UpdateNotificationChannelRequest {
+  name?: string
+  enabled?: boolean
+  events?: Array<string>
+  url?: string
+  secret?: string
+  smtp_config?: UpdateSmtpConfig
+}
+
+export interface NotificationChannelResponse {
+  channel: NotificationChannel
+}
+
+export interface ListNotificationChannelsResponse {
+  channels: Array<NotificationChannel>
+  total: number
+}
+
+export interface DeleteNotificationChannelResponse {
+  deleted: boolean
+}
+
+export interface TestNotificationChannelResponse {
+  success: boolean
+  error?: string
+}
+
+export interface NotificationDelivery {
+  id: string
+  channel_id: string
+  build_id?: string
+  event_type: string
+  status: NotificationDeliveryStatus
+  attempt_count: number
+  last_error?: string
+  created_at: number
+  delivered_at?: number
+}
+
+export interface ListNotificationDeliveriesResponse {
+  deliveries: Array<NotificationDelivery>
+  total: number
+}
+
+// ── Retention policy types ──────────────────────────────────────
+
+export type RetentionCleanupTarget = 'artifacts_only' | 'full'
+
+export interface RetentionPolicy {
+  enabled: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target: RetentionCleanupTarget
+  keep_statuses: Array<string>
+  dry_run: boolean
+  cleanup_interval_secs: number
+  artifact_ttl_days?: number
+  updated_at?: number
+}
+
+export interface RetentionPolicyResponse {
+  policy: RetentionPolicy
+}
+
+export interface UpdateRetentionPolicyRequest {
+  enabled: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target: RetentionCleanupTarget
+  keep_statuses: Array<string>
+  dry_run: boolean
+  cleanup_interval_secs: number
+  artifact_ttl_days?: number
+}
+
+export interface ProjectRetentionOverride {
+  project_id: string
+  enabled?: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target?: RetentionCleanupTarget
+  keep_statuses?: Array<string>
+  artifact_ttl_days?: number
+  updated_at?: number
+}
+
+export interface EffectiveProjectRetentionResponse {
+  effective: RetentionPolicy
+  has_override: boolean
+  override_fields?: ProjectRetentionOverride
+}
+
+export interface UpdateProjectRetentionOverrideRequest {
+  enabled?: boolean
+  max_age_days?: number
+  max_builds_per_project?: number
+  max_artifact_size_bytes?: number
+  cleanup_target?: RetentionCleanupTarget
+  keep_statuses?: Array<string>
+  artifact_ttl_days?: number
+}
+
+export interface RetentionCleanupSummary {
+  builds_expired: number
+  artifacts_deleted: number
+  bytes_reclaimed: number
+  dry_run: boolean
+  ran_at: number
+}
+
+export interface RetentionCleanupSummaryResponse {
+  last_cleanup?: RetentionCleanupSummary
+}
+
+// ── Audit Logs ──────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: number
+  actor_id: string | null
+  actor_email: string | null
+  action: string
+  resource_type: string
+  resource_id: string | null
+  details: string | null
+  created_at: number
+}
+
+export interface ListAuditLogsResponse {
+  entries: Array<AuditLogEntry>
+  total: number
+}
+
+// ── API Token types ─────────────────────────────────────────────
+
+export interface CreateApiTokenRequest {
+  name: string
+  role: string
+  expires_at?: number
+}
+
+export interface CreateApiTokenResponse {
+  id: string
+  name: string
+  prefix: string
+  role: string
+  created_at: number
+  expires_at: number | null
+  token: string
+}
+
+export interface ApiTokenSummary {
+  id: string
+  name: string
+  prefix: string
+  role: string
+  created_by: string
+  created_by_email: string
+  created_at: number
+  expires_at: number | null
+  last_used_at: number | null
+  is_expired: boolean
+  is_revoked: boolean
+}
+
+export interface ListApiTokensResponse {
+  tokens: Array<ApiTokenSummary>
+}
+
+export interface RevokeApiTokenResponse {
+  revoked: boolean
 }

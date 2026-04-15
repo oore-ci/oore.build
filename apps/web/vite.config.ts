@@ -168,8 +168,15 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': {
-        target: 'http://127.0.0.1:8787',
+        // When running under portless, proxy to the named API URL.
+        // Falls back to direct daemon address for non-portless setups.
+        target:
+          process.env.OORED_URL ||
+          (process.env.PORTLESS_URL
+            ? 'http://api.oore.localhost:1355'
+            : 'http://127.0.0.1:8787'),
         changeOrigin: true,
+        ws: true,
       },
     },
   },

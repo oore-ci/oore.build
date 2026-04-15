@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -9,6 +9,8 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { RuntimeMode } from '@/lib/types'
+import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
@@ -34,8 +36,9 @@ import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
-import { getSetupStatus, localLogin } from '@/lib/api'
+import { getSetupStatus } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
+import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
@@ -51,14 +54,6 @@ const KNOWN_LOCAL_DAEMON_URLS = [
   'http://127.0.0.1:8790',
 ]
 
-function relativeTime(epochSeconds: number): string {
-  const diff = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
-
 function normalizeUrl(value: string): string {
   return value.replace(/\/+$/, '')
 }
@@ -70,16 +65,6 @@ function isLoopbackHostname(hostname: string): boolean {
     hostname === '::1' ||
     hostname === '[::1]'
   )
-}
-
-function resolveBackendHostname(rawUrl: string): string {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return window.location.hostname
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
 }
 
 async function getSetupStatusWithTimeout(baseUrl: string, timeoutMs: number) {
@@ -106,20 +91,14 @@ async function detectReachableLocalDaemonUrl(): Promise<string | null> {
 function IndexPage() {
   const instance = useActiveInstance()
   const { data: status, isLoading, error } = useSetupStatus()
-  const navigate = useNavigate()
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
   const [isAutoLocalSigningIn, setIsAutoLocalSigningIn] = useState(false)
   const autoDetectAttemptedRef = useRef(false)
-  const autoLocalLoginInstanceRef = useRef<string | null>(null)
-  const authToken = useAuthStore((s) => s.token)
-  const authExpiresAt = useAuthStore((s) => s.expiresAt)
   const authUser = useAuthStore((s) => s.user)
-  const clearAuth = useAuthStore((s) => s.clearAuth)
-  const setAuth = useAuthStore((s) => s.setAuth)
 
-  useEffect(() => {
+  useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
     if (!isLoopbackHostname(window.location.hostname)) return
 
@@ -144,74 +123,9 @@ function IndexPage() {
       .finally(() => {
         setIsDetectingLocalInstance(false)
       })
-  }, [instance])
+  })
 
-  useEffect(() => {
-    if (!status || !instance) return
-
-    if (status.setup_mode && status.runtime_mode !== 'local') {
-      void navigate({ to: '/setup' })
-      return
-    }
-
-    const now = Math.floor(Date.now() / 1000)
-    const hasValidToken =
-      !!authToken && authExpiresAt != null && authExpiresAt > now
-
-    if (status.runtime_mode === 'local') {
-      const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-      const backendIsLoopback = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
-      )
-
-      if (!uiIsLoopback || !backendIsLoopback) {
-        if (!hasValidToken) {
-          clearAuth()
-          void navigate({ to: '/login' })
-        }
-        return
-      }
-
-      if (hasValidToken) return
-      if (autoLocalLoginInstanceRef.current === instance.id) return
-
-      autoLocalLoginInstanceRef.current = instance.id
-      setIsAutoLocalSigningIn(true)
-      clearAuth()
-      void localLogin(instance.url, {})
-        .then((response) => {
-          if (!response.user.user_id || !response.user.role) {
-            throw new Error('Incomplete user profile received from server')
-          }
-          setAuth(
-            response.session_token,
-            response.expires_at,
-            {
-              email: response.user.email,
-              oidc_subject: response.user.oidc_subject,
-              user_id: response.user.user_id,
-              role: response.user.role,
-              avatar_url: response.user.avatar_url,
-            },
-            'local',
-          )
-        })
-        .catch(() => {
-          autoLocalLoginInstanceRef.current = null
-          clearAuth()
-          void navigate({ to: '/login' })
-        })
-        .finally(() => {
-          setIsAutoLocalSigningIn(false)
-        })
-      return
-    }
-
-    if (status.is_configured && !hasValidToken) {
-      clearAuth()
-      void navigate({ to: '/login' })
-    }
-  }, [status, instance, authToken, authExpiresAt, clearAuth, setAuth, navigate])
+  useIndexAuthGuard(status, instance, setIsAutoLocalSigningIn)
 
   if (!instance && isDetectingLocalInstance) {
     return (
@@ -246,11 +160,7 @@ function IndexPage() {
         <div className="w-full max-w-md space-y-8">
           <div className="space-y-3 text-center">
             <div className="mx-auto flex size-14 items-center justify-center">
-              <img
-                src="/logo.svg"
-                alt="Oore CI logo"
-                className="size-full"
-              />
+              <img src="/logo.svg" alt="Oore CI logo" className="size-full" />
             </div>
             <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
             <p className="text-sm text-muted-foreground">
@@ -355,6 +265,24 @@ function ConfiguredDashboard({
   const navigate = useNavigate()
   const [triggerOpen, setTriggerOpen] = useState(false)
   const [triggerProjectId, setTriggerProjectId] = useState<string | undefined>()
+  const authUser = useAuthStore((s) => s.user)
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try {
+      return !localStorage.getItem('oore_welcomed')
+    } catch {
+      return false
+    }
+  })
+
+  function dismissWelcome() {
+    setShowWelcome(false)
+    try {
+      localStorage.setItem('oore_welcomed', '1')
+    } catch {
+      // ignore
+    }
+  }
+
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteBuilds = useHasPermission('builds', 'write')
@@ -433,6 +361,32 @@ function ConfiguredDashboard({
         }
       />
 
+      {showWelcome ? (
+        <Alert>
+          <AlertTitle>
+            Welcome to Oore CI
+            {userName ? `, ${userName.split('@')[0]}` : ''}!
+          </AlertTitle>
+          <AlertDescription className="flex items-start justify-between gap-4">
+            <span>
+              {authUser?.role === 'qa_viewer'
+                ? 'You have view-only access. Browse projects and download build artifacts from the Builds page.'
+                : authUser?.role === 'developer'
+                  ? 'You can create projects, configure pipelines, and trigger builds. Start by exploring the Projects page.'
+                  : 'You have full admin access. Manage users, runners, and integrations from the sidebar.'}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={dismissWelcome}
+            >
+              Dismiss
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* Active Builds */}
       {activeBuilds.length > 0 ? (
         <section className="space-y-2">
@@ -480,44 +434,102 @@ function ConfiguredDashboard({
           </div>
         ) : projects.length === 0 ? (
           <Card>
-            <CardContent className="space-y-3 py-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                {noConnectedSources
-                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
-                  : 'No projects yet.'}
-              </p>
-              <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
-                {canWriteProjects ? (
-                  <Button
-                    render={
-                      <Link to="/projects" search={{ openCreate: '1' }} />
-                    }
-                    nativeButton={false}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} size={14} />
-                    Create Project
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Owner/Admin/Developer required to create projects.
-                  </p>
-                )}
-
-                {noConnectedSources ? (
-                  canWriteIntegrations ? (
-                    <Button
-                      variant="outline"
-                      render={<Link to={integrationConnectTo} />}
-                      nativeButton={false}
-                    >
-                      Connect Source
-                    </Button>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Owner/Admin required to connect a source.
-                    </p>
-                  )
-                ) : null}
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">
+                Getting Started
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <ol className="space-y-3 text-sm">
+                  {runtimeMode === 'remote' && noConnectedSources ? (
+                    <li className="flex items-start gap-3">
+                      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                        1
+                      </span>
+                      <div className="space-y-1.5">
+                        <p className="font-medium">Connect a source</p>
+                        <p className="text-xs text-muted-foreground">
+                          Link GitHub or GitLab to import repositories and
+                          enable webhook-triggered builds.
+                        </p>
+                        {canWriteIntegrations ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            render={<Link to={integrationConnectTo} />}
+                            nativeButton={false}
+                          >
+                            Connect Source
+                          </Button>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Ask an admin to connect a source.
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  ) : null}
+                  <li className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                      {runtimeMode === 'remote' && noConnectedSources
+                        ? '2'
+                        : '1'}
+                    </span>
+                    <div className="space-y-1.5">
+                      <p className="font-medium">Create a project</p>
+                      <p className="text-xs text-muted-foreground">
+                        {runtimeMode === 'local'
+                          ? 'Point to a local Flutter repository to get started.'
+                          : 'Pick a repository from a connected source or use a local path.'}
+                      </p>
+                      {canWriteProjects ? (
+                        <Button
+                          size="sm"
+                          render={
+                            <Link to="/projects" search={{ openCreate: '1' }} />
+                          }
+                          nativeButton={false}
+                        >
+                          <HugeiconsIcon icon={Add01Icon} size={14} />
+                          Create Project
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Ask a developer or admin to create a project.
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                      {runtimeMode === 'remote' && noConnectedSources
+                        ? '3'
+                        : '2'}
+                    </span>
+                    <div className="space-y-1.5">
+                      <p className="font-medium">Add a pipeline</p>
+                      <p className="text-xs text-muted-foreground">
+                        Configure which platforms to build (Android, iOS, macOS)
+                        and signing settings.
+                      </p>
+                    </div>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+                      {runtimeMode === 'remote' && noConnectedSources
+                        ? '4'
+                        : '3'}
+                    </span>
+                    <div className="space-y-1.5">
+                      <p className="font-medium">Run your first build</p>
+                      <p className="text-xs text-muted-foreground">
+                        Trigger a build manually or push to your repository to
+                        start automatically.
+                      </p>
+                    </div>
+                  </li>
+                </ol>
               </div>
             </CardContent>
           </Card>
@@ -562,8 +574,10 @@ function ConfiguredDashboard({
           </Card>
         ) : recentBuilds.length === 0 ? (
           <Card>
-            <CardContent className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">No builds yet.</p>
+            <CardContent>
+              <div className="py-4 text-center">
+                <p className="text-sm text-muted-foreground">No builds yet.</p>
+              </div>
             </CardContent>
           </Card>
         ) : (
@@ -573,6 +587,7 @@ function ConfiguredDashboard({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Build</TableHead>
+                    <TableHead>Project</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Branch</TableHead>
                     <TableHead>Commit</TableHead>
@@ -580,38 +595,46 @@ function ConfiguredDashboard({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recentBuilds.map((build) => (
-                    <TableRow
-                      key={build.id}
-                      className="group cursor-pointer"
-                      onClick={() =>
-                        void navigate({
-                          to: '/builds/$buildId',
-                          params: { buildId: build.id },
-                        })
-                      }
-                    >
-                      <TableCell className="font-mono text-sm group-hover:underline">
-                        #{build.build_number}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusVariant(build.status)}>
-                          {build.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.branch ?? 'n/a'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.commit_sha
-                          ? build.commit_sha.slice(0, 8)
-                          : 'n/a'}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {relativeTime(build.created_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {recentBuilds.map((build) => {
+                    const projectName =
+                      projects.find((p) => p.id === build.project_id)?.name ??
+                      build.project_id.slice(0, 8)
+                    return (
+                      <TableRow
+                        key={build.id}
+                        className="group cursor-pointer"
+                        onClick={() =>
+                          void navigate({
+                            to: '/builds/$buildId',
+                            params: { buildId: build.id },
+                          })
+                        }
+                      >
+                        <TableCell className="font-mono text-sm group-hover:underline">
+                          #{build.build_number}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {projectName}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getStatusVariant(build.status)}>
+                            {build.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {build.branch ?? 'n/a'}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {build.commit_sha
+                            ? build.commit_sha.slice(0, 8)
+                            : 'n/a'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {relativeTime(build.created_at)}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </CardContent>

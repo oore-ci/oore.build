@@ -4,8 +4,9 @@
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-		       docs-check lint-woodpecker ui-init install-local validate validate-ci gen-openapi release-smoke \
-		       release-local release-cut
+		       docs-check ui-init install-local validate validate-ci gen-openapi release-smoke \
+		       release-local release-cut \
+		       portless-proxy portless-alias-api portless-list
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
 RUNNER_CONFIG ?= $(HOME)/.oore/runner.json
@@ -153,14 +154,14 @@ clippy-rust:
 test-rust-workspace:
 	cargo test --workspace
 
-# Release automation now lives in Woodpecker (tag -> GitHub release).
+# Release automation lives in GitHub Actions (tag -> GitHub release).
 release-local:
-	@echo "Use Woodpecker tag pipeline to publish releases."
+	@echo "Use GitHub Actions tag pipeline to publish releases."
 	@echo "If you need a manual release, create/push a semver tag like v0.2.0."
 	@exit 1
 
 release-cut:
-	@echo "Use Woodpecker push-to-main pipeline to auto-cut tags (or push a tag manually)."
+	@echo "Push to alpha/beta/stable to auto-cut tags via GitHub Actions (or push a tag manually)."
 	@exit 1
 
 # ── OpenAPI Spec Generation ───────────────────────────────────────
@@ -172,11 +173,21 @@ gen-openapi:
 docs-check:
 	bun run docs:check
 
-lint-woodpecker:
-	bash tools/lint-woodpecker.sh .woodpecker.yml
-
 ui-init:
 	bun run ui:init
+
+# ── Portless (named .localhost URLs for dev) ─────────────────────
+# Start the portless reverse proxy (run once, stays in background)
+portless-proxy:
+	portless proxy start
+
+# Alias the oored daemon so it's reachable at api.localhost:1355
+portless-alias-api:
+	portless alias api.oore $(lastword $(subst :, ,$(OORED_DEV_LISTEN_ADDR)))
+
+# Show all active portless routes
+portless-list:
+	portless list
 
 # ── Aggregate Targets ─────────────────────────────────────────────
 build: build-web build-docs build-site cargo-check

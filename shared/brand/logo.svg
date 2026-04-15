@@ -1,4 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .fill-brand { fill: #dc7702; }
+    @media (prefers-color-scheme: dark) {
+      .fill-brand { fill: #f59e0b; }
+    }
+  </style>
   <defs>
     <circle id="cut" cx="16" cy="16" r="7" />
     <mask id="hole">
@@ -18,7 +24,7 @@
     width="28"
     height="28"
     rx="6"
-    fill="#dc7702"
+    class="fill-brand"
     clip-path="url(#left)"
     mask="url(#hole)"
   />
@@ -28,7 +34,7 @@
     width="28"
     height="28"
     rx="6"
-    fill="#dc7702"
+    class="fill-brand"
     clip-path="url(#right)"
     mask="url(#hole)"
   />

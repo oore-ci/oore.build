@@ -63,7 +63,16 @@ use utoipa::OpenApi;
         paths::get_external_access_trusted_proxy_settings,
         paths::update_external_access_trusted_proxy_settings,
         paths::get_external_access_preflight,
+        paths::get_external_access_oidc,
         paths::configure_external_access_oidc,
+        paths::test_oidc_connection,
+        // ── Retention Policy ──
+        paths::get_retention_policy,
+        paths::update_retention_policy,
+        paths::get_retention_last_cleanup,
+        paths::get_project_retention,
+        paths::update_project_retention,
+        paths::delete_project_retention,
         // ── Integrations ──
         paths::list_integrations,
         paths::get_integration,
@@ -85,6 +94,11 @@ use utoipa::OpenApi;
         paths::get_project,
         paths::update_project,
         paths::delete_project,
+        // ── Project Members ──
+        paths::list_project_members,
+        paths::add_project_member,
+        paths::update_project_member,
+        paths::remove_project_member,
         // ── Pipelines ──
         paths::create_pipeline,
         paths::list_pipelines,
@@ -106,9 +120,17 @@ use utoipa::OpenApi;
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
+        paths::rerun_build,
+        // ── Audit Logs ──
+        paths::list_audit_logs,
+        // ── API Tokens ──
+        paths::list_api_tokens,
+        paths::create_api_token,
+        paths::revoke_api_token,
         // ── Runners ──
         paths::register_runner,
         paths::list_runners,
+        paths::get_runner,
         paths::update_runner,
         paths::runner_heartbeat,
         paths::claim_job,
@@ -123,6 +145,19 @@ use utoipa::OpenApi;
         paths::create_artifact,
         paths::list_artifacts,
         paths::generate_download_link,
+        // ── Scoped Download Tokens (OOR-140) ──
+        paths::create_scoped_download_token,
+        paths::list_scoped_download_tokens,
+        paths::revoke_scoped_download_token,
+        paths::download_via_scoped_token,
+        // ── Notification Channels ──
+        paths::list_notification_channels,
+        paths::create_notification_channel,
+        paths::get_notification_channel,
+        paths::update_notification_channel,
+        paths::delete_notification_channel,
+        paths::test_notification_channel,
+        paths::list_notification_deliveries,
         // ── Webhooks ──
         paths::github_webhook,
         paths::gitlab_webhook,
@@ -200,6 +235,14 @@ use utoipa::OpenApi;
         oore_contract::UpdateProjectRequest,
         oore_contract::ProjectDetailResponse,
         oore_contract::ListProjectsResponse,
+        // Project Members
+        oore_contract::ProjectRole,
+        oore_contract::ProjectMember,
+        oore_contract::AddProjectMemberRequest,
+        oore_contract::AddProjectMemberResponse,
+        oore_contract::UpdateProjectMemberRequest,
+        oore_contract::UpdateProjectMemberResponse,
+        oore_contract::ListProjectMembersResponse,
         // Pipelines
         oore_contract::BuildPlatform,
         oore_contract::PipelineCommandStages,
@@ -246,6 +289,7 @@ use utoipa::OpenApi;
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
+        oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
         // Runners
         oore_contract::RunnerStatus,
@@ -269,6 +313,11 @@ use utoipa::OpenApi;
         oore_contract::CreateArtifactResponse,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
+        oore_contract::CreateScopedDownloadTokenRequest,
+        oore_contract::CreateScopedDownloadTokenResponse,
+        oore_contract::ArtifactDownloadTokenSummary,
+        oore_contract::ListArtifactDownloadTokensResponse,
+        oore_contract::RevokeArtifactDownloadTokenResponse,
         oore_contract::ArtifactStorageSettingsResponse,
         oore_contract::UpdateArtifactStorageSettingsRequest,
         // Instance Settings
@@ -286,14 +335,51 @@ use utoipa::OpenApi;
         oore_contract::ExternalAccessPreflightResponse,
         oore_contract::ConfigureExternalAccessOidcRequest,
         oore_contract::ConfigureExternalAccessOidcResponse,
+        oore_contract::GetExternalAccessOidcResponse,
+        oore_contract::TestOidcConnectionRequest,
+        oore_contract::TestOidcConnectionResponse,
         oore_contract::InstancePreferences,
         oore_contract::InstancePreferencesResponse,
         oore_contract::UpdateInstancePreferencesRequest,
+        // Retention Policy
+        oore_contract::RetentionCleanupTarget,
+        oore_contract::RetentionPolicy,
+        oore_contract::RetentionPolicyResponse,
+        oore_contract::UpdateRetentionPolicyRequest,
+        oore_contract::ProjectRetentionOverride,
+        oore_contract::EffectiveProjectRetentionResponse,
+        oore_contract::UpdateProjectRetentionOverrideRequest,
+        oore_contract::RetentionCleanupSummary,
+        oore_contract::RetentionCleanupSummaryResponse,
         // Build Logs
         oore_contract::BuildLogChunk,
         oore_contract::AppendBuildLogsRequest,
         oore_contract::AppendBuildLogsResponse,
         oore_contract::BuildLogsResponse,
+        // Notification Channels
+        oore_contract::NotificationChannelType,
+        oore_contract::SmtpTlsMode,
+        oore_contract::SmtpConfig,
+        oore_contract::UpdateSmtpConfig,
+        oore_contract::NotificationDeliveryStatus,
+        oore_contract::NotificationChannel,
+        oore_contract::CreateNotificationChannelRequest,
+        oore_contract::UpdateNotificationChannelRequest,
+        oore_contract::NotificationChannelResponse,
+        oore_contract::ListNotificationChannelsResponse,
+        oore_contract::DeleteNotificationChannelResponse,
+        oore_contract::TestNotificationChannelResponse,
+        oore_contract::NotificationDelivery,
+        oore_contract::ListNotificationDeliveriesResponse,
+        // Audit Logs
+        oore_contract::AuditLogEntry,
+        oore_contract::ListAuditLogsResponse,
+        // API Tokens
+        oore_contract::CreateApiTokenRequest,
+        oore_contract::CreateApiTokenResponse,
+        oore_contract::ApiTokenSummary,
+        oore_contract::ListApiTokensResponse,
+        oore_contract::RevokeApiTokenResponse,
     )),
     tags(
         (name = "Health", description = "Health check endpoint"),
@@ -301,14 +387,19 @@ use utoipa::OpenApi;
         (name = "Auth", description = "Mode-aware authentication and session management. Enabled only after setup is complete."),
         (name = "Users", description = "User management — invite, list, update roles, disable/re-enable."),
         (name = "Instance Settings", description = "Instance-wide configuration — artifact storage, key storage preferences."),
+        (name = "Retention Policy", description = "Build retention and cleanup — automatic cleanup of old builds and artifacts based on age, count, or size policies."),
         (name = "Integrations", description = "SCM integrations — local git, GitHub App, and GitLab."),
         (name = "Projects", description = "Project CRUD — each project groups one or more pipelines."),
+        (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
+        (name = "Notification Channels", description = "Outbound notification channel configuration — webhook, Mattermost."),
+        (name = "Audit Logs", description = "Read-only audit trail of all user and system actions."),
+        (name = "API Tokens", description = "API token management — create, list, and revoke tokens for programmatic access."),
         (name = "Webhooks", description = "Incoming webhook receivers for GitHub and GitLab."),
     ),
     security(
@@ -778,6 +869,20 @@ mod paths {
     )]
     pub(super) async fn get_external_access_preflight() {}
 
+    /// Get current OIDC configuration for External Access
+    ///
+    /// Returns the current runtime OIDC provider configuration (issuer, client ID,
+    /// discovered endpoints). Never exposes the client secret.
+    #[utoipa::path(get, path = "/v1/settings/external-access/oidc", tag = "Instance Settings",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Current OIDC configuration", body = GetExternalAccessOidcResponse),
+            (status = 404, description = "OIDC not configured", body = ApiError),
+            (status = 409, description = "Setup not ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_external_access_oidc() {}
+
     /// Configure OIDC for External Access
     ///
     /// Owner-only endpoint to configure runtime OIDC after setup is complete.
@@ -793,6 +898,82 @@ mod paths {
         )
     )]
     pub(super) async fn configure_external_access_oidc() {}
+
+    /// Test OIDC provider connection
+    ///
+    /// Owner-only endpoint to test OIDC provider discovery without committing changes.
+    /// Validates that the issuer URL is reachable and returns discovered endpoints.
+    #[utoipa::path(post, path = "/v1/settings/external-access/oidc/test-connection", tag = "Instance Settings",
+        request_body = TestOidcConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Connection test succeeded", body = TestOidcConnectionResponse),
+            (status = 400, description = "Invalid input or OIDC discovery failure", body = ApiError),
+            (status = 403, description = "Owner-only operation", body = ApiError),
+        )
+    )]
+    pub(super) async fn test_oidc_connection() {}
+
+    // ── Retention Policy ──
+
+    /// Get global retention policy
+    #[utoipa::path(get, path = "/v1/settings/retention", tag = "Retention Policy",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Current retention policy", body = RetentionPolicyResponse),
+        )
+    )]
+    pub(super) async fn get_retention_policy() {}
+
+    /// Update global retention policy
+    #[utoipa::path(put, path = "/v1/settings/retention", tag = "Retention Policy",
+        request_body = UpdateRetentionPolicyRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Policy updated", body = RetentionPolicyResponse),
+        )
+    )]
+    pub(super) async fn update_retention_policy() {}
+
+    /// Get last cleanup summary
+    #[utoipa::path(get, path = "/v1/settings/retention/last-cleanup", tag = "Retention Policy",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Last cleanup summary", body = RetentionCleanupSummaryResponse),
+        )
+    )]
+    pub(super) async fn get_retention_last_cleanup() {}
+
+    /// Get project retention (effective policy merged with overrides)
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/retention", tag = "Retention Policy",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Effective project retention", body = EffectiveProjectRetentionResponse),
+        )
+    )]
+    pub(super) async fn get_project_retention() {}
+
+    /// Update project retention override
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/retention", tag = "Retention Policy",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = UpdateProjectRetentionOverrideRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Override updated", body = EffectiveProjectRetentionResponse),
+        )
+    )]
+    pub(super) async fn update_project_retention() {}
+
+    /// Delete project retention override (revert to global)
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/retention", tag = "Retention Policy",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Override removed", body = EffectiveProjectRetentionResponse),
+        )
+    )]
+    pub(super) async fn delete_project_retention() {}
 
     // ── Integrations ──
 
@@ -1033,6 +1214,62 @@ mod paths {
     )]
     pub(super) async fn delete_project() {}
 
+    // ── Project Members ──
+
+    /// List project members
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/members", tag = "Project Members",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Member list", body = ListProjectMembersResponse),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_project_members() {}
+
+    /// Add a member to a project
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/members", tag = "Project Members",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = AddProjectMemberRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Member added", body = AddProjectMemberResponse),
+            (status = 400, description = "Invalid user or user already has implicit access", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+            (status = 409, description = "User is already a member", body = ApiError),
+        )
+    )]
+    pub(super) async fn add_project_member() {}
+
+    /// Update a project member's role
+    #[utoipa::path(patch, path = "/v1/projects/{project_id}/members/{user_id}", tag = "Project Members",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("user_id" = String, Path, description = "User ID"),
+        ),
+        request_body = UpdateProjectMemberRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Member role updated", body = UpdateProjectMemberResponse),
+            (status = 404, description = "Project or member not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn update_project_member() {}
+
+    /// Remove a member from a project
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/members/{user_id}", tag = "Project Members",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("user_id" = String, Path, description = "User ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Member removed"),
+            (status = 404, description = "Project or member not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn remove_project_member() {}
+
     // ── Pipelines ──
 
     /// Create pipeline
@@ -1255,6 +1492,20 @@ mod paths {
     )]
     pub(super) async fn cancel_build() {}
 
+    /// Re-run build
+    ///
+    /// Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/rerun", tag = "Builds",
+        params(("build_id" = String, Path, description = "Source build ID to re-run")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Re-run build queued", body = RerunBuildResponse),
+            (status = 404, description = "Source build not found", body = ApiError),
+            (status = 409, description = "Source build is not in a terminal state", body = ApiError),
+        )
+    )]
+    pub(super) async fn rerun_build() {}
+
     // ── Runners ──
 
     /// Register runner
@@ -1277,6 +1528,19 @@ mod paths {
         )
     )]
     pub(super) async fn list_runners() {}
+
+    /// Get runner
+    ///
+    /// Retrieves a single runner by ID, including its current status and health information.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}", tag = "Runners",
+        params(("runner_id" = String, Path, description = "Runner ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Runner details", body = UpdateRunnerResponse),
+            (status = 404, description = "Runner not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_runner() {}
 
     /// Update runner
     #[utoipa::path(patch, path = "/v1/runners/{runner_id}", tag = "Runners",
@@ -1450,6 +1714,63 @@ mod paths {
     )]
     pub(super) async fn generate_download_link() {}
 
+    // ── Scoped Download Tokens (OOR-140) ──
+
+    /// Create scoped download token
+    ///
+    /// Generates a scoped, time-limited download token for a specific artifact.
+    /// The token can be shared with external users who don't have an account.
+    #[utoipa::path(post, path = "/v1/artifacts/{artifact_id}/scoped-token", tag = "Scoped Download Tokens",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        request_body = CreateScopedDownloadTokenRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Scoped download token created", body = CreateScopedDownloadTokenResponse),
+            (status = 404, description = "Artifact not found", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_scoped_download_token() {}
+
+    /// List scoped download tokens
+    ///
+    /// Lists all scoped download tokens for a specific artifact, including expired and revoked ones.
+    #[utoipa::path(get, path = "/v1/artifacts/{artifact_id}/scoped-tokens", tag = "Scoped Download Tokens",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of scoped download tokens", body = ListArtifactDownloadTokensResponse),
+        )
+    )]
+    pub(super) async fn list_scoped_download_tokens() {}
+
+    /// Revoke scoped download token
+    ///
+    /// Revokes a scoped download token so it can no longer be used.
+    #[utoipa::path(delete, path = "/v1/artifact-tokens/{token_id}", tag = "Scoped Download Tokens",
+        params(("token_id" = String, Path, description = "Download token ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token revoked", body = RevokeArtifactDownloadTokenResponse),
+            (status = 404, description = "Token not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn revoke_scoped_download_token() {}
+
+    /// Download via scoped token
+    ///
+    /// Downloads an artifact using a scoped download token. No session auth required —
+    /// the token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.
+    #[utoipa::path(get, path = "/v1/artifacts/dl/{token}", tag = "Scoped Download Tokens",
+        params(("token" = String, Path, description = "Scoped download token")),
+        responses(
+            (status = 302, description = "Redirect to presigned download URL"),
+            (status = 401, description = "Invalid or expired token", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+        )
+    )]
+    pub(super) async fn download_via_scoped_token() {}
+
     // ── Webhooks ──
 
     /// GitHub webhook receiver
@@ -1477,4 +1798,178 @@ mod paths {
         )
     )]
     pub(super) async fn gitlab_webhook() {}
+
+    // ── Audit Logs ──
+
+    /// List audit log entries
+    ///
+    /// Returns a paginated, filterable list of audit log entries recording
+    /// user and system actions. Owner and admin roles only.
+    #[utoipa::path(get, path = "/v1/audit-logs", tag = "Audit Logs",
+        params(
+            ("limit" = Option<i64>, Query, description = "Page size (default 50, max 200)"),
+            ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+            ("actor_id" = Option<String>, Query, description = "Filter by actor user ID"),
+            ("action" = Option<String>, Query, description = "Filter by action string"),
+            ("resource_type" = Option<String>, Query, description = "Filter by resource type"),
+            ("from_ts" = Option<i64>, Query, description = "Start of time range (unix timestamp)"),
+            ("to_ts" = Option<i64>, Query, description = "End of time range (unix timestamp)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Paginated audit log entries", body = ListAuditLogsResponse),
+            (status = 403, description = "Insufficient permissions", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_audit_logs() {}
+
+    // ── API Tokens ──
+
+    /// List API tokens
+    ///
+    /// Returns all API tokens visible to the caller. Admins and owners see all
+    /// tokens; other roles see only their own.
+    #[utoipa::path(get, path = "/v1/api-tokens", tag = "API Tokens",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of API tokens", body = ListApiTokensResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_api_tokens() {}
+
+    /// Create API token
+    ///
+    /// Creates a new API token. The plaintext token is returned only in this
+    /// response and cannot be retrieved again.
+    #[utoipa::path(post, path = "/v1/api-tokens", tag = "API Tokens",
+        request_body = CreateApiTokenRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token created", body = CreateApiTokenResponse),
+            (status = 400, description = "Invalid request", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden or role escalation", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_api_token() {}
+
+    /// Revoke API token
+    ///
+    /// Revokes an API token by ID. Non-admin users can only revoke their own
+    /// tokens.
+    #[utoipa::path(delete, path = "/v1/api-tokens/{token_id}", tag = "API Tokens",
+        params(("token_id" = String, Path, description = "API token ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Token revoked", body = RevokeApiTokenResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+            (status = 404, description = "Token not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn revoke_api_token() {}
+
+    // ── Notification Channels ──
+
+    /// List notification channels
+    ///
+    /// Returns all configured notification channels.
+    #[utoipa::path(get, path = "/v1/settings/notification-channels", tag = "Notification Channels",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "List of notification channels", body = ListNotificationChannelsResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_notification_channels() {}
+
+    /// Create notification channel
+    ///
+    /// Creates a new webhook or Mattermost notification channel.
+    #[utoipa::path(post, path = "/v1/settings/notification-channels", tag = "Notification Channels",
+        request_body = CreateNotificationChannelRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel created", body = NotificationChannelResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_notification_channel() {}
+
+    /// Get notification channel
+    ///
+    /// Returns details for a single notification channel.
+    #[utoipa::path(get, path = "/v1/settings/notification-channels/{id}", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel details", body = NotificationChannelResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_notification_channel() {}
+
+    /// Update notification channel
+    ///
+    /// Updates an existing notification channel. Omitted fields are preserved.
+    #[utoipa::path(put, path = "/v1/settings/notification-channels/{id}", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        request_body = UpdateNotificationChannelRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel updated", body = NotificationChannelResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn update_notification_channel() {}
+
+    /// Delete notification channel
+    ///
+    /// Permanently deletes a notification channel and its delivery history.
+    #[utoipa::path(delete, path = "/v1/settings/notification-channels/{id}", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Channel deleted", body = DeleteNotificationChannelResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn delete_notification_channel() {}
+
+    /// Test notification channel
+    ///
+    /// Sends a test notification to verify the channel is configured correctly.
+    #[utoipa::path(post, path = "/v1/settings/notification-channels/{id}/test", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Test result", body = TestNotificationChannelResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn test_notification_channel() {}
+
+    /// List notification deliveries
+    ///
+    /// Returns delivery history for a notification channel (most recent 100).
+    #[utoipa::path(get, path = "/v1/settings/notification-channels/{id}/deliveries", tag = "Notification Channels",
+        params(("id" = String, Path, description = "Channel ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Delivery history", body = ListNotificationDeliveriesResponse),
+            (status = 401, description = "Unauthorized", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_notification_deliveries() {}
 }

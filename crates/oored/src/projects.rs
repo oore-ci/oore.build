@@ -16,6 +16,10 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
+use crate::project_rbac::{
+    ProjectPermission, effective_role_string, require_project_permission,
+    resolve_effective_project_role,
+};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -382,6 +386,26 @@ pub async fn create_project(
     )
     .await;
 
+    // Auto-add creator as project maintainer (only for non-admin/non-owner users
+    // who will need explicit membership; admins/owners bypass membership checks).
+    if auth.0.role != "owner" && auth.0.role != "admin" {
+        let member_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO project_members (id, project_id, user_id, role, created_by, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, 'maintainer', ?3, ?4, ?4)",
+        )
+        .bind(&member_id)
+        .bind(&project_id)
+        .bind(&auth.0.user_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to auto-add creator as project maintainer");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to add creator as project member")
+        })?;
+    }
+
     info!(project_id = %project_id, name = %name, "project created");
 
     let project = Project {
@@ -400,70 +424,147 @@ pub async fn create_project(
 }
 
 /// `GET /v1/projects` — list projects with optional search.
+///
+/// For owner/admin: returns all projects.
+/// For developer/qa_viewer: returns only projects where the user has explicit membership.
 pub async fn list_projects(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Query(params): Query<ListProjectsQuery>,
 ) -> ApiResult<ListProjectsResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "read").await?;
-
+    // All authenticated users can call this endpoint; filtering is role-based.
     let store = state.store.lock().await;
     let pool = store.pool();
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
-    let (total, rows) = if let Some(ref search) = params.search {
-        let pattern = format!("%{search}%");
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM projects WHERE name LIKE ?1 OR description LIKE ?1",
-        )
-        .bind(&pattern)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+    let is_admin = auth.0.role == "owner" || auth.0.role == "admin";
 
-        let rows = sqlx::query(
-            "SELECT * FROM projects WHERE name LIKE ?1 OR description LIKE ?1 \
-             ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-        )
-        .bind(&pattern)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to list projects");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to list projects",
+    let (total, rows) = if is_admin {
+        // Admin/owner: see all projects (unchanged behaviour).
+        if let Some(ref search) = params.search {
+            let pattern = format!("%{search}%");
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM projects WHERE name LIKE ?1 OR description LIKE ?1",
             )
-        })?;
-
-        (total, rows)
-    } else {
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
+            .bind(&pattern)
             .fetch_one(pool)
             .await
             .unwrap_or(0);
 
-        let rows =
-            sqlx::query("SELECT * FROM projects ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| {
-                    error!(error = %e, "failed to list projects");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "store_error",
-                        "Failed to list projects",
-                    )
-                })?;
+            let rows = sqlx::query(
+                "SELECT * FROM projects WHERE name LIKE ?1 OR description LIKE ?1 \
+                 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            )
+            .bind(&pattern)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to list projects");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to list projects",
+                )
+            })?;
 
-        (total, rows)
+            (total, rows)
+        } else {
+            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+
+            let rows =
+                sqlx::query("SELECT * FROM projects ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "failed to list projects");
+                        api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "store_error",
+                            "Failed to list projects",
+                        )
+                    })?;
+
+            (total, rows)
+        }
+    } else {
+        // Non-admin: only see projects where user has explicit membership.
+        if let Some(ref search) = params.search {
+            let pattern = format!("%{search}%");
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM projects p \
+                 INNER JOIN project_members pm ON pm.project_id = p.id \
+                 WHERE pm.user_id = ?1 AND (p.name LIKE ?2 OR p.description LIKE ?2)",
+            )
+            .bind(&auth.0.user_id)
+            .bind(&pattern)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+            let rows = sqlx::query(
+                "SELECT p.* FROM projects p \
+                 INNER JOIN project_members pm ON pm.project_id = p.id \
+                 WHERE pm.user_id = ?1 AND (p.name LIKE ?2 OR p.description LIKE ?2) \
+                 ORDER BY p.created_at DESC LIMIT ?3 OFFSET ?4",
+            )
+            .bind(&auth.0.user_id)
+            .bind(&pattern)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to list projects");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to list projects",
+                )
+            })?;
+
+            (total, rows)
+        } else {
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM projects p \
+                 INNER JOIN project_members pm ON pm.project_id = p.id \
+                 WHERE pm.user_id = ?1",
+            )
+            .bind(&auth.0.user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+            let rows = sqlx::query(
+                "SELECT p.* FROM projects p \
+                 INNER JOIN project_members pm ON pm.project_id = p.id \
+                 WHERE pm.user_id = ?1 \
+                 ORDER BY p.created_at DESC LIMIT ?2 OFFSET ?3",
+            )
+            .bind(&auth.0.user_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to list projects");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to list projects",
+                )
+            })?;
+
+            (total, rows)
+        }
     };
 
     let projects = rows.iter().map(row_to_project).collect();
@@ -477,14 +578,24 @@ pub async fn get_project(
     auth: AuthUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<ProjectDetailResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "read").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Read)?;
 
     let project_row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
         .bind(&project_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch project");
@@ -501,13 +612,13 @@ pub async fn get_project(
     let pipeline_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pipelines WHERE project_id = ?1")
             .bind(&project_id)
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .unwrap_or(0);
 
     let build_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE project_id = ?1")
         .bind(&project_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(0);
 
@@ -515,6 +626,7 @@ pub async fn get_project(
         project,
         pipeline_count,
         build_count,
+        current_user_role: effective_role_string(&effective),
     }))
 }
 
@@ -525,15 +637,25 @@ pub async fn update_project(
     AxumPath(project_id): AxumPath<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> ApiResult<CreateProjectResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Write)?;
 
     // Verify project exists
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
         .bind(&project_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .unwrap_or(false);
 
@@ -561,7 +683,7 @@ pub async fn update_project(
         let repo_exists: bool =
             sqlx::query_scalar("SELECT COUNT(*) > 0 FROM integration_repositories WHERE id = ?1")
                 .bind(repo_id)
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 .unwrap_or(false);
 
@@ -605,7 +727,7 @@ pub async fn update_project(
         // Nothing to update — just return the current project
         let row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
             .bind(&project_id)
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to fetch project");
@@ -636,7 +758,7 @@ pub async fn update_project(
     }
     q = q.bind(&project_id);
 
-    q.execute(pool).await.map_err(|e| {
+    q.execute(&pool).await.map_err(|e| {
         error!(error = %e, "failed to update project");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -650,7 +772,7 @@ pub async fn update_project(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "project_updated",
         "project",
@@ -663,7 +785,7 @@ pub async fn update_project(
 
     let row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
         .bind(&project_id)
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to reload project");
@@ -685,10 +807,20 @@ pub async fn delete_project(
     auth: AuthUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<serde_json::Value> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "delete").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Delete)?;
 
     // Use a transaction so the active-build check, terminal-build cleanup,
     // and project delete are atomic (prevents race with concurrent build creation).
@@ -778,7 +910,7 @@ pub async fn delete_project(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "project_deleted",
         "project",

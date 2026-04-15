@@ -1,11 +1,12 @@
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import {
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { getColumns } from './-users-columns'
 import { UsersToolbar } from './-users-toolbar'
@@ -63,10 +64,23 @@ export const Route = createFileRoute('/settings/users')({
   component: UsersSettingsPage,
 })
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 const ROLE_OPTIONS: Record<string, string> = {
   admin: 'Admin',
   developer: 'Developer',
   qa_viewer: 'QA Viewer',
+}
+
+const ROLE_DESCRIPTIONS: Record<string, string> = {
+  owner:
+    'Full access. Can manage billing, delete the instance, and configure all settings.',
+  admin:
+    'Can manage users, integrations, and all projects. Cannot delete the instance.',
+  developer:
+    'Can create and manage projects, pipelines, and builds. Cannot manage users or integrations.',
+  qa_viewer:
+    'Read-only access to builds and artifacts. Cannot modify projects or settings.',
 }
 
 interface ConfirmAction {
@@ -78,7 +92,6 @@ interface ConfirmAction {
 }
 
 function UsersSettingsPage() {
-  const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
   const { data, isLoading, error } = useUsers()
   const inviteMutation = useInviteUser()
@@ -89,18 +102,12 @@ function UsersSettingsPage() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<UserRole>('developer')
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [emailError, setEmailError] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-
-  // Redirect non-admin users
-  useEffect(() => {
-    if (authUser && authUser.role !== 'owner' && authUser.role !== 'admin') {
-      void navigate({ to: '/' })
-    }
-  }, [authUser, navigate])
 
   const showError = useCallback((err: unknown, fallback: string) => {
     const message = err instanceof ApiClientError ? err.message : fallback
@@ -113,7 +120,24 @@ function UsersSettingsPage() {
       { email: inviteEmail, role: inviteRole },
       {
         onSuccess: () => {
-          toast.success(`${inviteEmail} invited`)
+          const instanceUrl = window.location.origin
+          void navigator.clipboard.writeText(instanceUrl).then(
+            () => {
+              toast.success(
+                `${inviteEmail} invited — instance URL copied to clipboard`,
+                {
+                  description: `Share this with them: ${instanceUrl}`,
+                  duration: 8000,
+                },
+              )
+            },
+            () => {
+              toast.success(`${inviteEmail} invited`, {
+                description: `Share this URL with them: ${instanceUrl}`,
+                duration: 8000,
+              })
+            },
+          )
           setInviteEmail('')
           setInviteRole('developer')
         },
@@ -235,12 +259,14 @@ function UsersSettingsPage() {
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
     enableRowSelection: (row) =>
       row.original.role !== 'owner' && row.original.id !== authUser?.user_id,
     state: { sorting, columnFilters, rowSelection },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onRowSelectionChange: setRowSelection,
+    initialState: { pagination: { pageSize: 20 } },
   })
 
   const pendingMutation =
@@ -297,17 +323,15 @@ function UsersSettingsPage() {
 
   if (error) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6">
+      <PageLayout>
         <PageMeta title="User Management" noindex />
-        <div className="max-w-md w-full">
-          <Alert variant="destructive">
-            <AlertDescription>
-              Failed to load users:{' '}
-              {error instanceof Error ? error.message : 'Unknown error'}
-            </AlertDescription>
-          </Alert>
-        </div>
-      </div>
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load users:{' '}
+            {error instanceof Error ? error.message : 'Unknown error'}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
     )
   }
 
@@ -368,13 +392,28 @@ function UsersSettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-3">
-            <Input
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="email@example.com"
-              className="flex-1"
-            />
+            <div className="flex flex-1 flex-col gap-1">
+              <Input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => {
+                  setInviteEmail(e.target.value)
+                  if (emailError) setEmailError(null)
+                }}
+                onBlur={() => {
+                  if (
+                    inviteEmail.trim() &&
+                    !EMAIL_RE.test(inviteEmail.trim())
+                  ) {
+                    setEmailError('Please enter a valid email address')
+                  }
+                }}
+                placeholder="email@example.com"
+              />
+              {emailError ? (
+                <p className="text-xs text-destructive">{emailError}</p>
+              ) : null}
+            </div>
             <Select
               value={inviteRole}
               onValueChange={(v) => setInviteRole(v as UserRole)}
@@ -393,7 +432,9 @@ function UsersSettingsPage() {
             </Select>
             <Button
               onClick={handleInvite}
-              disabled={!inviteEmail || inviteMutation.isPending}
+              disabled={
+                !inviteEmail || !!emailError || inviteMutation.isPending
+              }
             >
               {inviteMutation.isPending ? (
                 <>
@@ -405,6 +446,9 @@ function UsersSettingsPage() {
               )}
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {ROLE_DESCRIPTIONS[inviteRole] ?? ''}
+          </p>
           {inviteError ? (
             <p className="text-sm text-destructive">{inviteError}</p>
           ) : null}
@@ -421,6 +465,35 @@ function UsersSettingsPage() {
         <CardContent className="space-y-4">
           <UsersToolbar table={table} onBulkDisable={handleBulkDisable} />
           <DataTable table={table} />
+          {table.getPageCount() > 1 ? (
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-muted-foreground">
+                {table.getFilteredRowModel().rows.length} user(s)
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => table.previousPage()}
+                  disabled={!table.getCanPreviousPage()}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Page {table.getState().pagination.pageIndex + 1} of{' '}
+                  {table.getPageCount()}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => table.nextPage()}
+                  disabled={!table.getCanNextPage()}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

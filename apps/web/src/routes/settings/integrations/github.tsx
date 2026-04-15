@@ -68,7 +68,9 @@ function GitHubSetupPage() {
       <section className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Connection flow</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Connection flow
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -94,7 +96,9 @@ function GitHubSetupPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Generated endpoints</CardTitle>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Generated endpoints
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <Table>

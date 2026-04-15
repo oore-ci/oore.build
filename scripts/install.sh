@@ -33,6 +33,13 @@ RESOLVED_CHANNEL=""
 TMP_DIR=""
 CURRENT_STEP=0
 TOTAL_STEPS=5
+UI_RESET=""
+UI_BOLD=""
+UI_DIM=""
+UI_ACCENT=""
+UI_SUCCESS=""
+UI_WARNING=""
+UI_ERROR=""
 
 print_help() {
   cat <<'EOF'
@@ -60,20 +67,75 @@ EOF
 
 step() {
   CURRENT_STEP=$((CURRENT_STEP + 1))
-  printf '[%d/%d] %-28s' "$CURRENT_STEP" "$TOTAL_STEPS" "$1"
+  printf '%b[%d/%d]%b %-28s' "$UI_BOLD$UI_ACCENT" "$CURRENT_STEP" "$TOTAL_STEPS" "$UI_RESET" "$1"
 }
 
 step_done() {
-  printf '%s\n' "$1"
+  printf '%b%s%b\n' "$UI_SUCCESS" "$1" "$UI_RESET"
 }
 
 log() {
-  printf '[oore-install] %s\n' "$*"
+  printf '%b[oore-install]%b %s\n' "$UI_BOLD$UI_ACCENT" "$UI_RESET" "$*"
 }
 
 die() {
-  printf '[oore-install] ERROR: %s\n' "$*" >&2
+  printf '%b[oore-install] ERROR:%b %s\n' "$UI_BOLD$UI_ERROR" "$UI_RESET" "$*" >&2
   exit 1
+}
+
+has_prompt_tty() {
+  if [[ ! -r /dev/tty || ! -w /dev/tty ]]; then
+    return 1
+  fi
+
+  if ! (: >/dev/tty) 2>/dev/null; then
+    return 1
+  fi
+
+  return 0
+}
+
+init_ui_theme() {
+  if [[ -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
+    return 0
+  fi
+
+  if [[ -t 1 ]] || [[ -t 2 ]] || has_prompt_tty; then
+    UI_RESET=$'\033[0m'
+    UI_BOLD=$'\033[1m'
+    UI_DIM=$'\033[2m\033[38;2;120;113;108m'
+    UI_ACCENT=$'\033[38;2;217;119;6m'
+    UI_SUCCESS=$'\033[38;2;245;158;11m'
+    UI_WARNING=$'\033[38;2;251;191;36m'
+    UI_ERROR=$'\033[38;2;220;38;38m'
+  fi
+}
+
+print_ascii_banner() {
+  printf '%b' "$UI_BOLD$UI_ACCENT"
+  cat <<'EOF'
+   ____   ____  ____  ______      _________
+  / __ \ / __ \/ __ \/ ____/     / ____/  _/
+ / / / // / / / /_/ / __/       / /    / /  
+/ /_/ // /_/ / _, _/ /___      / /____/ /   
+\____/ \____/_/ |_/_____/      \____/___/   CI
+EOF
+  printf '%b\n' "$UI_RESET"
+}
+
+print_install_intro() {
+  printf '\n'
+  print_ascii_banner
+  printf '%bOore CI Installer%b\n' "$UI_BOLD$UI_ACCENT" "$UI_RESET"
+  printf '%b----------------------------------------%b\n' "$UI_DIM" "$UI_RESET"
+  printf '  Install root:  %s\n' "$OORE_INSTALL_ROOT"
+  if [[ "$OORE_VERSION" == "latest" ]]; then
+    printf '  Release:       latest (%s channel)\n' "$OORE_CHANNEL"
+  else
+    printf '  Release:       %s\n' "$OORE_VERSION"
+  fi
+  printf '  Hosted setup:  %s\n' "$OORE_HOSTED_UI"
+  printf '%b----------------------------------------%b\n' "$UI_DIM" "$UI_RESET"
 }
 
 have_cmd() {
@@ -115,42 +177,100 @@ is_noninteractive() {
 prompt_yes_no() {
   local question="$1"
   local default="${2:-y}"
-  local prompt=""
-  local answer=""
+  local selected=""
 
   if [[ "$default" == "y" ]]; then
-    prompt='[Y/n]'
+    selected="$(prompt_select "$question" "yes" "yes:Yes" "no:No")"
   else
-    prompt='[y/N]'
+    selected="$(prompt_select "$question" "no" "yes:Yes" "no:No")"
   fi
 
-  if is_noninteractive || [[ ! -r /dev/tty ]]; then
-    [[ "$default" == "y" ]]
-    return
+  [[ "$selected" == "yes" ]]
+}
+
+prompt_select() {
+  local question="$1"
+  local default_key="$2"
+  shift 2
+
+  local options=("$@")
+  local option_count="${#options[@]}"
+  local i=0
+  local key=""
+  local label=""
+  local selected=""
+  local default_index=1
+  local answer=""
+
+  [[ "$option_count" -gt 0 ]] || die "prompt_select requires at least one option."
+
+  for ((i = 0; i < option_count; i++)); do
+    key="${options[$i]%%:*}"
+    label="${options[$i]#*:}"
+    [[ "$label" != "$key" ]] || label="$key"
+
+    if [[ -z "$default_key" ]]; then
+      default_key="$key"
+      default_index=$((i + 1))
+      continue
+    fi
+
+    if [[ "$key" == "$default_key" ]]; then
+      default_index=$((i + 1))
+    fi
+  done
+
+  if is_noninteractive || ! has_prompt_tty; then
+    printf '%s' "$default_key"
+    return 0
   fi
 
   while true; do
-    printf '%s %s ' "$question" "$prompt" > /dev/tty
+    printf '\n%b%s%b\n' "$UI_BOLD" "$question" "$UI_RESET" > /dev/tty
+    for ((i = 0; i < option_count; i++)); do
+      key="${options[$i]%%:*}"
+      label="${options[$i]#*:}"
+      [[ "$label" != "$key" ]] || label="$key"
+      if [[ "$key" == "$default_key" ]]; then
+        printf '  %b%d)%b %s %b(default)%b\n' \
+          "$UI_ACCENT" "$((i + 1))" "$UI_RESET" "$label" "$UI_DIM" "$UI_RESET" > /dev/tty
+      else
+        printf '  %b%d)%b %s\n' "$UI_ACCENT" "$((i + 1))" "$UI_RESET" "$label" > /dev/tty
+      fi
+    done
+    printf '%bSelect an option [%d]:%b ' "$UI_DIM" "$default_index" "$UI_RESET" > /dev/tty
+
     if ! read -r answer < /dev/tty; then
-      [[ "$default" == "y" ]]
-      return
+      printf '%s' "$default_key"
+      return 0
     fi
 
-    case "$answer" in
-      [Yy]|[Yy][Ee][Ss])
+    if [[ -z "$answer" ]]; then
+      printf '%s' "$default_key"
+      return 0
+    fi
+
+    if [[ "$answer" =~ ^[0-9]+$ ]]; then
+      if ((answer >= 1 && answer <= option_count)); then
+        selected="${options[$((answer - 1))]%%:*}"
+        printf '%s' "$selected"
         return 0
-        ;;
-      [Nn]|[Nn][Oo])
-        return 1
-        ;;
-      "")
-        [[ "$default" == "y" ]]
-        return
-        ;;
-      *)
-        printf 'Please answer yes or no.\n' > /dev/tty
-        ;;
-    esac
+      fi
+      printf '%bPlease enter a number between 1 and %d.%b\n' "$UI_WARNING" "$option_count" "$UI_RESET" > /dev/tty
+      continue
+    fi
+
+    for ((i = 0; i < option_count; i++)); do
+      key="${options[$i]%%:*}"
+      if [[ "$answer" == "$key" ]] \
+        || [[ "$key" == "yes" && "$answer" =~ ^([Yy]|[Yy][Ee][Ss])$ ]] \
+        || [[ "$key" == "no" && "$answer" =~ ^([Nn]|[Nn][Oo])$ ]]; then
+        printf '%s' "$key"
+        return 0
+      fi
+    done
+
+    printf '%bPlease enter a valid option number.%b\n' "$UI_WARNING" "$UI_RESET" > /dev/tty
   done
 }
 
@@ -632,6 +752,10 @@ configure_local_web_noninteractive() {
 }
 
 handle_local_backend_onboarding() {
+  local next_action=""
+  local open_choice=""
+  local launch_choice=""
+
   printf '\n'
   log "Backend is running locally at $DAEMON_URL."
   log "Recommended first-run path is local-only setup."
@@ -639,7 +763,7 @@ handle_local_backend_onboarding() {
   log "Local-first options:"
   if has_local_web_bundle; then
     log "  1. Local web UI: $LOCAL_WEB_URL/setup"
-    log "     Add instance and leave Backend URL empty (uses local proxy)."
+    log "     Opens directly to your local setup wizard."
   else
     log "  1. Local web UI: not bundled in this release build."
   fi
@@ -649,22 +773,68 @@ handle_local_backend_onboarding() {
   log "  - Expose backend over HTTPS and open: ${OORE_HOSTED_UI}/setup?backend=<https-url>"
   log "  - Example tunnel command: cloudflared tunnel --url $DAEMON_URL"
 
-  if has_local_web_bundle && prompt_yes_no "Start local web UI now at $LOCAL_WEB_URL?" 'y'; then
-    start_local_web || true
-    if have_cmd open && prompt_yes_no "Open local setup UI in browser now?" 'y'; then
-      open "${LOCAL_WEB_URL}/setup" >/dev/null 2>&1 || true
-    fi
-    if prompt_yes_no "Auto-start local web UI at login with launchd?" 'n'; then
-      install_local_web_launch_agent || log "Failed to install launch agent."
-    fi
-    return 0
+  if has_local_web_bundle; then
+    next_action="$(
+      prompt_select \
+        "How do you want to continue?" \
+        "local_web" \
+        "local_web:Start local web UI now (recommended)" \
+        "cli_setup:Use CLI setup manually (oore setup)" \
+        "hosted_setup:Open hosted setup URL (remote mode path)" \
+        "skip:Skip for now"
+    )"
+  else
+    next_action="$(
+      prompt_select \
+        "How do you want to continue?" \
+        "cli_setup" \
+        "cli_setup:Use CLI setup manually (oore setup)" \
+        "hosted_setup:Open hosted setup URL (remote mode path)" \
+        "skip:Skip for now"
+    )"
   fi
 
-  if prompt_yes_no "Show hosted UI setup URL now (remote mode path)?" 'n'; then
-    if have_cmd open; then
-      open "${OORE_HOSTED_UI}/setup" >/dev/null 2>&1 || true
-    fi
-  fi
+  case "$next_action" in
+    local_web)
+      start_local_web || true
+      if have_cmd open; then
+        open_choice="$(
+          prompt_select \
+            "Open local setup UI in your browser now?" \
+            "yes" \
+            "yes:Open local web UI" \
+            "no:Not now"
+        )"
+        if [[ "$open_choice" == "yes" ]]; then
+          open "${LOCAL_WEB_URL}/setup" >/dev/null 2>&1 || true
+        fi
+      fi
+
+      launch_choice="$(
+        prompt_select \
+          "Run local web UI automatically at login?" \
+          "no" \
+          "yes:Enable launch-at-login" \
+          "no:Not now"
+      )"
+      if [[ "$launch_choice" == "yes" ]]; then
+        install_local_web_launch_agent || log "Failed to install launch agent."
+      fi
+      ;;
+    hosted_setup)
+      if have_cmd open; then
+        open "${OORE_HOSTED_UI}/setup" >/dev/null 2>&1 || true
+      else
+        log "Open this URL in your browser: ${OORE_HOSTED_UI}/setup"
+      fi
+      ;;
+    cli_setup|skip)
+      :
+      ;;
+    *)
+      :
+      ;;
+  esac
 }
 
 open_setup_ui() {
@@ -807,6 +977,7 @@ main() {
   fi
 
   trap cleanup EXIT
+  init_ui_theme
 
   validate_local_web_mode
   validate_channel
@@ -819,9 +990,13 @@ main() {
     fi
   fi
 
+  if ! is_noninteractive; then
+    print_install_intro
+  fi
+
   if [[ "$(uname -s)" != "Darwin" ]]; then
     die 'Oore CI V1 backend installer currently supports macOS only.'
-fi
+  fi
 
   ensure_dependency curl
   ensure_dependency tar

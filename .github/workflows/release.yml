@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, deploy & publish
+    runs-on: [self-hosted, jarvis]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build web
+        run: make build-web
+
+      - name: Cross-compile Rust
+        run: |
+          cargo build --release -p oored -p oore --target aarch64-apple-darwin
+          cargo build --release -p oored -p oore --target x86_64-apple-darwin
+
+      - name: Compile standalone web server
+        run: |
+          bun build --compile --target=bun-darwin-arm64 --outfile dist/oore-web-arm64 apps/web/tools/oore-web.js
+          bun build --compile --target=bun-darwin-x64 --outfile dist/oore-web-x86_64 apps/web/tools/oore-web.js
+          chmod +x dist/oore-web-arm64 dist/oore-web-x86_64
+
+      - name: Package release tarballs
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          mkdir -p "dist/releases/$tag"
+
+          stage_arm="dist/stage-arm64"
+          stage_x64="dist/stage-x86_64"
+          rm -rf "$stage_arm" "$stage_x64"
+          mkdir -p "$stage_arm/bin" "$stage_x64/bin"
+
+          cp "target/aarch64-apple-darwin/release/oored" "$stage_arm/bin/oored"
+          cp "target/aarch64-apple-darwin/release/oore"  "$stage_arm/bin/oore"
+          cp "dist/oore-web-arm64" "$stage_arm/bin/oore-web"
+          cp -R "apps/web/dist" "$stage_arm/web-dist"
+          cp "LICENSE" "$stage_arm/LICENSE"
+          printf '%s\n' "$ver" > "$stage_arm/VERSION"
+
+          cp "target/x86_64-apple-darwin/release/oored" "$stage_x64/bin/oored"
+          cp "target/x86_64-apple-darwin/release/oore"  "$stage_x64/bin/oore"
+          cp "dist/oore-web-x86_64" "$stage_x64/bin/oore-web"
+          cp -R "apps/web/dist" "$stage_x64/web-dist"
+          cp "LICENSE" "$stage_x64/LICENSE"
+          printf '%s\n' "$ver" > "$stage_x64/VERSION"
+
+          out="dist/releases/$tag"
+          arm_asset="$(printf 'oore_%s_darwin_arm64.tar.gz' "$ver")"
+          x64_asset="$(printf 'oore_%s_darwin_x86_64.tar.gz' "$ver")"
+          checksums="$(printf 'oore_%s_checksums.txt' "$ver")"
+          tar -C "$stage_arm" -czf "$out/$arm_asset" .
+          tar -C "$stage_x64" -czf "$out/$x64_asset" .
+          (cd "$out" && shasum -a 256 "$arm_asset" "$x64_asset" > "$checksums")
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          channel="prod"
+          if echo "$tag" | grep -q -- '-alpha\.'; then
+            channel="alpha"
+          elif echo "$tag" | grep -q -- '-beta\.'; then
+            channel="beta"
+          fi
+
+          prev=""
+          if [ "$channel" = "alpha" ]; then
+            prev="$(git tag -l 'v*-alpha.*' --sort=-v:refname | grep -v -F "$tag" | head -n1 || true)"
+          elif [ "$channel" = "beta" ]; then
+            prev="$(git tag -l 'v*-beta.*' --sort=-v:refname | grep -v -F "$tag" | head -n1 || true)"
+          else
+            prev="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -v -F "$tag" | head -n1 || true)"
+          fi
+
+          repo="${GITHUB_REPOSITORY}"
+          out="dist/releases/$tag/RELEASE_NOTES.md"
+
+          {
+            echo "# $tag"
+            echo
+
+            if [ -n "$prev" ]; then
+              echo "Changes since $prev:"
+              echo
+              git log --no-merges --pretty=format:'- %s (%h)' "$prev..$tag" | grep -v '^- chore(release): bump version to ' || true
+              echo
+              echo "**Full Changelog**: https://github.com/$repo/compare/$prev...$tag"
+            else
+              echo "Changes:"
+              echo
+              git log --no-merges --pretty=format:'- %s (%h)' "$tag" | grep -v '^- chore(release): bump version to ' || true
+              echo
+              echo "**Full Changelog**: https://github.com/$repo/releases/tag/$tag"
+            fi
+            echo
+          } > "$out"
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          channel="prod"
+          pages_branch="stable"
+          if echo "$tag" | grep -q -- '-alpha\.'; then
+            channel="alpha"
+            pages_branch="alpha"
+          elif echo "$tag" | grep -q -- '-beta\.'; then
+            channel="beta"
+            pages_branch="beta"
+          fi
+
+          export PAGES_PROJECT_SITE="oore"
+          export PAGES_PROJECT_DOCS="oore-docs"
+          export PAGES_PROJECT_WEB="oore-ci"
+          export PAGES_PROJECT_DEMO="oore-demo"
+          export PAGES_BRANCH="$pages_branch"
+          export PAGES_COMMIT_HASH="$(git rev-list -n 1 "$tag")"
+          export PAGES_COMMIT_MESSAGE="$tag"
+          export WRANGLER="./node_modules/.bin/wrangler"
+
+          echo "Deploy channel=$channel branch=$PAGES_BRANCH"
+
+          make build-site build-docs
+
+          # Deploy site, docs, web in parallel
+          status=0
+
+          make deploy-site-only &
+          pid_site=$!
+
+          make deploy-docs-only &
+          pid_docs=$!
+
+          make deploy-web-only &
+          pid_web=$!
+
+          wait "$pid_site" || status=$?
+          wait "$pid_docs" || status=$?
+          wait "$pid_web" || status=$?
+
+          if [ "$status" -ne 0 ]; then
+            echo "One or more Pages deploy commands failed." >&2
+            exit "$status"
+          fi
+
+          # Demo build intentionally overwrites apps/web/dist
+          make build-demo
+          make deploy-demo-only
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          prerelease_flag=""
+          if echo "$tag" | grep -q -- '-alpha\.'; then
+            prerelease_flag="--prerelease"
+          elif echo "$tag" | grep -q -- '-beta\.'; then
+            prerelease_flag="--prerelease"
+          fi
+
+          notes="dist/releases/$tag/RELEASE_NOTES.md"
+          dir="dist/releases/$tag"
+
+          # Create or update release
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            gh release edit "$tag" --title "$tag" $prerelease_flag --notes-file "$notes"
+          else
+            # shellcheck disable=SC2086
+            gh release create "$tag" --title "$tag" $prerelease_flag --notes-file "$notes"
+          fi
+
+          gh release upload "$tag" "$dir"/*.tar.gz "$dir"/*.txt "$notes" --clobber

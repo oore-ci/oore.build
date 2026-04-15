@@ -106,6 +106,47 @@ curl -X POST http://127.0.0.1:8787/v1/setup/bootstrap-token/verify \
 
 ---
 
+## Save Setup Preferences {#save-setup-preferences}
+
+Persist setup-time access mode before owner creation.
+
+```
+POST /v1/setup/preferences
+```
+
+**Authentication**: Setup session token (Bearer)
+
+### Request body
+
+```json
+{
+  "runtime_mode": "remote",
+  "remote_auth_mode": "trusted_proxy"
+}
+```
+
+### Response `200 OK`
+
+```json
+{
+  "runtime_mode": "remote",
+  "remote_auth_mode": "trusted_proxy",
+  "session_expires_at": 1738801800
+}
+```
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 401 | `missing_auth` | Authorization header not provided |
+| 401 | `invalid_session` | Setup session token is invalid |
+| 401 | `session_expired` | Setup session has expired |
+| 409 | `already_configured` | Setup is already complete |
+| 409 | `invalid_state` | Owner has already been created |
+
+---
+
 ## Configure OIDC {#configure-oidc}
 
 Configure the OIDC identity provider. Performs provider discovery on the issuer URL and stores the configuration. If a client secret is provided, it is encrypted with AES-256-GCM before storage.
@@ -178,6 +219,57 @@ curl -X POST http://127.0.0.1:8787/v1/setup/oidc/configure \
 
 ---
 
+## Configure Trusted Proxy {#configure-trusted-proxy}
+
+Configure trusted-proxy auth during setup for `runtime_mode=remote` with `remote_auth_mode=trusted_proxy`.
+
+```
+POST /v1/setup/trusted-proxy/configure
+```
+
+**Authentication**: Setup session token (Bearer)
+
+### Request body
+
+```json
+{
+  "user_email_header": "x-warpgate-username",
+  "trusted_proxy_cidrs": [],
+  "shared_secret": "optional-shared-secret"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `user_email_header` | `string` | No | Header containing the authenticated user email. Defaults to `x-warpgate-username`. |
+| `trusted_proxy_cidrs` | `string[]` | No | Optional allowlist of proxy source CIDRs. |
+| `shared_secret` | `string` | No | Optional write-only shared secret for defense in depth. |
+
+### Response `200 OK`
+
+```json
+{
+  "state": "idp_configured",
+  "has_shared_secret": true,
+  "configured_at": 1738800000,
+  "session_expires_at": 1738801800
+}
+```
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 400 | `invalid_input` | Header name, CIDR list, or shared secret is invalid |
+| 401 | `missing_auth` | Authorization header not provided |
+| 401 | `invalid_session` | Setup session token is invalid |
+| 401 | `session_expired` | Setup session has expired |
+| 403 | `mode_restricted` | Instance is not in remote trusted-proxy setup mode |
+| 409 | `already_configured` | Setup is already complete |
+| 409 | `invalid_state` | Owner has already been created |
+
+---
+
 ## Start Owner OIDC {#start-owner-oidc}
 
 Initiate an OIDC authorization code flow to verify the owner's identity. Returns an authorization URL to redirect the user to.
@@ -239,6 +331,95 @@ curl -X POST http://127.0.0.1:8787/v1/setup/owner/start-oidc \
   -H "Authorization: Bearer <session_token>" \
   -d '{"redirect_uri": "http://127.0.0.1:4173/auth/callback"}'
 ```
+
+---
+
+## Claim Owner From Trusted Proxy {#claim-owner-from-trusted-proxy}
+
+Create the owner record from the identity asserted by the trusted upstream proxy.
+
+```
+POST /v1/setup/owner/claim-trusted-proxy
+```
+
+**Authentication**: Setup session token (Bearer)
+
+### Request body
+
+None.
+
+### Required proxy headers
+
+By default, the request must include:
+
+```text
+X-Warpgate-Username: owner@example.com
+```
+
+### Response `200 OK`
+
+```json
+{
+  "state": "owner_created",
+  "owner_email": "owner@example.com",
+  "session_expires_at": 1738801800
+}
+```
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 401 | `missing_auth` | Authorization header not provided |
+| 401 | `invalid_session` | Setup session token is invalid |
+| 401 | `session_expired` | Setup session has expired |
+| 403 | `mode_restricted` | Instance is not in trusted-proxy setup mode |
+| 403 | `trusted_proxy_peer_not_allowed` | Request did not come from a trusted proxy peer |
+| 403 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
+| 403 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
+| 409 | `trusted_proxy_not_configured` | Trusted proxy settings have not been configured yet |
+| 409 | `invalid_state` | Not in `idp_configured` state |
+
+---
+
+## Create Local Owner {#create-local-owner}
+
+Create the owner record directly when setup is running in `runtime_mode=local`.
+
+```
+POST /v1/setup/local-owner/create
+```
+
+**Authentication**: Setup session token (Bearer)
+
+### Request body
+
+```json
+{
+  "email": "owner@local"
+}
+```
+
+### Response `200 OK`
+
+```json
+{
+  "state": "owner_created",
+  "owner_email": "owner@local",
+  "session_expires_at": 1738801800
+}
+```
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 400 | `invalid_input` | Email is invalid |
+| 401 | `missing_auth` | Authorization header not provided |
+| 401 | `invalid_session` | Setup session token is invalid |
+| 401 | `session_expired` | Setup session has expired |
+| 403 | `mode_restricted` | Local owner creation is only available in local mode |
+| 409 | `invalid_state` | Not in the local owner-creation state |
 
 ---
 

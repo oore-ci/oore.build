@@ -10,6 +10,190 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-04-15
+
+- Deployment/auth docs now cover the internal-only Mac Studio rollout path behind NetBird + Warpgate instead of assuming remote setup is always OIDC-first.
+  - Added an operations guide for serving the static web UI over internal HTTPS while keeping `oored` loopback-only, forwarding Warpgate identity headers, and completing setup in `Remote (Trusted Proxy / Warpgate)` mode.
+  - Updated the deployment, hosted onboarding, first-instance, setup API, and auth API docs to document trusted-proxy setup/login and to correct loopback-vs-proxy guidance.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+## 2026-03-19
+
+- **Email notification channel (SMTP)** ([OOR-144](https://linear.app/oorebuild/issue/OOR-144)):
+  - Added `email` as third notification channel type with SMTP provider config
+  - New `encrypted_config` column for AES-256-GCM encrypted SMTP JSON blob
+  - `lettre` crate for async SMTP with rustls TLS
+  - HTML email templates for build status and runner-offline notifications
+  - Frontend SMTP configuration form (create + partial edit)
+  - `runner_offline` event filter exposed in UI
+  - `SmtpConfig`, `UpdateSmtpConfig`, `SmtpTlsMode` contract types + OpenAPI
+- **Artifact expiry and scoped download tokens** ([OOR-140](https://linear.app/oorebuild/issue/OOR-140/artifact-expiry-and-scoped-download-tokens)):
+  - Added `expires_at` column to `artifacts` table; computed at creation from `artifact_ttl_days` retention policy setting.
+  - Added `artifact_ttl_days` field to `RetentionPolicy`, `ProjectRetentionOverride`, and their update requests.
+  - New `artifact_download_tokens` table for DB-backed scoped download tokens (survives daemon restart).
+  - New backend module `artifact_tokens.rs` with 4 endpoints: `POST /v1/artifacts/{artifact_id}/scoped-token`, `GET /v1/artifacts/{artifact_id}/scoped-tokens`, `DELETE /v1/artifact-tokens/{token_id}`, `GET /v1/artifacts/dl/{token}`.
+  - `GET /v1/artifacts/dl/{token}` is unauthenticated — the scoped token IS the authorization. Supports single-use and time-limited tokens.
+  - Background `expired_artifact_monitor` task cleans up expired artifacts and download tokens every 5 minutes.
+  - Frontend: artifact rows show expiry badge, new "Share Link" button opens dialog to create scoped tokens with configurable TTL and single-use option.
+  - Migration `025_artifact_expiry_and_download_tokens.sql`.
+  - OpenAPI spec updated with new endpoints and schemas.
+- **API Tokens frontend** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
+  - Added API token types (`CreateApiTokenRequest`, `CreateApiTokenResponse`, `ApiTokenSummary`, `ListApiTokensResponse`, `RevokeApiTokenResponse`) to `apps/web/src/lib/types.ts`.
+  - Added `createApiToken`, `listApiTokens`, `revokeApiToken` API functions to `apps/web/src/lib/api.ts`.
+  - Created `apps/web/src/hooks/use-api-tokens.ts` with `useApiTokens`, `useCreateApiToken`, `useRevokeApiToken` hooks.
+  - Added `api_tokens:read/write/delete` permissions to RBAC matrix for owner, admin, and developer roles in `apps/web/src/hooks/use-permissions.ts`.
+  - Created `apps/web/src/routes/settings/api-tokens.tsx` settings page with create dialog, token-revealed dialog, token table, and revoke confirmation.
+  - Added "API Tokens" nav item to sidebar in `apps/web/src/components/nav-main.tsx`.
+- **Fix: API token project-level role capping** ([OOR-134](https://linear.app/oorebuild/issue/OOR-134)):
+  - `resolve_effective_project_role` now accepts `auth_source` and caps resolved project membership at the token's instance role when authenticated via API token. Prevents a downgraded token from inheriting the creator's full project permissions.
+- **Build re-run / retry with same parameters** ([OOR-139](https://linear.app/oorebuild/issue/OOR-139/build-re-run-retry-with-same-parameters)):
+  - Added `POST /v1/builds/{build_id}/rerun` endpoint that clones an existing build's `config_snapshot`, `branch`, `commit_sha`, and `pipeline_id` to enqueue a new build.
+  - Added `source_build_id` column to `builds` table (migration 022) to link re-runs to their source build.
+  - Added `RerunBuildResponse` contract type in `oore-contract`.
+  - Frontend: replaced dialog-based re-run with single-click "Re-run" button on build detail page; added source build link for re-runs.
+  - OpenAPI spec updated with new endpoint.
+- **Runner health monitoring and status endpoint (OOR-142)**:
+  - Backend: Added `GET /v1/runners/{runner_id}` endpoint for individual runner details.
+  - Backend: Added `RunnerStateEvent` broadcast channel to emit events when runners go offline.
+  - Backend: Notification dispatch now sends runner offline alerts to configured notification channels.
+  - Backend: DB migration `022` extends `notification_deliveries` for runner event tracking (`runner_id`, `event_category`).
+  - Frontend: Runner status dashboard now auto-refreshes every 15s via `refetchInterval`.
+  - Frontend: Replaced "Rename policy" stat card with "Offline runners" count card with destructive badge.
+  - Frontend: Added pulsing status dot indicators and stale heartbeat (>60s) warning highlighting.
+  - OpenAPI spec updated with new `GET /v1/runners/{runner_id}` endpoint.
+  - Linear: https://linear.app/oorebuild/issue/OOR-142/runner-health-monitoring-and-status-endpoint
+- **SSO/OIDC provider management post-setup** ([OOR-141](https://linear.app/oorebuild/issue/OOR-141/ssooidc-provider-management-post-setup)):
+  - Added `GET /v1/settings/external-access/oidc` endpoint to read current OIDC provider config (issuer, client ID, endpoints, configured_at). Never exposes client secret.
+  - Added `POST /v1/settings/external-access/oidc/test-connection` endpoint for dry-run OIDC discovery validation without committing changes.
+  - Fixed bug: `PUT /v1/settings/external-access/oidc` now clears pending auth entries on reconfigure, invalidating stale in-flight OIDC flows.
+  - Frontend: OIDC identity card now displays current provider info (issuer, client ID, secret status).
+  - Frontend: OIDC reconfigure dialog pre-populates from current config and includes "Test Connection" button.
+  - Updated OpenAPI spec with new endpoints.
+
+- **Documentation & CI maintenance fixes**:
+  - CI: Reverted `actions/checkout@v4` back to `v6` in `validate.yml` for latest performance/security.
+  - Docs: Updated clean-reinstall guide to provide robust macOS paths as primary instruction (no `jq` dependency).
+  - Docs: Consolidated README screenshots in `apps/site/public/product/` to reflect renamed assets, while retaining local WebP assets in `apps/docs-site/docs/public` for documentation build reliability.
+  - Docs: Added 'Auth-mode decision table' to the Public Alpha guide to clarify Local-only vs Remote (OIDC/Proxy) authentication requirements.
+  - Tests: Added `clean-reinstall.md` and `issue-report-checklist.md` to documentation sanity test suite.
+  - Hygiene: Added missing trailing newline to `.gitignore`.
+
+## 2026-03-18
+
+
+- **Doc improvements for early testers** ([#49](https://github.com/devaryakjha/oore.build/issues/49), [#44](https://github.com/devaryakjha/oore.build/issues/44), [#40](https://github.com/devaryakjha/oore.build/issues/40), [#48](https://github.com/devaryakjha/oore.build/issues/48), [#41](https://github.com/devaryakjha/oore.build/issues/41), [#42](https://github.com/devaryakjha/oore.build/issues/42), [#43](https://github.com/devaryakjha/oore.build/issues/43)):
+  - Added "Alpha Feedback Playbook" with 10-minute test flow and templates.
+  - Added "Issue Report Checklist" page and linked from SUPPORT.md.
+  - Added screenshots with modern `.webp` formatting to the Public Alpha guide.
+  - Added Cloudflared tunnel troubleshooting section to Public Alpha guide.
+  - Added onboarding path decision table and release-channel reference table.
+  - Linked playbook from README.md and SUPPORT.md.
+
+- **CI migration: Woodpecker → GitHub Actions**:
+  - Replaced `.woodpecker.yml` with 3 GitHub Actions workflows: `validate.yml`, `autotag.yml`, `release.yml`.
+  - Validation split into parallel jobs: frontend/docs on Linux (`ubuntu-latest`), Rust on macOS (`macos-latest`). Saves ~70% of billable CI minutes.
+  - Autotag runs on Linux (git+bash only, no macOS needed). Uses `RELEASE_PAT` secret to push tags that trigger the release workflow.
+  - Release workflow: 4-job DAG — `build-assets` (macOS), `generate-notes` (Linux), `deploy-pages` (Linux), `github-release` (Linux). Uses `actions/upload-artifact` to pass build outputs between jobs.
+  - Eliminated 50-line Python `gh` CLI download script — `gh` is pre-installed on GitHub Actions runners.
+  - Caching: `Swatinem/rust-cache` for Cargo, `actions/cache` for `node_modules`.
+  - Deleted: `.woodpecker.yml`, `tools/lint-woodpecker.sh`, `lint-woodpecker` Makefile target.
+  - Updated: `tools/validate-ci.sh` (removed woodpecker lint call), `Makefile` (removed woodpecker references).
+
+- **Ban direct useEffect — useMountEffect + ESLint enforcement** ([OOR-145](https://linear.app/oorebuild/issue/OOR-145)):
+  - Frontend: Created `useMountEffect` hook as the only sanctioned wrapper for mount-only effects.
+  - Frontend: Created sanctioned hooks for common reactive patterns: `useBreadcrumbLabel`, `useAutoScroll`, `useBuildNotification`, `useIndexAuthGuard`.
+  - Frontend: Replaced all 58 direct `useEffect` calls across 35 files with proper patterns: derived state, react-hook-form `values` prop, `onOpenChange` callbacks, `useMountEffect`, event handlers, and named hooks.
+  - Frontend: Added ESLint `no-restricted-syntax` rule banning `useEffect` / `React.useEffect` with exemptions for sanctioned hook files.
+  - Frontend: Form resets now use react-hook-form `values` prop (runners, retention, notifications, project settings, setup/mode).
+  - Frontend: Login page runtime mode now derived from `useSetupStatus()` query instead of one-shot fetch.
+
+- **Demo mode audit: add missing MSW handlers** — [OOR-146](https://linear.app/oorebuild/issue/OOR-146):
+  - Added demo handlers + fixture data for notification channels (CRUD, test, deliveries), build retention policy (global + per-project overrides), and audit log viewer (filtered, paginated).
+  - All three features (OOR-143, OOR-137, OOR-135) now fully functional in `VITE_DEMO_MODE=true`.
+  - New files: `demo/data/{notification-channels,retention,audit-logs}.ts`, `demo/handlers/{notifications,retention,audit-logs}.ts`.
+  - Updated `demo/seed.ts` (added `NOTIFICATION_CHANNEL_IDS`) and `demo/handlers/index.ts`.
+
+## 2026-03-17
+
+- Audit log read endpoint and frontend viewer ([OOR-135](https://linear.app/oorebuild/issue/OOR-135)):
+  - Backend: `GET /v1/audit-logs` with filtering (actor, action, resource type, date range) and pagination. RBAC: owner/admin only.
+  - Frontend: `/settings/audit-log` page with table, filters, pagination. Added to sidebar nav under Admin.
+  - Contract types: `AuditLogEntry`, `ListAuditLogsResponse` in `oore-contract`.
+  - RBAC: `audit_logs:read` permission for owner and admin roles.
+  - OpenAPI spec updated.
+
+- **Notification channels (webhook + Mattermost)** — [OOR-143](https://linear.app/oorebuild/issue/OOR-143):
+  - Backend: CRUD endpoints for notification channels under `/v1/settings/notification-channels` (create, list, get, update, delete, test, delivery history).
+  - Backend: Background dispatch worker subscribes to `BuildStateEvent` broadcast and delivers notifications on terminal build states.
+  - Backend: Fixed event publishing gap — `publish_event` now called after manual cancel and runner terminal transitions (not just timeout monitor).
+  - Backend: Migration `019_notification_channels.sql` — `notification_channels` + `notification_deliveries` tables.
+  - Backend: Webhook delivery with optional HMAC-SHA256 signing (`X-Oore-Signature`), Mattermost/Slack-compatible incoming webhook format.
+  - Frontend: Settings UI for notification channels — list, create, edit, delete, test, delivery history.
+  - Frontend: Sidebar nav entry under Admin section.
+  - OpenAPI spec updated with Notification Channels tag and all new endpoints/schemas.
+  - Email channel implemented in [OOR-144](https://linear.app/oorebuild/issue/OOR-144).
+- **OOR-137: Build retention and cleanup policies** — automatic cleanup of old builds and artifacts.
+  - Backend: retention policy engine with three criteria (max age, max count, max artifact size per project).
+  - Global singleton settings table + per-project override table (migration 020).
+  - Background cleanup job runs at configurable interval (default 1h), supports dry-run mode.
+  - Two cleanup modes: `artifacts_only` (delete files, mark builds as Expired) or `full` (delete everything).
+  - Storage deletion support added to `StorageBackend` (S3 + local).
+  - `BuildStatus::valid_transitions()` updated: terminal states can now transition to `Expired`.
+  - API endpoints: `GET/PUT /v1/settings/retention`, `GET /v1/settings/retention/last-cleanup`, `GET/PUT/DELETE /v1/projects/{project_id}/retention`.
+  - Frontend: dedicated `/settings/retention` page with policy form, last-cleanup summary, protected statuses.
+  - Navigation: "Retention" item added to admin sidebar.
+  - Linear: https://linear.app/oorebuild/issue/OOR-137/build-retention-and-cleanup-policies
+
+- **Granular RBAC with per-project permissions** (OOR-136, backend-only):
+  - Added `project_members` table (migration 021) with per-project roles: `maintainer`, `developer`, `viewer`.
+  - New `project_rbac` module: project-scoped authorization (`resolve_effective_project_role`, `check_project_permission`). Owner/admin bypass membership (implicit full access).
+  - New API endpoints: `GET/POST /v1/projects/{id}/members`, `PATCH/DELETE /v1/projects/{id}/members/{user_id}`.
+  - `list_projects` now filters by membership for non-admin users.
+  - `get_project` returns `current_user_role` in response.
+  - `update_project`, `delete_project`, `create_pipeline`, `list_pipelines`, `create_build` now use project-level permission checks.
+  - Project creators are auto-added as `maintainer`.
+  - No backfill: existing developer/qa_viewer users must be explicitly added to projects.
+  - Contract types added to `oore-contract`: `ProjectRole`, `ProjectMember`, request/response types.
+  - OpenAPI spec updated.
+  - Linear: https://linear.app/oorebuild/issue/OOR-136/granular-rbac-with-per-project-permissions
+
+- UX journey audit — multi-persona frontend fixes across `apps/web`:
+  - Session expiry: added 5-minute warning toast + auto-redirect to login on expiry.
+  - Build notifications: `document.title` updates with status emoji + browser Notification API on terminal state.
+  - Build list: added status, branch, and project filter dropdowns + pagination integration.
+  - Onboarding: getting-started checklist on empty dashboard, role-based welcome banner on first login.
+  - Setup wizard: added mode descriptions, softened irreversible warning on complete step.
+  - Invitations: auto-copies instance URL to clipboard on invite with share prompt.
+  - Sidebar: added Documentation link (docs.oore.build).
+  - Artifacts: added copy-link button for sharing download URLs.
+  - Project detail: added "Latest successful build" shortcut on builds tab, permission-aware empty states.
+  - Pipeline form: added contextual help text for signing/triggers, clearer manual-only trigger explanation.
+  - Pipeline creation: added 5 template presets (Debug APK, Release Android, iOS+Android, All Platforms, Custom).
+  - Log viewer: added ANSI SGR color support (16 colors, bold, dim, italic, underline).
+  - Command palette: Cmd+K global search across projects, pages, and actions with keyboard navigation.
+  - Header: added search trigger button (⌘K) for command palette discoverability.
+  - Nav user: added role description in dropdown menu.
+- UX journey audit — phase 2 (remaining frontend-fixable gaps):
+  - Invite form: added role descriptions for all 4 roles, client-side email validation on blur.
+  - Run Build button: tooltip explains why it's disabled (no pipelines / no source).
+  - Dashboard recent builds: added Project column with name lookup.
+  - Builds list: switched "Created" column from locale datetime to relative time for consistency.
+  - Trigger build dialog: loading state for projects dropdown, branch/commit precedence help text.
+  - Integration detail: humanized `auth_mode` enum values (e.g. `github_app_manifest` → "GitHub App (Manifest)").
+  - Integration disconnect: button disabled while mutation is pending.
+  - Artifacts panel: contextual empty state (terminal vs in-progress builds).
+  - Artifact buttons: added `aria-label` with artifact name for accessibility.
+  - Pipeline breadcrumb: dynamic name from loaded pipeline data (matches build detail pattern).
+  - Clickable table rows: added `tabIndex`, `role="link"`, and keyboard handler (Enter/Space) across all list pages.
+
+## 2026-03-16
+
+- DX: added portless support for named `.localhost` dev URLs.
+  - `apps/web` dev → `web.oore.localhost:1355`, `apps/docs-site` dev → `docs.oore.localhost:1355`, `apps/site` dev → `oore.localhost:1355`, `oored` daemon → `api.oore.localhost:1355`.
+  - Added `make portless-proxy`, `make portless-alias-api`, `make portless-list` targets.
+  - Vite proxy target now reads `OORED_URL` env var (falls back to `http://127.0.0.1:8787`).
+  - Legacy `dev:legacy` scripts preserved for fallback without portless installed.
+
 ## 2026-02-25
 
 - OOR-65 follow-up: fixed Pages post-deploy verification false negatives in tag releases when deployment metadata/environment shape differs from strict assumptions (for example short commit hashes and/or preview-vs-production listing differences).
@@ -146,3 +330,8 @@ Rules:
   - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 - Added a consolidated Linear feature doc for this post-alpha reliability tranche.
   - Feature doc: https://linear.app/oorebuild/document/feature-post-alpha-reliability-tranche-2026-02-22-db79675a84e3
+
+## 2026-04-15
+
+- Installer and bundled uninstall script UX follow-up: restored the local web onboarding path to the dedicated `/setup` route and preserved legacy `y`/`n` answers in the new numeric prompt selector so interactive shell flows keep working as before.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda

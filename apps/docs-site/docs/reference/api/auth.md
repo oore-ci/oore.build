@@ -1,11 +1,11 @@
 ---
 status: implemented
-description: "API endpoints for OIDC authentication and session management in Oore CI."
+description: "API endpoints for OIDC, trusted-proxy, and local session management in Oore CI."
 ---
 
 # Auth API
 
-Endpoints for OIDC authentication and session management. These endpoints are only available after setup is complete (instance state is `ready`). Calling them before setup returns `409 Conflict` with code `setup_incomplete`.
+Endpoints for OIDC authentication, trusted-proxy authentication, and local session management. These endpoints are only available after setup is complete (instance state is `ready`). Calling them before setup returns `409 Conflict` with code `setup_incomplete`.
 
 ## OIDC Start {#oidc-start}
 
@@ -154,7 +154,51 @@ Returns `LocalLoginResponse`.
 
 ::: warning
 Local login is always loopback-only. Any non-loopback access path must use
-External Access (`runtime_mode=remote`) and OIDC.
+External Access (`runtime_mode=remote`) with either OIDC or Trusted Proxy.
+:::
+
+---
+
+## Trusted Proxy Login {#trusted-proxy-login}
+
+Create a user session from identity headers asserted by a trusted upstream proxy such as Warpgate.
+
+```
+POST /v1/auth/trusted-proxy/login
+```
+
+**Authentication**: None (public)
+
+### Request body
+
+No request body.
+
+### Required proxy headers
+
+By default, Oore expects the user email in:
+
+```text
+X-Warpgate-Username
+```
+
+The exact header name can be changed in trusted-proxy configuration.
+
+### Response `200 OK`
+
+Returns `LocalLoginResponse`.
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 403 | `mode_restricted` | Instance is not in `runtime_mode=remote` with `remote_auth_mode=trusted_proxy` |
+| 403 | `trusted_proxy_peer_not_allowed` | Request did not come from a trusted proxy peer |
+| 403 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
+| 403 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
+| 403 | `user_not_found` | No active user matched the forwarded email |
+
+::: info
+Trusted Proxy mode keeps authentication at the upstream proxy boundary while preserving normal Oore sessions, RBAC, and audit attribution.
 :::
 
 ---

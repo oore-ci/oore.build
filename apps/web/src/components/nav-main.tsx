@@ -1,10 +1,16 @@
 import { Link, useLocation, useMatches } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Audit01Icon,
+  CommandLineIcon,
+  CpuIcon,
   DashboardSquare01Icon,
+  Delete02Icon,
   Folder02Icon,
-  GitBranchIcon,
+  Key01Icon,
   Link04Icon,
+  Notification03Icon,
+  Settings01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 import {
@@ -34,7 +40,7 @@ interface NavItem {
 const PRIMARY_ITEMS: Array<NavItem> = [
   { title: 'Dashboard', to: '/', icon: DashboardSquare01Icon },
   { title: 'Projects', to: '/projects', icon: Folder02Icon },
-  { title: 'Builds', to: '/builds', icon: GitBranchIcon },
+  { title: 'Builds', to: '/builds', icon: CommandLineIcon },
 ]
 
 const ADMIN_ITEMS: Array<NavItem> = [
@@ -47,8 +53,14 @@ const ADMIN_ITEMS: Array<NavItem> = [
   {
     title: 'Runners',
     to: '/settings/runners',
-    icon: GitBranchIcon,
+    icon: CpuIcon,
     adminOnly: true,
+  },
+  {
+    title: 'API Tokens',
+    to: '/settings/api-tokens',
+    icon: Key01Icon,
+    adminOnly: false,
   },
   {
     title: 'Sources',
@@ -57,9 +69,27 @@ const ADMIN_ITEMS: Array<NavItem> = [
     adminOnly: true,
   },
   {
+    title: 'Notifications',
+    to: '/settings/notifications',
+    icon: Notification03Icon,
+    adminOnly: true,
+  },
+  {
+    title: 'Retention',
+    to: '/settings/retention',
+    icon: Delete02Icon,
+    adminOnly: true,
+  },
+  {
     title: 'Preferences',
     to: '/settings/preferences',
-    icon: Folder02Icon,
+    icon: Settings01Icon,
+    adminOnly: true,
+  },
+  {
+    title: 'Audit Log',
+    to: '/settings/audit-log',
+    icon: Audit01Icon,
     adminOnly: true,
   },
 ]
@@ -76,6 +106,8 @@ export default function NavMain() {
   const location = useLocation()
   const authUser = useAuthStore((s) => s.user)
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
+  const isDeveloperOrAbove =
+    isAdmin || authUser?.role === 'developer'
   const recentProjects = useRecentProjectsStore((s) => s.projects)
 
   function isActive(item: NavItem) {
@@ -84,9 +116,10 @@ export default function NavMain() {
       : matches.some((m) => m.fullPath.startsWith(item.to))
   }
 
-  const visibleAdminItems = ADMIN_ITEMS.filter(
-    (item) => !item.adminOnly || isAdmin,
-  )
+  const visibleAdminItems = ADMIN_ITEMS.filter((item) => {
+    if (item.to === '/settings/api-tokens') return isDeveloperOrAbove
+    return !item.adminOnly || isAdmin
+  })
 
   return (
     <>

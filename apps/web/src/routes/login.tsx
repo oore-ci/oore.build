@@ -1,8 +1,10 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
+import { useMountEffect } from '@/hooks/use-mount-effect'
+import { useSetupStatus } from '@/hooks/use-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
@@ -83,14 +85,11 @@ function LoginPage() {
   const expiresAt = useAuthStore((s) => s.expiresAt)
   const hasValidToken =
     !!token && expiresAt != null && expiresAt > Math.floor(Date.now() / 1000)
+  const setupStatusQuery = useSetupStatus()
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [runtimeMode, setRuntimeMode] = useState<'local' | 'remote' | null>(
-    null,
-  )
-  const [remoteAuthMode, setRemoteAuthMode] = useState<
-    'oidc' | 'trusted_proxy' | null
-  >(null)
+  const runtimeMode = setupStatusQuery.data?.runtime_mode ?? null
+  const remoteAuthMode = setupStatusQuery.data?.remote_auth_mode ?? null
   const [localEmail, setLocalEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [connectivityIssue, setConnectivityIssue] =
@@ -114,44 +113,23 @@ function LoginPage() {
   const localLoginAvailable = runtimeMode != null && loopbackLocalPath
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
-  useEffect(() => {
+  useMountEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
     }
-  }, [hasValidToken, navigate])
+  })
 
-  useEffect(() => {
-    setError(null)
-    setConnectivityIssue(null)
-  }, [instance?.id])
-
-  useEffect(() => {
-    let canceled = false
-    if (!instance) {
-      setRuntimeMode(null)
-      return () => {
-        canceled = true
+  useMountEffect(() => {
+    let prevId = useInstanceStore.getState().activeInstanceId
+    const unsub = useInstanceStore.subscribe((state) => {
+      if (state.activeInstanceId !== prevId) {
+        prevId = state.activeInstanceId
+        setError(null)
+        setConnectivityIssue(null)
       }
-    }
-
-    getSetupStatus(instance.url)
-      .then((status) => {
-        if (!canceled) {
-          setRuntimeMode(status.runtime_mode)
-          setRemoteAuthMode(status.remote_auth_mode)
-        }
-      })
-      .catch(() => {
-        if (!canceled) {
-          setRuntimeMode(null)
-          setRemoteAuthMode(null)
-        }
-      })
-
-    return () => {
-      canceled = true
-    }
-  }, [instance?.id, instance?.url])
+    })
+    return unsub
+  })
 
   const handleLogin = async () => {
     if (!instance) return
@@ -179,9 +157,6 @@ function LoginPage() {
         setLoading(false)
         return
       }
-      setRuntimeMode(status.runtime_mode)
-      setRemoteAuthMode(status.remote_auth_mode)
-
       const localUi = isLoopbackHostname(window.location.hostname)
       const localBackend = isLoopbackHostname(
         resolveBackendHostname(instance.url),

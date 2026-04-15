@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import { useCreateBuild } from '@/hooks/use-builds'
 import { usePipelines } from '@/hooks/use-pipelines'
@@ -20,6 +21,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -74,9 +76,10 @@ function defaults(
   fixedPipelineId?: string,
   defaultPipelineId?: string,
   defaultBranch?: string,
+  firstProjectId?: string,
 ): TriggerBuildForm {
   return {
-    project_id: fixedProjectId ?? '',
+    project_id: fixedProjectId ?? firstProjectId ?? '',
     pipeline_id: fixedPipelineId ?? defaultPipelineId ?? '',
     branch: defaultBranch ?? '',
     commit_sha: '',
@@ -145,58 +148,15 @@ export default function TriggerBuildDialog({
     [pipelines],
   )
 
-  useEffect(() => {
-    if (!open) return
-    form.reset(
-      defaults(
-        fixedProjectId,
-        fixedPipelineId,
-        defaultPipelineId,
-        defaultBranch,
-      ),
-    )
-  }, [
-    open,
-    fixedProjectId,
-    fixedPipelineId,
-    defaultPipelineId,
-    defaultBranch,
-    form,
-  ])
-
-  useEffect(() => {
-    if (!open || fixedProjectId) return
-    if (projects.length === 0) return
-
-    const current = form.getValues('project_id')?.trim()
-    if (!current) {
-      form.setValue('project_id', projects[0].id, { shouldDirty: false })
-    }
-  }, [open, fixedProjectId, projects, form])
-
-  useEffect(() => {
-    if (!open || fixedPipelineId) return
-    if (!projectId) return
-
-    const current = form.getValues('pipeline_id')?.trim()
-    const currentIsValid = pipelines.some((pipeline) => pipeline.id === current)
-
-    if (
-      defaultPipelineId &&
-      pipelines.some((pipeline) => pipeline.id === defaultPipelineId)
-    ) {
-      if (!current || !currentIsValid) {
-        form.setValue('pipeline_id', defaultPipelineId, { shouldDirty: false })
-      }
-      return
-    }
-
-    if (!currentIsValid) {
-      form.setValue('pipeline_id', pipelines[0]?.id ?? '', {
-        shouldDirty: false,
-      })
-    }
-  }, [open, fixedPipelineId, projectId, pipelines, defaultPipelineId, form])
+  // Auto-select pipeline when project changes
+  useMountEffect(() => {
+    const subscription = form.watch((_, { name }) => {
+      if (name !== 'project_id') return
+      if (fixedPipelineId) return
+      form.setValue('pipeline_id', '', { shouldDirty: false })
+    })
+    return () => subscription.unsubscribe()
+  })
 
   function handleClose() {
     onOpenChange(false)
@@ -260,7 +220,20 @@ export default function TriggerBuildDialog({
     pipelines.length === 0
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+        if (nextOpen) {
+          form.reset(
+            defaults(
+              fixedProjectId,
+              fixedPipelineId,
+              defaultPipelineId,
+              defaultBranch,
+              !fixedProjectId ? projects[0]?.id : undefined,
+            ),
+          )
+        }
+        onOpenChange(nextOpen)
+      }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -286,11 +259,18 @@ export default function TriggerBuildDialog({
                           })
                         }
                       }}
+                      disabled={projectsQuery.isLoading}
                       items={projectItems}
                     >
                       <FormControl>
                         <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select a project" />
+                          <SelectValue
+                            placeholder={
+                              projectsQuery.isLoading
+                                ? 'Loading projects...'
+                                : 'Select a project'
+                            }
+                          />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
@@ -367,6 +347,10 @@ export default function TriggerBuildDialog({
                       {...field}
                     />
                   </FormControl>
+                  <FormDescription>
+                    The branch to build. If both branch and commit SHA are
+                    provided, the commit takes precedence.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

@@ -15,6 +15,8 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuilds } from '@/hooks/use-builds'
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
@@ -145,7 +147,11 @@ function PipelineDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
+  const setLabel = useBreadcrumbStore((s) => s.setLabel)
+
   const label = data?.pipeline.name ?? 'Pipeline Details'
+
+  useBreadcrumbLabel(setLabel, '/projects/$projectId/pipelines/$pipelineId', data?.pipeline.name)
 
   if (isLoading) {
     return (
@@ -575,12 +581,23 @@ function PipelineDetailPage() {
                   <TableRow
                     key={build.id}
                     className="group cursor-pointer"
+                    role="link"
+                    tabIndex={0}
                     onClick={() =>
                       void navigate({
                         to: '/builds/$buildId',
                         params: { buildId: build.id },
                       })
                     }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void navigate({
+                          to: '/builds/$buildId',
+                          params: { buildId: build.id },
+                        })
+                      }
+                    }}
                   >
                     <TableCell className="font-mono text-sm group-hover:underline">
                       #{build.build_number}

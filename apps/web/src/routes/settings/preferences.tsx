@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -12,6 +12,7 @@ import {
   CheckmarkCircle02Icon,
   Folder02Icon,
 } from '@hugeicons/core-free-icons'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
@@ -25,8 +26,10 @@ import {
   useArtifactStorageSettings,
   useConfigureExternalAccessOidc,
   useExternalAccessNetworkSettings,
+  useExternalAccessOidc,
   useExternalAccessPreflight,
   useInstancePreferences,
+  useTestOidcConnection,
   useUpdateArtifactStorageSettings,
   useUpdateExternalAccessNetworkSettings,
   useUpdateInstancePreferences,
@@ -233,10 +236,45 @@ function PreferencesPage() {
   const preferencesQuery = useInstancePreferences()
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
+  const oidcConfigQuery = useExternalAccessOidc()
   const configureExternalAccessOidcMutation = useConfigureExternalAccessOidc()
+  const testOidcConnectionMutation = useTestOidcConnection()
   const updateNetworkSettingsMutation = useUpdateExternalAccessNetworkSettings()
   const updateStorageMutation = useUpdateArtifactStorageSettings()
   const updatePreferencesMutation = useUpdateInstancePreferences()
+
+  const storageSettings = settingsQuery.data?.settings
+  const storageValues = useMemo(() => {
+    if (!storageSettings) return undefined
+    const backend_kind =
+      storageSettings.provider === 'disabled'
+        ? 'disabled'
+        : storageSettings.provider === 'local'
+          ? 'local'
+          : 'object'
+    const object_service =
+      storageSettings.provider === 'r2'
+        ? 'cloudflare_r2'
+        : storageSettings.provider === 's3'
+          ? storageSettings.s3_endpoint
+            ? 'custom'
+            : 'aws_s3'
+          : 'aws_s3'
+    const region =
+      storageSettings.provider === 'r2'
+        ? (storageSettings.s3_region ?? 'auto')
+        : (storageSettings.s3_region ?? 'us-east-1')
+    return {
+      backend_kind,
+      object_service,
+      local_base_dir: storageSettings.local_base_dir ?? '',
+      s3_bucket: storageSettings.s3_bucket ?? '',
+      s3_region: region,
+      s3_endpoint: storageSettings.s3_endpoint ?? '',
+      access_key_id: '',
+      secret_access_key: '',
+    } as StorageFormValues
+  }, [storageSettings])
 
   const storageForm = useForm<StorageFormValues>({
     resolver: zodResolver(storageSchema),
@@ -250,8 +288,11 @@ function PreferencesPage() {
       access_key_id: '',
       secret_access_key: '',
     },
+    values: storageValues,
+    mode: 'onBlur',
   })
 
+  const oidcConfig = oidcConfigQuery.data
   const externalAccessOidcForm = useForm<ExternalAccessOidcFormValues>({
     resolver: zodResolver(externalAccessOidcSchema),
     defaultValues: {
@@ -259,79 +300,57 @@ function PreferencesPage() {
       client_id: '',
       client_secret: '',
     },
+    values: oidcConfig
+      ? {
+          issuer_url: oidcConfig.issuer_url,
+          client_id: oidcConfig.client_id,
+          client_secret: '',
+        }
+      : undefined,
+    mode: 'onBlur',
   })
+  const networkSettings = networkSettingsQuery.data?.settings
+  const networkValues = useMemo(() => {
+    if (!networkSettings) return undefined
+    return {
+      public_url: networkSettings.public_url ?? '',
+      allowed_origins: networkSettings.allowed_origins.join('\n'),
+    }
+  }, [networkSettings])
+
   const externalAccessNetworkForm = useForm<ExternalAccessNetworkFormValues>({
     resolver: zodResolver(externalAccessNetworkSchema),
     defaultValues: {
       public_url: '',
       allowed_origins: '',
     },
+    values: networkValues,
+    mode: 'onBlur',
   })
 
   const backendKind = storageForm.watch('backend_kind')
   const objectService = storageForm.watch('object_service')
 
-  useEffect(() => {
-    const settings = settingsQuery.data?.settings
-    if (!settings) return
 
-    const backend_kind =
-      settings.provider === 'disabled'
-        ? 'disabled'
-        : settings.provider === 'local'
-          ? 'local'
-          : 'object'
 
-    const object_service =
-      settings.provider === 'r2'
-        ? 'cloudflare_r2'
-        : settings.provider === 's3'
-          ? settings.s3_endpoint
-            ? 'custom'
-            : 'aws_s3'
-          : 'aws_s3'
-
-    const region =
-      settings.provider === 'r2'
-        ? (settings.s3_region ?? 'auto')
-        : (settings.s3_region ?? 'us-east-1')
-
-    storageForm.reset({
-      backend_kind,
-      object_service,
-      local_base_dir: settings.local_base_dir ?? '',
-      s3_bucket: settings.s3_bucket ?? '',
-      s3_region: region,
-      s3_endpoint: settings.s3_endpoint ?? '',
-      access_key_id: '',
-      secret_access_key: '',
-    })
-  }, [settingsQuery.data, storageForm])
-
-  useEffect(() => {
-    if (backendKind !== 'object') return
-    if (objectService === 'cloudflare_r2') {
-      if (storageForm.getValues('s3_region') !== 'auto') {
-        storageForm.setValue('s3_region', 'auto', { shouldDirty: true })
+  useMountEffect(() => {
+    const subscription = storageForm.watch((values, { name }) => {
+      if (name !== 'object_service' && name !== 'backend_kind') return
+      if (values.backend_kind !== 'object') return
+      if (values.object_service === 'cloudflare_r2') {
+        if (values.s3_region !== 'auto') {
+          storageForm.setValue('s3_region', 'auto', { shouldDirty: true })
+        }
+      } else if (values.object_service === 'aws_s3') {
+        if (values.s3_region === 'auto') {
+          storageForm.setValue('s3_region', 'us-east-1', { shouldDirty: true })
+        }
       }
-      return
-    }
-    if (objectService === 'aws_s3') {
-      if (storageForm.getValues('s3_region') === 'auto') {
-        storageForm.setValue('s3_region', 'us-east-1', { shouldDirty: true })
-      }
-    }
-  }, [backendKind, objectService, storageForm])
-
-  useEffect(() => {
-    const network = networkSettingsQuery.data?.settings
-    if (!network) return
-
-    externalAccessNetworkForm.reset({
-      public_url: network.public_url ?? '',
-      allowed_origins: network.allowed_origins.join('\n'),
     })
-  }, [networkSettingsQuery.data, externalAccessNetworkForm])
+    return () => subscription.unsubscribe()
+  })
+
+
 
   function onSubmitStorage(values: StorageFormValues) {
     const provider =
@@ -507,7 +526,6 @@ function PreferencesPage() {
     }
   }, [settings?.source])
   const preferences = preferencesQuery.data?.preferences
-  const networkSettings = networkSettingsQuery.data?.settings
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
   const failedReadinessChecks = useMemo(
     () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],
@@ -710,8 +728,36 @@ function PreferencesPage() {
                         {oidcReady ? 'Ready' : 'Setup'}
                       </Badge>
                     </div>
+                    {oidcConfig ? (
+                      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Issuer:
+                          </span>{' '}
+                          <span className="font-mono">
+                            {oidcConfig.issuer_url}
+                          </span>
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Client ID:
+                          </span>{' '}
+                          <span className="font-mono">
+                            {oidcConfig.client_id}
+                          </span>
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">
+                            Secret:
+                          </span>{' '}
+                          {oidcConfig.has_client_secret
+                            ? 'Stored'
+                            : 'None (public client)'}
+                        </p>
+                      </div>
+                    ) : null}
                     <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
-                      Configure
+                      {oidcReady ? 'Reconfigure' : 'Configure'}
                       <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
                     </p>
                   </button>
@@ -967,13 +1013,26 @@ function PreferencesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={oidcDialogOpen} onOpenChange={setOidcDialogOpen}>
+      <Dialog
+        open={oidcDialogOpen}
+        onOpenChange={(open) => {
+          setOidcDialogOpen(open)
+          if (!open) testOidcConnectionMutation.reset()
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Configure OIDC for External Access</DialogTitle>
+            <DialogTitle>
+              {oidcConfig
+                ? 'Update OIDC Provider'
+                : 'Configure OIDC for External Access'}
+            </DialogTitle>
             <DialogDescription>
               Owner-only. This updates runtime OIDC settings used by External
               Access sign-in.
+              {oidcConfig?.has_client_secret ? (
+                <> Leave the secret field empty to keep the existing secret.</>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
 
@@ -1036,18 +1095,47 @@ function PreferencesPage() {
                     <FormControl>
                       <Input
                         type="password"
-                        placeholder="Leave empty for public clients"
+                        placeholder={
+                          oidcConfig?.has_client_secret
+                            ? 'Leave empty to keep existing secret'
+                            : 'Leave empty for public clients'
+                        }
                         {...field}
                         disabled={configureExternalAccessOidcMutation.isPending}
                       />
                     </FormControl>
                     <FormDescription>
-                      If omitted, any existing stored client secret is removed.
+                      {oidcConfig?.has_client_secret
+                        ? 'Leave empty to keep the existing secret. Enter a new value to rotate.'
+                        : 'If omitted, any existing stored client secret is removed.'}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+              {testOidcConnectionMutation.isSuccess ? (
+                <Alert>
+                  <HugeiconsIcon
+                    icon={CheckmarkCircle02Icon}
+                    size={16}
+                    className="text-emerald-500"
+                  />
+                  <AlertDescription>
+                    Connection successful.{' '}
+                    <span className="font-mono text-xs">
+                      {testOidcConnectionMutation.data.discovered_issuer}
+                    </span>
+                  </AlertDescription>
+                </Alert>
+              ) : testOidcConnectionMutation.isError ? (
+                <Alert variant="destructive">
+                  <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                  <AlertDescription>
+                    Connection failed. Verify the issuer URL and try again.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
               <DialogFooter>
                 <Button
@@ -1057,6 +1145,46 @@ function PreferencesPage() {
                   disabled={configureExternalAccessOidcMutation.isPending}
                 >
                   Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={
+                    !isOwner ||
+                    testOidcConnectionMutation.isPending ||
+                    configureExternalAccessOidcMutation.isPending ||
+                    !externalAccessOidcForm.watch('issuer_url').trim()
+                  }
+                  onClick={() => {
+                    const issuerUrl =
+                      externalAccessOidcForm.getValues('issuer_url').trim()
+                    if (issuerUrl) {
+                      testOidcConnectionMutation.mutate(
+                        { issuer_url: issuerUrl },
+                        {
+                          onError: (error) => {
+                            toast.error(
+                              getApiErrorMessage(error, {
+                                oidc_discovery_failed:
+                                  'OIDC discovery failed. Verify issuer URL and provider availability.',
+                                invalid_input:
+                                  'Invalid issuer URL. Enter a valid URL.',
+                              }),
+                            )
+                          },
+                        },
+                      )
+                    }
+                  }}
+                >
+                  {testOidcConnectionMutation.isPending ? (
+                    <>
+                      <Spinner className="size-4" />
+                      Testing...
+                    </>
+                  ) : (
+                    'Test Connection'
+                  )}
                 </Button>
                 <Button
                   type="submit"
@@ -1070,7 +1198,7 @@ function PreferencesPage() {
                       Saving...
                     </>
                   ) : (
-                    'Save OIDC Settings'
+                    'Update OIDC Provider'
                   )}
                 </Button>
               </DialogFooter>
@@ -1216,13 +1344,13 @@ function PreferencesPage() {
                                 variant="outline"
                                 size="icon"
                                 aria-label="Browse"
-	                                title="Browse"
-	                                onClick={() => {
-	                                  setArtifactDirPickerOpen(true)
-	                                }}
-	                                disabled={
-	                                  !canWrite || updateStorageMutation.isPending
-	                                }
+                                title="Browse"
+                                onClick={() => {
+                                  setArtifactDirPickerOpen(true)
+                                }}
+                                disabled={
+                                  !canWrite || updateStorageMutation.isPending
+                                }
                               >
                                 <HugeiconsIcon icon={Folder02Icon} size={16} />
                               </Button>
@@ -1308,8 +1436,8 @@ function PreferencesPage() {
                             />
                           </FormControl>
                           <FormDescription>
-                            Keep this bucket private. Oore serves files
-                            via time-limited signed URLs.
+                            Keep this bucket private. Oore serves files via
+                            time-limited signed URLs.
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

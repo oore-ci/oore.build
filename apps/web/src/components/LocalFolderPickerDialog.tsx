@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -49,12 +49,6 @@ export default function LocalFolderPickerDialog({
 }: LocalFolderPickerDialogProps) {
   const [browserPath, setBrowserPath] = useState<string | undefined>(undefined)
 
-  useEffect(() => {
-    if (!open) return
-    const candidate = initialPath?.trim()
-    setBrowserPath(candidate ? candidate : undefined)
-  }, [open, initialPath])
-
   const {
     data: browserData,
     isLoading: browserLoading,
@@ -76,7 +70,10 @@ export default function LocalFolderPickerDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
+        if (nextOpen) {
+          const candidate = initialPath?.trim()
+          setBrowserPath(candidate ? candidate : undefined)
+        } else {
           setBrowserPath(undefined)
         }
         onOpenChange(nextOpen)
@@ -89,7 +86,7 @@ export default function LocalFolderPickerDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="rounded-md border bg-muted/20 p-3">
+          <div className="border bg-muted/20 p-3">
             <p className="text-xs text-muted-foreground">Current folder</p>
             <p className="mt-1 break-all font-mono text-xs">
               {browserData?.current_path ?? 'Loading...'}
@@ -166,7 +163,7 @@ export default function LocalFolderPickerDialog({
               </span>
             </div>
           ) : (
-            <ScrollArea className="h-80 rounded-md border">
+            <ScrollArea className="h-80 border">
               {browserData?.directories.length ? (
                 <div className="divide-y">
                   {browserData.directories.map((directory) => {
@@ -179,7 +176,7 @@ export default function LocalFolderPickerDialog({
                       >
                         <button
                           type="button"
-                          className="group min-w-0 flex-1 rounded-md border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/30 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+                          className="group min-w-0 flex-1 border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/30 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
                           onClick={() => setBrowserPath(directory.path)}
                         >
                           <div className="flex items-center gap-2">

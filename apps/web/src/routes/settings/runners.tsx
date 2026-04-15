@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -76,6 +76,29 @@ function formatRelativeTime(epochSeconds?: number): string {
   return `${days}d ago`
 }
 
+function getHeartbeatStaleness(epochSeconds?: number): 'fresh' | 'stale' | 'none' {
+  if (!epochSeconds) return 'none'
+  const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
+  if (diffSecs > 60) return 'stale'
+  return 'fresh'
+}
+
+function StatusDot({ status }: { status: string }) {
+  if (status === 'online' || status === 'busy') {
+    return (
+      <span className="relative mr-2 inline-flex size-2">
+        <span className="bg-success absolute inline-flex size-full animate-ping rounded-full opacity-75" />
+        <span className="bg-success relative inline-flex size-2 rounded-full" />
+      </span>
+    )
+  }
+  if (status === 'offline') {
+    return <span className="bg-destructive mr-2 inline-flex size-2 rounded-full" />
+  }
+  // draining
+  return <span className="bg-warning mr-2 inline-flex size-2 rounded-full" />
+}
+
 function formatCapabilities(capabilities: Runner['capabilities']): string {
   const entries = Object.entries(capabilities)
   if (entries.length === 0) return 'none'
@@ -110,15 +133,13 @@ function RenameRunnerDialog({
   const form = useForm<RenameRunnerForm>({
     resolver: zodResolver(renameRunnerSchema),
     defaultValues: { name: runner?.name ?? '' },
+    values: { name: runner?.name ?? '' },
     mode: 'onBlur',
   })
 
   const initialName = runner?.name ?? ''
   const isEmbedded = !runner?.registered_by
 
-  useEffect(() => {
-    form.reset({ name: runner?.name ?? '' })
-  }, [runner, form])
 
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) {
@@ -227,13 +248,17 @@ function RunnersSettingsPage() {
       ).length,
     [runners],
   )
+  const offlineCount = useMemo(
+    () => runners.filter((runner) => runner.status === 'offline').length,
+    [runners],
+  )
 
   return (
     <PageLayout width="wide">
       <PageMeta title="Runner Management" noindex />
       <PageHeader
         title="Runners"
-        description="Runner health and metadata management for this instance."
+        description="Runner health and metadata management. Auto-refreshes every 15s."
       />
 
       <section className="grid gap-4 md:grid-cols-3">
@@ -270,12 +295,19 @@ function RunnersSettingsPage() {
         </Card>
         <Card>
           <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Rename policy
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Offline runners
+              </p>
+              {offlineCount > 0 ? (
+                <Badge variant="destructive">{offlineCount}</Badge>
+              ) : null}
+            </div>
+            <p className="mt-3 text-2xl font-bold tracking-tight">
+              {offlineCount}
             </p>
-            <p className="mt-3 text-sm font-bold">External only</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Embedded runners stay daemon-managed
+              Unreachable or stopped
             </p>
           </CardContent>
         </Card>
@@ -336,13 +368,23 @@ function RunnersSettingsPage() {
                           </p>
                         </TableCell>
                         <TableCell>
-                          <Badge
-                            variant={getRunnerStatusVariant(runner.status)}
-                          >
-                            {runner.status}
-                          </Badge>
+                          <div className="flex items-center">
+                            <StatusDot status={runner.status} />
+                            <Badge
+                              variant={getRunnerStatusVariant(runner.status)}
+                            >
+                              {runner.status}
+                            </Badge>
+                          </div>
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
+                        <TableCell
+                          className={
+                            getHeartbeatStaleness(runner.last_heartbeat_at) ===
+                              'stale' && runner.status !== 'offline'
+                              ? 'text-warning'
+                              : 'text-muted-foreground'
+                          }
+                        >
                           {formatRelativeTime(runner.last_heartbeat_at)}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">

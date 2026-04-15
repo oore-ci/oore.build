@@ -8,6 +8,9 @@ import { artifactHandlers } from './artifacts'
 import { integrationHandlers } from './integrations'
 import { runnerHandlers } from './runners'
 import { settingsHandlers } from './settings'
+import { notificationHandlers } from './notifications'
+import { retentionHandlers } from './retention'
+import { auditLogHandlers } from './audit-logs'
 
 export const allHandlers = [
   ...setupHandlers,
@@ -20,4 +23,7 @@ export const allHandlers = [
   ...integrationHandlers,
   ...runnerHandlers,
   ...settingsHandlers,
+  ...notificationHandlers,
+  ...retentionHandlers,
+  ...auditLogHandlers,
 ]

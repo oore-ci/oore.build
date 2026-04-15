@@ -12,13 +12,31 @@ Use this guide after installing backend binaries to complete setup from `https:/
 It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
 :::
 
+## Preflight checks
+
+Before opening the Hosted UI, verify your backend is reachable over HTTPS from your local machine (where you run the browser). Replace `YOUR_URL` with your actual backend URL.
+
+1. **Verify HTTPS connection**:
+   ```bash
+   # Should return HTTP 200/401/403, not a timeout or DNS error
+   curl -I https://YOUR_URL/healthz
+   ```
+
+2. **Verify public status reachability**:
+   ```bash
+   # Should return JSON with "ready": false (if not set up)
+   curl https://YOUR_URL/v1/public/setup-status
+   ```
+
+If these commands fail, check your tunnel/reverse proxy configuration and ensure the Oore daemon is running. See [Troubleshooting](/operations/troubleshooting) if you hit DNS or SSL errors.
+
 ## 1. Start the daemon
 
 ```bash
-oored run --listen 0.0.0.0:8787
+oored run --listen 127.0.0.1:8787
 ```
 
-Use `127.0.0.1:8787` for local-only testing, or a reachable host/IP for remote browser access.
+Keep the daemon on loopback. For remote browser access, expose it through an HTTPS reverse proxy instead of binding `oored` directly to a public interface.
 
 ## 2. Confirm backend health
 
@@ -44,6 +62,8 @@ Keep this token ready for the setup wizard.
 3. Enter your backend URL (for example `https://ci.your-company.internal`).
 4. Continue to `/setup` and paste the bootstrap token.
 
+This can be a VPN-only HTTPS origin. It does not need to be public on the internet, but it must be reachable from the browser network path and use HTTPS.
+
 ### Option B: Backend is local-only (no public HTTPS endpoint)
 
 Choose one:
@@ -67,9 +87,12 @@ Choose one:
    - Then open `http://127.0.0.1:4173`.
    - Add an instance and leave **Backend URL** empty (this uses local proxy mode).
 
-## 5. Complete OIDC setup
+## 5. Complete setup
 
-Finish the OIDC configuration and owner verification flow in the setup wizard.
+Finish the setup wizard using either:
+
+- `Remote (OIDC)`, or
+- `Remote (Trusted Proxy / Warpgate)` if your HTTPS origin is already behind an identity-aware proxy
 
 ## CORS and origin notes
 

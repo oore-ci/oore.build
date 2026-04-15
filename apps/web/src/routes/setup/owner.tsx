@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -103,6 +103,7 @@ function OwnerStep() {
     defaultValues: {
       email: 'owner@local',
     },
+    mode: 'onBlur',
   })
 
   const oidcErrorMessage = getOidcErrorMessage(startOidcMutation.error)
@@ -130,18 +131,15 @@ function OwnerStep() {
       })
     : null
 
-  useEffect(() => {
-    if (!status) return
+  const ownerStepDone = useRef(false)
+  if (status && !ownerStepDone.current) {
+    ownerStepDone.current = true
     setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-  }, [status, setCurrentStep])
-
-  useEffect(() => {
-    if (!status) return
     if (status.state === 'owner_created') {
       setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
-      void navigate({ to: '/setup/complete' })
+      queueMicrotask(() => void navigate({ to: '/setup/complete' }))
     }
-  }, [status, setCurrentStep, navigate])
+  }
 
   if (!status) {
     return (
