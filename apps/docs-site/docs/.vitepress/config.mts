@@ -397,6 +397,10 @@ export default defineConfig({
           items: [
             { text: "Deployment", link: "/operations/deployment" },
             {
+              text: "Mac Studio + NetBird + Warpgate",
+              link: "/operations/mac-studio-netbird-warpgate",
+            },
+            {
               text: "Release Automation (macOS + R2)",
               link: "/operations/release-automation-mac-mini",
             },

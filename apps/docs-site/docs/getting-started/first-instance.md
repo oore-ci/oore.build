@@ -1,17 +1,23 @@
 ---
 status: implemented
-description: "Run the Oore CI setup wizard to configure OIDC and create your first admin account."
+description: "Run the Oore CI setup wizard to configure local, OIDC, or trusted-proxy access and create your first owner account."
 ---
 
 # Set Up Your Instance
 
-This tutorial walks you through the Oore CI setup wizard — from starting the daemon to having a fully configured instance with OIDC authentication.
+This tutorial walks you through the Oore CI setup wizard — from starting the daemon to having a fully configured instance with either:
+
+- local-only access
+- remote access through OIDC
+- remote access through a trusted proxy such as Warpgate
 
 ## What you need
 
 - Oore CI [installed](/getting-started/install)
-- An OIDC provider configured with a client application (see [Configure OIDC](/guides/oidc/) if you haven't done this yet)
-- Your OIDC **issuer URL**, **client ID**, and **client secret** (if required by your provider)
+- One of:
+  - an OIDC provider configured with a client application (see [Configure OIDC](/guides/oidc/) if you haven't done this yet), or
+  - a trusted proxy that forwards user identity as a header (for example Warpgate)
+- If using OIDC: your issuer URL, client ID, and client secret (if required by your provider)
 
 ## 1. Start the daemon
 
@@ -75,14 +81,15 @@ Choose one of two methods: the **web UI** or the **interactive CLI**.
 2. Add your backend instance URL (`http://127.0.0.1:8787` for local setup).
 3. Open the setup flow for that instance.
 
-4. Follow the four steps:
+4. Follow the setup steps:
 
    | Step | What you do |
    |---|---|
    | **1. Bootstrap** | Paste your bootstrap token to authenticate |
-   | **2. OIDC** | Enter your issuer URL, client ID, and client secret |
-   | **3. Owner** | Sign in with your OIDC provider to create the owner account |
-   | **4. Finalize** | Confirm to lock setup endpoints permanently |
+   | **2. Mode** | Choose `Local Only`, `Remote (OIDC)`, or `Remote (Trusted Proxy / Warpgate)` |
+   | **3. Auth setup** | Configure OIDC, or trusted-proxy header settings, or skip directly to owner in local mode |
+   | **4. Owner** | Verify the owner account through OIDC, trusted proxy, or local owner creation |
+   | **5. Finalize** | Confirm to lock setup endpoints permanently |
 
 ### Option B: Interactive CLI
 
@@ -92,7 +99,7 @@ Run the setup command:
 oore setup
 ```
 
-The CLI walks through the same four steps:
+The CLI walks through the same setup flow:
 
 ```
 oore setup -- interactive instance configuration
@@ -101,26 +108,38 @@ Connected to oored at http://127.0.0.1:8787
 Instance:  a1b2c3d4-...
 State:     bootstrap_pending
 
-[Step 1/4] Bootstrap token verification
+[Step 1/5] Bootstrap token verification
   Generating bootstrap token (TTL: 15m)...
   Verifying token with daemon...
   > Bootstrap verified. Session token acquired.
 
-[Step 2/4] OIDC provider configuration
+[Step 2/5] Access mode
+  Mode: Remote (OIDC)
+  > Access mode saved.
+
+[Step 3/5] OIDC provider configuration
   OIDC Issuer URL: https://accounts.google.com
   Client ID: your-client-id.apps.googleusercontent.com
   Client Secret (optional, press Enter to skip): ****
   > OIDC provider configured.
 
-[Step 3/4] Owner account setup
+[Step 4/5] Owner account setup
   Continue with OIDC authentication? [y/N] y
   Waiting for authentication callback...
   > Owner verified: admin@example.com
 
-[Step 4/4] Finalize setup
+[Step 5/5] Finalize setup
   Complete setup? This will lock all setup endpoints. [y/N] y
   > Setup complete! Instance ID: a1b2c3d4-...
 ```
+
+If you choose `Remote (Trusted Proxy / Warpgate)`, the web UI setup flow asks for:
+
+- trusted user email header (default: `x-warpgate-username`)
+- optional trusted proxy CIDRs
+- optional shared secret
+
+Then the owner is claimed from the trusted proxy-authenticated request instead of an OIDC redirect.
 
 ::: info
 The CLI OIDC flow opens your default browser and listens on a random local port for the callback. Make sure your OIDC provider's allowed callback URLs include `http://localhost:*` or the specific port shown in the CLI output.
@@ -162,7 +181,7 @@ bootstrap_pending → idp_configured → owner_created → ready
 | State | What happened | What's next |
 |---|---|---|
 | `bootstrap_pending` | Daemon started, waiting for bootstrap token | Verify token to get a setup session |
-| `idp_configured` | OIDC provider discovered and stored | Authenticate owner via OIDC |
+| `idp_configured` | OIDC or trusted-proxy auth has been configured | Verify or claim the owner account |
 | `owner_created` | Owner identity verified, account created | Finalize to lock setup |
 | `ready` | Setup complete, all setup endpoints disabled | Instance ready for normal use |
 
@@ -203,5 +222,6 @@ Setup sessions expire after 30 minutes of inactivity. Restart the setup process 
 Your instance is running and authenticated. Continue with:
 
 - [Configure OIDC](/guides/oidc/) — detailed provider setup guides
+- [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) — recommended internal-only VPN deployment shape
 - [API Reference](/reference/api/) — explore the API
 - [CLI Reference](/reference/cli/) — all available commands

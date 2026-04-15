@@ -10,6 +10,13 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-04-15
+
+- Deployment/auth docs now cover the internal-only Mac Studio rollout path behind NetBird + Warpgate instead of assuming remote setup is always OIDC-first.
+  - Added an operations guide for serving the static web UI over internal HTTPS while keeping `oored` loopback-only, forwarding Warpgate identity headers, and completing setup in `Remote (Trusted Proxy / Warpgate)` mode.
+  - Updated the deployment, hosted onboarding, first-instance, setup API, and auth API docs to document trusted-proxy setup/login and to correct loopback-vs-proxy guidance.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 ## 2026-03-19
 
 - **Email notification channel (SMTP)** ([OOR-144](https://linear.app/oorebuild/issue/OOR-144)):
