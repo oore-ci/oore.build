@@ -19,7 +19,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
-use crate::rbac::check_permission;
+use crate::project_rbac::{
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
+};
 use crate::runners::RunnerAuth;
 use crate::session::SessionInfo;
 use crate::token::{generate_token, hash_token};
@@ -58,9 +60,12 @@ const STREAM_TOKEN_TTL_SECS: i64 = 300;
 // ── Stream token store ─────────────────────────────────────────
 
 /// Entry for a short-lived streaming token.
+#[derive(Clone)]
 struct StreamTokenEntry {
-    /// The user's role at the time the token was issued (for RBAC checks).
-    role: String,
+    /// The validated user session at the time the token was issued.
+    session: SessionInfo,
+    /// The build this token was minted for.
+    build_id: String,
     /// Unix timestamp when this token expires.
     expires_at: i64,
 }
@@ -83,13 +88,14 @@ impl StreamTokenStore {
 
     /// Create a short-lived streaming token derived from a validated session.
     /// Returns the plaintext token (the store keeps the hash).
-    pub async fn create(&self, session: &SessionInfo) -> String {
+    pub async fn create(&self, session: &SessionInfo, build_id: &str) -> String {
         let token = generate_token();
         let hashed = hash_token(&token);
         let now = now_unix();
 
         let entry = StreamTokenEntry {
-            role: session.role.clone(),
+            session: session.clone(),
+            build_id: build_id.to_string(),
             expires_at: now + STREAM_TOKEN_TTL_SECS,
         };
 
@@ -103,15 +109,13 @@ impl StreamTokenStore {
         token
     }
 
-    /// Validate a streaming token. Returns the associated role if valid.
-    pub async fn validate(&self, token: &str) -> Option<String> {
+    /// Validate a streaming token. Returns the associated session/build if valid.
+    async fn validate(&self, token: &str) -> Option<StreamTokenEntry> {
         let hashed = hash_token(token);
         let now = now_unix();
 
         let map = self.tokens.lock().await;
-        map.get(&hashed)
-            .filter(|e| e.expires_at > now)
-            .map(|e| e.role.clone())
+        map.get(&hashed).filter(|e| e.expires_at > now).cloned()
     }
 }
 
@@ -132,6 +136,42 @@ pub struct GetBuildLogsQuery {
 #[derive(Debug, Deserialize)]
 pub struct SseTokenQuery {
     pub token: Option<String>,
+}
+
+async fn load_build_project_id(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(build_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load build project");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))
+}
+
+async fn require_build_log_read(
+    pool: &sqlx::SqlitePool,
+    session: &SessionInfo,
+    build_id: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let project_id = load_build_project_id(pool, build_id).await?;
+    let effective = resolve_effective_project_role(
+        pool,
+        &session.user_id,
+        &session.role,
+        &project_id,
+        &session.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Read)
 }
 
 // ── Handlers ────────────────────────────────────────────────────
@@ -262,27 +302,11 @@ pub async fn get_build_logs(
     Path(build_id): Path<String>,
     Query(params): Query<GetBuildLogsQuery>,
 ) -> ApiResult<BuildLogsResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
-
-    // Verify build exists
-    let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
-        .bind(&build_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
-
-    if !exists {
-        return Err(api_err(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "Build not found",
-        ));
-    }
+    require_build_log_read(&pool, &auth.0, &build_id).await?;
 
     let after_seq = params.after_sequence.unwrap_or(-1);
     let limit = params.limit.unwrap_or(1000).min(5000);
@@ -330,28 +354,14 @@ pub async fn create_stream_token(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     // Verify build exists
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
-    let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
-        .bind(&build_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
+    require_build_log_read(&pool, &auth.0, &build_id).await?;
 
-    if !exists {
-        return Err(api_err(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "Build not found",
-        ));
-    }
-
-    let token = state.stream_tokens.create(&auth.0).await;
+    let token = state.stream_tokens.create(&auth.0, &build_id).await;
     let expires_at = now_unix() + STREAM_TOKEN_TTL_SECS;
 
     info!(
@@ -379,18 +389,26 @@ pub async fn stream_build_logs(
     let query_token = sse_query.token.as_deref();
     let header_token = crate::util::extract_bearer(&headers);
 
-    let role = if let Some(qt) = query_token {
+    let session = if let Some(qt) = query_token {
         // Query param: must be a valid stream token — reject if not
-        state.stream_tokens.validate(qt).await.ok_or_else(|| {
+        let entry = state.stream_tokens.validate(qt).await.ok_or_else(|| {
             api_err(
                 StatusCode::UNAUTHORIZED,
                 "invalid_stream_token",
                 "Invalid or expired stream token (obtain one via POST /v1/builds/{build_id}/stream-token)",
             )
-        })?
+        })?;
+        if entry.build_id != build_id {
+            return Err(api_err(
+                StatusCode::FORBIDDEN,
+                "stream_token_build_mismatch",
+                "Stream token is not valid for this build",
+            ));
+        }
+        entry.session
     } else if let Some(ht) = header_token {
         // Authorization header: accept full session token (non-browser clients)
-        let session = state
+        state
             .sessions
             .validate_session(ht)
             .await
@@ -408,8 +426,7 @@ pub async fn stream_build_logs(
                     "invalid_session",
                     "Invalid or expired session token",
                 )
-            })?;
-        session.role
+            })?
     } else {
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
@@ -418,26 +435,11 @@ pub async fn stream_build_logs(
         ));
     };
 
-    // RBAC check
-    check_permission(&state.enforcer, &role, "builds", "read").await?;
-
-    // Verify build exists
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
-    let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM builds WHERE id = ?1")
-        .bind(&build_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
-    if !exists {
-        return Err(api_err(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "Build not found",
-        ));
-    }
+    require_build_log_read(&pool, &session, &build_id).await?;
 
     // Check for Last-Event-ID header for reconnection support
     let last_event_id: i64 = headers

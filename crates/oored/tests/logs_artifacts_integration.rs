@@ -35,6 +35,25 @@ async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String 
     token
 }
 
+async fn seed_user_with_role(pool: &sqlx::SqlitePool, email: &str, role: &str) -> String {
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)",
+    )
+    .bind(&user_id)
+    .bind(email)
+    .bind(format!("{role}::{email}"))
+    .bind(email)
+    .bind(role)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed test user");
+    user_id
+}
+
 /// Register a runner and return (runner_id, runner_token).
 async fn register_runner(app: &axum::Router, session_token: &str, name: &str) -> (String, String) {
     let body = serde_json::json!({
@@ -399,6 +418,60 @@ async fn test_get_logs_build_not_found() {
 
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_non_member_cannot_read_build_logs_or_artifacts() {
+    let (app, pool, _session_token, runner_id, runner_token, build_id) = full_scaffold().await;
+    let outsider_id = seed_user_with_role(&pool, "outsider@example.com", "developer").await;
+    let outsider_session = create_session_token(&pool, &outsider_id).await;
+
+    let artifact_body = serde_json::json!({
+        "name": "private.apk",
+        "artifact_type": "apk",
+    });
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let artifact_json = body_json(resp.into_body()).await;
+    let artifact_id = artifact_json["artifact"]["id"].as_str().unwrap();
+
+    for (method, uri) in [
+        ("GET", "/v1/builds".to_string()),
+        ("GET", format!("/v1/builds/{build_id}")),
+        ("GET", format!("/v1/builds/{build_id}/logs")),
+        ("POST", format!("/v1/builds/{build_id}/stream-token")),
+        ("GET", format!("/v1/builds/{build_id}/logs/stream")),
+        ("GET", format!("/v1/builds/{build_id}/artifacts")),
+        ("POST", format!("/v1/artifacts/{artifact_id}/download-link")),
+    ] {
+        let req = Request::builder()
+            .uri(uri)
+            .method(method)
+            .header(
+                http::header::AUTHORIZATION,
+                format!("Bearer {outsider_session}"),
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        if method == "GET" && resp.status() == StatusCode::OK {
+            let json = body_json(resp.into_body()).await;
+            assert_eq!(json["total"].as_i64(), Some(0));
+        } else {
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        }
+    }
 }
 
 // ── Stream token tests ──────────────────────────────────────────

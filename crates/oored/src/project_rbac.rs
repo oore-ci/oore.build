@@ -187,6 +187,37 @@ pub fn require_project_permission(
     }
 }
 
+/// Resolve project membership for a direct pipeline-id route and require the
+/// requested project permission. Returns the pipeline's project id.
+pub async fn require_pipeline_project_permission(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    instance_role: &str,
+    auth_source: &AuthSource,
+    pipeline_id: &str,
+    permission: ProjectPermission,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM pipelines WHERE id = ?1")
+        .bind(pipeline_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to query pipeline project");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to check pipeline access",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"))?;
+
+    let effective =
+        resolve_effective_project_role(pool, user_id, instance_role, &project_id, auth_source)
+            .await?;
+    require_project_permission(&effective, permission)?;
+    Ok(project_id)
+}
+
 /// Return the project role string for inclusion in API responses.
 pub fn effective_role_string(effective_role: &EffectiveProjectRole) -> Option<String> {
     match effective_role {

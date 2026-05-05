@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
-use crate::rbac::check_permission;
+use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -409,12 +409,19 @@ pub async fn get_pipeline_android_signing(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<PipelineAndroidSigningResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::Read,
+    )
+    .await?;
 
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await
@@ -483,8 +490,6 @@ pub async fn update_pipeline_android_signing(
     Path(pipeline_id): Path<String>,
     Json(req): Json<UpdatePipelineAndroidSigningRequest>,
 ) -> ApiResult<PipelineAndroidSigningResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "write").await?;
-
     if req.debug.is_none() && req.release.is_none() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -497,6 +502,15 @@ pub async fn update_pipeline_android_signing(
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::ManagePipelines,
+    )
+    .await?;
 
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await

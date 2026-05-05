@@ -15,7 +15,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
-use crate::rbac::check_permission;
+use crate::project_rbac::{
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
+};
 use crate::retention::load_effective_policy;
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
@@ -60,6 +62,22 @@ fn row_to_artifact(row: &sqlx::sqlite::SqliteRow) -> Artifact {
         created_at: row.get("created_at"),
         expires_at: row.get("expires_at"),
     }
+}
+
+async fn require_project_artifact_read(
+    pool: &sqlx::SqlitePool,
+    auth: &AuthUser,
+    project_id: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::ReadArtifacts)
 }
 
 // ── Handlers ────────────────────────────────────────────────────
@@ -300,12 +318,25 @@ pub async fn list_artifacts(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<ListArtifactsResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load build for artifact listing");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list artifacts",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
 
     let rows = sqlx::query("SELECT * FROM artifacts WHERE build_id = ?1 ORDER BY created_at ASC")
         .bind(&build_id)
@@ -331,27 +362,33 @@ pub async fn generate_download_link(
     auth: AuthUser,
     Path(artifact_id): Path<String>,
 ) -> ApiResult<ArtifactDownloadLinkResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
 
     // Look up artifact
-    let row = sqlx::query("SELECT * FROM artifacts WHERE id = ?1")
-        .bind(&artifact_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to fetch artifact");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to fetch artifact",
-            )
-        })?
-        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Artifact not found"))?;
+    let row = sqlx::query(
+        "SELECT a.*, b.project_id AS project_id \
+         FROM artifacts a \
+         JOIN builds b ON b.id = a.build_id \
+         WHERE a.id = ?1",
+    )
+    .bind(&artifact_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch artifact");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch artifact",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Artifact not found"))?;
+
+    let project_id: String = row.get("project_id");
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
 
     // Reject downloads of expired artifacts
     let artifact_expires_at: Option<i64> = row.get("expires_at");

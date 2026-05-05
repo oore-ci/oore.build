@@ -1084,6 +1084,11 @@ async fn setup_owner_claim_trusted_proxy(
             "Trusted proxy owner claim must come from an allowlisted proxy peer",
         ));
     }
+    crate::instance_settings::verify_trusted_proxy_shared_secret(
+        &headers,
+        &trusted_proxy_settings,
+        &state.encryption_key,
+    )?;
     let email =
         crate::instance_settings::extract_trusted_proxy_email(&headers, &trusted_proxy_settings)?;
 

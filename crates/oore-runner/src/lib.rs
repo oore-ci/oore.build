@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -537,6 +537,28 @@ fn decode_runner_b64(value: &str, field_name: &str) -> anyhow::Result<Vec<u8>> {
         .map_err(|e| anyhow::anyhow!("invalid base64 value for {field_name}: {e}"))
 }
 
+fn safe_ios_signing_filename(
+    raw: &str,
+    fallback: &str,
+    field_name: &str,
+) -> anyhow::Result<String> {
+    let trimmed = raw.trim();
+    let candidate = if trimmed.is_empty() {
+        fallback
+    } else {
+        trimmed
+    };
+    let mut components = Path::new(candidate).components();
+    let is_single_normal_component =
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
+
+    if !is_single_normal_component || candidate.contains('/') || candidate.contains('\\') {
+        anyhow::bail!("{field_name} must be a filename, not a path");
+    }
+
+    Ok(candidate.to_string())
+}
+
 fn write_export_options_plist(
     output_path: &Path,
     team_id: &str,
@@ -611,11 +633,9 @@ fn install_ios_signing_bundle(
         )
     })?;
 
-    let p12_path = signing_dir.join(if bundle.p12_filename.trim().is_empty() {
-        "distribution.p12"
-    } else {
-        bundle.p12_filename.trim()
-    });
+    let p12_filename =
+        safe_ios_signing_filename(&bundle.p12_filename, "distribution.p12", "p12_filename")?;
+    let p12_path = signing_dir.join(p12_filename);
     let p12_bytes = decode_runner_b64(&bundle.p12_base64, "p12")?;
     if p12_bytes.is_empty() {
         anyhow::bail!("decoded iOS p12 is empty");
@@ -673,11 +693,12 @@ fn install_ios_signing_bundle(
                 );
             }
 
-            let work_file_name = if profile.profile_filename.trim().is_empty() {
-                format!("{}.mobileprovision", profile.bundle_id)
-            } else {
-                profile.profile_filename.trim().to_string()
-            };
+            let fallback_profile_name = format!("{}.mobileprovision", profile.bundle_id);
+            let work_file_name = safe_ios_signing_filename(
+                &profile.profile_filename,
+                &fallback_profile_name,
+                "profile_filename",
+            )?;
             let work_path = profile_work_dir.join(work_file_name);
             fs::write(&work_path, &profile_bytes).map_err(|e| {
                 anyhow::anyhow!("failed to write profile {}: {e}", work_path.display())
@@ -3801,6 +3822,34 @@ mod tests {
     fn chooses_release_testing_export_method_when_available() {
         let help = "Available options: app-store-connect, release-testing, enterprise";
         assert_eq!(choose_ios_export_method(help), "release-testing");
+    }
+
+    #[test]
+    fn ios_signing_filename_must_be_single_path_component() {
+        assert_eq!(
+            safe_ios_signing_filename(" dist.p12 ", "fallback.p12", "p12_filename")
+                .expect("valid filename"),
+            "dist.p12"
+        );
+        assert_eq!(
+            safe_ios_signing_filename("", "fallback.p12", "p12_filename")
+                .expect("fallback filename"),
+            "fallback.p12"
+        );
+
+        for unsafe_name in [
+            "../dist.p12",
+            "/tmp/dist.p12",
+            "profiles/dist.mobileprovision",
+            "profiles\\dist.mobileprovision",
+            ".",
+            "..",
+        ] {
+            assert!(
+                safe_ios_signing_filename(unsafe_name, "fallback.p12", "profile_filename").is_err(),
+                "{unsafe_name} should be rejected"
+            );
+        }
     }
 
     #[test]

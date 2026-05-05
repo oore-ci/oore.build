@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path as FsPath, PathBuf};
+use std::path::{Component, Path as FsPath, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ use crate::AppState;
 use crate::apple_api::{self, AppleApiCredentials};
 use crate::crypto;
 use crate::extractors::AuthUser;
-use crate::rbac::check_permission;
+use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -124,6 +124,25 @@ fn trim_opt(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn validate_materialized_filename(
+    value: String,
+    field_name: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let mut components = FsPath::new(&value).components();
+    let is_single_normal_component =
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
+
+    if !is_single_normal_component || value.contains('/') || value.contains('\\') {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_filename",
+            format!("{field_name} must be a filename, not a path"),
+        ));
+    }
+
+    Ok(value)
 }
 
 fn mode_str(mode: IosSigningMode) -> &'static str {
@@ -1921,12 +1940,19 @@ pub async fn get_pipeline_ios_signing(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<PipelineIosSigningResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::Read,
+    )
+    .await?;
 
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await
@@ -1965,12 +1991,19 @@ pub async fn update_pipeline_ios_signing(
     Path(pipeline_id): Path<String>,
     Json(req): Json<UpdatePipelineIosSigningRequest>,
 ) -> ApiResult<PipelineIosSigningResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "write").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::ManagePipelines,
+    )
+    .await?;
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await
         .map_err(|e| {
@@ -2052,7 +2085,7 @@ pub async fn update_pipeline_ios_signing(
 
     if let Some(cert) = req.certificate.clone() {
         if let Some(filename) = trim_opt(cert.p12_filename) {
-            p12_filename = Some(filename);
+            p12_filename = Some(validate_materialized_filename(filename, "p12_filename")?);
         }
         if let Some(p12_payload) = trim_opt(cert.p12_base64) {
             let p12_bytes = decode_b64(&p12_payload).map_err(|_| {
@@ -2479,6 +2512,8 @@ async fn upsert_profile(
     })?;
     let checksum = Some(hex::encode(Sha256::digest(&profile_bytes)));
     let filename = trim_opt(input.profile_filename)
+        .map(|filename| validate_materialized_filename(filename, "profile_filename"))
+        .transpose()?
         .or_else(|| {
             parsed
                 .profile_uuid
@@ -2585,12 +2620,19 @@ pub async fn list_pipeline_ios_devices(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<ListPipelineIosDevicesResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::Read,
+    )
+    .await?;
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await
         .map_err(|e| {
@@ -2629,8 +2671,6 @@ pub async fn register_pipeline_ios_device(
     Path(pipeline_id): Path<String>,
     Json(req): Json<RegisterIosDeviceRequest>,
 ) -> ApiResult<RegisterIosDeviceResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "write").await?;
-
     let udid = req.udid.trim().to_uppercase();
     let name = req.name.trim().to_string();
     let platform = req.platform.unwrap_or_else(|| "IOS".to_string());
@@ -2654,6 +2694,15 @@ pub async fn register_pipeline_ios_device(
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::ManagePipelines,
+    )
+    .await?;
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await
         .map_err(|e| {
@@ -2868,12 +2917,19 @@ pub async fn sync_pipeline_ios_signing(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<SyncPipelineIosSigningResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "write").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    require_pipeline_project_permission(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::ManagePipelines,
+    )
+    .await?;
     if !ensure_pipeline_exists(&pool, &pipeline_id)
         .await
         .map_err(|e| {
@@ -3154,4 +3210,32 @@ pub async fn get_job_ios_signing(
     Ok(Json(RunnerIosSigningResponse {
         bundle: Some(bundle),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn materialized_ios_filenames_must_be_basenames() {
+        assert_eq!(
+            validate_materialized_filename("dist.p12".to_string(), "p12_filename")
+                .expect("valid p12 filename"),
+            "dist.p12"
+        );
+
+        for value in [
+            "../dist.p12",
+            "/tmp/dist.p12",
+            "profiles/dist.mobileprovision",
+            "profiles\\dist.mobileprovision",
+            ".",
+            "..",
+        ] {
+            assert!(
+                validate_materialized_filename(value.to_string(), "profile_filename").is_err(),
+                "{value} should be rejected"
+            );
+        }
+    }
 }

@@ -137,7 +137,7 @@ If you choose `Remote (Trusted Proxy / Warpgate)`, the web UI setup flow asks fo
 
 - trusted user email header (default: `x-warpgate-username`)
 - optional trusted proxy CIDRs
-- optional shared secret
+- optional shared secret sent by the proxy as `x-oore-trusted-proxy-secret`
 
 Then the owner is claimed from the trusted proxy-authenticated request instead of an OIDC redirect.
 
