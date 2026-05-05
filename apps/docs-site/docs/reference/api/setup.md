@@ -243,7 +243,7 @@ POST /v1/setup/trusted-proxy/configure
 |---|---|---|---|
 | `user_email_header` | `string` | No | Header containing the authenticated user email. Defaults to `x-warpgate-username`. |
 | `trusted_proxy_cidrs` | `string[]` | No | Optional allowlist of proxy source CIDRs. |
-| `shared_secret` | `string` | No | Optional write-only shared secret for defense in depth. |
+| `shared_secret` | `string` | No | Optional write-only shared secret for defense in depth. When configured, the proxy must send it in `X-Oore-Trusted-Proxy-Secret`. |
 
 ### Response `200 OK`
 
@@ -356,6 +356,12 @@ By default, the request must include:
 X-Warpgate-Username: owner@example.com
 ```
 
+If a trusted-proxy shared secret is configured, the request must also include:
+
+```text
+X-Oore-Trusted-Proxy-Secret: configured-shared-secret
+```
+
 ### Response `200 OK`
 
 ```json
@@ -373,10 +379,12 @@ X-Warpgate-Username: owner@example.com
 | 401 | `missing_auth` | Authorization header not provided |
 | 401 | `invalid_session` | Setup session token is invalid |
 | 401 | `session_expired` | Setup session has expired |
+| 401 | `trusted_proxy_shared_secret_missing` | Trusted proxy shared secret header is required but missing |
+| 401 | `trusted_proxy_shared_secret_invalid` | Trusted proxy shared secret header does not match |
 | 403 | `mode_restricted` | Instance is not in trusted-proxy setup mode |
 | 403 | `trusted_proxy_peer_not_allowed` | Request did not come from a trusted proxy peer |
-| 403 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
-| 403 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
+| 401 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
+| 401 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
 | 409 | `trusted_proxy_not_configured` | Trusted proxy settings have not been configured yet |
 | 409 | `invalid_state` | Not in `idp_configured` state |
 

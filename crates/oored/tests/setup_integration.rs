@@ -173,6 +173,30 @@ async fn set_runtime_and_remote_auth_mode(path: &Path, runtime_mode: &str, remot
     .expect("failed to set runtime/auth mode");
 }
 
+async fn upsert_trusted_proxy_settings(path: &Path, shared_secret: Option<&str>) {
+    let store = connect_store(path).await;
+    let now = now_unix();
+    let encrypted_shared_secret = shared_secret.map(|secret| {
+        oored::crypto::encrypt(secret, &TEST_ENCRYPTION_KEY)
+            .expect("failed to encrypt trusted proxy shared secret")
+    });
+
+    sqlx::query(
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
+         VALUES (1, 'x-warpgate-username', '[]', ?1, NULL, ?2, ?2)
+         ON CONFLICT(id) DO UPDATE SET
+            user_email_header = excluded.user_email_header,
+            trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
+            encrypted_shared_secret = excluded.encrypted_shared_secret,
+            updated_at = excluded.updated_at",
+    )
+    .bind(encrypted_shared_secret)
+    .bind(now)
+    .execute(store.pool())
+    .await
+    .expect("failed to upsert trusted proxy settings");
+}
+
 /// Extract the JSON body from a response.
 async fn body_json(response: axum::response::Response) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -1023,6 +1047,80 @@ async fn test_setup_owner_claim_trusted_proxy_requires_configuration() {
     assert_eq!(resp.status(), 409);
     let body = body_json(resp).await;
     assert_eq!(body["code"], "trusted_proxy_not_configured");
+}
+
+#[tokio::test]
+async fn test_setup_owner_claim_trusted_proxy_requires_configured_shared_secret() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let session_token = seed_session_token(&db_path).await;
+
+    set_state(&db_path, SetupState::IdpConfigured).await;
+    set_runtime_and_remote_auth_mode(&db_path, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings(&db_path, Some("proxy-secret")).await;
+
+    let missing_secret = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/claim-trusted-proxy")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .header("x-warpgate-username", "owner@example.com")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41235))))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_secret.status(), 401);
+    let body = body_json(missing_secret).await;
+    assert_eq!(body["code"], "trusted_proxy_shared_secret_missing");
+
+    let wrong_secret = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/claim-trusted-proxy")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .header("x-warpgate-username", "owner@example.com")
+                .header(
+                    oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+                    "wrong-secret",
+                )
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41236))))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_secret.status(), 401);
+    let body = body_json(wrong_secret).await;
+    assert_eq!(body["code"], "trusted_proxy_shared_secret_invalid");
+
+    let valid_secret = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/claim-trusted-proxy")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .header("x-warpgate-username", "owner@example.com")
+                .header(
+                    oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+                    "proxy-secret",
+                )
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41237))))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(valid_secret.status(), 200);
+    let body = body_json(valid_secret).await;
+    assert_eq!(body["state"], "owner_created");
+    assert_eq!(body["owner_email"], "owner@example.com");
 }
 
 // ── Ready-locked tests ──────────────────────────────────────────

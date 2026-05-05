@@ -10,7 +10,21 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-05-05
+
+- **Project RBAC hardening from Codex scan** ([GitHub #88](https://github.com/devaryakjha/oore.build/issues/88), [#89](https://github.com/devaryakjha/oore.build/issues/89)):
+  - `POST /v1/builds/{build_id}/cancel` now resolves the build project and requires `ProjectPermission::CancelBuild` before transitioning build state.
+  - Scoped artifact token create/list/revoke routes now resolve artifact -> build -> project and require `ProjectPermission::ReadArtifacts` before minting or managing bearer download URLs.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 ## 2026-04-15
+
+- **Security fixes from Codex scan** ([GitHub #83](https://github.com/devaryakjha/oore.build/issues/83), [#84](https://github.com/devaryakjha/oore.build/issues/84), [#85](https://github.com/devaryakjha/oore.build/issues/85), [#86](https://github.com/devaryakjha/oore.build/issues/86)):
+  - Enforced configured trusted-proxy shared secrets with the `X-Oore-Trusted-Proxy-Secret` header for runtime trusted-proxy login and setup owner claim.
+  - Scoped direct build/log/artifact read routes to project RBAC, including stream-token issuance and artifact download links.
+  - Scoped direct pipeline and signing mutation routes to project RBAC before applying pipeline, Android signing, iOS signing, device registration, or sync changes.
+  - Rejected unsafe iOS signing filenames at API and runner materialization boundaries so signing assets cannot escape the runner workspace.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 - Deployment/auth docs now cover the internal-only Mac Studio rollout path behind NetBird + Warpgate instead of assuming remote setup is always OIDC-first.
   - Added an operations guide for serving the static web UI over internal HTTPS while keeping `oored` loopback-only, forwarding Warpgate identity headers, and completing setup in `Remote (Trusted Proxy / Warpgate)` mode.

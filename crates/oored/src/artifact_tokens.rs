@@ -20,7 +20,9 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
-use crate::rbac::check_permission;
+use crate::project_rbac::{
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
+};
 use crate::store::write_audit_log;
 use crate::token::{generate_token, hash_token};
 use crate::util::{api_err, now_unix};
@@ -34,6 +36,48 @@ const DEFAULT_TTL_SECS: i64 = 86_400;
 const MAX_TTL_SECS: i64 = 604_800;
 
 // ── DB helpers ──────────────────────────────────────────────────
+
+async fn require_project_artifact_read(
+    pool: &SqlitePool,
+    auth: &AuthUser,
+    project_id: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::ReadArtifacts)
+}
+
+async fn load_artifact_access(
+    pool: &SqlitePool,
+    artifact_id: &str,
+) -> Result<(Option<i64>, String), (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT a.expires_at, b.project_id \
+         FROM artifacts a \
+         JOIN builds b ON b.id = a.build_id \
+         WHERE a.id = ?1",
+    )
+    .bind(artifact_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch artifact project");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch artifact",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Artifact not found"))?;
+
+    Ok((row.get("expires_at"), row.get("project_id")))
+}
 
 pub async fn create_download_token(
     pool: &SqlitePool,
@@ -139,8 +183,6 @@ pub async fn create_scoped_token_handler(
     Path(artifact_id): Path<String>,
     Json(req): Json<CreateScopedDownloadTokenRequest>,
 ) -> ApiResult<CreateScopedDownloadTokenResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let ttl = req.ttl_secs.unwrap_or(DEFAULT_TTL_SECS);
     if ttl < 60 {
         return Err(api_err(
@@ -162,22 +204,8 @@ pub async fn create_scoped_token_handler(
         store.pool().clone()
     };
 
-    // Verify artifact exists and is not expired
-    let artifact_row = sqlx::query("SELECT id, expires_at FROM artifacts WHERE id = ?1")
-        .bind(&artifact_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to fetch artifact");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to fetch artifact",
-            )
-        })?
-        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Artifact not found"))?;
-
-    let artifact_expires_at: Option<i64> = artifact_row.get("expires_at");
+    let (artifact_expires_at, project_id) = load_artifact_access(&pool, &artifact_id).await?;
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
     if let Some(ea) = artifact_expires_at
         && ea <= now_unix()
     {
@@ -248,12 +276,12 @@ pub async fn list_scoped_tokens_handler(
     auth: AuthUser,
     Path(artifact_id): Path<String>,
 ) -> ApiResult<ListArtifactDownloadTokensResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
+    let (_, project_id) = load_artifact_access(&pool, &artifact_id).await?;
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
     let now = now_unix();
 
     let rows = sqlx::query(
@@ -312,27 +340,30 @@ pub async fn revoke_scoped_token_handler(
     auth: AuthUser,
     Path(token_id): Path<String>,
 ) -> ApiResult<RevokeArtifactDownloadTokenResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let pool = {
         let store = state.store.lock().await;
         store.pool().clone()
     };
 
     // Fetch the token to check existence
-    let row =
-        sqlx::query("SELECT created_by, revoked_at FROM artifact_download_tokens WHERE id = ?1")
-            .bind(&token_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to query download token");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "db_error",
-                    "Failed to query download token",
-                )
-            })?;
+    let row = sqlx::query(
+        "SELECT t.created_by, t.revoked_at, b.project_id \
+         FROM artifact_download_tokens t \
+         JOIN artifacts a ON a.id = t.artifact_id \
+         JOIN builds b ON b.id = a.build_id \
+         WHERE t.id = ?1",
+    )
+    .bind(&token_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to query download token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "db_error",
+            "Failed to query download token",
+        )
+    })?;
 
     let row = row.ok_or_else(|| {
         api_err(
@@ -341,6 +372,9 @@ pub async fn revoke_scoped_token_handler(
             "Download token not found",
         )
     })?;
+
+    let project_id: String = row.get("project_id");
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
 
     let revoked_at: Option<i64> = row.get("revoked_at");
     if revoked_at.is_some() {

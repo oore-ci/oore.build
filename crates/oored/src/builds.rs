@@ -18,7 +18,6 @@ use crate::extractors::AuthUser;
 use crate::project_rbac::{
     ProjectPermission, require_project_permission, resolve_effective_project_role,
 };
-use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -696,8 +695,6 @@ pub async fn list_builds(
     auth: AuthUser,
     Query(params): Query<ListBuildsQuery>,
 ) -> ApiResult<ListBuildsResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
 
@@ -708,6 +705,13 @@ pub async fn list_builds(
     let mut conditions = Vec::new();
     let mut bind_values: Vec<String> = Vec::new();
 
+    if auth.0.role != "owner" && auth.0.role != "admin" {
+        bind_values.push(auth.0.user_id.clone());
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = builds.project_id AND pm.user_id = ?{})",
+            bind_values.len()
+        ));
+    }
     if let Some(ref project_id) = params.project_id {
         bind_values.push(project_id.clone());
         conditions.push(format!("project_id = ?{}", bind_values.len()));
@@ -772,8 +776,6 @@ pub async fn get_build(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<BuildDetailResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "read").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
 
@@ -790,6 +792,17 @@ pub async fn get_build(
             )
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+
+    let project_id: String = build_row.get("project_id");
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Read)?;
 
     let build = row_to_build(&build_row);
 
@@ -818,10 +831,32 @@ pub async fn cancel_build(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<CancelBuildResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "builds", "cancel").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
+
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to fetch build project for cancel");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::CancelBuild)?;
 
     let build = transition_build(
         pool,

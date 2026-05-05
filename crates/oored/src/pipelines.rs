@@ -17,7 +17,8 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{
-    ProjectPermission, require_project_permission, resolve_effective_project_role,
+    ProjectPermission, require_pipeline_project_permission, require_project_permission,
+    resolve_effective_project_role,
 };
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
@@ -606,10 +607,17 @@ pub async fn get_pipeline(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<PipelineDetailResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
+    require_pipeline_project_permission(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::Read,
+    )
+    .await?;
 
     let pipeline_row = sqlx::query("SELECT * FROM pipelines WHERE id = ?1")
         .bind(&pipeline_id)
@@ -646,10 +654,17 @@ pub async fn update_pipeline(
     Path(pipeline_id): Path<String>,
     Json(req): Json<UpdatePipelineRequest>,
 ) -> ApiResult<CreatePipelineResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "pipelines", "write").await?;
-
     let store = state.store.lock().await;
     let pool = store.pool();
+    require_pipeline_project_permission(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::ManagePipelines,
+    )
+    .await?;
 
     let row = sqlx::query("SELECT * FROM pipelines WHERE id = ?1")
         .bind(&pipeline_id)

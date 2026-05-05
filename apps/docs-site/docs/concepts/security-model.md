@@ -25,6 +25,7 @@ The daemon also supports loopback-only local login (`POST /v1/auth/local/login`)
 In Trusted Proxy mode, Oore CI trusts identity headers from an upstream proxy and creates normal Oore sessions per user.
 
 - Default identity header: `x-warpgate-username` (expected to be an email)
+- Optional shared-secret header: `x-oore-trusted-proxy-secret`
 - Trust boundary: headers are accepted only when the immediate peer is trusted (loopback by default, optional CIDR allowlist for remote proxy peers)
 - Authorization stays in Oore RBAC (owner/admin/developer/qa_viewer) via Oore users and roles
 

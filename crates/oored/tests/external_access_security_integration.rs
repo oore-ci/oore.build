@@ -208,17 +208,38 @@ async fn upsert_trusted_proxy_settings(
     user_email_header: &str,
     trusted_proxy_cidrs_json: &str,
 ) {
+    upsert_trusted_proxy_settings_with_secret(
+        pool,
+        user_email_header,
+        trusted_proxy_cidrs_json,
+        None,
+    )
+    .await;
+}
+
+async fn upsert_trusted_proxy_settings_with_secret(
+    pool: &sqlx::SqlitePool,
+    user_email_header: &str,
+    trusted_proxy_cidrs_json: &str,
+    shared_secret: Option<&str>,
+) {
     let now = now_unix();
+    let encrypted_shared_secret = shared_secret.map(|secret| {
+        oored::crypto::encrypt(secret, &common::TEST_ENCRYPTION_KEY)
+            .expect("failed to encrypt trusted proxy shared secret")
+    });
     sqlx::query(
         "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
-         VALUES (1, ?1, ?2, NULL, NULL, ?3, ?3)
+         VALUES (1, ?1, ?2, ?3, NULL, ?4, ?4)
          ON CONFLICT(id) DO UPDATE SET
             user_email_header = excluded.user_email_header,
             trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
+            encrypted_shared_secret = excluded.encrypted_shared_secret,
             updated_at = excluded.updated_at",
     )
     .bind(user_email_header)
     .bind(trusted_proxy_cidrs_json)
+    .bind(encrypted_shared_secret)
     .bind(now)
     .execute(pool)
     .await
@@ -872,6 +893,82 @@ async fn trusted_proxy_login_activates_invited_user() {
 
     assert_eq!(status, "active");
     assert_eq!(oidc_subject, "warpgate::invitee@example.com");
+}
+
+#[tokio::test]
+async fn trusted_proxy_login_requires_configured_shared_secret() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    mark_setup_ready(&pool).await;
+    set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings_with_secret(
+        &pool,
+        "x-warpgate-username",
+        "[]",
+        Some("proxy-secret"),
+    )
+    .await;
+    seed_user_with_role(&pool, "owner@example.com", "owner").await;
+
+    let missing_secret = Request::builder()
+        .uri("/v1/auth/trusted-proxy/login")
+        .method("POST")
+        .header("x-warpgate-username", "owner@example.com")
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43104))))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app
+        .clone()
+        .oneshot(missing_secret)
+        .await
+        .expect("missing secret response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["code"], "trusted_proxy_shared_secret_missing");
+
+    let wrong_secret = Request::builder()
+        .uri("/v1/auth/trusted-proxy/login")
+        .method("POST")
+        .header("x-warpgate-username", "owner@example.com")
+        .header(
+            oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+            "wrong-secret",
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43105))))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app
+        .clone()
+        .oneshot(wrong_secret)
+        .await
+        .expect("wrong secret response");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["code"], "trusted_proxy_shared_secret_invalid");
+
+    let valid_secret = Request::builder()
+        .uri("/v1/auth/trusted-proxy/login")
+        .method("POST")
+        .header("x-warpgate-username", "owner@example.com")
+        .header(
+            oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+            "proxy-secret",
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43106))))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app
+        .clone()
+        .oneshot(valid_secret)
+        .await
+        .expect("valid secret response");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["user"]["email"], "owner@example.com");
+    assert!(body["session_token"].as_str().is_some());
 }
 
 #[tokio::test]

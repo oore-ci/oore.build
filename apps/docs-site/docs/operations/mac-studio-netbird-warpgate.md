@@ -78,6 +78,7 @@ ci.macstudio.internal {
             header_up X-Forwarded-Proto https
             header_up X-Forwarded-For {remote_host}
             header_up X-Warpgate-Username {header.X-Warpgate-Username}
+            header_up X-Oore-Trusted-Proxy-Secret {env.OORE_TRUSTED_PROXY_SHARED_SECRET}
         }
     }
 
@@ -95,6 +96,7 @@ Important details:
 
 - Serve `apps/web/dist` from the same HTTPS origin users open in the browser.
 - Preserve the Warpgate identity header when proxying `/v1/*`.
+- If you configure a trusted-proxy shared secret in Oore, forward the same value as `X-Oore-Trusted-Proxy-Secret` from the reverse proxy.
 - If Warpgate and the reverse proxy both run on the Mac Studio, `oored` will see the proxy peer as loopback, so `trusted_proxy_cidrs` can stay empty.
 - If `oored` sees a non-loopback proxy peer, add that proxy source CIDR during trusted-proxy setup.
 
@@ -127,9 +129,10 @@ In setup:
 1. Verify the bootstrap token.
 2. Choose `Remote (Trusted Proxy / Warpgate)`.
 3. Use `x-warpgate-username` as the user email header.
-4. Leave trusted proxy CIDRs empty if the reverse proxy talks to `oored` over loopback.
-5. Claim the owner account from the Warpgate-authenticated request.
-6. Finalize setup.
+4. Set a shared secret and configure the reverse proxy to send it as `X-Oore-Trusted-Proxy-Secret`.
+5. Leave trusted proxy CIDRs empty if the reverse proxy talks to `oored` over loopback.
+6. Claim the owner account from the Warpgate-authenticated request.
+7. Finalize setup.
 
 ## 6. Set External Access network settings after setup
 

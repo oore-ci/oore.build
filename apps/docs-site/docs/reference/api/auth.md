@@ -181,7 +181,12 @@ By default, Oore expects the user email in:
 X-Warpgate-Username
 ```
 
-The exact header name can be changed in trusted-proxy configuration.
+The exact identity header name can be changed in trusted-proxy configuration.
+If a shared secret is configured, the proxy must also send:
+
+```text
+X-Oore-Trusted-Proxy-Secret
+```
 
 ### Response `200 OK`
 
@@ -193,8 +198,10 @@ Returns `LocalLoginResponse`.
 |---|---|---|
 | 403 | `mode_restricted` | Instance is not in `runtime_mode=remote` with `remote_auth_mode=trusted_proxy` |
 | 403 | `trusted_proxy_peer_not_allowed` | Request did not come from a trusted proxy peer |
-| 403 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
-| 403 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
+| 401 | `trusted_proxy_shared_secret_missing` | Trusted proxy shared secret header is required but missing |
+| 401 | `trusted_proxy_shared_secret_invalid` | Trusted proxy shared secret header does not match |
+| 401 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
+| 401 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
 | 403 | `user_not_found` | No active user matched the forwarded email |
 
 ::: info

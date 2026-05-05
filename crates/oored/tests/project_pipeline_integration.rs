@@ -58,6 +58,73 @@ async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String 
     token
 }
 
+async fn seed_user_with_role(pool: &sqlx::SqlitePool, email: &str, role: &str) -> String {
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)",
+    )
+    .bind(&user_id)
+    .bind(email)
+    .bind(format!("{role}::{email}"))
+    .bind(email)
+    .bind(role)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed test user");
+    user_id
+}
+
+async fn seed_project_member(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    user_id: &str,
+    created_by: &str,
+    role: &str,
+) {
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO project_members (id, project_id, user_id, role, created_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(project_id)
+    .bind(user_id)
+    .bind(role)
+    .bind(created_by)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed project member");
+}
+
+async fn seed_running_build_without_runner(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+) -> String {
+    let build_id = uuid::Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, runner_id, \
+         trigger_type, config_snapshot, queued_at, started_at, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, \
+                 (SELECT COALESCE(MAX(build_number), 0) + 1 FROM builds WHERE project_id = ?2), \
+                 'running', NULL, 'manual', '{}', ?4, ?4, ?4, ?4)",
+    )
+    .bind(&build_id)
+    .bind(project_id)
+    .bind(pipeline_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed running build");
+
+    build_id
+}
+
 /// Helper to send a JSON request and return (status, body_json).
 async fn json_request(
     app: &axum::Router,
@@ -678,6 +745,203 @@ async fn test_update_pipeline() {
         "Renamed Pipeline"
     );
     assert!(!json["pipeline"]["enabled"].as_bool().unwrap());
+}
+
+#[tokio::test]
+async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (_project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/private-project").await;
+
+    let outsider_id = seed_user_with_role(&pool, "outsider@example.com", "developer").await;
+    let outsider_token = create_session_token(&pool, &outsider_id).await;
+
+    let denied_requests = [
+        ("GET", format!("/v1/pipelines/{pipeline_id}"), None),
+        (
+            "PATCH",
+            format!("/v1/pipelines/{pipeline_id}"),
+            Some(serde_json::json!({ "name": "Hijacked Pipeline" })),
+        ),
+        (
+            "GET",
+            format!("/v1/pipelines/{pipeline_id}/android-signing"),
+            None,
+        ),
+        (
+            "PUT",
+            format!("/v1/pipelines/{pipeline_id}/android-signing"),
+            Some(serde_json::json!({
+                "debug": {
+                    "enabled": true,
+                    "keystore_filename": "debug.jks",
+                    "keystore_base64": "ZmFrZQ==",
+                    "store_password": "store-pass",
+                    "key_alias": "debug",
+                    "key_password": "key-pass"
+                }
+            })),
+        ),
+        (
+            "GET",
+            format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+            None,
+        ),
+        (
+            "PUT",
+            format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+            Some(serde_json::json!({
+                "enabled": false,
+                "mode": "manual",
+                "bundle_ids": []
+            })),
+        ),
+        (
+            "GET",
+            format!("/v1/pipelines/{pipeline_id}/ios-signing/devices"),
+            None,
+        ),
+        (
+            "POST",
+            format!("/v1/pipelines/{pipeline_id}/ios-signing/devices/register"),
+            Some(serde_json::json!({
+                "name": "QA Device",
+                "udid": "00008110ABCDEF1234567890ABCDEF1234567890",
+                "platform": "IOS"
+            })),
+        ),
+        (
+            "POST",
+            format!("/v1/pipelines/{pipeline_id}/ios-signing/sync"),
+            None,
+        ),
+    ];
+
+    for (method, uri, body) in denied_requests {
+        let (status, json) = json_request(&app, method, &uri, &outsider_token, body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {json}");
+    }
+}
+
+#[tokio::test]
+async fn test_developer_cannot_cancel_build_outside_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+
+    let (allowed_project_id, allowed_pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/allowed-project").await;
+    let (private_project_id, private_pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/private-project").await;
+
+    let developer_id = seed_user_with_role(&pool, "developer@example.com", "developer").await;
+    seed_project_member(
+        &pool,
+        &allowed_project_id,
+        &developer_id,
+        &owner_id,
+        "developer",
+    )
+    .await;
+    let developer_token = create_session_token(&pool, &developer_id).await;
+
+    let allowed_build_id =
+        seed_running_build_without_runner(&pool, &allowed_project_id, &allowed_pipeline_id).await;
+    let private_build_id =
+        seed_running_build_without_runner(&pool, &private_project_id, &private_pipeline_id).await;
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/builds/{private_build_id}/cancel"),
+        &developer_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "private cancel: {json}");
+
+    let private_status: String = sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+        .bind(&private_build_id)
+        .fetch_one(&pool)
+        .await
+        .expect("failed to fetch private build status");
+    assert_eq!(private_status, "running");
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/builds/{allowed_build_id}/cancel"),
+        &developer_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "allowed cancel: {json}");
+    assert_eq!(json["build"]["status"].as_str(), Some("canceled"));
+}
+
+#[tokio::test]
+async fn test_ios_signing_rejects_path_filenames() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let token = create_session_token(&pool, &user_id).await;
+
+    let (_, json) = json_request(
+        &app,
+        "POST",
+        "/v1/projects",
+        &token,
+        Some(serde_json::json!({
+            "name": "iOS Filename Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
+    )
+    .await;
+    let project_id = json["project"]["id"].as_str().unwrap();
+
+    let (_, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/pipelines"),
+        &token,
+        Some(serde_json::json!({ "name": "iOS Filename Pipeline" })),
+    )
+    .await;
+    let pipeline_id = json["pipeline"]["id"].as_str().unwrap().to_string();
+
+    let (status, json) = json_request(
+        &app,
+        "PUT",
+        &format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+        &token,
+        Some(serde_json::json!({
+            "enabled": false,
+            "mode": "manual",
+            "bundle_ids": [],
+            "certificate": {
+                "p12_filename": "../dist.p12"
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "invalid p12 filename: {json}"
+    );
+    assert_eq!(json["code"].as_str(), Some("invalid_filename"));
 }
 
 #[tokio::test]

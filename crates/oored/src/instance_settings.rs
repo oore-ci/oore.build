@@ -49,6 +49,7 @@ pub const DEFAULT_ALLOWED_ORIGINS: [&str; 4] = [
     "http://127.0.0.1:4173",
 ];
 pub const DEFAULT_TRUSTED_PROXY_EMAIL_HEADER: &str = "x-warpgate-username";
+pub const TRUSTED_PROXY_SHARED_SECRET_HEADER: &str = "x-oore-trusted-proxy-secret";
 
 #[derive(Debug, Clone)]
 pub struct EffectiveExternalAccessNetworkSettings {
@@ -64,6 +65,7 @@ pub struct EffectiveTrustedProxySettings {
     pub trusted_proxy_cidrs: Vec<String>,
     pub trusted_proxy_networks: Vec<IpNet>,
     pub has_shared_secret: bool,
+    pub encrypted_shared_secret: Option<String>,
     pub configured: bool,
     pub updated_at: Option<i64>,
 }
@@ -274,17 +276,18 @@ pub async fn load_effective_trusted_proxy_settings(
             .map(|value| parse_db_trusted_proxy_cidrs(&value))
             .unwrap_or_default();
         let trusted_proxy_networks = parse_cidr_list(&trusted_proxy_cidrs);
-        let has_shared_secret = row
+        let encrypted_shared_secret = row
             .try_get::<Option<String>, _>("encrypted_shared_secret")
             .ok()
-            .flatten()
-            .is_some();
+            .flatten();
+        let has_shared_secret = encrypted_shared_secret.is_some();
 
         return Ok(EffectiveTrustedProxySettings {
             user_email_header,
             trusted_proxy_cidrs,
             trusted_proxy_networks,
             has_shared_secret,
+            encrypted_shared_secret,
             configured: true,
             updated_at: row.try_get::<Option<i64>, _>("updated_at").ok().flatten(),
         });
@@ -296,6 +299,7 @@ pub async fn load_effective_trusted_proxy_settings(
         trusted_proxy_networks: parse_cidr_list(&trusted_proxy_cidrs),
         trusted_proxy_cidrs,
         has_shared_secret: false,
+        encrypted_shared_secret: None,
         configured: false,
         updated_at: None,
     })
@@ -431,12 +435,64 @@ fn trusted_proxy_settings_response(
     }
 }
 
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 pub fn is_trusted_proxy_peer(peer_ip: IpAddr, settings: &EffectiveTrustedProxySettings) -> bool {
     peer_ip.is_loopback()
         || settings
             .trusted_proxy_networks
             .iter()
             .any(|cidr| cidr.contains(&peer_ip))
+}
+
+pub fn verify_trusted_proxy_shared_secret(
+    headers: &HeaderMap,
+    settings: &EffectiveTrustedProxySettings,
+    encryption_key: &[u8],
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let Some(encrypted_shared_secret) = settings.encrypted_shared_secret.as_deref() else {
+        return Ok(());
+    };
+
+    let expected = crypto::decrypt(encrypted_shared_secret, encryption_key).map_err(|e| {
+        error!(error = %e, "failed to decrypt trusted proxy shared secret");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "decryption_error",
+            "Failed to verify trusted proxy shared secret",
+        )
+    })?;
+
+    let provided = headers
+        .get(TRUSTED_PROXY_SHARED_SECRET_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::UNAUTHORIZED,
+                "trusted_proxy_shared_secret_missing",
+                "Trusted proxy shared secret header is missing",
+            )
+        })?;
+
+    if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "trusted_proxy_shared_secret_invalid",
+            "Trusted proxy shared secret header is invalid",
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn extract_trusted_proxy_email(
@@ -1220,6 +1276,7 @@ pub async fn update_external_access_trusted_proxy_settings(
             trusted_proxy_cidrs,
             trusted_proxy_networks,
             has_shared_secret: encrypted_shared_secret.is_some(),
+            encrypted_shared_secret,
             configured: true,
             updated_at: Some(now),
         },
