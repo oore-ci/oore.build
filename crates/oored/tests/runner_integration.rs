@@ -7,8 +7,8 @@ mod common;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
-    body_json, connect_pool, create_test_app, seed_github_integration, seed_project_chain,
-    seed_test_user,
+    body_json, connect_pool, create_test_app, seed_github_integration, seed_gitlab_integration,
+    seed_project_chain, seed_test_user,
 };
 use sqlx::Row;
 use tower::ServiceExt;
@@ -167,6 +167,23 @@ async fn create_build(pool: &sqlx::SqlitePool, project_id: &str, pipeline_id: &s
     .expect("failed to create build event");
 
     build_id
+}
+
+async fn seed_access_token(pool: &sqlx::SqlitePool, integration_id: &str, token: &str) {
+    let now = common::now_unix();
+    let encrypted =
+        oored::crypto::encrypt(token, &common::TEST_ENCRYPTION_KEY).expect("encrypt token");
+    sqlx::query(
+        "INSERT INTO integration_credentials (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
+         VALUES (?1, ?2, 'access_token', ?3, ?4, ?4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(integration_id)
+    .bind(encrypted)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed access token");
 }
 
 #[tokio::test]
@@ -361,6 +378,53 @@ async fn test_runner_claim_and_execute() {
 
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["build"]["status"].as_str().unwrap(), "succeeded");
+}
+
+#[tokio::test]
+async fn test_runner_checkout_auth_returns_gitlab_token_for_assigned_job() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session_token = create_session_token(&pool, &user_id).await;
+
+    let integration_id = seed_gitlab_integration(&pool, &user_id, "webhook-secret").await;
+    seed_access_token(&pool, &integration_id, "glpat-test-token").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "group/private-repo").await;
+    let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let (runner_id, runner_token) = register_runner(&app, &session_token, "checkout-runner").await;
+
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/claim"))
+        .method("POST")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .uri(format!(
+            "/v1/runners/{runner_id}/jobs/{build_id}/checkout-auth"
+        ))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["auth"]["username"].as_str(), Some("test-org"));
+    assert_eq!(json["auth"]["password"].as_str(), Some("glpat-test-token"));
 }
 
 #[tokio::test]

@@ -3540,6 +3540,73 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/checkout-auth": {
+      "get": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Get checkout credentials",
+        "description": "Runner fetches ephemeral checkout credentials for its assigned build.",
+        "operationId": "get_checkout_auth",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkout credentials, if required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerCheckoutAuthResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Build is not assigned to this runner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Checkout credentials are missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/logs": {
       "post": {
         "tags": [
@@ -9226,6 +9293,36 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "RunnerCheckoutAuth": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "RunnerCheckoutAuthResponse": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerCheckoutAuth"
+              }
+            ]
           }
         }
       },

@@ -2685,6 +2685,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "tokio",
+ "url",
 ]
 
 [[package]]

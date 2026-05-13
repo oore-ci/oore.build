@@ -135,6 +135,7 @@ use utoipa::OpenApi;
         paths::update_runner,
         paths::runner_heartbeat,
         paths::claim_job,
+        paths::get_checkout_auth,
         paths::update_job_status,
         paths::get_job_status,
         // ── Build Logs ──
@@ -304,6 +305,8 @@ use utoipa::OpenApi;
         oore_contract::UpdateRunnerResponse,
         oore_contract::ClaimJobResponse,
         oore_contract::ClaimedJob,
+        oore_contract::RunnerCheckoutAuth,
+        oore_contract::RunnerCheckoutAuthResponse,
         oore_contract::UpdateJobStatusRequest,
         oore_contract::ListRunnersResponse,
         oore_contract::JobStatusResponse,
@@ -1596,6 +1599,23 @@ mod paths {
         )
     )]
     pub(super) async fn claim_job() {}
+
+    /// Get checkout credentials
+    ///
+    /// Runner fetches ephemeral checkout credentials for its assigned build.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/checkout-auth", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Checkout credentials, if required", body = RunnerCheckoutAuthResponse),
+            (status = 403, description = "Build is not assigned to this runner", body = ApiError),
+            (status = 409, description = "Checkout credentials are missing", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_checkout_auth() {}
 
     /// Update job status
     ///

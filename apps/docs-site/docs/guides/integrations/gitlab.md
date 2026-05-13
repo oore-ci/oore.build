@@ -12,9 +12,21 @@ This guide covers connecting a GitLab instance to Oore CI for repository access 
 - **Role**: owner or admin
 - A running Oore CI instance in `ready` state
 - A [GitLab](https://about.gitlab.com/) account (self-hosted or gitlab.com)
-- Permission to create OAuth applications in your GitLab instance
+- Permission to create project webhooks in GitLab
+- Either a Personal Access Token with `api` and `read_repository` scopes, or permission to create OAuth applications in your GitLab instance
 
-## Steps
+## Personal Access Token mode
+
+Use this mode for self-managed/internal GitLab instances when you want the quickest setup.
+
+1. In GitLab, create a Personal Access Token with:
+   - `api`: lets Oore list accessible projects and read integration metadata
+   - `read_repository`: lets Oore runners clone private repositories over HTTPS
+2. In Oore, go to **Settings > Integrations > Connect GitLab**.
+3. Enter the GitLab host URL and token.
+4. Copy the displayed webhook URL and generated webhook secret. You need both when configuring GitLab webhooks.
+
+## OAuth application mode
 
 ### 1. Create a GitLab OAuth application
 
@@ -49,9 +61,9 @@ When you create a project from a GitLab repository, Oore CI needs webhooks for a
 
 1. In GitLab, go to **Project Settings > Webhooks**
 2. Add a webhook:
-   - **URL**: `http://<your-oore-instance>:8787/v1/webhooks/gitlab`
-   - **Trigger**: Push events, Merge request events
-   - **Secret token**: (use the token from your Oore CI integration settings)
+   - **URL**: `<your public Oore URL>/v1/webhooks/gitlab`
+   - **Trigger**: Push events
+   - **Secret token**: use the webhook secret shown in Oore
 3. Click **Add webhook**
 
 ## Removing the integration

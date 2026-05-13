@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -70,6 +71,14 @@ const gitLabSetupSchema = z
 
 type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
 
+function generateWebhookSecret() {
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
+    '',
+  )
+}
+
 export const Route = createFileRoute('/settings/integrations/gitlab')({
   staticData: { breadcrumbLabel: 'GitLab' },
   beforeLoad: () => {
@@ -84,6 +93,10 @@ function GitLabSetupPage() {
   const startMutation = useGitLabStart()
   const { data: preferences } = useInstancePreferences()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
+  const webhookUrl =
+    typeof window === 'undefined'
+      ? '/v1/webhooks/gitlab'
+      : `${window.location.origin}/v1/webhooks/gitlab`
 
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
@@ -91,7 +104,7 @@ function GitLabSetupPage() {
     defaultValues: {
       host_url: 'https://gitlab.com',
       auth_mode: 'personal_token',
-      webhook_secret: '',
+      webhook_secret: generateWebhookSecret(),
       access_token: '',
       client_id: '',
       client_secret: '',
@@ -221,27 +234,6 @@ function GitLabSetupPage() {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="webhook_secret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Webhook secret</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        {...field}
-                        placeholder="Shared secret for GitLab webhook settings"
-                      />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">
-                      Use the same secret when creating the webhook in GitLab.
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
               {authMode === 'personal_token' ? (
                 <FormField
                   control={form.control}
@@ -256,11 +248,15 @@ function GitLabSetupPage() {
                           placeholder="glpat-..."
                         />
                       </FormControl>
-                      <p className="text-xs text-muted-foreground">
-                        Create a token with api scope at{' '}
-                        {hostUrl || 'https://gitlab.com'}
+                      <FormDescription>
+                        Personal Access Token with{' '}
+                        <code className="font-mono">api</code> and{' '}
+                        <code className="font-mono">read_repository</code>{' '}
+                        scopes. The API scope lists projects; read_repository
+                        lets runners clone private repositories over HTTPS.
+                        Create it at {hostUrl || 'https://gitlab.com'}
                         /-/user_settings/personal_access_tokens.
-                      </p>
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -299,6 +295,40 @@ function GitLabSetupPage() {
                   />
                 </>
               )}
+
+              <FormItem>
+                <FormLabel>Webhook URL</FormLabel>
+                <FormControl>
+                  <Input readOnly value={webhookUrl} />
+                </FormControl>
+                <FormDescription>
+                  In GitLab, add a project webhook with this URL, the secret
+                  below as Secret token, and Push events enabled.
+                </FormDescription>
+              </FormItem>
+
+              <FormField
+                control={form.control}
+                name="webhook_secret"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Webhook secret</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="password"
+                        {...field}
+                        placeholder="Shared secret for GitLab webhook settings"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Oore verifies incoming GitLab requests against the
+                      X-Gitlab-Token header. This generated value is safe to
+                      replace if your team already has a webhook secret.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <Button
                 type="submit"

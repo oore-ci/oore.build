@@ -1138,6 +1138,18 @@ pub struct ClaimedJob {
     pub lease_expires_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerCheckoutAuth {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerCheckoutAuthResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RunnerCheckoutAuth>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct UpdateJobStatusRequest {
     pub status: String,

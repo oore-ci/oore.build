@@ -138,6 +138,20 @@ If no jobs are available, returns `204 No Content`.
 
 ---
 
+## Get Checkout Auth {#get-checkout-auth}
+
+Runner fetches checkout credentials for its assigned job.
+
+```
+GET /v1/runners/{runner_id}/jobs/{job_id}/checkout-auth
+```
+
+**Authentication**: Runner token (Bearer)
+
+The response contains credentials only when the linked source requires them, such as a private GitLab repository connected with a Personal Access Token or OAuth token. Runners use these credentials for Git HTTPS checkout without writing them to build logs.
+
+---
+
 ## Get Job Status {#get-job-status}
 
 ```

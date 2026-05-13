@@ -8,7 +8,8 @@ use oore_contract::{
     AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
     PlatformBuildArgs, PlatformBuildCommands, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
+    RunnerAndroidSigningResponse, RunnerCheckoutAuth, RunnerCheckoutAuthResponse,
+    RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -1731,13 +1732,34 @@ struct CheckoutInvocation {
     preview_command: String,
     shell_script: String,
     env: Vec<(String, String)>,
+    credential_line: Option<String>,
+}
+
+fn build_git_credential_line(repo_url: &str, auth: &RunnerCheckoutAuth) -> anyhow::Result<String> {
+    let mut parsed =
+        url::Url::parse(repo_url).map_err(|e| anyhow::anyhow!("invalid repository URL: {e}"))?;
+    parsed
+        .set_username(&auth.username)
+        .map_err(|_| anyhow::anyhow!("failed to set checkout credential username"))?;
+    parsed
+        .set_password(Some(&auth.password))
+        .map_err(|_| anyhow::anyhow!("failed to set checkout credential password"))?;
+    parsed.set_path("");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Ok(parsed.to_string())
 }
 
 fn build_checkout_invocation(
     repo_url: &str,
     commit_sha: Option<&str>,
     branch: Option<&str>,
+    checkout_auth: Option<&RunnerCheckoutAuth>,
 ) -> anyhow::Result<CheckoutInvocation> {
+    let credential_line = checkout_auth
+        .map(|auth| build_git_credential_line(repo_url, auth))
+        .transpose()?;
+
     if let Some(sha) = commit_sha {
         return Ok(CheckoutInvocation {
             preview_command: format!(
@@ -1764,6 +1786,7 @@ fi
                 ("OORE_REPO".to_string(), repo_url.to_string()),
                 ("OORE_SHA".to_string(), sha.to_string()),
             ],
+            credential_line,
         });
     }
 
@@ -1791,10 +1814,34 @@ fi
                 ("OORE_REPO".to_string(), repo_url.to_string()),
                 ("OORE_BRANCH".to_string(), branch.to_string()),
             ],
+            credential_line,
         });
     }
 
     anyhow::bail!("Build has neither commit_sha nor branch — cannot checkout source")
+}
+
+async fn fetch_checkout_auth(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+) -> anyhow::Result<Option<RunnerCheckoutAuth>> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/checkout-auth",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Checkout auth request failed: {}", resp.status());
+    }
+
+    let response: RunnerCheckoutAuthResponse = resp.json().await?;
+    Ok(response.auth)
 }
 
 async fn execute_build(
@@ -1841,12 +1888,19 @@ async fn execute_build(
     }
 
     let start = now_unix();
-    let checkout =
-        match build_checkout_invocation(repo_url, job.commit_sha.as_deref(), job.branch.as_deref())
-        {
-            Ok(checkout) => checkout,
-            Err(e) => return (steps, Err(e)),
-        };
+    let checkout_auth = match fetch_checkout_auth(client, daemon_url, config, &job.build_id).await {
+        Ok(auth) => auth,
+        Err(e) => return (steps, Err(e)),
+    };
+    let checkout = match build_checkout_invocation(
+        repo_url,
+        job.commit_sha.as_deref(),
+        job.branch.as_deref(),
+        checkout_auth.as_ref(),
+    ) {
+        Ok(checkout) => checkout,
+        Err(e) => return (steps, Err(e)),
+    };
 
     let _ = append_runner_log_line(
         client,
@@ -1877,6 +1931,30 @@ async fn execute_build(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+
+    checkout_child.env("GIT_TERMINAL_PROMPT", "0");
+    if let Some(credential_line) = checkout.credential_line.as_deref() {
+        let credential_path = workspace.join(".oore-git-credentials");
+        if let Err(e) = fs::write(&credential_path, format!("{credential_line}\n")) {
+            return (steps, Err(e.into()));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = fs::set_permissions(&credential_path, fs::Permissions::from_mode(0o600))
+            {
+                return (steps, Err(e.into()));
+            }
+        }
+        checkout_child.env("GIT_CONFIG_COUNT", "2");
+        checkout_child.env("GIT_CONFIG_KEY_0", "credential.helper");
+        checkout_child.env(
+            "GIT_CONFIG_VALUE_0",
+            format!("store --file={}", credential_path.display()),
+        );
+        checkout_child.env("GIT_CONFIG_KEY_1", "credential.useHttpPath");
+        checkout_child.env("GIT_CONFIG_VALUE_1", "false");
+    }
 
     for (key, value) in &checkout.env {
         checkout_child.env(key, value);
@@ -3170,7 +3248,7 @@ mod tests {
     #[test]
     fn checkout_invocation_includes_recursive_submodule_commands() {
         let commit =
-            build_checkout_invocation("https://example.com/repo.git", Some("abc123"), None)
+            build_checkout_invocation("https://example.com/repo.git", Some("abc123"), None, None)
                 .expect("commit checkout invocation");
         assert!(
             commit
@@ -3188,8 +3266,9 @@ mod tests {
                 .contains("[oore-checkout] updating submodules (init + recursive)")
         );
 
-        let branch = build_checkout_invocation("https://example.com/repo.git", None, Some("main"))
-            .expect("branch checkout invocation");
+        let branch =
+            build_checkout_invocation("https://example.com/repo.git", None, Some("main"), None)
+                .expect("branch checkout invocation");
         assert!(
             branch
                 .preview_command
@@ -3199,6 +3278,43 @@ mod tests {
             branch
                 .preview_command
                 .contains("git submodule update --init --recursive")
+        );
+    }
+
+    #[test]
+    fn checkout_auth_uses_credential_file_without_leaking_preview() {
+        let auth = RunnerCheckoutAuth {
+            username: "arya@example.com".to_string(),
+            password: "secret token".to_string(),
+        };
+        let checkout = build_checkout_invocation(
+            "https://gitlab.example.com/group/repo.git",
+            None,
+            Some("main"),
+            Some(&auth),
+        )
+        .expect("checkout invocation with auth");
+
+        assert!(
+            checkout
+                .preview_command
+                .contains("git clone --depth 1 --branch main <repo>")
+        );
+        assert!(!checkout.preview_command.contains("secret"));
+        assert_eq!(checkout.env.len(), 2);
+        let credential_line = checkout
+            .credential_line
+            .as_deref()
+            .expect("credential line");
+        assert!(
+            credential_line
+                .starts_with("https://arya%40example.com:secret%20token@gitlab.example.com")
+        );
+        assert!(
+            !checkout
+                .env
+                .iter()
+                .any(|(_, value)| value.contains("secret"))
         );
     }
 
@@ -3213,6 +3329,7 @@ mod tests {
             fixture.root_repo.to_str().expect("root path"),
             None,
             Some(&fixture.default_branch),
+            None,
         )
         .expect("build checkout invocation");
         let output = run_checkout_for_test(&checkout, &workspace);
@@ -3241,6 +3358,7 @@ mod tests {
         let checkout = build_checkout_invocation(
             fixture.root_repo.to_str().expect("root path"),
             Some(&fixture.head_sha),
+            None,
             None,
         )
         .expect("build checkout invocation");
@@ -3283,6 +3401,7 @@ mod tests {
             fixture.root_repo.to_str().expect("root path"),
             None,
             Some(&fixture.default_branch),
+            None,
         )
         .expect("build checkout invocation");
         let output = run_checkout_for_test(&checkout, &workspace);

@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-13
 
+- **GitLab source setup and private checkout fixes**:
+  - Runner checkout now fetches GitLab HTTPS credentials from a runner-only assigned-job endpoint, so private GitLab repositories clone with the stored integration token instead of prompting for a username.
+  - GitLab integration setup now shows required Personal Access Token scopes, the exact webhook receiver URL, and a generated webhook secret before connecting.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **First-class Warpgate split-deployment operations**:
   - Added `oore external-access enable-trusted-proxy` to configure public URL, allowed origins, trusted proxy CIDRs/header/shared secret, and switch the instance into `remote + trusted_proxy` mode without manual curl calls.
   - Added `POST /v1/users/transfer-owner` and `oore users transfer-owner` so the owner role can be transferred to an active Warpgate user without editing SQLite.

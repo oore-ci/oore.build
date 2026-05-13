@@ -2269,6 +2269,10 @@ async fn build_router_inner(
         )
         .route("/v1/runners/{runner_id}/claim", post(runners::claim_job))
         .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/checkout-auth",
+            get(runners::get_checkout_auth),
+        )
+        .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/status",
             post(runners::update_job_status),
         )
