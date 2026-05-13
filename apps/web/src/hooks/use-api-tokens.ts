@@ -26,7 +26,7 @@ export function useApiTokens() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'api-tokens'],
     queryFn: () => listApiTokens(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -38,7 +38,7 @@ export function useCreateApiToken() {
 
   return useMutation({
     mutationFn: (data: CreateApiTokenRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return createApiToken(baseUrl, token, data)
@@ -59,7 +59,7 @@ export function useRevokeApiToken() {
 
   return useMutation({
     mutationFn: (tokenId: string) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return revokeApiToken(baseUrl, token, tokenId)

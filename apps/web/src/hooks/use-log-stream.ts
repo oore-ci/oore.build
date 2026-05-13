@@ -68,7 +68,7 @@ export function useLogStream(
   }, [])
 
   const pollOnce = useCallback(async () => {
-    if (!baseUrl || !token) return
+    if (baseUrl === null || !token) return
     const after = Math.max(-1, lastSequenceRef.current - POLL_BACKFILL_WINDOW)
     try {
       const response = await getBuildLogs(baseUrl, token, buildId, {
@@ -88,7 +88,7 @@ export function useLogStream(
   }, [])
 
   const startPolling = useCallback(() => {
-    if (!baseUrl || !token || pollingRef.current) return
+    if (baseUrl === null || !token || pollingRef.current) return
     void pollOnce()
     pollingRef.current = setInterval(() => {
       void pollOnce()
@@ -108,7 +108,7 @@ export function useLogStream(
   }, [stopPolling])
 
   useEffect(() => {
-    if (!enabled || !baseUrl || !token) {
+    if (!enabled || baseUrl === null || !token) {
       cleanup()
       return
     }

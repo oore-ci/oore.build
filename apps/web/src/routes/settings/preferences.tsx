@@ -28,6 +28,7 @@ import {
   useExternalAccessNetworkSettings,
   useExternalAccessOidc,
   useExternalAccessPreflight,
+  useExternalAccessTrustedProxySettings,
   useInstancePreferences,
   useTestOidcConnection,
   useUpdateArtifactStorageSettings,
@@ -237,6 +238,7 @@ function PreferencesPage() {
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
   const oidcConfigQuery = useExternalAccessOidc()
+  const trustedProxySettingsQuery = useExternalAccessTrustedProxySettings()
   const configureExternalAccessOidcMutation = useConfigureExternalAccessOidc()
   const testOidcConnectionMutation = useTestOidcConnection()
   const updateNetworkSettingsMutation = useUpdateExternalAccessNetworkSettings()
@@ -331,8 +333,6 @@ function PreferencesPage() {
   const backendKind = storageForm.watch('backend_kind')
   const objectService = storageForm.watch('object_service')
 
-
-
   useMountEffect(() => {
     const subscription = storageForm.watch((values, { name }) => {
       if (name !== 'object_service' && name !== 'backend_kind') return
@@ -349,8 +349,6 @@ function PreferencesPage() {
     })
     return () => subscription.unsubscribe()
   })
-
-
 
   function onSubmitStorage(values: StorageFormValues) {
     const provider =
@@ -527,6 +525,9 @@ function PreferencesPage() {
   }, [settings?.source])
   const preferences = preferencesQuery.data?.preferences
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
+  const remoteAuthMode = preferences?.remote_auth_mode ?? 'oidc'
+  const remoteAuthLabel =
+    remoteAuthMode === 'trusted_proxy' ? 'Trusted Proxy' : 'OIDC'
   const failedReadinessChecks = useMemo(
     () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],
     [preflightQuery.data?.checks],
@@ -537,12 +538,16 @@ function PreferencesPage() {
   }, [preflightQuery.data?.checks])
   const setupReady = readinessById.get('setup_ready')?.ok ?? false
   const oidcReady = readinessById.get('oidc_configured')?.ok ?? false
+  const trustedProxyReady =
+    readinessById.get('trusted_proxy_configured')?.ok ?? false
+  const identityReady =
+    remoteAuthMode === 'trusted_proxy' ? trustedProxyReady : oidcReady
   const networkReady =
     (readinessById.get('public_url_https')?.ok ?? false) &&
     (readinessById.get('public_origin_allowed')?.ok ?? false) &&
     (readinessById.get('redirect_policy_consistent')?.ok ?? false)
   const readinessReady = preflightQuery.data?.ready ?? false
-  const setupStepsComplete = Number(networkReady) + Number(oidcReady)
+  const setupStepsComplete = Number(networkReady) + Number(identityReady)
   const setupStepCount = 2
 
   function handleExternalAccessToggle() {
@@ -618,7 +623,7 @@ function PreferencesPage() {
               <p className="text-sm font-medium">Current access</p>
               <p className="text-xs text-muted-foreground">
                 {externalAccessEnabled
-                  ? 'Sign-in from network paths is active and uses OIDC.'
+                  ? `Sign-in from network paths is active and uses ${remoteAuthLabel}.`
                   : 'Local Only is active. Sign-in is limited to localhost on this machine.'}
               </p>
             </div>
@@ -719,16 +724,56 @@ function PreferencesPage() {
                       <div>
                         <p className="text-sm font-medium">2. Identity</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {oidcReady
-                            ? 'OIDC provider configured.'
-                            : 'Configure OIDC provider.'}
+                          {remoteAuthMode === 'trusted_proxy'
+                            ? identityReady
+                              ? 'Trusted proxy settings configured.'
+                              : 'Configure trusted proxy settings.'
+                            : identityReady
+                              ? 'OIDC provider configured.'
+                              : 'Configure OIDC provider.'}
                         </p>
                       </div>
-                      <Badge variant={oidcReady ? 'success' : 'outline'}>
-                        {oidcReady ? 'Ready' : 'Setup'}
+                      <Badge variant={identityReady ? 'success' : 'outline'}>
+                        {identityReady ? 'Ready' : 'Setup'}
                       </Badge>
                     </div>
-                    {oidcConfig ? (
+                    {remoteAuthMode === 'trusted_proxy' ? (
+                      trustedProxySettingsQuery.data?.settings ? (
+                        <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                          <p>
+                            <span className="font-medium text-foreground">
+                              Header:
+                            </span>{' '}
+                            <span className="font-mono">
+                              {
+                                trustedProxySettingsQuery.data.settings
+                                  .user_email_header
+                              }
+                            </span>
+                          </p>
+                          <p>
+                            <span className="font-medium text-foreground">
+                              CIDRs:
+                            </span>{' '}
+                            {trustedProxySettingsQuery.data.settings
+                              .trusted_proxy_cidrs.length > 0
+                              ? trustedProxySettingsQuery.data.settings.trusted_proxy_cidrs.join(
+                                  ', ',
+                                )
+                              : 'Loopback only'}
+                          </p>
+                          <p>
+                            <span className="font-medium text-foreground">
+                              Secret:
+                            </span>{' '}
+                            {trustedProxySettingsQuery.data.settings
+                              .has_shared_secret
+                              ? 'Stored'
+                              : 'Not configured'}
+                          </p>
+                        </div>
+                      ) : null
+                    ) : oidcConfig ? (
                       <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                         <p>
                           <span className="font-medium text-foreground">
@@ -757,7 +802,13 @@ function PreferencesPage() {
                       </div>
                     ) : null}
                     <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
-                      {oidcReady ? 'Reconfigure' : 'Configure'}
+                      {remoteAuthMode === 'trusted_proxy'
+                        ? identityReady
+                          ? 'Configured'
+                          : 'Configure'
+                        : identityReady
+                          ? 'Reconfigure'
+                          : 'Configure'}
                       <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
                     </p>
                   </button>
@@ -1156,8 +1207,9 @@ function PreferencesPage() {
                     !externalAccessOidcForm.watch('issuer_url').trim()
                   }
                   onClick={() => {
-                    const issuerUrl =
-                      externalAccessOidcForm.getValues('issuer_url').trim()
+                    const issuerUrl = externalAccessOidcForm
+                      .getValues('issuer_url')
+                      .trim()
                     if (issuerUrl) {
                       testOidcConnectionMutation.mutate(
                         { issuer_url: issuerUrl },

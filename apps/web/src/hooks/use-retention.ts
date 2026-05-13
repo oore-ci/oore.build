@@ -36,7 +36,7 @@ export function useRetentionPolicy() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'retention-policy'],
     queryFn: () => getRetentionPolicy(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -48,7 +48,7 @@ export function useUpdateRetentionPolicy() {
 
   return useMutation({
     mutationFn: (data: UpdateRetentionPolicyRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateRetentionPolicy(baseUrl, token, data)
@@ -72,7 +72,7 @@ export function useRetentionLastCleanup() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'retention-last-cleanup'],
     queryFn: () => getRetentionLastCleanup(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -84,7 +84,7 @@ export function useProjectRetention(projectId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'project-retention', projectId],
     queryFn: () => getProjectRetention(baseUrl!, token!, projectId),
-    enabled: !!baseUrl && !!token && !!projectId,
+    enabled: baseUrl !== null && !!token && !!projectId,
   })
 }
 
@@ -96,7 +96,7 @@ export function useUpdateProjectRetention(projectId: string) {
 
   return useMutation({
     mutationFn: (data: UpdateProjectRetentionOverrideRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateProjectRetention(baseUrl, token, projectId, data)
@@ -117,7 +117,7 @@ export function useDeleteProjectRetention(projectId: string) {
 
   return useMutation({
     mutationFn: () => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return deleteProjectRetention(baseUrl, token, projectId)

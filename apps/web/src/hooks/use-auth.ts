@@ -34,7 +34,7 @@ export function useCurrentUser() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'me'],
     queryFn: () => getMe(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -46,7 +46,7 @@ export function useUsers() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'users'],
     queryFn: () => listUsers(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -58,7 +58,7 @@ export function useInviteUser() {
 
   return useMutation({
     mutationFn: (data: InviteUserRequest) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return inviteUser(baseUrl, token, data)
     },
@@ -84,7 +84,7 @@ export function useUpdateUserRole() {
       userId: string
       data: UpdateUserRoleRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updateUserRole(baseUrl, token, userId, data)
     },
@@ -104,7 +104,7 @@ export function useReEnableUser() {
 
   return useMutation({
     mutationFn: (userId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return reEnableUser(baseUrl, token, userId)
     },
@@ -124,7 +124,7 @@ export function useDeleteUser() {
 
   return useMutation({
     mutationFn: (userId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deleteUser(baseUrl, token, userId)
     },
@@ -145,7 +145,7 @@ export function useLogout() {
 
   return useMutation({
     mutationFn: () => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.resolve({ ok: true } as { ok: boolean })
       return logout(baseUrl, token)
     },

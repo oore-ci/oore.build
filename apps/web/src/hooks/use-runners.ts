@@ -26,7 +26,7 @@ export function useRunners() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'runners'],
     queryFn: () => listRunners(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
     refetchInterval: 15_000,
   })
 }
@@ -45,7 +45,7 @@ export function useUpdateRunner() {
       runnerId: string
       data: UpdateRunnerRequest
     }) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateRunner(baseUrl, token, runnerId, data)

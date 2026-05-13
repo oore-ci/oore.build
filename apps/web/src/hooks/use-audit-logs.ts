@@ -32,7 +32,7 @@ export function useAuditLogs(params?: {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'audit-logs', params ?? {}],
     queryFn: () => listAuditLogs(baseUrl!, token!, params),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
     placeholderData: keepPreviousData,
   })
 }

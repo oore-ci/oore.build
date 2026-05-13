@@ -85,7 +85,7 @@ function useAvailableRepos(enabled: boolean) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
     queryFn: async () => {
-      if (!baseUrl || !token) return []
+      if (baseUrl === null || !token) return []
       const intResp = await listIntegrations(baseUrl, token)
       const repos: Array<IntegrationRepository> = []
       for (const integration of intResp.integrations) {
@@ -102,7 +102,7 @@ function useAvailableRepos(enabled: boolean) {
       }
       return repos
     },
-    enabled: enabled && !!baseUrl && !!token,
+    enabled: enabled && baseUrl !== null && !!token,
   })
 }
 
@@ -148,7 +148,11 @@ export default function CreateProjectDialog({
 
   // Derive effective sourceKind: fallback to 'local' if remote mode has no repos
   const effectiveSourceKind =
-    isRemoteMode && sourceKind === 'repo' && !hasRepos && !sourceKindTouched && !reposLoading
+    isRemoteMode &&
+    sourceKind === 'repo' &&
+    !hasRepos &&
+    !sourceKindTouched &&
+    !reposLoading
       ? 'local'
       : sourceKind
 
@@ -435,7 +439,8 @@ export default function CreateProjectDialog({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
-                    (effectiveSourceKind === 'repo' && (reposLoading || !hasRepos))
+                    (effectiveSourceKind === 'repo' &&
+                      (reposLoading || !hasRepos))
                   }
                 >
                   {createMutation.isPending ? (

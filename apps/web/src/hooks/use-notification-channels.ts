@@ -35,7 +35,7 @@ export function useNotificationChannels() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'notification-channels'],
     queryFn: () => listNotificationChannels(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -47,7 +47,7 @@ export function useCreateNotificationChannel() {
 
   return useMutation({
     mutationFn: (data: CreateNotificationChannelRequest) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createNotificationChannel(baseUrl, token, data)
     },
@@ -73,7 +73,7 @@ export function useUpdateNotificationChannel() {
       id: string
       data: UpdateNotificationChannelRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updateNotificationChannel(baseUrl, token, id, data)
     },
@@ -93,7 +93,7 @@ export function useDeleteNotificationChannel() {
 
   return useMutation({
     mutationFn: (id: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deleteNotificationChannel(baseUrl, token, id)
     },
@@ -111,7 +111,7 @@ export function useTestNotificationChannel() {
 
   return useMutation({
     mutationFn: (id: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return testNotificationChannel(baseUrl, token, id)
     },
@@ -130,6 +130,6 @@ export function useNotificationDeliveries(channelId: string) {
       channelId,
     ],
     queryFn: () => listNotificationDeliveries(baseUrl!, token!, channelId),
-    enabled: !!baseUrl && !!token && !!channelId,
+    enabled: baseUrl !== null && !!token && !!channelId,
   })
 }

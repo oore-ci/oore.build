@@ -59,7 +59,7 @@ export function useBuilds(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
     queryFn: () => listBuilds(baseUrl!, token!, params),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
     refetchInterval: options?.refetchInterval,
     placeholderData: keepPreviousData,
   })
@@ -88,7 +88,7 @@ export function useBuild(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build', buildId],
     queryFn: () => getBuild(baseUrl!, token!, buildId),
-    enabled: !!baseUrl && !!token && !!buildId,
+    enabled: baseUrl !== null && !!token && !!buildId,
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -108,7 +108,7 @@ export function useCreateBuild() {
       projectId: string
       data: CreateBuildRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createBuild(baseUrl, token, projectId, data)
     },
@@ -171,7 +171,7 @@ export function useCancelBuild() {
 
   return useMutation({
     mutationFn: (buildId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return cancelBuild(baseUrl, token, buildId)
     },
@@ -194,7 +194,7 @@ export function useRerunBuild() {
 
   return useMutation({
     mutationFn: (buildId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return rerunBuild(baseUrl, token, buildId)
     },
@@ -239,7 +239,7 @@ export function useBuildLogs(buildId: string) {
 
       return { logs: allLogs, total }
     },
-    enabled: !!baseUrl && !!token && !!buildId,
+    enabled: baseUrl !== null && !!token && !!buildId,
   })
 }
 
@@ -254,7 +254,7 @@ export function useArtifacts(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifacts', buildId],
     queryFn: () => listArtifacts(baseUrl!, token!, buildId),
-    enabled: !!baseUrl && !!token && !!buildId,
+    enabled: baseUrl !== null && !!token && !!buildId,
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -265,7 +265,7 @@ export function useArtifactDownloadLink() {
 
   return useMutation({
     mutationFn: (artifactId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return getArtifactDownloadLink(baseUrl, token, artifactId)
     },
@@ -286,7 +286,7 @@ export function useCreateScopedDownloadToken() {
       artifactId: string
       data: CreateScopedDownloadTokenRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createScopedDownloadToken(baseUrl, token, artifactId, data)
     },
@@ -306,7 +306,7 @@ export function useScopedDownloadTokens(artifactId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
     queryFn: () => listScopedDownloadTokens(baseUrl!, token!, artifactId),
-    enabled: !!baseUrl && !!token && !!artifactId,
+    enabled: baseUrl !== null && !!token && !!artifactId,
   })
 }
 
@@ -318,7 +318,7 @@ export function useRevokeScopedDownloadToken() {
 
   return useMutation({
     mutationFn: (tokenId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return revokeScopedDownloadToken(baseUrl, token, tokenId)
     },

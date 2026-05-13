@@ -13,6 +13,7 @@ import {
   getExternalAccessNetworkSettings,
   getExternalAccessOidc,
   getExternalAccessPreflight,
+  getExternalAccessTrustedProxySettings,
   getInstancePreferences,
   testOidcConnection,
   updateArtifactStorageSettings,
@@ -43,7 +44,7 @@ export function useArtifactStorageSettings() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifact-storage-settings'],
     queryFn: () => getArtifactStorageSettings(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -55,7 +56,7 @@ export function useUpdateArtifactStorageSettings() {
 
   return useMutation({
     mutationFn: (data: UpdateArtifactStorageSettingsRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateArtifactStorageSettings(baseUrl, token, data)
@@ -76,7 +77,7 @@ export function useInstancePreferences() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'instance-preferences'],
     queryFn: () => getInstancePreferences(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -88,7 +89,7 @@ export function useUpdateInstancePreferences() {
 
   return useMutation({
     mutationFn: (data: UpdateInstancePreferencesRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateInstancePreferences(baseUrl, token, data)
@@ -112,7 +113,7 @@ export function useExternalAccessOidc() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-oidc'],
     queryFn: () => getExternalAccessOidc(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -124,7 +125,7 @@ export function useConfigureExternalAccessOidc() {
 
   return useMutation({
     mutationFn: (data: ConfigureExternalAccessOidcRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return configureExternalAccessOidc(baseUrl, token, data)
@@ -146,7 +147,7 @@ export function useTestOidcConnection() {
 
   return useMutation({
     mutationFn: (data: TestOidcConnectionRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return testOidcConnection(baseUrl, token, data)
@@ -162,7 +163,7 @@ export function useExternalAccessPreflight() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
     queryFn: () => getExternalAccessPreflight(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -174,7 +175,19 @@ export function useExternalAccessNetworkSettings() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
     queryFn: () => getExternalAccessNetworkSettings(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    enabled: baseUrl !== null && !!token,
+  })
+}
+
+export function useExternalAccessTrustedProxySettings() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-trusted-proxy'],
+    queryFn: () => getExternalAccessTrustedProxySettings(baseUrl!, token!),
+    enabled: baseUrl !== null && !!token,
   })
 }
 
@@ -186,7 +199,7 @@ export function useUpdateExternalAccessNetworkSettings() {
 
   return useMutation({
     mutationFn: (data: UpdateExternalAccessNetworkSettingsRequest) => {
-      if (!baseUrl || !token) {
+      if (baseUrl === null || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateExternalAccessNetworkSettings(baseUrl, token, data)

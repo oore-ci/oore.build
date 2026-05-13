@@ -39,7 +39,7 @@ export function useProjects(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'projects', params ?? {}],
     queryFn: () => listProjects(baseUrl!, token!, params),
-    enabled: enabled && !!baseUrl && !!token,
+    enabled: enabled && baseUrl !== null && !!token,
   })
 }
 
@@ -51,7 +51,7 @@ export function useProject(projectId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'project', projectId],
     queryFn: () => getProject(baseUrl!, token!, projectId),
-    enabled: !!baseUrl && !!token && !!projectId,
+    enabled: baseUrl !== null && !!token && !!projectId,
   })
 }
 
@@ -63,7 +63,7 @@ export function useCreateProject() {
 
   return useMutation({
     mutationFn: (data: CreateProjectRequest) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createProject(baseUrl, token, data)
     },
@@ -89,7 +89,7 @@ export function useUpdateProject() {
       projectId: string
       data: UpdateProjectRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updateProject(baseUrl, token, projectId, data)
     },
@@ -112,7 +112,7 @@ export function useDeleteProject() {
 
   return useMutation({
     mutationFn: (projectId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deleteProject(baseUrl, token, projectId)
     },

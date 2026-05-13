@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-13
 
+- **Same-origin frontend proxy and Warpgate trusted-proxy hardening**:
+  - Fixed authenticated web hooks so an empty Backend URL is treated as the same-origin `oore-web` proxy instead of disabling Users, Preferences, projects, builds, runners, integrations, notifications, retention, and audit-log queries.
+  - Updated Preferences to reflect the active remote auth mode, including Trusted Proxy / Warpgate status instead of showing OIDC-only readiness text for trusted-proxy instances.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Frontend-only installer for split Warpgate deployments**:
   - Added `OORE_INSTALL_MODE=frontend` to install only `oore-web` and prebuilt web assets on Linux or macOS hosts.
   - Release automation now publishes `oore-web_<version>_<os>_<arch>.tar.gz` frontend-only assets alongside full macOS backend archives.

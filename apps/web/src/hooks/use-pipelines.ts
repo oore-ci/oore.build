@@ -56,7 +56,7 @@ export function usePipelines(
       params ?? {},
     ],
     queryFn: () => listPipelines(baseUrl!, token!, projectId, params),
-    enabled: enabled && !!baseUrl && !!token && !!projectId,
+    enabled: enabled && baseUrl !== null && !!token && !!projectId,
   })
 }
 
@@ -68,7 +68,7 @@ export function usePipeline(pipelineId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline', pipelineId],
     queryFn: () => getPipeline(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: baseUrl !== null && !!token && !!pipelineId,
   })
 }
 
@@ -86,7 +86,7 @@ export function useCreatePipeline() {
       projectId: string
       data: CreatePipelineRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createPipeline(baseUrl, token, projectId, data)
     },
@@ -112,7 +112,7 @@ export function useUpdatePipeline() {
       pipelineId: string
       data: UpdatePipelineRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updatePipeline(baseUrl, token, pipelineId, data)
     },
@@ -139,7 +139,7 @@ export function useDeletePipeline() {
 
   return useMutation({
     mutationFn: (pipelineId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deletePipeline(baseUrl, token, pipelineId)
     },
@@ -157,7 +157,7 @@ export function useValidatePipeline() {
 
   return useMutation({
     mutationFn: (data: ValidatePipelineRequest) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return validatePipeline(baseUrl, token, data)
     },
@@ -176,7 +176,7 @@ export function usePipelineAndroidSigning(pipelineId: string) {
       pipelineId,
     ],
     queryFn: () => getPipelineAndroidSigning(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: baseUrl !== null && !!token && !!pipelineId,
   })
 }
 
@@ -194,7 +194,7 @@ export function useUpdatePipelineAndroidSigning() {
       pipelineId: string
       data: UpdatePipelineAndroidSigningRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updatePipelineAndroidSigning(baseUrl, token, pipelineId, data)
     },
@@ -225,7 +225,7 @@ export function usePipelineIosSigning(pipelineId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline-ios-signing', pipelineId],
     queryFn: () => getPipelineIosSigning(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: baseUrl !== null && !!token && !!pipelineId,
   })
 }
 
@@ -243,7 +243,7 @@ export function useUpdatePipelineIosSigning() {
       pipelineId: string
       data: UpdatePipelineIosSigningRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updatePipelineIosSigning(baseUrl, token, pipelineId, data)
     },
@@ -285,7 +285,7 @@ export function usePipelineIosDevices(pipelineId: string) {
       pipelineId,
     ],
     queryFn: () => listPipelineIosDevices(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: baseUrl !== null && !!token && !!pipelineId,
   })
 }
 
@@ -303,7 +303,7 @@ export function useRegisterPipelineIosDevice() {
       pipelineId: string
       data: RegisterIosDeviceRequest
     }) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return registerPipelineIosDevice(baseUrl, token, pipelineId, data)
     },
@@ -334,7 +334,7 @@ export function useSyncPipelineIosSigning() {
 
   return useMutation({
     mutationFn: (pipelineId: string) => {
-      if (!baseUrl || !token)
+      if (baseUrl === null || !token)
         return Promise.reject(new Error('Not authenticated'))
       return syncPipelineIosSigning(baseUrl, token, pipelineId)
     },
