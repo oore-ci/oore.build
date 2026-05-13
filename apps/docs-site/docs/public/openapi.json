@@ -5467,6 +5467,83 @@
         ]
       }
     },
+    "/v1/users/transfer-owner": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Transfer owner",
+        "description": "Transfers the singleton owner role to an existing active user. Requires owner role.",
+        "operationId": "transfer_owner",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferOwnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Owner transferred",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOwnerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "User is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users/{user_id}": {
       "delete": {
         "tags": [
@@ -9695,6 +9772,32 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TransferOwnerRequest": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        }
+      },
+      "TransferOwnerResponse": {
+        "type": "object",
+        "required": [
+          "previous_owner",
+          "owner"
+        ],
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/User"
+          },
+          "previous_owner": {
+            "$ref": "#/components/schemas/User"
           }
         }
       },

@@ -553,6 +553,47 @@ verify_archive_checksum() {
   log "Checksum verified for $archive_name."
 }
 
+stop_local_web_for_upgrade() {
+  [[ -e "$WEB_BINARY" ]] || return 0
+
+  local stopped=0
+
+  if [[ "$RELEASE_OS" == "linux" ]] && have_cmd systemctl; then
+    if systemctl --user list-unit-files "$WEB_SYSTEMD_SERVICE_NAME" >/dev/null 2>&1; then
+      systemctl --user stop "$WEB_SYSTEMD_SERVICE_NAME" >/dev/null 2>&1 || true
+      stopped=1
+    fi
+  elif [[ "$RELEASE_OS" == "darwin" ]] && have_cmd launchctl; then
+    local uid
+    uid="$(id -u)"
+    launchctl bootout "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    stopped=1
+  fi
+
+  if [[ -f "$WEB_PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$WEB_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      stopped=1
+    fi
+  fi
+
+  if have_cmd pgrep; then
+    local pid
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      kill "$pid" >/dev/null 2>&1 || true
+      stopped=1
+    done < <(pgrep -f "$WEB_BINARY" 2>/dev/null || true)
+  fi
+
+  if [[ "$stopped" == "1" ]]; then
+    sleep 1
+    log "Stopped existing local web UI before replacing oore-web."
+  fi
+}
+
 install_binaries() {
   local archive_name
   local extract_dir="$TMP_DIR/extract"
@@ -570,6 +611,7 @@ install_binaries() {
   [[ -f "$extract_dir/VERSION" ]] || die "Release archive is missing VERSION."
 
   mkdir -p "$BIN_DIR" "$LOG_DIR"
+  stop_local_web_for_upgrade
   if [[ "$OORE_INSTALL_MODE" == "full" ]]; then
     cp "$extract_dir/bin/oored" "$BIN_DIR/oored"
     cp "$extract_dir/bin/oore" "$BIN_DIR/oore"

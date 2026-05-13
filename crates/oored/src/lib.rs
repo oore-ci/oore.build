@@ -2069,6 +2069,7 @@ async fn build_router_inner(
         .route("/v1/users/me", get(users::get_me))
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
+        .route("/v1/users/transfer-owner", post(users::transfer_owner))
         .route(
             "/v1/users/{user_id}/role",
             axum::routing::patch(users::update_user_role),

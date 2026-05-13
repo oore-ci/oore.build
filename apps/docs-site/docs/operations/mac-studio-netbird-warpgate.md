@@ -207,12 +207,24 @@ In setup:
 
 ## 6. Set External Access network settings after setup
 
-After the owner account is created, open **Settings -> Preferences -> External Access** and set:
+After the owner account is created, configure the runtime deployment from the Mac Studio with the operator CLI:
 
-- `public_url`: `https://ci.macstudio.internal`
-- `allowed_origins`: include `https://ci.macstudio.internal`
+```bash
+oore external-access enable-trusted-proxy \
+  --public-url https://ci.macstudio.internal \
+  --proxy-cidr 100.107.126.166/32 \
+  --user-email-header x-warpgate-username
+```
+
+Use the frontend host's NetBird IP or subnet for `--proxy-cidr`, because `oored` sees proxied API requests as coming from that host.
 
 This keeps runtime auth, callback validation, and artifact links aligned with the VPN-visible HTTPS origin.
+
+If the Warpgate-authenticated user was first created as an admin, transfer the singleton owner role without editing SQLite:
+
+```bash
+oore users transfer-owner --email owner@example.com
+```
 
 ## 7. Verify from a VPN-connected client
 

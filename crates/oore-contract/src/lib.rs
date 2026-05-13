@@ -441,6 +441,17 @@ pub struct UpdateUserRoleResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TransferOwnerRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct TransferOwnerResponse {
+    pub previous_owner: User,
+    pub owner: User,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ReEnableUserResponse {
     pub user: User,
 }

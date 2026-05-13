@@ -12,6 +12,12 @@ Rules:
 
 ## 2026-05-13
 
+- **First-class Warpgate split-deployment operations**:
+  - Added `oore external-access enable-trusted-proxy` to configure public URL, allowed origins, trusted proxy CIDRs/header/shared secret, and switch the instance into `remote + trusted_proxy` mode without manual curl calls.
+  - Added `POST /v1/users/transfer-owner` and `oore users transfer-owner` so the owner role can be transferred to an active Warpgate user without editing SQLite.
+  - Installer now stops an existing `oore-web` service/process before replacing the frontend binary, avoiding `Text file busy` during frontend-only upgrades.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Same-origin frontend proxy and Warpgate trusted-proxy hardening**:
   - Fixed authenticated web hooks so an empty Backend URL is treated as the same-origin `oore-web` proxy instead of disabling Users, Preferences, projects, builds, runners, integrations, notifications, retention, and audit-log queries.
   - Updated Preferences to reflect the active remote auth mode, including Trusted Proxy / Warpgate status instead of showing OIDC-only readiness text for trusted-proxy instances.

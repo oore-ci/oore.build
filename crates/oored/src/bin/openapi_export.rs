@@ -50,6 +50,7 @@ use utoipa::OpenApi;
         paths::get_me,
         paths::list_users,
         paths::invite_user,
+        paths::transfer_owner,
         paths::update_user_role,
         paths::delete_user,
         paths::re_enable_user,
@@ -197,6 +198,8 @@ use utoipa::OpenApi;
         oore_contract::User,
         oore_contract::InviteUserRequest,
         oore_contract::InviteUserResponse,
+        oore_contract::TransferOwnerRequest,
+        oore_contract::TransferOwnerResponse,
         oore_contract::UpdateUserRoleRequest,
         oore_contract::UpdateUserRoleResponse,
         oore_contract::ReEnableUserResponse,
@@ -719,6 +722,22 @@ mod paths {
         )
     )]
     pub(super) async fn invite_user() {}
+
+    /// Transfer owner
+    ///
+    /// Transfers the singleton owner role to an existing active user. Requires owner role.
+    #[utoipa::path(post, path = "/v1/users/transfer-owner", tag = "Users",
+        request_body = TransferOwnerRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Owner transferred", body = TransferOwnerResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+            (status = 404, description = "User not found", body = ApiError),
+            (status = 409, description = "User is not active", body = ApiError),
+        )
+    )]
+    pub(super) async fn transfer_owner() {}
 
     /// Update user role
     ///

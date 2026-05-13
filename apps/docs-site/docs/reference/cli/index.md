@@ -50,6 +50,8 @@ The operator CLI handles setup, authentication, and administration.
 | [`oore setup token`](/reference/cli/oore-setup#setup-token) | Generate a bootstrap token | Implemented |
 | [`oore login`](/reference/cli/oore-login) | Authenticate in local mode or import a token | Implemented |
 | [`oore status`](/reference/cli/oore-status) | Show setup status and authenticated operational summary | Implemented |
+| [`oore external-access enable-trusted-proxy`](/reference/cli/oore-external-access) | Configure public URL, allowed origins, trusted proxy peers, and remote trusted-proxy mode | Implemented |
+| [`oore users transfer-owner`](/reference/cli/oore-users) | Transfer the singleton owner role to an existing active user | Implemented |
 | `oore runner register` | Register an external build runner | Implemented |
 | `oore runner start` | Start external runner process | Implemented |
 | [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values | Implemented |

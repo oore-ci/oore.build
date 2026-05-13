@@ -116,6 +116,62 @@ Returns the updated user object.
 
 ---
 
+## Transfer Owner {#transfer-owner}
+
+```
+POST /v1/users/transfer-owner
+```
+
+**Authentication**: User session (Bearer, owner)
+
+Transfers the singleton `owner` role to an existing active user. The previous owner becomes `admin`, the instance owner record is updated, and sessions for both affected users are revoked.
+
+### Request body
+
+```json
+{
+  "email": "new-owner@example.com"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | `string` | Yes | Active user who should become the new owner |
+
+### Response `200 OK`
+
+```json
+{
+  "previous_owner": {
+    "id": "user_old",
+    "email": "owner@example.com",
+    "role": "admin",
+    "status": "active",
+    "created_at": 1738800000,
+    "updated_at": 1738800000
+  },
+  "owner": {
+    "id": "user_new",
+    "email": "new-owner@example.com",
+    "role": "owner",
+    "status": "active",
+    "created_at": 1738800100,
+    "updated_at": 1738800200
+  }
+}
+```
+
+### Error responses
+
+| Status | Code | Description |
+|---|---|---|
+| 400 | `invalid_email` | Invalid target email |
+| 403 | `forbidden` | Caller is not the owner |
+| 404 | `user_not_found` | Target user does not exist |
+| 409 | `user_not_active` | Target user has not signed in yet or is disabled |
+
+---
+
 ## Disable User {#disable-user}
 
 Disable a user account. The user's sessions are invalidated and they cannot sign in.

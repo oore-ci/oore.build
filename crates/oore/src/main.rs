@@ -9,10 +9,12 @@ use chrono::{Local, TimeZone};
 use clap::{Args, Parser, Subcommand};
 use oore_contract::{
     ApiError, BootstrapTokenRecord, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse,
-    ListBuildsResponse, ListRunnersResponse, LocalLoginRequest, LocalLoginResponse,
-    OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, SetupCompleteResponse,
-    SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
-    SetupState, SetupStateFile, SetupStatus, UserProfileResponse,
+    KeyStorageMode, ListBuildsResponse, ListRunnersResponse, LocalLoginRequest, LocalLoginResponse,
+    OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode,
+    RuntimeMode, SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse,
+    SetupOidcVerifyRequest, SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
+    TransferOwnerRequest, TransferOwnerResponse, UpdateExternalAccessNetworkSettingsRequest,
+    UpdateInstancePreferencesRequest, UpdateTrustedProxySettingsRequest, UserProfileResponse,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -71,6 +73,8 @@ enum Commands {
     Login(LoginArgs),
     Status(StatusArgs),
     Runner(RunnerArgs),
+    Users(UsersArgs),
+    ExternalAccess(ExternalAccessArgs),
     Config(ConfigArgs),
     Doctor(DoctorArgs),
     /// Print the installed oore version
@@ -208,6 +212,84 @@ struct RunnerConfig {
     runner_token: String,
     daemon_url: String,
     name: String,
+}
+
+#[derive(Debug, Args)]
+struct UsersArgs {
+    #[command(subcommand)]
+    command: UsersSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum UsersSubcommand {
+    /// Transfer the singleton owner role to an existing active user
+    TransferOwner(TransferOwnerArgs),
+}
+
+#[derive(Debug, Args)]
+struct TransferOwnerArgs {
+    /// Daemon URL (loaded from config if not specified)
+    #[arg(long, env = "OORE_DAEMON_URL")]
+    daemon_url: Option<String>,
+
+    /// Session token for the current owner.
+    /// If omitted, falls back to OORE_SESSION_TOKEN or stored CLI config.
+    #[arg(long, env = "OORE_SESSION_TOKEN")]
+    token: Option<String>,
+
+    /// Email of the active user who should become owner
+    #[arg(long)]
+    email: String,
+
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ExternalAccessArgs {
+    #[command(subcommand)]
+    command: ExternalAccessSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ExternalAccessSubcommand {
+    /// Configure remote trusted-proxy mode for a Warpgate/reverse-proxy deployment
+    EnableTrustedProxy(EnableTrustedProxyArgs),
+}
+
+#[derive(Debug, Args)]
+struct EnableTrustedProxyArgs {
+    /// Daemon URL (loaded from config if not specified)
+    #[arg(long, env = "OORE_DAEMON_URL")]
+    daemon_url: Option<String>,
+
+    /// Session token for an owner/admin user.
+    /// If omitted, falls back to OORE_SESSION_TOKEN or stored CLI config.
+    #[arg(long, env = "OORE_SESSION_TOKEN")]
+    token: Option<String>,
+
+    /// Public HTTPS URL that users open in the browser, e.g. https://oore.example.com
+    #[arg(long)]
+    public_url: String,
+
+    /// Allowed browser origin. May be passed multiple times. Defaults to --public-url.
+    #[arg(long = "allowed-origin")]
+    allowed_origins: Vec<String>,
+
+    /// Trusted proxy CIDR. May be passed multiple times, e.g. 100.107.126.166/32.
+    #[arg(long = "proxy-cidr")]
+    trusted_proxy_cidrs: Vec<String>,
+
+    /// Header set by the reverse proxy with the authenticated user's email
+    #[arg(long, default_value = "x-warpgate-username")]
+    user_email_header: String,
+
+    /// Optional shared secret expected from the reverse proxy
+    #[arg(long)]
+    shared_secret: Option<String>,
+
+    #[arg(long, default_value = "false")]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -979,6 +1061,77 @@ async fn fetch_user_profile(
     )
 }
 
+fn require_session_token(cli_value: Option<&str>, action: &str) -> anyhow::Result<String> {
+    resolve_session_token(cli_value)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{action} requires a session token. Run `oore login`, import one with `oore login --token <token>`, or pass --token."
+        )
+    })
+}
+
+async fn api_put_json<T>(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    token: &str,
+    path: &str,
+    body: &T,
+) -> anyhow::Result<serde_json::Value>
+where
+    T: serde::Serialize + ?Sized,
+{
+    let url = format!("{}{}", daemon_url.trim_end_matches('/'), path);
+    let response = client
+        .put(&url)
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if response.status().is_success() {
+        return response
+            .json()
+            .await
+            .with_context(|| format!("failed to parse {path} response"));
+    }
+
+    let status = response.status();
+    let msg = extract_error_message(response).await;
+    anyhow::bail!("{} failed (HTTP {}): {}", path, status.as_u16(), msg)
+}
+
+async fn api_post_json<T, U>(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    token: &str,
+    path: &str,
+    body: &T,
+) -> anyhow::Result<U>
+where
+    T: serde::Serialize + ?Sized,
+    U: serde::de::DeserializeOwned,
+{
+    let url = format!("{}{}", daemon_url.trim_end_matches('/'), path);
+    let response = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
+
+    if response.status().is_success() {
+        return response
+            .json()
+            .await
+            .with_context(|| format!("failed to parse {path} response"));
+    }
+
+    let status = response.status();
+    let msg = extract_error_message(response).await;
+    anyhow::bail!("{} failed (HTTP {}): {}", path, status.as_u16(), msg)
+}
+
 async fn fetch_build_list(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -1542,6 +1695,125 @@ async fn handle_login(args: LoginArgs) -> anyhow::Result<()> {
     println!("User:    {}", login_body.user.email);
     println!("Expires: {}", format_epoch_local(login_body.expires_at));
     println!("Config:  {}", config_path.display());
+    Ok(())
+}
+
+async fn handle_transfer_owner(args: TransferOwnerArgs) -> anyhow::Result<()> {
+    let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
+    let token = require_session_token(args.token.as_deref(), "owner transfer")?;
+    let client = reqwest::Client::new();
+
+    let response: TransferOwnerResponse = api_post_json(
+        &client,
+        &daemon_url,
+        &token,
+        "/v1/users/transfer-owner",
+        &TransferOwnerRequest { email: args.email },
+    )
+    .await?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+
+    println!("Owner transferred.");
+    println!(
+        "Previous owner: {} ({})",
+        response.previous_owner.email, response.previous_owner.role
+    );
+    println!(
+        "New owner:      {} ({})",
+        response.owner.email, response.owner.role
+    );
+    println!(
+        "Existing sessions for both users were revoked; sign in again to pick up the new role."
+    );
+    Ok(())
+}
+
+async fn handle_enable_trusted_proxy(args: EnableTrustedProxyArgs) -> anyhow::Result<()> {
+    let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
+    let token = require_session_token(args.token.as_deref(), "trusted-proxy configuration")?;
+    let client = reqwest::Client::new();
+
+    if args.trusted_proxy_cidrs.is_empty() {
+        anyhow::bail!(
+            "at least one --proxy-cidr is required, e.g. --proxy-cidr 100.107.126.166/32"
+        );
+    }
+
+    let public_url = args.public_url.trim().trim_end_matches('/').to_string();
+    if public_url.is_empty() {
+        anyhow::bail!("--public-url cannot be empty");
+    }
+    let allowed_origins = if args.allowed_origins.is_empty() {
+        vec![public_url.clone()]
+    } else {
+        args.allowed_origins
+            .into_iter()
+            .map(|origin| origin.trim().trim_end_matches('/').to_string())
+            .filter(|origin| !origin.is_empty())
+            .collect::<Vec<_>>()
+    };
+    if allowed_origins.is_empty() {
+        anyhow::bail!("at least one allowed origin is required");
+    }
+
+    let network = api_put_json(
+        &client,
+        &daemon_url,
+        &token,
+        "/v1/settings/external-access/network",
+        &UpdateExternalAccessNetworkSettingsRequest {
+            public_url: Some(public_url.clone()),
+            allowed_origins: allowed_origins.clone(),
+        },
+    )
+    .await?;
+
+    let trusted_proxy = api_put_json(
+        &client,
+        &daemon_url,
+        &token,
+        "/v1/settings/external-access/trusted-proxy",
+        &UpdateTrustedProxySettingsRequest {
+            user_email_header: Some(args.user_email_header),
+            trusted_proxy_cidrs: args.trusted_proxy_cidrs,
+            shared_secret: args.shared_secret,
+        },
+    )
+    .await?;
+
+    let preferences = api_put_json(
+        &client,
+        &daemon_url,
+        &token,
+        "/v1/settings/preferences",
+        &UpdateInstancePreferencesRequest {
+            key_storage_mode: KeyStorageMode::File,
+            runtime_mode: Some(RuntimeMode::Remote),
+            remote_auth_mode: Some(RemoteAuthMode::TrustedProxy),
+        },
+    )
+    .await?;
+
+    if args.json {
+        let output = serde_json::json!({
+            "network": network,
+            "trusted_proxy": trusted_proxy,
+            "preferences": preferences,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    println!("Trusted-proxy external access configured.");
+    println!("Public URL:      {}", public_url);
+    println!("Allowed origins: {}", allowed_origins.join(", "));
+    println!("Remote auth:     trusted_proxy");
+    println!("Key storage:     file");
+    println!("Restart oored if the response indicates restart_required.");
     Ok(())
 }
 
@@ -2613,6 +2885,20 @@ fn main() -> anyhow::Result<()> {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_start(args))?;
+            }
+        },
+        Commands::Users(users) => match users.command {
+            UsersSubcommand::TransferOwner(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(handle_transfer_owner(args))?;
+            }
+        },
+        Commands::ExternalAccess(external_access) => match external_access.command {
+            ExternalAccessSubcommand::EnableTrustedProxy(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(handle_enable_trusted_proxy(args))?;
             }
         },
         Commands::Config(config) => match config.command {
