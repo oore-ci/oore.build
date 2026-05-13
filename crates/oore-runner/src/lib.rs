@@ -1367,6 +1367,13 @@ fn apply_fvm_wrappers(stage_commands: PipelineCommandStages) -> PipelineCommandS
     }
 }
 
+fn fvm_setup_commands(version: &str) -> Vec<String> {
+    vec![
+        format!("fvm install {version}"),
+        format!("fvm use {version} --force"),
+    ]
+}
+
 fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>> {
     let mut cleaned = Vec::with_capacity(patterns.len());
     for (idx, pattern) in patterns.iter().enumerate() {
@@ -1645,9 +1652,8 @@ fn resolve_execution_plan(
         let mut stage_commands = materialize_stage_commands(&file_config, include_defaults);
         if let Some(version) = resolved_flutter_version {
             stage_commands = apply_fvm_wrappers(stage_commands);
-            stage_commands
-                .pre_build
-                .insert(0, format!("fvm use {version} --force"));
+            let setup_commands = fvm_setup_commands(&version);
+            stage_commands.pre_build.splice(0..0, setup_commands);
         }
 
         return Ok(ResolvedExecutionPlan {
@@ -1663,9 +1669,8 @@ fn resolve_execution_plan(
     let mut stage_commands = materialize_stage_commands(&fallback, true);
     if let Some(version) = resolved_flutter_version {
         stage_commands = apply_fvm_wrappers(stage_commands);
-        stage_commands
-            .pre_build
-            .insert(0, format!("fvm use {version} --force"));
+        let setup_commands = fvm_setup_commands(&version);
+        stage_commands.pre_build.splice(0..0, setup_commands);
     }
     Ok(ResolvedExecutionPlan {
         stage_commands,
@@ -3702,6 +3707,7 @@ mod tests {
         assert_eq!(
             plan.stage_commands.pre_build,
             vec![
+                "fvm install 3.24.0".to_string(),
                 "fvm use 3.24.0 --force".to_string(),
                 "fvm flutter pub get".to_string(),
             ]
@@ -3732,6 +3738,7 @@ mod tests {
         assert_eq!(
             plan.stage_commands.pre_build,
             vec![
+                "fvm install 3.22.3".to_string(),
                 "fvm use 3.22.3 --force".to_string(),
                 "fvm flutter pub get".to_string(),
             ]

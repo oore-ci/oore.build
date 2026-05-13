@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-13
 
+- **Runner Flutter SDK preparation fix**:
+  - Runner plans now run `fvm install <version>` before `fvm use <version> --force` when a Flutter version is resolved from `.fvmrc`, `.oore.yaml`, or the UI pipeline config.
+  - Web log viewing now silently falls back to polling after an SSE disconnect instead of showing a persistent warning while logs continue loading normally.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Runner checkout credential-file fix**:
   - Branch checkout now uses `git init` + `git fetch` + `git checkout FETCH_HEAD` instead of `git clone ... .`, so runner-created credential files do not make the checkout directory fail as non-empty.
   - Runner workspaces are cleared before each job starts to avoid stale failed-attempt files affecting retries.

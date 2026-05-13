@@ -177,7 +177,7 @@ export function useLogStream(
           es.close()
           eventSourceRef.current = null
           setIsStreaming(false)
-          setError('Live stream disconnected. Continuing with polling.')
+          setError(null)
           startPolling()
         })
       } catch {
