@@ -26,6 +26,77 @@ Browser on VPN
 
 Keep `oored` bound to loopback. Expose HTTPS from the reverse proxy, not from the daemon itself.
 
+For the split frontend variant below, bind `oored` to the Mac Studio's NetBird address instead of loopback, and firewall it so only the frontend host can reach the daemon.
+
+## Split frontend architecture
+
+Use this variant when the Mac Studio should stay private on NetBird and a small Ubuntu host should own HTTPS, Warpgate, and the static web UI:
+
+```text
+Browser
+  -> Warpgate on Ubuntu (auth)
+  -> Caddy/nginx on Ubuntu (HTTPS)
+  -> oore-web on 127.0.0.1:4173
+  -> NetBird
+  -> oored on Mac Studio NetBird address:8787
+  -> embedded runner on Mac Studio
+```
+
+In this shape:
+
+- Mac Studio runs `oored` and the embedded runner.
+- Ubuntu runs only `oore-web` plus the static frontend assets.
+- Warpgate forwards the authenticated identity header to the Ubuntu reverse proxy.
+- The Ubuntu reverse proxy forwards that header to `oore-web`.
+- `oore-web` forwards `/v1/*` requests, including Warpgate identity headers and cookies, to the Mac daemon over NetBird.
+- Users add the instance with an empty **Backend URL** so browser requests stay on the HTTPS frontend origin.
+
+On the Mac Studio, start the daemon on the NetBird address:
+
+```bash
+export OORED_LISTEN_ADDR=100.64.10.20:8787
+export OORE_CORS_ORIGINS=https://ci.builds.example.corp
+export RUST_LOG=info
+
+oored run --listen 100.64.10.20:8787
+```
+
+Install the frontend-only bundle on Ubuntu:
+
+```bash
+curl -fsSL https://oore.build/install | \
+  OORE_INSTALL_MODE=frontend \
+  OORE_WEB_BACKEND_URL=http://100.64.10.20:8787 \
+  OORE_LOCAL_WEB_LISTEN=127.0.0.1:4173 \
+  OORE_LOCAL_WEB_MODE=login \
+  OORE_NONINTERACTIVE=1 \
+  bash
+```
+
+Replace `100.64.10.20` with the Mac Studio NetBird IP or DNS name. Keep `OORE_LOCAL_WEB_LISTEN` on loopback unless you have a reason to expose the launcher directly.
+
+For the Linux user service to survive logout and reboot:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Example Caddyfile on Ubuntu:
+
+```caddy
+ci.builds.example.corp {
+    reverse_proxy 127.0.0.1:4173 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Warpgate-Username {header.X-Warpgate-Username}
+        header_up X-Oore-Trusted-Proxy-Secret {env.OORE_TRUSTED_PROXY_SHARED_SECRET}
+    }
+}
+```
+
+Configure the Mac daemon's trusted proxy CIDRs to allow the Ubuntu NetBird address or subnet, because the backend sees the request as coming from the frontend host over NetBird rather than loopback.
+
 ## 1. Build the binaries and web UI
 
 ```bash

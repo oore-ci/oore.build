@@ -34,7 +34,9 @@ jobs:
         run: |
           bun build --compile --target=bun-darwin-arm64 --outfile dist/oore-web-arm64 apps/web/tools/oore-web.js
           bun build --compile --target=bun-darwin-x64 --outfile dist/oore-web-x86_64 apps/web/tools/oore-web.js
-          chmod +x dist/oore-web-arm64 dist/oore-web-x86_64
+          bun build --compile --target=bun-linux-arm64 --outfile dist/oore-web-linux-arm64 apps/web/tools/oore-web.js
+          bun build --compile --target=bun-linux-x64 --outfile dist/oore-web-linux-x86_64 apps/web/tools/oore-web.js
+          chmod +x dist/oore-web-arm64 dist/oore-web-x86_64 dist/oore-web-linux-arm64 dist/oore-web-linux-x86_64
 
       - name: Package release tarballs
         run: |
@@ -45,8 +47,14 @@ jobs:
 
           stage_arm="dist/stage-arm64"
           stage_x64="dist/stage-x86_64"
-          rm -rf "$stage_arm" "$stage_x64"
+          stage_web_darwin_arm="dist/stage-web-darwin-arm64"
+          stage_web_darwin_x64="dist/stage-web-darwin-x86_64"
+          stage_web_linux_arm="dist/stage-web-linux-arm64"
+          stage_web_linux_x64="dist/stage-web-linux-x86_64"
+          rm -rf "$stage_arm" "$stage_x64" "$stage_web_darwin_arm" "$stage_web_darwin_x64" "$stage_web_linux_arm" "$stage_web_linux_x64"
           mkdir -p "$stage_arm/bin" "$stage_x64/bin"
+          mkdir -p "$stage_web_darwin_arm/bin" "$stage_web_darwin_x64/bin"
+          mkdir -p "$stage_web_linux_arm/bin" "$stage_web_linux_x64/bin"
 
           cp "target/aarch64-apple-darwin/release/oored" "$stage_arm/bin/oored"
           cp "target/aarch64-apple-darwin/release/oore"  "$stage_arm/bin/oore"
@@ -62,13 +70,41 @@ jobs:
           cp "LICENSE" "$stage_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_x64/VERSION"
 
+          cp "dist/oore-web-arm64" "$stage_web_darwin_arm/bin/oore-web"
+          cp -R "apps/web/dist" "$stage_web_darwin_arm/web-dist"
+          cp "LICENSE" "$stage_web_darwin_arm/LICENSE"
+          printf '%s\n' "$ver" > "$stage_web_darwin_arm/VERSION"
+
+          cp "dist/oore-web-x86_64" "$stage_web_darwin_x64/bin/oore-web"
+          cp -R "apps/web/dist" "$stage_web_darwin_x64/web-dist"
+          cp "LICENSE" "$stage_web_darwin_x64/LICENSE"
+          printf '%s\n' "$ver" > "$stage_web_darwin_x64/VERSION"
+
+          cp "dist/oore-web-linux-arm64" "$stage_web_linux_arm/bin/oore-web"
+          cp -R "apps/web/dist" "$stage_web_linux_arm/web-dist"
+          cp "LICENSE" "$stage_web_linux_arm/LICENSE"
+          printf '%s\n' "$ver" > "$stage_web_linux_arm/VERSION"
+
+          cp "dist/oore-web-linux-x86_64" "$stage_web_linux_x64/bin/oore-web"
+          cp -R "apps/web/dist" "$stage_web_linux_x64/web-dist"
+          cp "LICENSE" "$stage_web_linux_x64/LICENSE"
+          printf '%s\n' "$ver" > "$stage_web_linux_x64/VERSION"
+
           out="dist/releases/$tag"
           arm_asset="$(printf 'oore_%s_darwin_arm64.tar.gz' "$ver")"
           x64_asset="$(printf 'oore_%s_darwin_x86_64.tar.gz' "$ver")"
+          web_darwin_arm_asset="$(printf 'oore-web_%s_darwin_arm64.tar.gz' "$ver")"
+          web_darwin_x64_asset="$(printf 'oore-web_%s_darwin_x86_64.tar.gz' "$ver")"
+          web_linux_arm_asset="$(printf 'oore-web_%s_linux_arm64.tar.gz' "$ver")"
+          web_linux_x64_asset="$(printf 'oore-web_%s_linux_x86_64.tar.gz' "$ver")"
           checksums="$(printf 'oore_%s_checksums.txt' "$ver")"
           tar -C "$stage_arm" -czf "$out/$arm_asset" .
           tar -C "$stage_x64" -czf "$out/$x64_asset" .
-          (cd "$out" && shasum -a 256 "$arm_asset" "$x64_asset" > "$checksums")
+          tar -C "$stage_web_darwin_arm" -czf "$out/$web_darwin_arm_asset" .
+          tar -C "$stage_web_darwin_x64" -czf "$out/$web_darwin_x64_asset" .
+          tar -C "$stage_web_linux_arm" -czf "$out/$web_linux_arm_asset" .
+          tar -C "$stage_web_linux_x64" -czf "$out/$web_linux_x64_asset" .
+          (cd "$out" && shasum -a 256 "$arm_asset" "$x64_asset" "$web_darwin_arm_asset" "$web_darwin_x64_asset" "$web_linux_arm_asset" "$web_linux_x64_asset" > "$checksums")
 
       - name: Generate release notes
         run: |

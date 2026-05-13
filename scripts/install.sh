@@ -3,6 +3,7 @@ set -euo pipefail
 
 OORE_VERSION="${OORE_VERSION:-latest}"
 OORE_CHANNEL="${OORE_CHANNEL:-stable}"
+OORE_INSTALL_MODE="${OORE_INSTALL_MODE:-full}"
 OORE_INSTALL_ROOT="${OORE_INSTALL_ROOT:-$HOME/.oore}"
 OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-devaryakjha/oore.build}"
 OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://github.com/$OORE_GITHUB_REPO/releases/download}"
@@ -11,6 +12,8 @@ OORE_RELEASES_LIST_URL="${OORE_RELEASES_LIST_URL:-https://api.github.com/repos/$
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_HOSTED_UI="${OORE_HOSTED_UI:-https://ci.oore.build}"
+OORE_DAEMON_URL="${OORE_DAEMON_URL:-http://127.0.0.1:8787}"
+OORE_WEB_BACKEND_URL="${OORE_WEB_BACKEND_URL:-$OORE_DAEMON_URL}"
 OORE_LOCAL_WEB_MODE="${OORE_LOCAL_WEB_MODE:-}"
 OORE_LOCAL_WEB_LISTEN="${OORE_LOCAL_WEB_LISTEN:-127.0.0.1:4173}"
 
@@ -24,11 +27,16 @@ WEB_DIST_DIR="$OORE_INSTALL_ROOT/web-dist"
 WEB_BINARY="$BIN_DIR/oore-web"
 WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
 WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
-DAEMON_URL="http://127.0.0.1:8787"
+WEB_SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+WEB_SYSTEMD_SERVICE_NAME="oore-web.service"
+WEB_SYSTEMD_SERVICE_FILE="$WEB_SYSTEMD_USER_DIR/$WEB_SYSTEMD_SERVICE_NAME"
+DAEMON_URL="$OORE_DAEMON_URL"
+WEB_BACKEND_URL="$OORE_WEB_BACKEND_URL"
 LOCAL_WEB_URL=""
 RELEASE_TAG=""
 RELEASE_VERSION=""
 RELEASE_ARCH=""
+RELEASE_OS=""
 RESOLVED_CHANNEL=""
 TMP_DIR=""
 CURRENT_STEP=0
@@ -43,7 +51,7 @@ UI_ERROR=""
 
 print_help() {
   cat <<'EOF'
-Oore CI installer (macOS)
+Oore CI installer
 
 Usage:
   ./scripts/install.sh
@@ -52,9 +60,12 @@ Usage:
 Environment overrides:
   OORE_VERSION               Release tag or "latest" (default: latest)
   OORE_CHANNEL               Release channel for latest resolution: stable|beta|alpha (default: stable)
+  OORE_INSTALL_MODE          Install mode: full|frontend (default: full)
   OORE_INSTALL_ROOT          Install root (default: ~/.oore)
   OORE_NONINTERACTIVE        Non-interactive mode (true/false)
   OORE_START_DAEMON          Start daemon in non-interactive mode (true/false)
+  OORE_DAEMON_URL            Daemon URL used by full-mode setup helpers (default: http://127.0.0.1:8787)
+  OORE_WEB_BACKEND_URL       Backend URL proxied by oore-web (default: OORE_DAEMON_URL)
   OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
   OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
   OORE_HOSTED_UI             Hosted UI URL (default: https://ci.oore.build)
@@ -128,11 +139,16 @@ print_install_intro() {
   print_ascii_banner
   printf '%bOore CI Installer%b\n' "$UI_BOLD$UI_ACCENT" "$UI_RESET"
   printf '%b----------------------------------------%b\n' "$UI_DIM" "$UI_RESET"
+  printf '  Mode:          %s\n' "$OORE_INSTALL_MODE"
   printf '  Install root:  %s\n' "$OORE_INSTALL_ROOT"
   if [[ "$OORE_VERSION" == "latest" ]]; then
     printf '  Release:       latest (%s channel)\n' "$OORE_CHANNEL"
   else
     printf '  Release:       %s\n' "$OORE_VERSION"
+  fi
+  if [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
+    printf '  Backend URL:   %s\n' "$WEB_BACKEND_URL"
+    printf '  Web listen:    %s\n' "$OORE_LOCAL_WEB_LISTEN"
   fi
   printf '  Hosted setup:  %s\n' "$OORE_HOSTED_UI"
   printf '%b----------------------------------------%b\n' "$UI_DIM" "$UI_RESET"
@@ -298,6 +314,31 @@ detect_arch() {
   esac
 }
 
+detect_os() {
+  case "$(uname -s)" in
+    Darwin)
+      RELEASE_OS="darwin"
+      ;;
+    Linux)
+      RELEASE_OS="linux"
+      ;;
+    *)
+      die "Unsupported operating system: $(uname -s). Full install supports macOS; frontend install supports macOS and Linux."
+      ;;
+  esac
+}
+
+validate_install_mode() {
+  case "${OORE_INSTALL_MODE:-}" in
+    full|frontend)
+      return 0
+      ;;
+    *)
+      die 'OORE_INSTALL_MODE must be one of: full,frontend.'
+      ;;
+  esac
+}
+
 validate_channel() {
   case "${OORE_CHANNEL:-}" in
     stable|alpha|beta)
@@ -448,32 +489,61 @@ resolve_release_tag() {
   fi
 }
 
+release_archive_name() {
+  case "$OORE_INSTALL_MODE" in
+    full)
+      printf 'oore_%s_darwin_%s.tar.gz' "$RELEASE_VERSION" "$RELEASE_ARCH"
+      ;;
+    frontend)
+      printf 'oore-web_%s_%s_%s.tar.gz' "$RELEASE_VERSION" "$RELEASE_OS" "$RELEASE_ARCH"
+      ;;
+    *)
+      die "Unsupported install mode: $OORE_INSTALL_MODE"
+      ;;
+  esac
+}
+
 download_release_assets() {
-  local archive_name="oore_${RELEASE_VERSION}_darwin_${RELEASE_ARCH}.tar.gz"
+  local archive_name
   local checksum_name="oore_${RELEASE_VERSION}_checksums.txt"
   local base_url="${OORE_RELEASE_BASE_URL%/}/$RELEASE_TAG"
+  archive_name="$(release_archive_name)"
   local archive_url="$base_url/$archive_name"
   local checksum_url="$base_url/$checksum_name"
 
-  log "Downloading release assets for $RELEASE_TAG ($RELEASE_ARCH)..."
+  log "Downloading release assets for $RELEASE_TAG ($OORE_INSTALL_MODE/$RELEASE_OS/$RELEASE_ARCH)..."
   curl -fsSL --retry 3 --output "$TMP_DIR/$archive_name" "$archive_url" \
     || die "Failed to download release archive: $archive_url"
   curl -fsSL --retry 3 --output "$TMP_DIR/$checksum_name" "$checksum_url" \
     || die "Failed to download checksum file: $checksum_url"
 }
 
+compute_sha256() {
+  local file="$1"
+  if have_cmd shasum; then
+    shasum -a 256 "$file" | awk '{ print $1 }'
+    return 0
+  fi
+  if have_cmd sha256sum; then
+    sha256sum "$file" | awk '{ print $1 }'
+    return 0
+  fi
+  die "shasum or sha256sum is required to verify release checksums."
+}
+
 verify_archive_checksum() {
-  local archive_name="oore_${RELEASE_VERSION}_darwin_${RELEASE_ARCH}.tar.gz"
+  local archive_name
   local checksum_name="oore_${RELEASE_VERSION}_checksums.txt"
   local expected=""
   local actual=""
+  archive_name="$(release_archive_name)"
 
   expected="$(
     awk -v file="$archive_name" '$2 == file { print $1 }' "$TMP_DIR/$checksum_name"
   )"
   [[ -n "$expected" ]] || die "Checksum entry for $archive_name not found in $checksum_name."
 
-  actual="$(shasum -a 256 "$TMP_DIR/$archive_name" | awk '{ print $1 }')"
+  actual="$(compute_sha256 "$TMP_DIR/$archive_name")"
   [[ -n "$actual" ]] || die "Failed to compute checksum for $archive_name."
 
   if [[ "$actual" != "$expected" ]]; then
@@ -484,32 +554,34 @@ verify_archive_checksum() {
 }
 
 install_binaries() {
-  local archive_name="oore_${RELEASE_VERSION}_darwin_${RELEASE_ARCH}.tar.gz"
+  local archive_name
   local extract_dir="$TMP_DIR/extract"
+  archive_name="$(release_archive_name)"
 
   mkdir -p "$extract_dir"
   tar -xzf "$TMP_DIR/$archive_name" -C "$extract_dir"
 
-  [[ -f "$extract_dir/bin/oored" ]] || die "Release archive is missing bin/oored."
-  [[ -f "$extract_dir/bin/oore" ]] || die "Release archive is missing bin/oore."
+  if [[ "$OORE_INSTALL_MODE" == "full" ]]; then
+    [[ -f "$extract_dir/bin/oored" ]] || die "Release archive is missing bin/oored."
+    [[ -f "$extract_dir/bin/oore" ]] || die "Release archive is missing bin/oore."
+  fi
+  [[ -f "$extract_dir/bin/oore-web" ]] || die "Release archive is missing bin/oore-web."
+  [[ -d "$extract_dir/web-dist" ]] || die "Release archive is missing web-dist."
   [[ -f "$extract_dir/VERSION" ]] || die "Release archive is missing VERSION."
 
   mkdir -p "$BIN_DIR" "$LOG_DIR"
-  cp "$extract_dir/bin/oored" "$BIN_DIR/oored"
-  cp "$extract_dir/bin/oore" "$BIN_DIR/oore"
-  chmod +x "$BIN_DIR/oored" "$BIN_DIR/oore"
-
-  if [[ -f "$extract_dir/bin/oore-web" ]]; then
-    cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
-    chmod +x "$WEB_BINARY"
+  if [[ "$OORE_INSTALL_MODE" == "full" ]]; then
+    cp "$extract_dir/bin/oored" "$BIN_DIR/oored"
+    cp "$extract_dir/bin/oore" "$BIN_DIR/oore"
+    chmod +x "$BIN_DIR/oored" "$BIN_DIR/oore"
   fi
-
-  if [[ -d "$extract_dir/web-dist" ]]; then
-    rm -rf "$WEB_DIST_DIR"
-    cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
-  fi
+  cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
+  chmod +x "$WEB_BINARY"
+  rm -rf "$WEB_DIST_DIR"
+  cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
 
   cp "$extract_dir/VERSION" "$OORE_INSTALL_ROOT/VERSION"
+  printf '%s\n' "$OORE_INSTALL_MODE" > "$OORE_INSTALL_ROOT/INSTALL_MODE"
   if [[ -n "${RESOLVED_CHANNEL:-}" ]]; then
     printf '%s\n' "$RESOLVED_CHANNEL" > "$OORE_INSTALL_ROOT/CHANNEL"
   fi
@@ -662,7 +734,7 @@ start_local_web() {
 
   nohup "$WEB_BINARY" \
     --listen "$OORE_LOCAL_WEB_LISTEN" \
-    --backend-url "$DAEMON_URL" \
+    --backend-url "$WEB_BACKEND_URL" \
     --dist-dir "$WEB_DIST_DIR" >"$WEB_LOG" 2>&1 &
   echo "$!" > "$WEB_PID_FILE"
 
@@ -699,7 +771,7 @@ install_local_web_launch_agent() {
       <string>--listen</string>
       <string>$OORE_LOCAL_WEB_LISTEN</string>
       <string>--backend-url</string>
-      <string>$DAEMON_URL</string>
+      <string>$WEB_BACKEND_URL</string>
       <string>--dist-dir</string>
       <string>$WEB_DIST_DIR</string>
     </array>
@@ -732,6 +804,54 @@ EOF
   return 0
 }
 
+install_local_web_systemd_user_service() {
+  if ! has_local_web_bundle; then
+    log "Cannot install systemd user service: bundled web UI is unavailable."
+    return 1
+  fi
+  if ! have_cmd systemctl; then
+    log "Cannot install systemd user service: systemctl is unavailable."
+    return 1
+  fi
+
+  mkdir -p "$WEB_SYSTEMD_USER_DIR" "$LOG_DIR"
+  cat > "$WEB_SYSTEMD_SERVICE_FILE" <<EOF
+[Unit]
+Description=Oore CI frontend launcher
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR
+Restart=on-failure
+RestartSec=3
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
+EOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$WEB_SYSTEMD_SERVICE_NAME"
+  log "Installed systemd user service: $WEB_SYSTEMD_SERVICE_NAME"
+  return 0
+}
+
+install_local_web_autostart() {
+  case "$(uname -s)" in
+    Darwin)
+      install_local_web_launch_agent
+      ;;
+    Linux)
+      install_local_web_systemd_user_service
+      ;;
+    *)
+      log "Autostart is not supported on this OS."
+      return 1
+      ;;
+  esac
+}
+
 configure_local_web_noninteractive() {
   case "${OORE_LOCAL_WEB_MODE:-}" in
     ""|off)
@@ -741,8 +861,8 @@ configure_local_web_noninteractive() {
       start_local_web || die "Failed to start local web UI in non-interactive mode."
       ;;
     login)
-      install_local_web_launch_agent \
-        || die "Failed to install local web launch agent in non-interactive mode."
+      install_local_web_autostart \
+        || die "Failed to install local web autostart in non-interactive mode."
       start_local_web || true
       ;;
     *)
@@ -818,7 +938,7 @@ handle_local_backend_onboarding() {
           "no:Not now"
       )"
       if [[ "$launch_choice" == "yes" ]]; then
-        install_local_web_launch_agent || log "Failed to install launch agent."
+        install_local_web_autostart || log "Failed to install local web autostart."
       fi
       ;;
     hosted_setup)
@@ -921,6 +1041,21 @@ print_next_steps() {
 
   printf '\nInstallation complete.\n\n'
 
+  if [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
+    printf 'Frontend is installed at %s\n' "$LOCAL_WEB_URL"
+    printf 'Backend proxy target: %s\n\n' "$WEB_BACKEND_URL"
+    if "$local_web_running"; then
+      printf 'Frontend status: running\n'
+    else
+      printf 'Start the frontend:\n'
+      printf '  oore-web --listen %s --backend-url %s\n' "$OORE_LOCAL_WEB_LISTEN" "$WEB_BACKEND_URL"
+    fi
+    printf '\nPut your HTTPS reverse proxy / Warpgate target in front of %s.\n' "$LOCAL_WEB_URL"
+    printf 'In the UI, add an instance with Backend URL empty so browser API calls use this frontend proxy.\n'
+    printf '\nDocs: https://docs.oore.build\n'
+    return 0
+  fi
+
   if "$daemon_running"; then
     printf 'Daemon is running at %s\n\n' "$DAEMON_URL"
     printf 'Complete setup (local-first):\n'
@@ -979,6 +1114,7 @@ main() {
   trap cleanup EXIT
   init_ui_theme
 
+  validate_install_mode
   validate_local_web_mode
   validate_channel
 
@@ -994,23 +1130,26 @@ main() {
     print_install_intro
   fi
 
-  if [[ "$(uname -s)" != "Darwin" ]]; then
+  detect_os
+  if [[ "$OORE_INSTALL_MODE" == "full" && "$RELEASE_OS" != "darwin" ]]; then
     die 'Oore CI V1 backend installer currently supports macOS only.'
   fi
 
   ensure_dependency curl
   ensure_dependency tar
-  ensure_dependency shasum
   ensure_dependency awk
   ensure_dependency uname
   ensure_dependency mktemp
+  if ! have_cmd shasum && ! have_cmd sha256sum; then
+    die 'shasum or sha256sum is required.'
+  fi
 
   ensure_install_root_writable
 
   # Step 1: Detect platform
   step "Detecting platform..."
   detect_arch
-  step_done "macOS $RELEASE_ARCH"
+  step_done "$RELEASE_OS $RELEASE_ARCH"
 
   TMP_DIR="$(mktemp -d)"
   resolve_local_web_url
@@ -1019,7 +1158,7 @@ main() {
   resolve_release_tag
   step "Downloading $RELEASE_TAG..."
   download_release_assets
-  step_done "oore_${RELEASE_VERSION}_darwin_${RELEASE_ARCH}.tar.gz"
+  step_done "$(release_archive_name)"
 
   # Step 3: Verify checksum
   step "Verifying checksum..."
@@ -1029,13 +1168,27 @@ main() {
   # Step 4: Install binaries
   step "Installing binaries..."
   install_binaries
-  if has_local_web_bundle; then
+  if [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
+    step_done "$BIN_DIR/oore-web + web-dist"
+  elif has_local_web_bundle; then
     step_done "$BIN_DIR/{oored,oore,oore-web}"
   else
     step_done "$BIN_DIR/{oored,oore}"
   fi
 
   ensure_on_path
+
+  if [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
+    step "Configuring frontend..."
+    configure_local_web_noninteractive
+    if [[ -z "${OORE_LOCAL_WEB_MODE:-}" || "${OORE_LOCAL_WEB_MODE:-}" == "off" ]]; then
+      step_done "installed (start with oore-web)"
+    else
+      step_done "$LOCAL_WEB_URL"
+    fi
+    print_next_steps
+    return 0
+  fi
 
   if is_noninteractive; then
     # Step 5: Non-interactive daemon handling

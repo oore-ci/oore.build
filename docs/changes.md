@@ -10,6 +10,15 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-05-13
+
+- **Frontend-only installer for split Warpgate deployments**:
+  - Added `OORE_INSTALL_MODE=frontend` to install only `oore-web` and prebuilt web assets on Linux or macOS hosts.
+  - Release automation now publishes `oore-web_<version>_<os>_<arch>.tar.gz` frontend-only assets alongside full macOS backend archives.
+  - Installer supports `OORE_WEB_BACKEND_URL` so a separate frontend host can proxy `/v1/*` to a Mac Studio daemon over NetBird.
+  - Docs now cover the split Mac Studio backend + Ubuntu frontend + Warpgate topology.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 ## 2026-05-05
 
 - **Project RBAC hardening from Codex scan** ([GitHub #88](https://github.com/devaryakjha/oore.build/issues/88), [#89](https://github.com/devaryakjha/oore.build/issues/89)):

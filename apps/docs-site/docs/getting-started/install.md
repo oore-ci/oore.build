@@ -67,6 +67,39 @@ curl -fsSL https://oore.build/install | OORE_NONINTERACTIVE=1 OORE_START_DAEMON=
 
 If `OORE_NONINTERACTIVE=1` and `OORE_START_DAEMON` is not set, daemon startup is skipped.
 
+## Frontend-only install
+
+Use frontend-only mode when `oored` runs on a Mac host but the browser-facing web UI runs on a separate Linux or macOS machine.
+
+Example for an Ubuntu frontend host that reaches the Mac daemon through NetBird:
+
+```bash
+curl -fsSL https://oore.build/install | \
+  OORE_INSTALL_MODE=frontend \
+  OORE_WEB_BACKEND_URL=http://100.64.10.20:8787 \
+  OORE_LOCAL_WEB_LISTEN=127.0.0.1:4173 \
+  OORE_LOCAL_WEB_MODE=login \
+  OORE_NONINTERACTIVE=1 \
+  bash
+```
+
+Frontend-only mode:
+
+- Downloads `oore-web` and the prebuilt `web-dist` assets only.
+- Supports Linux and macOS release assets.
+- Does not install or start `oored`, `oore`, or the embedded runner.
+- Proxies `/v1/*` and `/healthz` from the frontend host to `OORE_WEB_BACKEND_URL`.
+- Uses a systemd user service on Linux when `OORE_LOCAL_WEB_MODE=login`.
+
+For a Linux user service to survive logout and reboot, enable lingering for the service user:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Put Warpgate and your HTTPS reverse proxy in front of the frontend host, then proxy traffic to `http://127.0.0.1:4173`.
+In the web UI, add an instance with **Backend URL** left empty so API calls use the same HTTPS origin and flow through the frontend proxy.
+
 ## Verify installation
 
 ```bash
@@ -114,6 +147,7 @@ Continue with [Hosted UI Onboarding](/getting-started/hosted-ui-onboarding).
 |---|---|---|
 | `OORE_VERSION` | `latest` | Release selector (`latest` or tag like `v0.2.0`) |
 | `OORE_CHANNEL` | `stable` | Channel selector when `OORE_VERSION=latest`: `stable`, `beta`, or `alpha` |
+| `OORE_INSTALL_MODE` | `full` | Install `full` macOS backend/CLI/frontend bundle, or `frontend` web-only bundle |
 | `OORE_INSTALL_ROOT` | `~/.oore` | Installation directory |
 | `OORE_GITHUB_REPO` | `devaryakjha/oore.build` | GitHub repository used to resolve `latest` and download assets |
 | `OORE_RELEASE_BASE_URL` | `https://github.com/<repo>/releases/download` | Base URL that contains `<tag>/` release assets |
@@ -121,6 +155,8 @@ Continue with [Hosted UI Onboarding](/getting-started/hosted-ui-onboarding).
 | `OORE_RELEASES_LIST_URL` | `https://api.github.com/repos/<repo>/releases?per_page=100` | Release list URL used when `OORE_VERSION=latest` and `OORE_CHANNEL` is `alpha` or `beta` |
 | `OORE_NONINTERACTIVE` | `0` | Disable prompts when set to `1` |
 | `OORE_START_DAEMON` | unset | Non-interactive daemon startup behavior (`true` or `false`) |
+| `OORE_DAEMON_URL` | `http://127.0.0.1:8787` | Daemon URL used by full-mode setup helpers |
+| `OORE_WEB_BACKEND_URL` | `OORE_DAEMON_URL` | Backend URL proxied by `oore-web`, useful for frontend-only hosts |
 | `OORE_LOCAL_WEB_MODE` | unset | Non-interactive local web behavior for localhost backends: `off`, `run`, or `login` (launch-at-login) |
 | `OORE_LOCAL_WEB_LISTEN` | `127.0.0.1:4173` | Bind address for `oore-web` |
 
@@ -128,7 +164,7 @@ Continue with [Hosted UI Onboarding](/getting-started/hosted-ui-onboarding).
 
 ### Unsupported architecture
 
-The installer currently supports macOS `arm64` and `x86_64`.
+Full backend install currently supports macOS `arm64` and `x86_64`. Frontend-only install supports Linux and macOS `arm64` / `x86_64` release assets.
 
 ### Checksum mismatch
 
