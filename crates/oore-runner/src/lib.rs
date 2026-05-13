@@ -1793,11 +1793,13 @@ fi
     if let Some(branch) = branch {
         return Ok(CheckoutInvocation {
             preview_command: format!(
-                "git clone --depth 1 --branch {branch} <repo> . && \
+                "git init && git fetch --depth 1 <repo> {branch} && git checkout FETCH_HEAD && \
                  git submodule sync --recursive && git submodule update --init --recursive"
             ),
             shell_script: r#"set -eu
-git clone --depth 1 --branch "$OORE_BRANCH" "$OORE_REPO" .
+git init
+git fetch --depth 1 "$OORE_REPO" "$OORE_BRANCH"
+git checkout FETCH_HEAD
 echo "[oore-checkout] syncing submodules (recursive)"
 if ! git submodule sync --recursive; then
   echo "[oore-checkout] submodule sync failed" >&2
@@ -1857,6 +1859,11 @@ async fn execute_build(
     try_mark_no_spotlight_index(&workspace_root);
 
     let workspace = workspace_root.join(&job.build_id);
+    if workspace.exists()
+        && let Err(e) = fs::remove_dir_all(&workspace)
+    {
+        return (vec![], Err(e.into()));
+    }
     if let Err(e) = fs::create_dir_all(&workspace) {
         return (vec![], Err(e.into()));
     }
@@ -3272,7 +3279,7 @@ mod tests {
         assert!(
             branch
                 .preview_command
-                .contains("git clone --depth 1 --branch main")
+                .contains("git fetch --depth 1 <repo> main")
         );
         assert!(
             branch
@@ -3298,7 +3305,7 @@ mod tests {
         assert!(
             checkout
                 .preview_command
-                .contains("git clone --depth 1 --branch main <repo>")
+                .contains("git fetch --depth 1 <repo> main")
         );
         assert!(!checkout.preview_command.contains("secret"));
         assert_eq!(checkout.env.len(), 2);
@@ -3324,6 +3331,11 @@ mod tests {
         let fixture = create_nested_submodule_fixture(&fixture_root);
         let workspace = fixture_root.join("checkout-branch");
         fs::create_dir_all(&workspace).expect("create checkout workspace");
+        fs::write(
+            workspace.join(".oore-git-credentials"),
+            b"credential-placeholder\n",
+        )
+        .expect("seed credential placeholder");
 
         let checkout = build_checkout_invocation(
             fixture.root_repo.to_str().expect("root path"),
@@ -3340,6 +3352,7 @@ mod tests {
         );
 
         assert!(workspace.join("deps/child/README.md").exists());
+        assert!(workspace.join(".oore-git-credentials").exists());
         assert!(
             workspace
                 .join("deps/child/deps/grandchild/README.md")

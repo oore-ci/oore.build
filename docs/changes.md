@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-13
 
+- **Runner checkout credential-file fix**:
+  - Branch checkout now uses `git init` + `git fetch` + `git checkout FETCH_HEAD` instead of `git clone ... .`, so runner-created credential files do not make the checkout directory fail as non-empty.
+  - Runner workspaces are cleared before each job starts to avoid stale failed-attempt files affecting retries.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **GitLab source setup and private checkout fixes**:
   - Runner checkout now fetches GitLab HTTPS credentials from a runner-only assigned-job endpoint, so private GitLab repositories clone with the stored integration token instead of prompting for a username.
   - GitLab integration setup now shows required Personal Access Token scopes, the exact webhook receiver URL, and a generated webhook secret before connecting.
