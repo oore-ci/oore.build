@@ -10,6 +10,15 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-05-16
+
+- **Complexity optimization pass**:
+  - Backend retention cleanup now bulk-loads candidate build artifacts per project instead of issuing one artifact query per candidate build.
+  - Web log streaming now incrementally merges ordered log chunks instead of resorting the full log set on every SSE/poll append.
+  - Project detail, log viewer, and user settings render paths now reuse memoized lookups/counts for repeated derived data.
+  - Web TypeScript config keeps the supported deprecation suppression target for current `tsc` validation.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 ## 2026-05-13
 
 - **Frontend-only installer for split Warpgate deployments**:

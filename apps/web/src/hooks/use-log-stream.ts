@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { BuildLogChunk } from '@/lib/types'
 import { createStreamToken, getBuildLogs } from '@/lib/api'
+import { mergeBuildLogChunks } from '@/lib/log-stream-utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
 
@@ -39,32 +40,22 @@ export function useLogStream(
   const abortRef = useRef<AbortController | null>(null)
 
   const logsBySequenceRef = useRef<Map<number, BuildLogChunk>>(new Map())
+  const orderedLogsRef = useRef<Array<BuildLogChunk>>([])
   const lastSequenceRef = useRef(-1)
 
   const appendLogs = useCallback((chunks: Array<BuildLogChunk>) => {
     if (chunks.length === 0) return
 
-    let changed = false
-    for (const chunk of chunks) {
-      const existing = logsBySequenceRef.current.get(chunk.sequence)
-      if (
-        !existing ||
-        existing.content !== chunk.content ||
-        existing.stream !== chunk.stream
-      ) {
-        logsBySequenceRef.current.set(chunk.sequence, chunk)
-        changed = true
-      }
-    }
-
-    if (!changed) return
-
-    const sorted = [...logsBySequenceRef.current.values()].sort(
-      (a, b) => a.sequence - b.sequence,
+    const merged = mergeBuildLogChunks(
+      orderedLogsRef.current,
+      logsBySequenceRef.current,
+      chunks,
     )
-    lastSequenceRef.current =
-      sorted.length > 0 ? sorted[sorted.length - 1].sequence : -1
-    setLogs(sorted)
+    if (!merged.changed) return
+
+    orderedLogsRef.current = merged.logs
+    lastSequenceRef.current = merged.lastSequence
+    setLogs(merged.logs)
   }, [])
 
   const pollOnce = useCallback(async () => {
@@ -118,6 +109,7 @@ export function useLogStream(
     setIsDone(false)
     setError(null)
     logsBySequenceRef.current = new Map()
+    orderedLogsRef.current = []
     lastSequenceRef.current = -1
 
     const abort = new AbortController()

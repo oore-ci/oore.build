@@ -228,6 +228,17 @@ function UsersSettingsPage() {
   )
 
   const users = data?.users ?? []
+  const userStatusCounts = useMemo(
+    () =>
+      users.reduce(
+        (counts, user) => {
+          counts[user.status] += 1
+          return counts
+        },
+        { active: 0, disabled: 0, invited: 0 },
+      ),
+    [users],
+  )
 
   const columns = useMemo(
     () =>
@@ -362,7 +373,7 @@ function UsersSettingsPage() {
               Active users
             </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
-              {users.filter((user) => user.status === 'active').length}
+              {userStatusCounts.active}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Can access this instance
@@ -375,7 +386,7 @@ function UsersSettingsPage() {
               Invited users
             </p>
             <p className="mt-3 text-2xl font-bold tracking-tight">
-              {users.filter((user) => user.status === 'invited').length}
+              {userStatusCounts.invited}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Pending account completion

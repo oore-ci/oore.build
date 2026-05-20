@@ -1,12 +1,12 @@
 //! Background monitoring tasks for lease timeouts, build timeouts, runner health,
 //! and retention cleanup.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use oore_contract::{BuildStatus, RetentionCleanupTarget};
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
@@ -24,6 +24,12 @@ const BUILD_TIMEOUT_SECS: i64 = 3600;
 
 /// Runner heartbeat staleness threshold (2 minutes).
 const HEARTBEAT_STALE_SECS: i64 = 120;
+const SQLITE_BIND_LIMIT_HEADROOM: usize = 900;
+
+struct CleanupArtifact {
+    file_path: String,
+    file_size: Option<i64>,
+}
 
 /// Start all background monitoring tasks.
 pub fn start_background_tasks(
@@ -375,20 +381,20 @@ async fn run_retention_cleanup(
             }
         }
 
+        let artifacts_by_build = load_artifacts_for_builds(pool, &candidate_ids).await?;
+
         // Process candidates
         for build_id in &candidate_ids {
             // Load artifacts for this build (needed for both dry-run counting and real deletion)
-            let artifacts =
-                sqlx::query("SELECT id, file_path, file_size FROM artifacts WHERE build_id = ?1")
-                    .bind(build_id)
-                    .fetch_all(pool)
-                    .await?;
+            let artifacts = artifacts_by_build
+                .get(build_id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
 
             if policy.dry_run {
                 // Count what *would* be cleaned up so dry-run can preview storage impact
-                for artifact in &artifacts {
-                    let file_size: Option<i64> = artifact.get("file_size");
-                    total_bytes_reclaimed += file_size.unwrap_or(0);
+                for artifact in artifacts {
+                    total_bytes_reclaimed += artifact.file_size.unwrap_or(0);
                     total_artifacts_deleted += 1;
                 }
                 info!(build_id = %build_id, project_id = %project_id, "retention_cleanup: [DRY RUN] would clean up build");
@@ -399,22 +405,19 @@ async fn run_retention_cleanup(
             // Delete artifact files from storage first, then delete DB rows only on success.
             // This prevents orphaned files when storage deletion fails.
             let mut all_files_deleted = true;
-            for artifact in &artifacts {
-                let file_path: String = artifact.get("file_path");
-                let file_size: Option<i64> = artifact.get("file_size");
-
+            for artifact in artifacts {
                 let backend = storage.read().await;
-                if let Err(e) = backend.delete_object(&file_path).await {
+                if let Err(e) = backend.delete_object(&artifact.file_path).await {
                     warn!(
                         build_id = %build_id,
-                        file_path = %file_path,
+                        file_path = %artifact.file_path,
                         error = %e,
                         "retention_cleanup: failed to delete artifact file, skipping DB cleanup for this build"
                     );
                     all_files_deleted = false;
                     break;
                 } else {
-                    total_bytes_reclaimed += file_size.unwrap_or(0);
+                    total_bytes_reclaimed += artifact.file_size.unwrap_or(0);
                     total_artifacts_deleted += 1;
                 }
             }
@@ -501,6 +504,42 @@ async fn run_retention_cleanup(
     }
 
     Ok(policy.cleanup_interval_secs)
+}
+
+async fn load_artifacts_for_builds(
+    pool: &SqlitePool,
+    build_ids: &HashSet<String>,
+) -> Result<HashMap<String, Vec<CleanupArtifact>>, sqlx::Error> {
+    let mut artifacts_by_build: HashMap<String, Vec<CleanupArtifact>> = HashMap::new();
+    if build_ids.is_empty() {
+        return Ok(artifacts_by_build);
+    }
+
+    let build_ids: Vec<&str> = build_ids.iter().map(String::as_str).collect();
+    for chunk in build_ids.chunks(SQLITE_BIND_LIMIT_HEADROOM) {
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT build_id, file_path, file_size FROM artifacts WHERE build_id IN (",
+        );
+        let mut separated = query.separated(", ");
+        for build_id in chunk {
+            separated.push_bind(*build_id);
+        }
+        separated.push_unseparated(")");
+
+        let rows = query.build().fetch_all(pool).await?;
+        for row in rows {
+            let build_id: String = row.get("build_id");
+            artifacts_by_build
+                .entry(build_id)
+                .or_default()
+                .push(CleanupArtifact {
+                    file_path: row.get("file_path"),
+                    file_size: row.get("file_size"),
+                });
+        }
+    }
+
+    Ok(artifacts_by_build)
 }
 
 /// Expired artifact and download token cleanup monitor.
@@ -608,5 +647,82 @@ async fn expired_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageB
         }
 
         tokio::time::sleep(Duration::from_secs(300)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashSet;
+
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn artifact_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite memory db");
+
+        sqlx::query(
+            "CREATE TABLE artifacts (\
+             id TEXT PRIMARY KEY NOT NULL, \
+             build_id TEXT NOT NULL, \
+             file_path TEXT NOT NULL, \
+             file_size INTEGER)",
+        )
+        .execute(&pool)
+        .await
+        .expect("create artifacts table");
+
+        pool
+    }
+
+    async fn insert_artifact(pool: &SqlitePool, id: &str, build_id: &str, file_size: i64) {
+        sqlx::query(
+            "INSERT INTO artifacts (id, build_id, file_path, file_size) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(id)
+        .bind(build_id)
+        .bind(format!("artifacts/{id}.zip"))
+        .bind(file_size)
+        .execute(pool)
+        .await
+        .expect("insert artifact");
+    }
+
+    #[tokio::test]
+    async fn load_artifacts_for_builds_groups_candidate_artifacts() {
+        let pool = artifact_pool().await;
+        insert_artifact(&pool, "a1", "build-a", 10).await;
+        insert_artifact(&pool, "a2", "build-a", 20).await;
+        insert_artifact(&pool, "b1", "build-b", 30).await;
+        insert_artifact(&pool, "ignored", "build-c", 40).await;
+
+        let candidate_ids = HashSet::from(["build-a".to_string(), "build-b".to_string()]);
+        let artifacts = load_artifacts_for_builds(&pool, &candidate_ids)
+            .await
+            .expect("load artifacts");
+
+        let mut build_a_paths: Vec<_> = artifacts["build-a"]
+            .iter()
+            .map(|artifact| artifact.file_path.as_str())
+            .collect();
+        build_a_paths.sort_unstable();
+
+        assert_eq!(build_a_paths, vec!["artifacts/a1.zip", "artifacts/a2.zip"]);
+        assert_eq!(artifacts["build-b"][0].file_size, Some(30));
+        assert!(!artifacts.contains_key("build-c"));
+    }
+
+    #[tokio::test]
+    async fn load_artifacts_for_builds_skips_query_for_empty_candidates() {
+        let pool = artifact_pool().await;
+        let artifacts = load_artifacts_for_builds(&pool, &HashSet::new())
+            .await
+            .expect("load artifacts");
+
+        assert!(artifacts.is_empty());
     }
 }

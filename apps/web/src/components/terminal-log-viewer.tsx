@@ -154,78 +154,83 @@ export default function TerminalLogViewer({
 
   // ── Step grouping ──────────────────────────────────────────
 
-  const { stepGroups, allVisibleLogs } = useMemo(() => {
-    const groups = new Map<string, StepGroup>()
-    const order: Array<string> = []
-    const visibleLogs: Array<BuildLogChunk> = []
-    let activeStep: string | null = null
+  const { stepGroups, stepGroupsByName, allVisibleLogs, runningStepName } =
+    useMemo(() => {
+      const groups = new Map<string, StepGroup>()
+      const order: Array<string> = []
+      const visibleLogs: Array<BuildLogChunk> = []
+      let activeStep: string | null = null
 
-    const ensureGroup = (name: string): StepGroup => {
-      const existing = groups.get(name)
-      if (existing) return existing
-      const created: StepGroup = {
-        name,
-        status: 'pending',
-        logs: [],
-      }
-      groups.set(name, created)
-      order.push(name)
-      return created
-    }
-
-    for (const chunk of logs) {
-      const marker = parseStepMarker(chunk.content)
-      if (marker) {
-        const group = ensureGroup(marker.name)
-        if (marker.event === 'start') {
-          group.status = 'running'
-          if (marker.command) group.command = marker.command
-          activeStep = marker.name
-        } else {
-          group.status = marker.status ?? 'succeeded'
-          activeStep = activeStep === marker.name ? null : activeStep
+      const ensureGroup = (name: string): StepGroup => {
+        const existing = groups.get(name)
+        if (existing) return existing
+        const created: StepGroup = {
+          name,
+          status: 'pending',
+          logs: [],
         }
-        continue
+        groups.set(name, created)
+        order.push(name)
+        return created
       }
 
-      visibleLogs.push(chunk)
-      if (activeStep) {
-        ensureGroup(activeStep).logs.push(chunk)
+      for (const chunk of logs) {
+        const marker = parseStepMarker(chunk.content)
+        if (marker) {
+          const group = ensureGroup(marker.name)
+          if (marker.event === 'start') {
+            group.status = 'running'
+            if (marker.command) group.command = marker.command
+            activeStep = marker.name
+          } else {
+            group.status = marker.status ?? 'succeeded'
+            activeStep = activeStep === marker.name ? null : activeStep
+          }
+          continue
+        }
+
+        visibleLogs.push(chunk)
+        if (activeStep) {
+          ensureGroup(activeStep).logs.push(chunk)
+        }
       }
-    }
 
-    for (const result of stepResults) {
-      const group = ensureGroup(result.name)
-      group.status = result.status
-      group.durationMs = result.duration_ms
-    }
+      for (const result of stepResults) {
+        const group = ensureGroup(result.name)
+        group.status = result.status
+        group.durationMs = result.duration_ms
+      }
 
-    return {
-      stepGroups: order
+      const orderedGroups = order
         .map((name) => groups.get(name))
-        .filter(Boolean) as Array<StepGroup>,
-      allVisibleLogs: visibleLogs,
-    }
-  }, [logs, stepResults])
+        .filter(Boolean) as Array<StepGroup>
+
+      return {
+        stepGroups: orderedGroups,
+        stepGroupsByName: groups,
+        allVisibleLogs: visibleLogs,
+        runningStepName:
+          orderedGroups.find((group) => group.status === 'running')?.name ??
+          null,
+      }
+    }, [logs, stepResults])
 
   // ── Derive selected step ──────────────────────────────────
   const selectedStep = useMemo(() => {
     if (userSelectedStep !== null) {
       const valid =
-        userSelectedStep === 'all' ||
-        stepGroups.some((g) => g.name === userSelectedStep)
+        userSelectedStep === 'all' || stepGroupsByName.has(userSelectedStep)
       if (valid) return userSelectedStep
     }
-    const running = stepGroups.find((g) => g.status === 'running')
-    return running?.name ?? stepGroups.at(0)?.name ?? 'all'
-  }, [userSelectedStep, stepGroups])
+    return runningStepName ?? stepGroups.at(0)?.name ?? 'all'
+  }, [userSelectedStep, stepGroups, stepGroupsByName, runningStepName])
 
   // ── Filtered logs ──────────────────────────────────────────
 
   const selectedLogs = useMemo(() => {
     if (selectedStep === 'all') return allVisibleLogs
-    return stepGroups.find((g) => g.name === selectedStep)?.logs ?? []
-  }, [selectedStep, allVisibleLogs, stepGroups])
+    return stepGroupsByName.get(selectedStep)?.logs ?? []
+  }, [selectedStep, allVisibleLogs, stepGroupsByName])
 
   const filteredLogs = useMemo(() => {
     if (!searchQuery.trim()) return selectedLogs
@@ -237,14 +242,14 @@ export default function TerminalLogViewer({
 
   const selectedStepMeta = useMemo(() => {
     if (selectedStep === 'all') return null
-    const group = stepGroups.find((g) => g.name === selectedStep)
+    const group = stepGroupsByName.get(selectedStep)
     if (!group) return null
     return {
       command: group.command,
       status: group.status,
       durationMs: group.durationMs,
     }
-  }, [selectedStep, stepGroups])
+  }, [selectedStep, stepGroupsByName])
 
   // ── Virtualizer ────────────────────────────────────────────
 

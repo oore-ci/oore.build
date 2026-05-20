@@ -1,0 +1,72 @@
+import type { BuildLogChunk } from '@/lib/types'
+
+export interface MergeBuildLogChunksResult {
+  changed: boolean
+  logs: Array<BuildLogChunk>
+  lastSequence: number
+}
+
+function findLogInsertIndex(
+  logs: Array<BuildLogChunk>,
+  sequence: number,
+): number {
+  let low = 0
+  let high = logs.length
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (logs[mid].sequence < sequence) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+
+  return low
+}
+
+export function mergeBuildLogChunks(
+  currentLogs: Array<BuildLogChunk>,
+  logsBySequence: Map<number, BuildLogChunk>,
+  chunks: Array<BuildLogChunk>,
+): MergeBuildLogChunksResult {
+  let nextLogs = currentLogs
+  let changed = false
+
+  for (const chunk of chunks) {
+    const existing = logsBySequence.get(chunk.sequence)
+    if (
+      existing &&
+      existing.content === chunk.content &&
+      existing.stream === chunk.stream
+    ) {
+      continue
+    }
+
+    logsBySequence.set(chunk.sequence, chunk)
+    if (nextLogs === currentLogs) {
+      nextLogs = [...currentLogs]
+    }
+
+    const index =
+      nextLogs.length > 0 &&
+      chunk.sequence > nextLogs[nextLogs.length - 1].sequence
+        ? nextLogs.length
+        : findLogInsertIndex(nextLogs, chunk.sequence)
+
+    if (nextLogs[index]?.sequence === chunk.sequence) {
+      nextLogs[index] = chunk
+    } else {
+      nextLogs.splice(index, 0, chunk)
+    }
+
+    changed = true
+  }
+
+  return {
+    changed,
+    logs: nextLogs,
+    lastSequence:
+      nextLogs.length > 0 ? nextLogs[nextLogs.length - 1].sequence : -1,
+  }
+}

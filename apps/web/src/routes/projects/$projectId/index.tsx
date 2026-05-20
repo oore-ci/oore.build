@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -123,7 +123,6 @@ function ProjectSettingsForm({
     },
     mode: 'onBlur',
   })
-
 
   function onSubmit(data: EditProjectForm) {
     updateMutation.mutate(
@@ -295,19 +294,27 @@ function ProjectDetailPage() {
     setTriggerBuildOpen(true)
   }
 
-  // Build a quick lookup: pipeline.id -> last build info
-  const lastBuildByPipeline = new Map<
-    string,
-    { status: string; time: number }
-  >()
-  for (const build of builds) {
-    if (build.pipeline_id && !lastBuildByPipeline.has(build.pipeline_id)) {
-      lastBuildByPipeline.set(build.pipeline_id, {
-        status: build.status,
-        time: build.queued_at,
-      })
+  const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
+    const byPipeline = new Map<string, { status: string; time: number }>()
+    let latestSucceeded: (typeof builds)[number] | null = null
+
+    for (const build of builds) {
+      if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
+        byPipeline.set(build.pipeline_id, {
+          status: build.status,
+          time: build.queued_at,
+        })
+      }
+      if (latestSucceeded === null && build.status === 'succeeded') {
+        latestSucceeded = build
+      }
     }
-  }
+
+    return {
+      lastBuildByPipeline: byPipeline,
+      latestSucceededBuild: latestSucceeded,
+    }
+  }, [builds])
 
   return (
     <PageLayout width="wide">
@@ -434,10 +441,7 @@ function ProjectDetailPage() {
             <Card>
               <CardContent>
                 {(() => {
-                  const latestSucceeded = builds.find(
-                    (b) => b.status === 'succeeded',
-                  )
-                  if (!latestSucceeded) return null
+                  if (!latestSucceededBuild) return null
                   return (
                     <div className="mb-3 flex items-center gap-2 text-sm">
                       <Badge variant="default" className="text-[10px]">
@@ -445,14 +449,14 @@ function ProjectDetailPage() {
                       </Badge>
                       <Link
                         to="/builds/$buildId"
-                        params={{ buildId: latestSucceeded.id }}
+                        params={{ buildId: latestSucceededBuild.id }}
                         className="font-mono text-xs text-primary hover:underline"
                       >
-                        Build #{latestSucceeded.build_number}
+                        Build #{latestSucceededBuild.build_number}
                       </Link>
                       <span className="text-xs text-muted-foreground">
-                        on {latestSucceeded.branch ?? 'n/a'} ·{' '}
-                        {relativeTime(latestSucceeded.queued_at)}
+                        on {latestSucceededBuild.branch ?? 'n/a'} ·{' '}
+                        {relativeTime(latestSucceededBuild.queued_at)}
                       </span>
                     </div>
                   )
