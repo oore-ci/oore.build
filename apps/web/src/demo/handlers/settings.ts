@@ -32,7 +32,7 @@ let externalAccessNetworkSettings: ExternalAccessNetworkSettings = {
 }
 
 let trustedProxySettings: TrustedProxySettingsPublic = {
-  user_email_header: 'x-warpgate-username',
+  user_email_header: 'x-oore-user-email',
   trusted_proxy_cidrs: [],
   has_shared_secret: false,
   updated_at: ago(86400 * 30),

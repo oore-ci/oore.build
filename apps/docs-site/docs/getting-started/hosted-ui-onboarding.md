@@ -92,7 +92,7 @@ Choose one:
 Finish the setup wizard using either:
 
 - `Remote (OIDC)`, or
-- `Remote (Trusted Proxy / Warpgate)` if your HTTPS origin is already behind an identity-aware proxy
+- `Remote (Trusted Proxy)` if your HTTPS origin is already behind an identity-aware proxy
 
 ## CORS and origin notes
 

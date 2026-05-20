@@ -33,7 +33,7 @@ fn local_subject_for_email(email: &str) -> String {
 }
 
 fn trusted_proxy_subject_for_email(email: &str) -> String {
-    format!("warpgate::{}", email.trim().to_lowercase())
+    format!("trusted-proxy::{}", email.trim().to_lowercase())
 }
 
 /// Pending OIDC authorization request stored in memory while the user is
@@ -932,8 +932,8 @@ pub async fn local_login(
 /// `POST /v1/auth/trusted-proxy/login`
 ///
 /// Creates a session for the identity asserted by a trusted upstream proxy
-/// (for example, Warpgate). This endpoint is only available in Remote mode
-/// when remote auth mode is configured to trusted_proxy.
+/// This endpoint is only available in Remote mode when remote auth mode is
+/// configured to trusted_proxy.
 pub async fn trusted_proxy_login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,

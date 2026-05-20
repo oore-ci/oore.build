@@ -21,11 +21,15 @@ Rules:
   - Feature doc: https://linear.app/oorebuild/document/feature-oored-launchd-service-installuninstall-3878b499a450
 
 - **Guided split deployment installer**:
-  - Installer mode now supports `auto`: Linux resolves to frontend-only install, while macOS keeps the backend/runner install path by default.
-  - Frontend-only installs now prompt for the Mac Studio backend URL, keep `oore-web` loopback by default, configure `run`/`login` service behavior, and can enable systemd lingering for Ubuntu service survival across logout/reboot.
+  - Installer modes are now role-based: `auto`, `all`, `backend`, and `frontend`; legacy `full` still works as an alias for `all`.
+  - `backend` installs only the macOS daemon, CLI, and embedded runner from the backend archive; `all` keeps the prior single-host bundle with local web assets.
+  - Frontend-only installs now prompt for a generic reachable backend URL, keep `oore-web` loopback by default, configure `run`/`login` service behavior, and can enable systemd lingering for Linux service survival across logout/reboot.
   - Non-interactive frontend-only installs now fail fast unless a backend URL was explicitly provided, preventing accidental proxies to `127.0.0.1`.
-  - Full macOS installs now accept `OORE_DAEMON_LISTEN`, `OORE_PUBLIC_URL`, `OORE_CORS_ORIGINS`, and `OORE_INSTALL_DAEMON_SERVICE`, with interactive prompts for the same values.
-  - Updated split Mac Studio + Ubuntu + NetBird + Warpgate docs around the new guided install path.
+  - `all` and `backend` macOS installs now accept `OORE_DAEMON_LISTEN`, `OORE_PUBLIC_URL`, `OORE_CORS_ORIGINS`, and `OORE_INSTALL_DAEMON_SERVICE`, with interactive prompts for the same values.
+  - Trusted-proxy setup now captures an initial owner email and rejects owner claims from a different forwarded identity, avoiding manual owner/admin edits in SQLite.
+  - Trusted-proxy setup UI now includes proxy presets: generic `x-oore-user-email`, Warpgate `x-warpgate-username`, and a custom editable header.
+  - Setup completion now promotes an existing matching user row to `owner` instead of ignoring it when the email already exists.
+  - Updated generic split role docs and kept the Mac Studio + NetBird + Warpgate guide as one provider-specific example.
   - Documented the prerelease installer endpoints so alpha/beta testers use the matching installer script, not the stable production installer.
   - Feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 
@@ -40,11 +44,11 @@ Rules:
 
 ## 2026-05-13
 
-- **Frontend-only installer for split Warpgate deployments**:
+- **Frontend-only installer for split deployments**:
   - Added `OORE_INSTALL_MODE=frontend` to install only `oore-web` and prebuilt web assets on Linux or macOS hosts.
-  - Release automation now publishes `oore-web_<version>_<os>_<arch>.tar.gz` frontend-only assets alongside full macOS backend archives.
-  - Installer supports `OORE_WEB_BACKEND_URL` so a separate frontend host can proxy `/v1/*` to a Mac Studio daemon over NetBird.
-  - Docs now cover the split Mac Studio backend + Ubuntu frontend + Warpgate topology.
+  - Release automation now publishes `oore-web_<version>_<os>_<arch>.tar.gz` frontend-only assets alongside macOS backend archives.
+  - Installer supports `OORE_WEB_BACKEND_URL` so a separate frontend host can proxy `/v1/*` to a backend daemon over a private or controlled network path.
+  - Docs now cover split backend/frontend topology, with Mac Studio + NetBird + Warpgate as one provider-specific example.
   - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 ## 2026-05-05

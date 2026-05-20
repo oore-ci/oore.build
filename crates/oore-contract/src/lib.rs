@@ -175,6 +175,8 @@ pub struct SetupPreferencesResponse {
 pub struct SetupTrustedProxyConfigureRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_email_header: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_owner_email: Option<String>,
     #[serde(default)]
     pub trusted_proxy_cidrs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -184,6 +186,8 @@ pub struct SetupTrustedProxyConfigureRequest {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct SetupTrustedProxyConfigureResponse {
     pub state: SetupState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_owner_email: Option<String>,
     pub has_shared_secret: bool,
     pub configured_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]

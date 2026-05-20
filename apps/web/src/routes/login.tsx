@@ -277,7 +277,7 @@ function LoginPage() {
           )
         } else if (e.code === 'trusted_proxy_identity_missing') {
           setError(
-            'Trusted proxy identity header is missing. Check Warpgate header forwarding.',
+            'Trusted proxy identity header is missing. Check proxy header forwarding.',
           )
         } else if (e.code === 'trusted_proxy_identity_invalid') {
           setError(

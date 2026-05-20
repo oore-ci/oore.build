@@ -12,7 +12,7 @@ This page explains the security design decisions in Oore CI and how they protect
 For any non-loopback access (`runtime_mode=remote`), Oore CI requires one of:
 
 - OpenID Connect (OIDC)
-- Trusted Proxy mode (for example Warpgate / IAP)
+- Trusted Proxy mode (for example Warpgate or an identity-aware proxy)
 
 There are no local passwords, no password storage, and no password reset flows.
 
@@ -20,11 +20,12 @@ The daemon also supports loopback-only local login (`POST /v1/auth/local/login`)
 
 **Why**: Eliminates an entire class of vulnerabilities (credential storage, brute force attacks, password reuse). Users authenticate with identity systems already used by the organization. Disabling a user in the upstream identity system revokes their ability to start new sessions.
 
-### Trusted Proxy mode (Warpgate / IAP)
+### Trusted Proxy mode
 
 In Trusted Proxy mode, Oore CI trusts identity headers from an upstream proxy and creates normal Oore sessions per user.
 
-- Default identity header: `x-warpgate-username` (expected to be an email)
+- Default identity header: `x-oore-user-email` (expected to be an email)
+- Setup UI presets can switch the header to provider-specific defaults such as `x-warpgate-username`
 - Optional shared-secret header: `x-oore-trusted-proxy-secret`
 - Trust boundary: headers are accepted only when the immediate peer is trusted (loopback by default, optional CIDR allowlist for remote proxy peers)
 - Authorization stays in Oore RBAC (owner/admin/developer/qa_viewer) via Oore users and roles

@@ -497,13 +497,14 @@ mod paths {
 
     /// Configure trusted proxy auth during setup
     ///
-    /// Upserts trusted proxy settings for remote trusted-proxy mode.
+    /// Upserts trusted proxy settings for remote trusted-proxy mode, including
+    /// the expected initial owner email.
     #[utoipa::path(post, path = "/v1/setup/trusted-proxy/configure", tag = "Setup",
         request_body = SetupTrustedProxyConfigureRequest,
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Trusted proxy setup configured", body = SetupTrustedProxyConfigureResponse),
-            (status = 400, description = "Invalid header/CIDR/secret input", body = ApiError),
+            (status = 400, description = "Invalid owner/header/CIDR/secret input", body = ApiError),
             (status = 401, description = "Invalid setup session", body = ApiError),
             (status = 403, description = "Not in remote trusted-proxy mode", body = ApiError),
             (status = 409, description = "Setup already complete or owner already created", body = ApiError),
@@ -546,13 +547,14 @@ mod paths {
 
     /// Claim owner identity from trusted proxy headers
     ///
-    /// Creates owner record from trusted proxy identity headers (email).
+    /// Creates the owner record from trusted proxy identity headers after the
+    /// proxy-authenticated email matches the configured setup owner email.
     #[utoipa::path(post, path = "/v1/setup/owner/claim-trusted-proxy", tag = "Setup",
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Owner created from trusted proxy identity", body = SetupTrustedProxyClaimOwnerResponse),
             (status = 401, description = "Invalid setup session or missing/invalid identity header", body = ApiError),
-            (status = 403, description = "Not in trusted-proxy mode or untrusted proxy peer", body = ApiError),
+            (status = 403, description = "Not in trusted-proxy mode, untrusted proxy peer, or owner email mismatch", body = ApiError),
             (status = 409, description = "Invalid setup state", body = ApiError),
         )
     )]

@@ -71,15 +71,15 @@ Usage:
 Environment overrides:
   OORE_VERSION               Release tag or "latest" (default: latest)
   OORE_CHANNEL               Release channel for latest resolution: stable|beta|alpha (default: stable)
-  OORE_INSTALL_MODE          Install mode: auto|full|frontend (default: auto)
+  OORE_INSTALL_MODE          Install mode: auto|all|backend|frontend (default: auto; full is a legacy alias for all)
   OORE_INSTALL_ROOT          Install root (default: ~/.oore)
   OORE_NONINTERACTIVE        Non-interactive mode (true/false)
-  OORE_DAEMON_LISTEN         Daemon listen address for full installs (default: from OORE_DAEMON_URL)
+  OORE_DAEMON_LISTEN         Daemon listen address for all/backend installs (default: from OORE_DAEMON_URL)
   OORE_START_DAEMON          Start daemon in non-interactive mode (true/false)
-  OORE_INSTALL_DAEMON_SERVICE Install oored as a launchd service in full mode (true/false)
-  OORE_PUBLIC_URL            Browser-visible HTTPS URL for split/remote installs
+  OORE_INSTALL_DAEMON_SERVICE Install oored as a launchd service in all/backend mode (true/false)
+  OORE_PUBLIC_URL            Browser-visible HTTPS origin for remote access
   OORE_CORS_ORIGINS          Comma-separated allowed browser origins (default: OORE_PUBLIC_URL when set)
-  OORE_DAEMON_URL            Daemon URL used by full-mode setup helpers (default: http://127.0.0.1:8787)
+  OORE_DAEMON_URL            Daemon URL used by all/backend setup helpers (default: http://127.0.0.1:8787)
   OORE_WEB_BACKEND_URL       Backend URL proxied by oore-web (default: OORE_DAEMON_URL)
   OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
   OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
@@ -158,7 +158,7 @@ print_install_intro() {
   printf '  Mode:          %s\n' "$OORE_INSTALL_MODE"
   printf '  Prompting:     %s\n' "$(ui_prompt_mode)"
   printf '  Install root:  %s\n' "$OORE_INSTALL_ROOT"
-  if [[ "$OORE_INSTALL_MODE" == "full" ]]; then
+  if is_daemon_install; then
     printf '  Daemon listen: %s\n' "$OORE_DAEMON_LISTEN"
     if [[ -n "$OORE_PUBLIC_URL" ]]; then
       printf '  Public URL:    %s\n' "$OORE_PUBLIC_URL"
@@ -413,20 +413,34 @@ detect_os() {
       RELEASE_OS="linux"
       ;;
     *)
-      die "Unsupported operating system: $(uname -s). Full install supports macOS; frontend install supports macOS and Linux."
+      die "Unsupported operating system: $(uname -s). Backend install supports macOS; frontend install supports macOS and Linux."
       ;;
   esac
 }
 
 validate_install_mode() {
   case "${OORE_INSTALL_MODE:-}" in
-    auto|full|frontend)
+    auto|all|backend|frontend|full)
       return 0
       ;;
     *)
-      die 'OORE_INSTALL_MODE must be one of: auto,full,frontend.'
+      die 'OORE_INSTALL_MODE must be one of: auto,all,backend,frontend. The old full value is accepted as an all-in-one alias.'
       ;;
   esac
+}
+
+normalize_install_mode() {
+  if [[ "${OORE_INSTALL_MODE:-}" == "full" ]]; then
+    OORE_INSTALL_MODE="all"
+  fi
+}
+
+is_daemon_install() {
+  [[ "${OORE_INSTALL_MODE:-}" == "all" || "${OORE_INSTALL_MODE:-}" == "backend" ]]
+}
+
+is_web_install() {
+  [[ "${OORE_INSTALL_MODE:-}" == "all" || "${OORE_INSTALL_MODE:-}" == "frontend" ]]
 }
 
 validate_channel() {
@@ -459,29 +473,6 @@ daemon_url_from_listen() {
   fi
 }
 
-detect_overlay_ip() {
-  local ip_addr=""
-
-  if have_cmd ip; then
-    ip_addr="$(ip -4 addr show 2>/dev/null | awk '
-      /inet 100\./ {
-        split($2, parts, "/");
-        print parts[1];
-        exit;
-      }
-    ')"
-  elif have_cmd ifconfig; then
-    ip_addr="$(ifconfig 2>/dev/null | awk '
-      $1 == "inet" && $2 ~ /^100\./ {
-        print $2;
-        exit;
-      }
-    ')"
-  fi
-
-  printf '%s' "$ip_addr"
-}
-
 normalize_runtime_config() {
   if [[ -z "$OORE_DAEMON_LISTEN" ]]; then
     OORE_DAEMON_LISTEN="$(url_to_host_port "$DAEMON_URL")"
@@ -506,6 +497,8 @@ normalize_runtime_config() {
 }
 
 configure_install_mode() {
+  normalize_install_mode
+
   if [[ "$OORE_INSTALL_MODE" == "auto" ]]; then
     case "$RELEASE_OS" in
       linux)
@@ -515,21 +508,24 @@ configure_install_mode() {
         if [[ "$OORE_INSTALL_MODE_WAS_SET" -eq 0 && ! is_noninteractive && has_prompt_tty ]]; then
           OORE_INSTALL_MODE="$(
             prompt_select \
-              "What are you installing on this machine?" \
-              "full" \
-              "full:Backend + runner on this Mac" \
-              "frontend:Frontend-only proxy"
+              "What role should this machine run?" \
+              "all" \
+              "all:Backend + CLI + embedded runner + local web" \
+              "backend:Backend daemon + CLI + embedded runner only" \
+              "frontend:Frontend-only web proxy"
           )"
         else
-          OORE_INSTALL_MODE="full"
+          OORE_INSTALL_MODE="all"
         fi
         ;;
     esac
   fi
+
+  normalize_install_mode
 }
 
 configure_backend_install() {
-  [[ "$OORE_INSTALL_MODE" == "full" ]] || return 0
+  is_daemon_install || return 0
 
   if [[ "$RELEASE_OS" != "darwin" ]]; then
     die 'Oore CI V1 backend installer currently supports macOS only.'
@@ -541,17 +537,11 @@ configure_backend_install() {
   [[ -n "$OORE_DAEMON_LISTEN" ]] || OORE_DAEMON_LISTEN="127.0.0.1:8787"
 
   if ! is_noninteractive && has_prompt_tty; then
-    local overlay_ip=""
     local listen_default="$OORE_DAEMON_LISTEN"
-    overlay_ip="$(detect_overlay_ip)"
-    if [[ "$listen_default" == "127.0.0.1:8787" && -n "$overlay_ip" ]]; then
-      log "Detected private overlay IP: $overlay_ip"
-      listen_default="$overlay_ip:8787"
-    fi
 
     OORE_DAEMON_LISTEN="$(
       prompt_text \
-        "Daemon listen address. Use the Mac Studio NetBird IP for a split Ubuntu frontend, or 127.0.0.1:8787 for same-host/private-proxy setup." \
+        "Daemon listen address. Use 127.0.0.1:8787 for same-host or same-host reverse-proxy setups, or a private/LAN/VPN address when another frontend host must reach this daemon." \
         "$listen_default" \
         "required"
     )"
@@ -615,7 +605,7 @@ configure_frontend_install() {
 
     WEB_BACKEND_URL="$(
       prompt_text \
-        "Mac Studio backend URL reachable from this machine over NetBird, for example http://100.64.10.20:8787." \
+        "Backend daemon URL reachable from this frontend host, for example http://10.0.0.20:8787 or https://ci-api.example.com." \
         "$backend_default" \
         "required"
     )"
@@ -623,7 +613,7 @@ configure_frontend_install() {
 
     OORE_LOCAL_WEB_LISTEN="$(
       prompt_text \
-        "Local oore-web listen address. Keep loopback when Caddy/Warpgate is on this Ubuntu host." \
+        "Local oore-web listen address. Keep loopback when a reverse proxy runs on this host; bind a private interface only when you intentionally expose oore-web directly." \
         "$OORE_LOCAL_WEB_LISTEN" \
         "required"
     )"
@@ -656,7 +646,7 @@ configure_frontend_install() {
     fi
   else
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
-      die 'Frontend-only non-interactive install requires OORE_WEB_BACKEND_URL, for example http://<mac-netbird-ip>:8787.'
+      die 'Frontend-only non-interactive install requires OORE_WEB_BACKEND_URL, for example http://<backend-host>:8787.'
     fi
   fi
 
@@ -805,7 +795,7 @@ resolve_release_tag() {
 
 release_archive_name() {
   case "$OORE_INSTALL_MODE" in
-    full)
+    all|backend)
       printf 'oore_%s_darwin_%s.tar.gz' "$RELEASE_VERSION" "$RELEASE_ARCH"
       ;;
     frontend)
@@ -875,24 +865,31 @@ install_binaries() {
   mkdir -p "$extract_dir"
   tar -xzf "$TMP_DIR/$archive_name" -C "$extract_dir"
 
-  if [[ "$OORE_INSTALL_MODE" == "full" ]]; then
+  if is_daemon_install; then
     [[ -f "$extract_dir/bin/oored" ]] || die "Release archive is missing bin/oored."
     [[ -f "$extract_dir/bin/oore" ]] || die "Release archive is missing bin/oore."
   fi
-  [[ -f "$extract_dir/bin/oore-web" ]] || die "Release archive is missing bin/oore-web."
-  [[ -d "$extract_dir/web-dist" ]] || die "Release archive is missing web-dist."
+  if is_web_install; then
+    [[ -f "$extract_dir/bin/oore-web" ]] || die "Release archive is missing bin/oore-web."
+    [[ -d "$extract_dir/web-dist" ]] || die "Release archive is missing web-dist."
+  fi
   [[ -f "$extract_dir/VERSION" ]] || die "Release archive is missing VERSION."
 
   mkdir -p "$BIN_DIR" "$LOG_DIR"
-  if [[ "$OORE_INSTALL_MODE" == "full" ]]; then
+  if is_daemon_install; then
     cp "$extract_dir/bin/oored" "$BIN_DIR/oored"
     cp "$extract_dir/bin/oore" "$BIN_DIR/oore"
     chmod +x "$BIN_DIR/oored" "$BIN_DIR/oore"
   fi
-  cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
-  chmod +x "$WEB_BINARY"
-  rm -rf "$WEB_DIST_DIR"
-  cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
+  if is_web_install; then
+    cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
+    chmod +x "$WEB_BINARY"
+    rm -rf "$WEB_DIST_DIR"
+    cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
+  else
+    rm -f "$WEB_BINARY"
+    rm -rf "$WEB_DIST_DIR"
+  fi
 
   cp "$extract_dir/VERSION" "$OORE_INSTALL_ROOT/VERSION"
   printf '%s\n' "$OORE_INSTALL_MODE" > "$OORE_INSTALL_ROOT/INSTALL_MODE"
@@ -1454,7 +1451,7 @@ print_next_steps() {
       printf '  systemctl --user status %s\n' "$WEB_SYSTEMD_SERVICE_NAME"
       printf '  sudo loginctl enable-linger %s   # only needed if not already enabled\n' "$USER"
     fi
-    printf '\nPut your HTTPS reverse proxy / Warpgate target in front of %s.\n' "$LOCAL_WEB_URL"
+    printf '\nPut your HTTPS reverse proxy in front of %s.\n' "$LOCAL_WEB_URL"
     printf 'In the UI, add an instance with Backend URL empty so browser API calls use this frontend proxy.\n'
     printf '\nDocs: https://docs.oore.build\n'
     return 0
@@ -1481,7 +1478,7 @@ print_next_steps() {
       printf '  local web start:  oore-web --backend-url %s\n' "$DAEMON_URL"
     fi
     if [[ -n "$OORE_PUBLIC_URL" ]]; then
-      printf '\nSplit frontend setup URL:\n'
+      printf '\nConfigured public setup URL:\n'
       printf '  %s/setup\n' "${OORE_PUBLIC_URL%/}"
     else
       printf '\nRemote mode (optional later, requires HTTPS backend):\n'
@@ -1588,6 +1585,8 @@ main() {
   install_binaries
   if [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
     step_done "$BIN_DIR/oore-web + web-dist"
+  elif [[ "$OORE_INSTALL_MODE" == "backend" ]]; then
+    step_done "$BIN_DIR/{oored,oore}"
   elif has_local_web_bundle; then
     step_done "$BIN_DIR/{oored,oore,oore-web}"
   else

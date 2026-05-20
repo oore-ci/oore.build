@@ -4960,7 +4960,7 @@
           "Setup"
         ],
         "summary": "Claim owner identity from trusted proxy headers",
-        "description": "Creates owner record from trusted proxy identity headers (email).",
+        "description": "Creates the owner record from trusted proxy identity headers after the\nproxy-authenticated email matches the configured setup owner email.",
         "operationId": "setup_owner_claim_trusted_proxy",
         "responses": {
           "200": {
@@ -4984,7 +4984,7 @@
             }
           },
           "403": {
-            "description": "Not in trusted-proxy mode or untrusted proxy peer",
+            "description": "Not in trusted-proxy mode, untrusted proxy peer, or owner email mismatch",
             "content": {
               "application/json": {
                 "schema": {
@@ -5255,7 +5255,7 @@
           "Setup"
         ],
         "summary": "Configure trusted proxy auth during setup",
-        "description": "Upserts trusted proxy settings for remote trusted-proxy mode.",
+        "description": "Upserts trusted proxy settings for remote trusted-proxy mode, including\nthe expected initial owner email.",
         "operationId": "setup_trusted_proxy_configure",
         "requestBody": {
           "content": {
@@ -5279,7 +5279,7 @@
             }
           },
           "400": {
-            "description": "Invalid header/CIDR/secret input",
+            "description": "Invalid owner/header/CIDR/secret input",
             "content": {
               "application/json": {
                 "schema": {
@@ -9441,6 +9441,12 @@
       "SetupTrustedProxyConfigureRequest": {
         "type": "object",
         "properties": {
+          "setup_owner_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "shared_secret": {
             "type": [
               "string",
@@ -9482,6 +9488,12 @@
               "null"
             ],
             "format": "int64"
+          },
+          "setup_owner_email": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "state": {
             "$ref": "#/components/schemas/SetupState"

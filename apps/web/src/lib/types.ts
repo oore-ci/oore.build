@@ -91,12 +91,14 @@ export interface SetupPreferencesResponse {
 
 export interface SetupTrustedProxyConfigureRequest {
   user_email_header?: string
+  setup_owner_email?: string
   trusted_proxy_cidrs: Array<string>
   shared_secret?: string
 }
 
 export interface SetupTrustedProxyConfigureResponse {
   state: SetupState
+  setup_owner_email?: string
   has_shared_secret: boolean
   configured_at: number
   session_expires_at?: number

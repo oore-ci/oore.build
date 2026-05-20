@@ -396,6 +396,7 @@ export default defineConfig({
           text: "Operations",
           items: [
             { text: "Deployment", link: "/operations/deployment" },
+            { text: "Split Backend and Frontend", link: "/operations/split-roles" },
             {
               text: "Mac Studio + NetBird + Warpgate",
               link: "/operations/mac-studio-netbird-warpgate",

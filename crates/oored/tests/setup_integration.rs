@@ -11,10 +11,11 @@ use axum::body::Body;
 use axum::extract::ConnectInfo;
 use http_body_util::BodyExt;
 use hyper::Request;
-use oore_contract::{BootstrapTokenRecord, SetupSessionRecord, SetupState};
+use oore_contract::{BootstrapTokenRecord, OwnerRecord, SetupSessionRecord, SetupState};
 use oored::build_test_router;
 use oored::store::SetupStore;
 use oored::token::{generate_token, hash_token};
+use sqlx::Row;
 
 /// Fixed test encryption key (32 bytes).
 const TEST_ENCRYPTION_KEY: [u8; 32] = [0x42u8; 32];
@@ -153,6 +154,18 @@ async fn set_state(path: &Path, state: SetupState) {
     store.save(&sf).await.expect("failed to save state");
 }
 
+async fn set_owner_created_state(path: &Path, email: &str, oidc_subject: &str) {
+    let store = connect_store(path).await;
+    let mut sf = store.load().await.expect("failed to load state");
+    sf.setup_state = SetupState::OwnerCreated;
+    sf.owner = Some(OwnerRecord {
+        email: email.to_string(),
+        oidc_subject: Some(oidc_subject.to_string()),
+        created_at: now_unix(),
+    });
+    store.save(&sf).await.expect("failed to save state");
+}
+
 async fn set_runtime_and_remote_auth_mode(path: &Path, runtime_mode: &str, remote_auth_mode: &str) {
     let store = connect_store(path).await;
     let now = now_unix();
@@ -174,6 +187,14 @@ async fn set_runtime_and_remote_auth_mode(path: &Path, runtime_mode: &str, remot
 }
 
 async fn upsert_trusted_proxy_settings(path: &Path, shared_secret: Option<&str>) {
+    upsert_trusted_proxy_settings_with_owner(path, shared_secret, None).await;
+}
+
+async fn upsert_trusted_proxy_settings_with_owner(
+    path: &Path,
+    shared_secret: Option<&str>,
+    setup_owner_email: Option<&str>,
+) {
     let store = connect_store(path).await;
     let now = now_unix();
     let encrypted_shared_secret = shared_secret.map(|secret| {
@@ -182,14 +203,16 @@ async fn upsert_trusted_proxy_settings(path: &Path, shared_secret: Option<&str>)
     });
 
     sqlx::query(
-        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
-         VALUES (1, 'x-warpgate-username', '[]', ?1, NULL, ?2, ?2)
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
+         VALUES (1, 'x-oore-user-email', ?1, '[]', ?2, NULL, ?3, ?3)
          ON CONFLICT(id) DO UPDATE SET
             user_email_header = excluded.user_email_header,
+            setup_owner_email = excluded.setup_owner_email,
             trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
             encrypted_shared_secret = excluded.encrypted_shared_secret,
             updated_at = excluded.updated_at",
     )
+    .bind(setup_owner_email.map(str::to_lowercase))
     .bind(encrypted_shared_secret)
     .bind(now)
     .execute(store.pool())
@@ -1021,6 +1044,60 @@ async fn test_complete_setup_wrong_state() {
 }
 
 #[tokio::test]
+async fn test_complete_setup_promotes_existing_owner_email() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let session_token = seed_session_token(&db_path).await;
+    let store = connect_store(&db_path).await;
+    let now = now_unix();
+
+    set_owner_created_state(
+        &db_path,
+        "owner@example.com",
+        "trusted-proxy::owner@example.com",
+    )
+    .await;
+
+    sqlx::query(
+        "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at)
+         VALUES ('existing-user', 'owner@example.com', 'old-subject', 'Owner', 'admin', 'active', ?1, ?1)",
+    )
+    .bind(now)
+    .execute(store.pool())
+    .await
+    .expect("failed to insert existing user");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/complete")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+
+    let row = sqlx::query(
+        "SELECT id, role, status, oidc_subject FROM users WHERE lower(email) = lower('owner@example.com')",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("failed to fetch promoted owner");
+    assert_eq!(row.get::<String, _>("id"), "existing-user");
+    assert_eq!(row.get::<String, _>("role"), "owner");
+    assert_eq!(row.get::<String, _>("status"), "active");
+    assert_eq!(
+        row.get::<String, _>("oidc_subject"),
+        "trusted-proxy::owner@example.com"
+    );
+}
+
+#[tokio::test]
 async fn test_setup_owner_claim_trusted_proxy_requires_configuration() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("oore.db");
@@ -1036,7 +1113,7 @@ async fn test_setup_owner_claim_trusted_proxy_requires_configuration() {
                 .method("POST")
                 .uri("/v1/setup/owner/claim-trusted-proxy")
                 .header("Authorization", format!("Bearer {}", session_token))
-                .header("x-warpgate-username", "owner@example.com")
+                .header("x-oore-user-email", "owner@example.com")
                 .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41234))))
                 .body(Body::empty())
                 .unwrap(),
@@ -1047,6 +1124,91 @@ async fn test_setup_owner_claim_trusted_proxy_requires_configuration() {
     assert_eq!(resp.status(), 409);
     let body = body_json(resp).await;
     assert_eq!(body["code"], "trusted_proxy_not_configured");
+}
+
+#[tokio::test]
+async fn test_setup_trusted_proxy_configures_expected_owner_email() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let session_token = seed_session_token(&db_path).await;
+
+    set_runtime_and_remote_auth_mode(&db_path, "remote", "trusted_proxy").await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/trusted-proxy/configure")
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .body(Body::from(
+                    serde_json::to_string(&json!({
+                        "user_email_header": "X-Oore-User-Email",
+                        "setup_owner_email": "Owner@Example.COM ",
+                        "trusted_proxy_cidrs": [],
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["state"], "idp_configured");
+    assert_eq!(body["setup_owner_email"], "owner@example.com");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/claim-trusted-proxy")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .header("x-oore-user-email", "owner@example.com")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41238))))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["state"], "owner_created");
+    assert_eq!(body["owner_email"], "owner@example.com");
+}
+
+#[tokio::test]
+async fn test_setup_owner_claim_trusted_proxy_rejects_owner_email_mismatch() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let session_token = seed_session_token(&db_path).await;
+
+    set_state(&db_path, SetupState::IdpConfigured).await;
+    set_runtime_and_remote_auth_mode(&db_path, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings_with_owner(&db_path, None, Some("owner@example.com")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/owner/claim-trusted-proxy")
+                .header("Authorization", format!("Bearer {}", session_token))
+                .header("x-oore-user-email", "admin@example.com")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41239))))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "trusted_proxy_owner_email_mismatch");
 }
 
 #[tokio::test]
@@ -1067,7 +1229,7 @@ async fn test_setup_owner_claim_trusted_proxy_requires_configured_shared_secret(
                 .method("POST")
                 .uri("/v1/setup/owner/claim-trusted-proxy")
                 .header("Authorization", format!("Bearer {}", session_token))
-                .header("x-warpgate-username", "owner@example.com")
+                .header("x-oore-user-email", "owner@example.com")
                 .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41235))))
                 .body(Body::empty())
                 .unwrap(),
@@ -1085,7 +1247,7 @@ async fn test_setup_owner_claim_trusted_proxy_requires_configured_shared_secret(
                 .method("POST")
                 .uri("/v1/setup/owner/claim-trusted-proxy")
                 .header("Authorization", format!("Bearer {}", session_token))
-                .header("x-warpgate-username", "owner@example.com")
+                .header("x-oore-user-email", "owner@example.com")
                 .header(
                     oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
                     "wrong-secret",
@@ -1106,7 +1268,7 @@ async fn test_setup_owner_claim_trusted_proxy_requires_configured_shared_secret(
                 .method("POST")
                 .uri("/v1/setup/owner/claim-trusted-proxy")
                 .header("Authorization", format!("Bearer {}", session_token))
-                .header("x-warpgate-username", "owner@example.com")
+                .header("x-oore-user-email", "owner@example.com")
                 .header(
                     oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
                     "proxy-secret",

@@ -161,7 +161,7 @@ External Access (`runtime_mode=remote`) with either OIDC or Trusted Proxy.
 
 ## Trusted Proxy Login {#trusted-proxy-login}
 
-Create a user session from identity headers asserted by a trusted upstream proxy such as Warpgate.
+Create a user session from identity headers asserted by a trusted upstream proxy.
 
 ```
 POST /v1/auth/trusted-proxy/login
@@ -178,7 +178,7 @@ No request body.
 By default, Oore expects the user email in:
 
 ```text
-X-Warpgate-Username
+X-Oore-User-Email
 ```
 
 The exact identity header name can be changed in trusted-proxy configuration.

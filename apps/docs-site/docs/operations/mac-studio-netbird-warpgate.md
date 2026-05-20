@@ -54,7 +54,7 @@ In this shape:
 On the Mac Studio, install the backend on the NetBird address. The interactive installer asks for this listen address, public URL, allowed origins, and whether to install a launchd service:
 
 ```bash
-curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
+curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha OORE_INSTALL_MODE=backend bash
 ```
 
 Non-interactive Mac Studio equivalent:
@@ -62,6 +62,7 @@ Non-interactive Mac Studio equivalent:
 ```bash
 curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_CHANNEL=alpha \
+  OORE_INSTALL_MODE=backend \
   OORE_DAEMON_LISTEN=100.64.10.20:8787 \
   OORE_PUBLIC_URL=https://ci.builds.example.corp \
   OORE_INSTALL_DAEMON_SERVICE=true \
@@ -216,11 +217,12 @@ https://ci.macstudio.internal/setup
 In setup:
 
 1. Verify the bootstrap token.
-2. Choose `Remote (Trusted Proxy / Warpgate)`.
-3. Use `x-warpgate-username` as the user email header.
-4. Set a shared secret and configure the reverse proxy to send it as `X-Oore-Trusted-Proxy-Secret`.
-5. Leave trusted proxy CIDRs empty if the reverse proxy talks to `oored` over loopback.
-6. Claim the owner account from the Warpgate-authenticated request.
+2. Choose `Remote (Trusted Proxy)`.
+3. Enter the initial owner email.
+4. Use `x-warpgate-username` as the user email header if Warpgate forwards the authenticated email in `X-Warpgate-Username`.
+5. Set a shared secret and configure the reverse proxy to send it as `X-Oore-Trusted-Proxy-Secret`.
+6. Leave trusted proxy CIDRs empty if the reverse proxy talks to `oored` over loopback.
+7. Claim the owner account from the Warpgate-authenticated request. The forwarded email must match the initial owner email.
 7. Finalize setup.
 
 ## 6. Set External Access network settings after setup

@@ -9,14 +9,14 @@ This tutorial walks you through the Oore CI setup wizard — from starting the d
 
 - local-only access
 - remote access through OIDC
-- remote access through a trusted proxy such as Warpgate
+- remote access through a trusted identity proxy
 
 ## What you need
 
 - Oore CI [installed](/getting-started/install)
 - One of:
   - an OIDC provider configured with a client application (see [Configure OIDC](/guides/oidc/) if you haven't done this yet), or
-  - a trusted proxy that forwards user identity as a header (for example Warpgate)
+  - a trusted proxy that forwards user identity as a header
 - If using OIDC: your issuer URL, client ID, and client secret (if required by your provider)
 
 ## 1. Start the daemon
@@ -86,7 +86,7 @@ Choose one of two methods: the **web UI** or the **interactive CLI**.
    | Step | What you do |
    |---|---|
    | **1. Bootstrap** | Paste your bootstrap token to authenticate |
-   | **2. Mode** | Choose `Local Only`, `Remote (OIDC)`, or `Remote (Trusted Proxy / Warpgate)` |
+   | **2. Mode** | Choose `Local Only`, `Remote (OIDC)`, or `Remote (Trusted Proxy)` |
    | **3. Auth setup** | Configure OIDC, or trusted-proxy header settings, or skip directly to owner in local mode |
    | **4. Owner** | Verify the owner account through OIDC, trusted proxy, or local owner creation |
    | **5. Finalize** | Confirm to lock setup endpoints permanently |
@@ -133,13 +133,15 @@ State:     bootstrap_pending
   > Setup complete! Instance ID: a1b2c3d4-...
 ```
 
-If you choose `Remote (Trusted Proxy / Warpgate)`, the web UI setup flow asks for:
+If you choose `Remote (Trusted Proxy)`, the web UI setup flow asks for:
 
-- trusted user email header (default: `x-warpgate-username`)
+- initial owner email
+- proxy preset (`Generic proxy`, `Warpgate`, or `Custom header`)
+- trusted user email header (`Generic proxy` uses `x-oore-user-email`; `Warpgate` uses `x-warpgate-username`)
 - optional trusted proxy CIDRs
 - optional shared secret sent by the proxy as `x-oore-trusted-proxy-secret`
 
-Then the owner is claimed from the trusted proxy-authenticated request instead of an OIDC redirect.
+Then the owner is claimed from the trusted proxy-authenticated request instead of an OIDC redirect. The proxied email must match the configured initial owner email, so setup cannot accidentally create the wrong first owner.
 
 ::: info
 The CLI OIDC flow opens your default browser and listens on a random local port for the callback. Make sure your OIDC provider's allowed callback URLs include `http://localhost:*` or the specific port shown in the CLI output.
@@ -222,6 +224,7 @@ Setup sessions expire after 30 minutes of inactivity. Restart the setup process 
 Your instance is running and authenticated. Continue with:
 
 - [Configure OIDC](/guides/oidc/) — detailed provider setup guides
-- [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) — recommended internal-only VPN deployment shape
+- [Split Backend and Frontend](/operations/split-roles) — generic multi-host deployment shape
+- [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) — one internal-only VPN deployment example
 - [API Reference](/reference/api/) — explore the API
 - [CLI Reference](/reference/cli/) — all available commands

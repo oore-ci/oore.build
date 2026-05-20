@@ -7,8 +7,8 @@ description: "Deploy Oore CI in production including launchd, reverse proxy, and
 
 Checklist and guidance for deploying Oore CI in a production environment.
 
-For an internal-only macOS rollout behind NetBird + Warpgate, see
-[Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate).
+For separate backend and frontend hosts, see [Split Backend and Frontend](/operations/split-roles).
+For one internal-only macOS rollout example behind NetBird + Warpgate, see [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate).
 
 ## Prerequisites
 
@@ -74,7 +74,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Warpgate-Username $http_x_warpgate_username;
+        proxy_set_header X-Oore-User-Email $http_x_oore_user_email;
     }
 
     location /healthz {
@@ -97,7 +97,7 @@ server {
 ./target/release/oore setup --daemon-url http://127.0.0.1:8787
 ```
 
-If your browser reaches the UI through an identity-aware proxy such as Warpgate, choose `Remote (Trusted Proxy / Warpgate)` during setup instead of OIDC.
+If your browser reaches the UI through an identity-aware proxy, choose `Remote (Trusted Proxy)` during setup instead of OIDC, enter the initial owner email, and configure the header your proxy forwards.
 
 ### 5. Configure artifact storage
 

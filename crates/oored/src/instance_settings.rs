@@ -48,7 +48,7 @@ pub const DEFAULT_ALLOWED_ORIGINS: [&str; 4] = [
     "http://localhost:4173",
     "http://127.0.0.1:4173",
 ];
-pub const DEFAULT_TRUSTED_PROXY_EMAIL_HEADER: &str = "x-warpgate-username";
+pub const DEFAULT_TRUSTED_PROXY_EMAIL_HEADER: &str = "x-oore-user-email";
 pub const TRUSTED_PROXY_SHARED_SECRET_HEADER: &str = "x-oore-trusted-proxy-secret";
 
 #[derive(Debug, Clone)]
@@ -62,6 +62,7 @@ pub struct EffectiveExternalAccessNetworkSettings {
 #[derive(Debug, Clone)]
 pub struct EffectiveTrustedProxySettings {
     pub user_email_header: String,
+    pub setup_owner_email: Option<String>,
     pub trusted_proxy_cidrs: Vec<String>,
     pub trusted_proxy_networks: Vec<IpNet>,
     pub has_shared_secret: bool,
@@ -159,7 +160,7 @@ pub(crate) fn normalize_header_name(raw: &str) -> Option<String> {
         .map(|header| header.as_str().to_string())
 }
 
-fn normalize_email_value(raw: &str) -> Option<String> {
+pub(crate) fn normalize_email_value(raw: &str) -> Option<String> {
     let trimmed = raw.trim().to_lowercase();
     if trimmed.is_empty() || trimmed.len() > 256 || !trimmed.contains('@') {
         return None;
@@ -258,7 +259,7 @@ pub async fn load_effective_trusted_proxy_settings(
     pool: &sqlx::SqlitePool,
 ) -> anyhow::Result<EffectiveTrustedProxySettings> {
     let row = sqlx::query(
-        "SELECT user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_at \
+        "SELECT user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_at \
          FROM trusted_proxy_settings WHERE id = 1",
     )
     .fetch_optional(pool)
@@ -275,6 +276,11 @@ pub async fn load_effective_trusted_proxy_settings(
             .ok()
             .map(|value| parse_db_trusted_proxy_cidrs(&value))
             .unwrap_or_default();
+        let setup_owner_email = row
+            .try_get::<Option<String>, _>("setup_owner_email")
+            .ok()
+            .flatten()
+            .and_then(|value| normalize_email_value(&value));
         let trusted_proxy_networks = parse_cidr_list(&trusted_proxy_cidrs);
         let encrypted_shared_secret = row
             .try_get::<Option<String>, _>("encrypted_shared_secret")
@@ -284,6 +290,7 @@ pub async fn load_effective_trusted_proxy_settings(
 
         return Ok(EffectiveTrustedProxySettings {
             user_email_header,
+            setup_owner_email,
             trusted_proxy_cidrs,
             trusted_proxy_networks,
             has_shared_secret,
@@ -296,6 +303,7 @@ pub async fn load_effective_trusted_proxy_settings(
     let trusted_proxy_cidrs = Vec::new();
     Ok(EffectiveTrustedProxySettings {
         user_email_header: DEFAULT_TRUSTED_PROXY_EMAIL_HEADER.to_string(),
+        setup_owner_email: None,
         trusted_proxy_networks: parse_cidr_list(&trusted_proxy_cidrs),
         trusted_proxy_cidrs,
         has_shared_secret: false,
@@ -515,7 +523,7 @@ pub fn extract_trusted_proxy_email(
             api_err(
                 StatusCode::UNAUTHORIZED,
                 "trusted_proxy_identity_missing",
-                "Trusted proxy identity header is missing. Configure Warpgate to forward user identity.",
+                "Trusted proxy identity header is missing. Configure the upstream proxy to forward user identity.",
             )
         })?;
 
@@ -523,7 +531,7 @@ pub fn extract_trusted_proxy_email(
         api_err(
             StatusCode::UNAUTHORIZED,
             "trusted_proxy_identity_invalid",
-            "Trusted proxy identity must be an email address. Configure Warpgate username/header mapping to email.",
+            "Trusted proxy identity must be an email address. Configure the upstream proxy to forward an email identity.",
         )
     })
 }
@@ -1166,7 +1174,7 @@ pub async fn update_external_access_trusted_proxy_settings(
     }
 
     let existing_row =
-        sqlx::query("SELECT encrypted_shared_secret FROM trusted_proxy_settings WHERE id = 1")
+        sqlx::query("SELECT encrypted_shared_secret, setup_owner_email FROM trusted_proxy_settings WHERE id = 1")
             .fetch_optional(&pool)
             .await
             .map_err(|e| {
@@ -1194,6 +1202,15 @@ pub async fn update_external_access_trusted_proxy_settings(
             "Failed to persist trusted proxy CIDRs",
         )
     })?;
+
+    let existing_setup_owner_email = existing_row
+        .as_ref()
+        .and_then(|row| {
+            row.try_get::<Option<String>, _>("setup_owner_email")
+                .ok()
+                .flatten()
+        })
+        .and_then(|value| normalize_email_value(&value));
 
     let encrypted_shared_secret = match req.shared_secret {
         Some(value) => {
@@ -1273,6 +1290,7 @@ pub async fn update_external_access_trusted_proxy_settings(
     Ok(Json(trusted_proxy_settings_response(
         EffectiveTrustedProxySettings {
             user_email_header,
+            setup_owner_email: existing_setup_owner_email,
             trusted_proxy_cidrs,
             trusted_proxy_networks,
             has_shared_secret: encrypted_shared_secret.is_some(),

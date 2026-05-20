@@ -123,9 +123,11 @@ function OwnerStep() {
         trusted_proxy_peer_not_allowed:
           'This request did not come from a trusted proxy peer.',
         trusted_proxy_identity_missing:
-          'Trusted proxy identity header is missing. Check Warpgate header forwarding.',
+          'Trusted proxy identity header is missing. Check proxy header forwarding.',
         trusted_proxy_identity_invalid:
           'Trusted proxy identity header must contain an email address.',
+        trusted_proxy_owner_email_mismatch:
+          'The proxy-authenticated email does not match the configured initial owner email.',
         mode_restricted:
           'Switch setup mode to Remote (Trusted Proxy) before claiming owner.',
       })
@@ -218,7 +220,7 @@ function OwnerStep() {
           {isLocalMode
             ? 'Create a local owner account to finish setup without OIDC.'
             : isTrustedProxyMode
-              ? 'Confirm owner identity from your trusted proxy (Warpgate).'
+              ? 'Confirm owner identity from your trusted proxy.'
               : "Authenticate with your OIDC provider to verify your identity. Your email and OIDC subject will be extracted from the provider's ID token."}
         </p>
       </div>

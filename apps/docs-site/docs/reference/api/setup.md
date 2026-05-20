@@ -233,7 +233,8 @@ POST /v1/setup/trusted-proxy/configure
 
 ```json
 {
-  "user_email_header": "x-warpgate-username",
+  "setup_owner_email": "owner@example.com",
+  "user_email_header": "x-oore-user-email",
   "trusted_proxy_cidrs": [],
   "shared_secret": "optional-shared-secret"
 }
@@ -241,15 +242,19 @@ POST /v1/setup/trusted-proxy/configure
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `user_email_header` | `string` | No | Header containing the authenticated user email. Defaults to `x-warpgate-username`. |
+| `setup_owner_email` | `string` | No | Expected initial owner email. When set, the trusted-proxy owner claim must come from this same email. |
+| `user_email_header` | `string` | No | Header containing the authenticated user email. Defaults to `x-oore-user-email`. |
 | `trusted_proxy_cidrs` | `string[]` | No | Optional allowlist of proxy source CIDRs. |
 | `shared_secret` | `string` | No | Optional write-only shared secret for defense in depth. When configured, the proxy must send it in `X-Oore-Trusted-Proxy-Secret`. |
+
+The web setup wizard includes proxy presets that pre-fill `user_email_header`: `Generic proxy` uses `x-oore-user-email`, `Warpgate` uses `x-warpgate-username`, and `Custom header` keeps the field editable. API callers should send the final header name directly.
 
 ### Response `200 OK`
 
 ```json
 {
   "state": "idp_configured",
+  "setup_owner_email": "owner@example.com",
   "has_shared_secret": true,
   "configured_at": 1738800000,
   "session_expires_at": 1738801800
@@ -260,7 +265,7 @@ POST /v1/setup/trusted-proxy/configure
 
 | Status | Code | Description |
 |---|---|---|
-| 400 | `invalid_input` | Header name, CIDR list, or shared secret is invalid |
+| 400 | `invalid_input` | Owner email, header name, CIDR list, or shared secret is invalid |
 | 401 | `missing_auth` | Authorization header not provided |
 | 401 | `invalid_session` | Setup session token is invalid |
 | 401 | `session_expired` | Setup session has expired |
@@ -336,7 +341,7 @@ curl -X POST http://127.0.0.1:8787/v1/setup/owner/start-oidc \
 
 ## Claim Owner From Trusted Proxy {#claim-owner-from-trusted-proxy}
 
-Create the owner record from the identity asserted by the trusted upstream proxy.
+Create the owner record from the identity asserted by the trusted upstream proxy. When `setup_owner_email` was configured, the asserted email must match it.
 
 ```
 POST /v1/setup/owner/claim-trusted-proxy
@@ -353,7 +358,7 @@ None.
 By default, the request must include:
 
 ```text
-X-Warpgate-Username: owner@example.com
+X-Oore-User-Email: owner@example.com
 ```
 
 If a trusted-proxy shared secret is configured, the request must also include:
@@ -383,6 +388,7 @@ X-Oore-Trusted-Proxy-Secret: configured-shared-secret
 | 401 | `trusted_proxy_shared_secret_invalid` | Trusted proxy shared secret header does not match |
 | 403 | `mode_restricted` | Instance is not in trusted-proxy setup mode |
 | 403 | `trusted_proxy_peer_not_allowed` | Request did not come from a trusted proxy peer |
+| 403 | `trusted_proxy_owner_email_mismatch` | Trusted proxy identity does not match the configured setup owner email |
 | 401 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
 | 401 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
 | 409 | `trusted_proxy_not_configured` | Trusted proxy settings have not been configured yet |

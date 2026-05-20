@@ -114,7 +114,29 @@ fn local_subject_for_email(email: &str) -> String {
 }
 
 fn trusted_proxy_subject_for_email(email: &str) -> String {
-    format!("warpgate::{}", email.trim().to_lowercase())
+    format!("trusted-proxy::{}", email.trim().to_lowercase())
+}
+
+fn normalize_optional_setup_owner_email(
+    value: Option<String>,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    crate::instance_settings::normalize_email_value(trimmed)
+        .map(Some)
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "setup_owner_email must be a valid email address",
+            )
+        })
 }
 
 /// Maximum number of concurrent pending OIDC auth requests.
@@ -910,6 +932,7 @@ async fn setup_trusted_proxy_configure(
         .unwrap_or_else(|| {
             crate::instance_settings::DEFAULT_TRUSTED_PROXY_EMAIL_HEADER.to_string()
         });
+    let setup_owner_email = normalize_optional_setup_owner_email(req.setup_owner_email)?;
     let trusted_proxy_cidrs =
         crate::instance_settings::normalize_requested_trusted_proxy_cidrs(req.trusted_proxy_cidrs)?;
     let trusted_proxy_cidrs_json = serde_json::to_string(&trusted_proxy_cidrs).map_err(|e| {
@@ -950,15 +973,17 @@ async fn setup_trusted_proxy_configure(
 
     let now = now_unix();
     sqlx::query(
-        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
-         VALUES (1, ?1, ?2, ?3, NULL, ?4, ?4)
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, NULL, ?5, ?5)
          ON CONFLICT(id) DO UPDATE SET
             user_email_header = excluded.user_email_header,
+            setup_owner_email = excluded.setup_owner_email,
             trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
             encrypted_shared_secret = excluded.encrypted_shared_secret,
             updated_at = excluded.updated_at",
     )
     .bind(&user_email_header)
+    .bind(&setup_owner_email)
     .bind(&trusted_proxy_cidrs_json)
     .bind(encrypted_shared_secret.clone())
     .bind(now)
@@ -986,6 +1011,7 @@ async fn setup_trusted_proxy_configure(
 
     Ok(Json(SetupTrustedProxyConfigureResponse {
         state: sf.setup_state,
+        setup_owner_email,
         has_shared_secret: encrypted_shared_secret.is_some(),
         configured_at: now,
         session_expires_at: sf.setup_session.as_ref().map(|s| s.expires_at),
@@ -1091,6 +1117,15 @@ async fn setup_owner_claim_trusted_proxy(
     )?;
     let email =
         crate::instance_settings::extract_trusted_proxy_email(&headers, &trusted_proxy_settings)?;
+    if let Some(expected_owner_email) = trusted_proxy_settings.setup_owner_email.as_deref()
+        && email != expected_owner_email
+    {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "trusted_proxy_owner_email_mismatch",
+            "Trusted proxy identity does not match the configured setup owner email",
+        ));
+    }
 
     let now = now_unix();
     sf.owner = Some(OwnerRecord {
@@ -1781,8 +1816,14 @@ async fn complete_setup(
         let pool = store.pool();
 
         sqlx::query(
-            "INSERT OR IGNORE INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, 'owner', 'active', ?5, ?5)",
+            "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 'owner', 'active', ?5, ?5) \
+             ON CONFLICT(email) DO UPDATE SET \
+                oidc_subject = excluded.oidc_subject, \
+                display_name = excluded.display_name, \
+                role = 'owner', \
+                status = 'active', \
+                updated_at = excluded.updated_at",
         )
         .bind(&user_id)
         .bind(&owner.email)
@@ -1796,12 +1837,26 @@ async fn complete_setup(
             api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to create owner user")
         })?;
 
+        let owner_user_id: String =
+            sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower(?1) LIMIT 1")
+                .bind(&owner.email)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to resolve owner user id");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to load owner user",
+                    )
+                })?;
+
         let _ = write_audit_log(
             pool,
-            Some(&user_id),
+            Some(&owner_user_id),
             "owner_created",
             "user",
-            Some(&user_id),
+            Some(&owner_user_id),
             None,
         )
         .await;

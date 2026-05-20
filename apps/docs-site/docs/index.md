@@ -31,7 +31,8 @@ features:
 |---|---|
 | **Set up Oore CI for the first time** | [Getting Started](/getting-started/) |
 | **Configure my OIDC provider** | [OIDC Guides](/guides/oidc/) |
-| **Deploy on a Mac Studio behind VPN + Warpgate** | [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) |
+| **Split backend and web UI across hosts** | [Split Backend and Frontend](/operations/split-roles) |
+| **Deploy on a Mac Studio behind NetBird + Warpgate** | [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) |
 | **Look up an API endpoint or CLI flag** | [Reference](/reference/api/) |
 
 </div>

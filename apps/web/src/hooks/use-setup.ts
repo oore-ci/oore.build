@@ -172,16 +172,19 @@ export function useSetupTrustedProxyConfigure() {
     mutationFn: ({
       sessionToken,
       userEmailHeader,
+      setupOwnerEmail,
       trustedProxyCidrs,
       sharedSecret,
     }: {
       sessionToken: string
       userEmailHeader?: string
+      setupOwnerEmail?: string
       trustedProxyCidrs: Array<string>
       sharedSecret?: string
     }) =>
       setupTrustedProxyConfigure(requireInstance(instance), sessionToken, {
         user_email_header: userEmailHeader,
+        setup_owner_email: setupOwnerEmail,
         trusted_proxy_cidrs: trustedProxyCidrs,
         shared_secret: sharedSecret,
       }),

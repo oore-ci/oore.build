@@ -279,7 +279,7 @@ async fn set_owner_created_with_setup_session(
     let now = now_unix();
     let session_expires_at = now + 1800;
     let session_hash = oored::token::hash_token(session_token);
-    let owner_subject = format!("warpgate::{}", owner_email.to_lowercase());
+    let owner_subject = format!("trusted-proxy::{}", owner_email.to_lowercase());
 
     sqlx::query(
         "UPDATE setup_state SET
@@ -892,7 +892,7 @@ async fn trusted_proxy_login_activates_invited_user() {
     let oidc_subject: String = row.get("oidc_subject");
 
     assert_eq!(status, "active");
-    assert_eq!(oidc_subject, "warpgate::invitee@example.com");
+    assert_eq!(oidc_subject, "trusted-proxy::invitee@example.com");
 }
 
 #[tokio::test]
