@@ -26,6 +26,7 @@ Rules:
   - Non-interactive frontend-only installs now fail fast unless a backend URL was explicitly provided, preventing accidental proxies to `127.0.0.1`.
   - Full macOS installs now accept `OORE_DAEMON_LISTEN`, `OORE_PUBLIC_URL`, `OORE_CORS_ORIGINS`, and `OORE_INSTALL_DAEMON_SERVICE`, with interactive prompts for the same values.
   - Updated split Mac Studio + Ubuntu + NetBird + Warpgate docs around the new guided install path.
+  - Documented the prerelease installer endpoints so alpha/beta testers use the matching installer script, not the stable production installer.
   - Feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 
 ## 2026-05-16

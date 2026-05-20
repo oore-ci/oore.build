@@ -54,13 +54,13 @@ In this shape:
 On the Mac Studio, install the backend on the NetBird address. The interactive installer asks for this listen address, public URL, allowed origins, and whether to install a launchd service:
 
 ```bash
-curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 ```
 
 Non-interactive Mac Studio equivalent:
 
 ```bash
-curl -fsSL https://oore.build/install | \
+curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_CHANNEL=alpha \
   OORE_DAEMON_LISTEN=100.64.10.20:8787 \
   OORE_PUBLIC_URL=https://ci.builds.example.corp \
@@ -72,13 +72,13 @@ curl -fsSL https://oore.build/install | \
 Install the frontend-only bundle on Ubuntu. On Linux, `auto` mode selects frontend-only and prompts for the backend URL, loopback listen address, systemd service, and lingering:
 
 ```bash
-curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 ```
 
 Non-interactive Ubuntu equivalent:
 
 ```bash
-curl -fsSL https://oore.build/install | \
+curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_CHANNEL=alpha \
   OORE_INSTALL_MODE=frontend \
   OORE_WEB_BACKEND_URL=http://100.64.10.20:8787 \

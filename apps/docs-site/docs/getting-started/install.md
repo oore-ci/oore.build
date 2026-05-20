@@ -32,13 +32,13 @@ The installer supports release channels:
 curl -fsSL https://oore.build/install | bash
 
 # beta
-curl -fsSL https://oore.build/install | OORE_CHANNEL=beta bash
+curl -fsSL https://beta.oore.pages.dev/install | OORE_CHANNEL=beta bash
 
 # alpha
-curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 ```
 
-`OORE_VERSION` (pinned tag/version) always overrides channel selection.
+`OORE_VERSION` (pinned tag/version) always overrides channel selection. Use the matching channel installer endpoint when testing prerelease installer behavior; `https://oore.build/install` is the stable production installer.
 
 The installer:
 
@@ -74,7 +74,7 @@ Use frontend-only mode when `oored` runs on a Mac host but the browser-facing we
 For an interactive Ubuntu install, run:
 
 ```bash
-curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 ```
 
 The installer asks for the Mac daemon URL, keeps `oore-web` on loopback by default, can install a systemd user service, and can enable lingering so the service survives logout/reboot.
@@ -82,7 +82,8 @@ The installer asks for the Mac daemon URL, keeps `oore-web` on loopback by defau
 Example for an Ubuntu frontend host that reaches the Mac daemon through NetBird:
 
 ```bash
-curl -fsSL https://oore.build/install | \
+curl -fsSL https://alpha.oore.pages.dev/install | \
+  OORE_CHANNEL=alpha \
   OORE_INSTALL_MODE=frontend \
   OORE_WEB_BACKEND_URL=http://100.64.10.20:8787 \
   OORE_LOCAL_WEB_LISTEN=127.0.0.1:4173 \
