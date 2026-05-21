@@ -10,6 +10,18 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-05-21
+
+- **Trusted-proxy sign-in UX**:
+  - The web app now treats configured Remote + Trusted Proxy instances as proxy-authenticated sessions, auto-exchanging the forwarded identity header for an Oore session from both the dashboard guard and login page.
+  - Trusted Proxy mode no longer falls through to Local Only or OIDC copy, and blocked Local Only access now points users back to daemon-host setup or their selected Remote auth mode instead of assuming OIDC.
+  - Feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+
+- **Frontend launcher update command**:
+  - Added `oore-web update` for frontend-only hosts so operators can update the browser-facing launcher and `web-dist` assets from the installed release channel without rerunning the installer.
+  - The command supports `--check`, `--force`, `--channel stable|beta|alpha`, and `--repo owner/name`, verifies the release checksum, and preserves installed `CHANNEL` / `GITHUB_REPO` metadata.
+  - Feature doc: https://linear.app/oorebuild/document/feature-oore-web-frontend-update-command-6b648f19a3f9
+
 ## 2026-05-20
 
 - **Daemon launchd service management**:

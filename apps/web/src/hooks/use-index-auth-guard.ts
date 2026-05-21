@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 
 import type { Instance, SetupStatus } from '@/lib/types'
-import { localLogin } from '@/lib/api'
+import { localLogin, trustedProxyLogin } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -34,15 +34,16 @@ function resolveBackendHostname(rawUrl: string): string {
  * Handles three cases:
  * 1. Redirect to /setup when in setup mode (non-local)
  * 2. Auto local-login for loopback instances in local runtime mode
- * 3. Redirect to /login when token is expired on a configured instance
+ * 3. Auto trusted-proxy login for configured proxy-authenticated instances
+ * 4. Redirect to /login when token is expired on other configured instances
  */
 export function useIndexAuthGuard(
   status: SetupStatus | undefined,
   instance: Instance | null,
-  setIsAutoLocalSigningIn: (v: boolean) => void,
+  setIsAutoSigningIn: (v: boolean) => void,
 ) {
   const navigate = useNavigate()
-  const autoLocalLoginInstanceRef = useRef<string | null>(null)
+  const autoLoginInstanceRef = useRef<string | null>(null)
   const authToken = useAuthStore((s) => s.token)
   const authExpiresAt = useAuthStore((s) => s.expiresAt)
   const clearAuth = useAuthStore((s) => s.clearAuth)
@@ -75,10 +76,10 @@ export function useIndexAuthGuard(
       }
 
       if (hasValidToken) return
-      if (autoLocalLoginInstanceRef.current === instance.id) return
+      if (autoLoginInstanceRef.current === instance.id) return
 
-      autoLocalLoginInstanceRef.current = instance.id
-      setIsAutoLocalSigningIn(true)
+      autoLoginInstanceRef.current = instance.id
+      setIsAutoSigningIn(true)
       clearAuth()
       void localLogin(instance.url, {})
         .then((response) => {
@@ -99,12 +100,49 @@ export function useIndexAuthGuard(
           )
         })
         .catch(() => {
-          autoLocalLoginInstanceRef.current = null
+          autoLoginInstanceRef.current = null
           clearAuth()
           void navigate({ to: '/login' })
         })
         .finally(() => {
-          setIsAutoLocalSigningIn(false)
+          setIsAutoSigningIn(false)
+        })
+      return
+    }
+
+    if (status.remote_auth_mode === 'trusted_proxy') {
+      if (hasValidToken) return
+      if (!status.is_configured) return
+      if (autoLoginInstanceRef.current === instance.id) return
+
+      autoLoginInstanceRef.current = instance.id
+      setIsAutoSigningIn(true)
+      clearAuth()
+      void trustedProxyLogin(instance.url)
+        .then((response) => {
+          if (!response.user.user_id || !response.user.role) {
+            throw new Error('Incomplete user profile received from server')
+          }
+          setAuth(
+            response.session_token,
+            response.expires_at,
+            {
+              email: response.user.email,
+              oidc_subject: response.user.oidc_subject,
+              user_id: response.user.user_id,
+              role: response.user.role,
+              avatar_url: response.user.avatar_url,
+            },
+            'trusted_proxy',
+          )
+        })
+        .catch(() => {
+          autoLoginInstanceRef.current = null
+          clearAuth()
+          void navigate({ to: '/login' })
+        })
+        .finally(() => {
+          setIsAutoSigningIn(false)
         })
       return
     }
@@ -121,8 +159,8 @@ export function useIndexAuthGuard(
     navigate,
     clearAuth,
     setAuth,
-    setIsAutoLocalSigningIn,
+    setIsAutoSigningIn,
   ])
 
-  return autoLocalLoginInstanceRef
+  return autoLoginInstanceRef
 }

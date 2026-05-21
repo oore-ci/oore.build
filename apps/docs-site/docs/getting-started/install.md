@@ -139,6 +139,7 @@ Frontend-only mode:
 - Proxies `/v1/*` and `/healthz` from the frontend host to `OORE_WEB_BACKEND_URL`.
 - Uses a systemd user service on Linux when `OORE_LOCAL_WEB_MODE=login`.
 - Refuses non-interactive frontend-only installs unless `OORE_WEB_BACKEND_URL` or `OORE_DAEMON_URL` was explicitly provided.
+- Can be updated later with `oore-web update` or checked with `oore-web update --check`.
 
 For a Linux user service to survive logout and reboot, enable lingering for the service user:
 

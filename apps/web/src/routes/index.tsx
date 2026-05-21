@@ -94,7 +94,7 @@ function IndexPage() {
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
-  const [isAutoLocalSigningIn, setIsAutoLocalSigningIn] = useState(false)
+  const [isAutoSigningIn, setIsAutoSigningIn] = useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const authUser = useAuthStore((s) => s.user)
 
@@ -125,7 +125,7 @@ function IndexPage() {
       })
   })
 
-  useIndexAuthGuard(status, instance, setIsAutoLocalSigningIn)
+  useIndexAuthGuard(status, instance, setIsAutoSigningIn)
 
   if (!instance && isDetectingLocalInstance) {
     return (
@@ -141,13 +141,13 @@ function IndexPage() {
     )
   }
 
-  if (isAutoLocalSigningIn) {
+  if (isAutoSigningIn) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
         <div className="flex items-center gap-3">
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">Signing in locally...</p>
+          <p className="text-sm text-muted-foreground">Signing in...</p>
         </div>
       </div>
     )

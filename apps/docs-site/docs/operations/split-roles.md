@@ -80,6 +80,14 @@ Put your HTTPS reverse proxy in front of `http://127.0.0.1:4173`. In the web UI,
 
 During first-run setup, choose `Remote (Trusted Proxy)`, enter the initial owner email, and select a proxy preset. `Generic proxy` uses `x-oore-user-email`, `Warpgate` uses `x-warpgate-username`, and `Custom header` lets you enter the exact header your proxy forwards. The first owner claim must come from that same proxy-authenticated email, avoiding manual database edits.
 
+To pull a newer frontend-only release later:
+
+```bash
+oore-web update
+```
+
+`oore-web update --check` reports whether the installed channel has a newer release without changing files. Restart the `oore-web` service after an update if you want the running launcher process to pick up binary changes immediately.
+
 ## Provider-Specific Examples
 
 For one concrete private-network setup, see [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate).

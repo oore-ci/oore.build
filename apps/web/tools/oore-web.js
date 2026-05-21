@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 
 import fs from 'node:fs'
+import crypto from 'node:crypto'
+import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 const DEFAULT_LISTEN = process.env.OORE_WEB_LISTEN || '127.0.0.1:4173'
 const DEFAULT_BACKEND_URL =
@@ -9,18 +12,36 @@ const DEFAULT_BACKEND_URL =
 const DEFAULT_DIST_DIR =
   process.env.OORE_WEB_DIST_DIR ||
   path.resolve(path.dirname(process.execPath), '..', 'web-dist')
+const DEFAULT_GITHUB_REPO = 'devaryakjha/oore.build'
 
 function printHelp() {
   console.log(`oore-web - local self-hosted Oore CI frontend launcher
 
 Usage:
-  oore-web [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
+  oore-web [serve] [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
+  oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
+  oore-web version
 
 Options:
   --listen        Listen address (default: ${DEFAULT_LISTEN})
   --backend-url   Backend API base URL (default: ${DEFAULT_BACKEND_URL})
   --dist-dir      Path to web static assets (default: ${DEFAULT_DIST_DIR})
   --help          Show this help text
+`)
+}
+
+function printUpdateHelp() {
+  console.log(`oore-web update - update the frontend launcher and web assets
+
+Usage:
+  oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
+
+Options:
+  --channel   Release channel. Defaults to installed CHANNEL, then current VERSION.
+  --repo      GitHub repo. Defaults to installed GITHUB_REPO, then ${DEFAULT_GITHUB_REPO}.
+  --check     Only print whether an update is available.
+  --force     Reinstall the latest release even if already current.
+  --help      Show this help text
 `)
 }
 
@@ -52,7 +73,7 @@ function parseListen(raw) {
   return { hostname, port }
 }
 
-function parseArgs(argv) {
+function parseServeArgs(argv) {
   const config = {
     listen: DEFAULT_LISTEN,
     backendUrl: DEFAULT_BACKEND_URL,
@@ -96,6 +117,66 @@ function parseArgs(argv) {
   return config
 }
 
+function parseUpdateArgs(argv) {
+  const config = {
+    channel: process.env.OORE_CHANNEL || '',
+    repo: process.env.OORE_GITHUB_REPO || '',
+    check: false,
+    force: false,
+  }
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === '--help' || arg === '-h') {
+      printUpdateHelp()
+      process.exit(0)
+    }
+
+    if (arg === '--channel') {
+      const value = argv[i + 1]
+      if (!value) throw new Error('--channel requires a value')
+      config.channel = value
+      i += 1
+      continue
+    }
+
+    if (arg === '--repo') {
+      const value = argv[i + 1]
+      if (!value) throw new Error('--repo requires a value')
+      config.repo = value
+      i += 1
+      continue
+    }
+
+    if (arg === '--check') {
+      config.check = true
+      continue
+    }
+
+    if (arg === '--force') {
+      config.force = true
+      continue
+    }
+
+    throw new Error(`unknown update argument: ${arg}`)
+  }
+
+  return config
+}
+
+function parseCommand(argv) {
+  const first = argv[0]
+  if (!first || first.startsWith('-')) {
+    return { command: 'serve', args: argv }
+  }
+
+  if (first === '--version' || first === '-V') {
+    return { command: 'version', args: [] }
+  }
+
+  return { command: first, args: argv.slice(1) }
+}
+
 function resolveAssetPath(distDir, pathname) {
   const decoded = decodeURIComponent(pathname)
   const stripped = decoded.replace(/^\/+/, '')
@@ -124,6 +205,309 @@ function isDirectory(filePath) {
   } catch {
     return false
   }
+}
+
+function readTrimmedFile(filePath) {
+  try {
+    const value = fs.readFileSync(filePath, 'utf8').trim()
+    return value || null
+  } catch {
+    return null
+  }
+}
+
+function resolveInstallRoot() {
+  const envRoot = process.env.OORE_INSTALL_ROOT?.trim()
+  if (envRoot) return path.resolve(envRoot)
+
+  const binDir = path.dirname(process.execPath)
+  if (path.basename(binDir) === 'bin') {
+    return path.dirname(binDir)
+  }
+
+  return path.join(os.homedir(), '.oore')
+}
+
+function parseChannel(raw) {
+  const value = raw.trim().toLowerCase()
+  if (value === 'stable' || value === 'prod' || value === 'production') {
+    return 'stable'
+  }
+  if (value === 'beta') return 'beta'
+  if (value === 'alpha') return 'alpha'
+  throw new Error(`invalid channel '${raw}', expected: stable|beta|alpha`)
+}
+
+function parseVersion(raw) {
+  const match = raw
+    .trim()
+    .match(/^v?(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta)\.(\d+))?$/)
+  if (!match) throw new Error(`invalid version: ${raw}`)
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    pre: match[4] || '',
+    preNumber: match[5] ? Number(match[5]) : 0,
+    raw: raw.trim().replace(/^v/, ''),
+  }
+}
+
+function compareVersions(a, b) {
+  for (const key of ['major', 'minor', 'patch']) {
+    if (a[key] !== b[key]) return a[key] - b[key]
+  }
+
+  if (a.pre === b.pre) return a.preNumber - b.preNumber
+  if (!a.pre) return 1
+  if (!b.pre) return -1
+  if (a.pre === 'beta' && b.pre === 'alpha') return 1
+  if (a.pre === 'alpha' && b.pre === 'beta') return -1
+  return a.pre.localeCompare(b.pre)
+}
+
+function inferChannelFromVersion(version) {
+  if (version.pre === 'alpha') return 'alpha'
+  if (version.pre === 'beta') return 'beta'
+  return 'stable'
+}
+
+function githubHeaders() {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': `oore-web/${readInstalledVersion(resolveInstallRoot()) || 'unknown'}/update`,
+  }
+  const token =
+    process.env.OORE_GITHUB_TOKEN ||
+    process.env.GITHUB_TOKEN ||
+    process.env.GH_TOKEN
+  if (token?.trim()) {
+    headers.Authorization = `Bearer ${token.trim()}`
+  }
+  return headers
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { headers: githubHeaders() })
+  if (!response.ok) {
+    throw new Error(`request failed (${response.status}) for ${url}`)
+  }
+  return await response.json()
+}
+
+async function fetchBytes(url) {
+  const response = await fetch(url, { headers: githubHeaders() })
+  if (!response.ok) {
+    throw new Error(`download failed (${response.status}) for ${url}`)
+  }
+  return Buffer.from(await response.arrayBuffer())
+}
+
+function releaseMatchesChannel(release, channel) {
+  if (release.draft) return false
+  if (channel === 'stable') return !release.prerelease
+  return release.prerelease && release.tag_name.includes(`-${channel}.`)
+}
+
+async function fetchLatestRelease(repo, channel) {
+  if (!repo.includes('/')) {
+    throw new Error(`invalid GitHub repo '${repo}', expected owner/name`)
+  }
+
+  const base = `https://api.github.com/repos/${repo}`
+  if (channel === 'stable') {
+    const release = await fetchJson(`${base}/releases/latest`)
+    if (!releaseMatchesChannel(release, channel)) {
+      throw new Error(
+        `latest stable release is not usable: ${release.tag_name}`,
+      )
+    }
+    return release
+  }
+
+  const releases = await fetchJson(`${base}/releases?per_page=100`)
+  const release = releases.find((candidate) =>
+    releaseMatchesChannel(candidate, channel),
+  )
+  if (!release) throw new Error(`no ${channel} release found in ${repo}`)
+  return release
+}
+
+function findAssetUrl(release, name) {
+  const asset = release.assets?.find((candidate) => candidate.name === name)
+  if (!asset?.browser_download_url) {
+    throw new Error(`release ${release.tag_name} is missing asset ${name}`)
+  }
+  return asset.browser_download_url
+}
+
+function releasePlatform() {
+  if (process.platform === 'darwin') return 'darwin'
+  if (process.platform === 'linux') return 'linux'
+  throw new Error(`unsupported platform: ${process.platform}`)
+}
+
+function releaseArch() {
+  if (process.arch === 'arm64') return 'arm64'
+  if (process.arch === 'x64') return 'x86_64'
+  throw new Error(`unsupported architecture: ${process.arch}`)
+}
+
+function parseChecksum(text, filename) {
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length >= 2 && parts[1] === filename) {
+      return parts[0].toLowerCase()
+    }
+  }
+  throw new Error(`checksum not found for ${filename}`)
+}
+
+function sha256(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex')
+}
+
+function extractTarGz(archivePath, extractDir) {
+  fs.mkdirSync(extractDir, { recursive: true })
+  const result = spawnSync('tar', ['-xzf', archivePath, '-C', extractDir], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+  })
+  if (result.status !== 0) {
+    const details =
+      result.stderr?.trim() || result.stdout?.trim() || 'tar failed'
+    throw new Error(`failed to extract archive: ${details}`)
+  }
+}
+
+function replaceFile(src, dst) {
+  const next = `${dst}.new-${process.pid}`
+  fs.copyFileSync(src, next)
+  fs.chmodSync(next, 0o755)
+  fs.renameSync(next, dst)
+}
+
+function replaceDirectory(src, dst) {
+  const next = `${dst}.new-${process.pid}`
+  const prev = `${dst}.old-${process.pid}`
+  fs.rmSync(next, { recursive: true, force: true })
+  fs.cpSync(src, next, { recursive: true })
+
+  if (fs.existsSync(dst)) {
+    fs.renameSync(dst, prev)
+  }
+  fs.renameSync(next, dst)
+  fs.rmSync(prev, { recursive: true, force: true })
+}
+
+function readInstalledVersion(installRoot) {
+  return readTrimmedFile(path.join(installRoot, 'VERSION'))
+}
+
+function printVersion() {
+  const installRoot = resolveInstallRoot()
+  const version = readInstalledVersion(installRoot)
+  console.log(version || 'unknown')
+}
+
+async function runUpdate(config) {
+  const installRoot = resolveInstallRoot()
+  const currentRaw = readInstalledVersion(installRoot) || '0.0.0'
+  const current = parseVersion(currentRaw)
+  const repo =
+    config.repo ||
+    readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
+    DEFAULT_GITHUB_REPO
+  const channel = parseChannel(
+    config.channel ||
+      readTrimmedFile(path.join(installRoot, 'CHANNEL')) ||
+      inferChannelFromVersion(current),
+  )
+
+  const release = await fetchLatestRelease(repo, channel)
+  const latestRaw = release.tag_name.trim().replace(/^v/, '')
+  const latest = parseVersion(latestRaw)
+
+  console.log(`Channel:         ${channel}`)
+  console.log(`GitHub repo:     ${repo}`)
+  console.log(`Current version: ${current.raw}`)
+  console.log(`Latest version:  ${latest.raw} (${release.tag_name})`)
+
+  if (compareVersions(current, latest) >= 0 && !config.force) {
+    console.log('Already up to date.')
+    return
+  }
+
+  if (compareVersions(current, latest) < 0) {
+    console.log(`Update available: ${current.raw} -> ${latest.raw}`)
+  } else {
+    console.log(`Reinstalling version ${latest.raw} (--force).`)
+  }
+
+  if (config.check) return
+
+  const osName = releasePlatform()
+  const arch = releaseArch()
+  const archiveName = `oore-web_${latestRaw}_${osName}_${arch}.tar.gz`
+  const checksumsName = `oore_${latestRaw}_checksums.txt`
+  const archiveUrl = findAssetUrl(release, archiveName)
+  const checksumsUrl = findAssetUrl(release, checksumsName)
+
+  console.log(`Downloading ${archiveName}...`)
+  const [archiveBytes, checksumsBytes] = await Promise.all([
+    fetchBytes(archiveUrl),
+    fetchBytes(checksumsUrl),
+  ])
+
+  const expectedHash = parseChecksum(
+    checksumsBytes.toString('utf8'),
+    archiveName,
+  )
+  const actualHash = sha256(archiveBytes)
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `checksum mismatch for ${archiveName} (expected ${expectedHash}, got ${actualHash})`,
+    )
+  }
+  console.log('Checksum verified (SHA-256).')
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oore-web-update-'))
+  try {
+    const archivePath = path.join(tmpDir, archiveName)
+    const extractDir = path.join(tmpDir, 'extract')
+    fs.writeFileSync(archivePath, archiveBytes)
+    extractTarGz(archivePath, extractDir)
+
+    const extractedBinary = path.join(extractDir, 'bin', 'oore-web')
+    const extractedDist = path.join(extractDir, 'web-dist')
+    const extractedVersion = path.join(extractDir, 'VERSION')
+    const extractedLicense = path.join(extractDir, 'LICENSE')
+
+    if (!fileExists(extractedBinary))
+      throw new Error('archive missing bin/oore-web')
+    if (!isDirectory(extractedDist)) throw new Error('archive missing web-dist')
+    if (!fileExists(extractedVersion))
+      throw new Error('archive missing VERSION')
+
+    const binDir = path.join(installRoot, 'bin')
+    fs.mkdirSync(binDir, { recursive: true })
+    replaceFile(extractedBinary, path.join(binDir, 'oore-web'))
+    replaceDirectory(extractedDist, path.join(installRoot, 'web-dist'))
+    fs.copyFileSync(extractedVersion, path.join(installRoot, 'VERSION'))
+    fs.writeFileSync(path.join(installRoot, 'CHANNEL'), `${channel}\n`)
+    fs.writeFileSync(path.join(installRoot, 'GITHUB_REPO'), `${repo}\n`)
+    if (fileExists(extractedLicense)) {
+      fs.copyFileSync(extractedLicense, path.join(installRoot, 'LICENSE'))
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+
+  console.log(`Updated oore-web to ${latest.raw}.`)
+  console.log(
+    'If oore-web is running as a service, restart the service to use the updated launcher binary.',
+  )
 }
 
 function isApiPath(pathname) {
@@ -203,10 +587,40 @@ function serveSpa(distDir, pathname, acceptHeader) {
   return new Response('Not found', { status: 404 })
 }
 
-function main() {
+async function main() {
+  const parsedCommand = parseCommand(process.argv.slice(2))
+  if (parsedCommand.command === 'help' || parsedCommand.command === '--help') {
+    printHelp()
+    return
+  }
+  if (parsedCommand.command === 'version') {
+    printVersion()
+    return
+  }
+  if (parsedCommand.command === 'update') {
+    let updateConfig
+    try {
+      updateConfig = parseUpdateArgs(parsedCommand.args)
+    } catch (error) {
+      console.error(
+        `[oore-web] ${error instanceof Error ? error.message : 'failed to parse update args'}`,
+      )
+      printUpdateHelp()
+      process.exit(2)
+    }
+    await runUpdate(updateConfig)
+    return
+  }
+
+  if (parsedCommand.command !== 'serve' && parsedCommand.command !== 'run') {
+    console.error(`[oore-web] unknown command: ${parsedCommand.command}`)
+    printHelp()
+    process.exit(2)
+  }
+
   let config
   try {
-    config = parseArgs(process.argv.slice(2))
+    config = parseServeArgs(parsedCommand.args)
   } catch (error) {
     console.error(
       `[oore-web] ${error instanceof Error ? error.message : 'failed to parse args'}`,
@@ -282,4 +696,7 @@ function main() {
   process.on('SIGTERM', shutdown)
 }
 
-main()
+main().catch((error) => {
+  console.error(`[oore-web] ${error instanceof Error ? error.message : error}`)
+  process.exit(1)
+})

@@ -39,6 +39,7 @@ export default [
       '**/use-session-countdown.ts',
       '**/use-log-stream.ts',
       '**/use-index-auth-guard.ts',
+      '**/use-trusted-proxy-auto-login.ts',
     ],
     rules: {
       'no-restricted-syntax': 'off',
