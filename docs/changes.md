@@ -12,6 +12,10 @@ Rules:
 
 ## 2026-05-21
 
+- **Web TypeScript release-build compatibility**:
+  - Kept the required `ignoreDeprecations` compiler option and restored it to the TypeScript-supported `5.0` value so release builds pass `tsc`.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Backend-owned setup initialization for trusted proxy deployments**:
   - Added `oore setup init --mode local|trusted-proxy` so backend-host setup can create the owner and complete setup without a browser bootstrap-token flow when the operator already knows the deployment mode.
   - Backend and installer trusted-proxy setup now require a shared secret for direct Trusted Proxy initialization, store it in restrictive files for service use, and let `oore-web` inject the backend secret only on proxied API requests.
