@@ -12,6 +12,10 @@ Rules:
 
 ## 2026-05-21
 
+- **Release latest resolution sorting**:
+  - `oore-web update` and the installer now choose the highest semver-matching release for alpha/beta channels instead of trusting GitHub Releases list order.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Remote auth mode preferences UI**:
   - Preferences now represents Remote OIDC and Remote Trusted Proxy as distinct access states instead of treating every Remote setup as OIDC.
   - Sources and source setup screens no longer default to Local Only while access policy is still loading, and their copy now follows the backend runtime mode instead of frontend-only assumptions.

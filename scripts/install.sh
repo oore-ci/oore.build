@@ -999,8 +999,9 @@ resolve_latest_channel_tag_from_list() {
     *) die "resolve_latest_channel_tag_from_list: unsupported channel: $channel" ;;
   esac
 
-  # The GitHub API returns releases ordered newest-first.
-  # We'll pick the first matching prerelease tag for the requested channel.
+  # GitHub's release API order is not stable after release edits.
+  # Collect all matching prerelease tags and choose the highest version.
+  local candidates=()
   local tag=""
   local draft=""
   local prerelease=""
@@ -1018,8 +1019,7 @@ resolve_latest_channel_tag_from_list() {
 
     if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
       if [[ "$draft" == "false" && "$prerelease" == "true" ]] && echo "$tag" | grep -qE -- "$want_re"; then
-        printf '%s' "$tag"
-        return 0
+        candidates+=("$tag")
       fi
       tag=""
       draft=""
@@ -1027,14 +1027,19 @@ resolve_latest_channel_tag_from_list() {
     fi
   done < "$json_file"
 
-  return 1
+  if [[ "${#candidates[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "${candidates[@]}" | sort -V | tail -n1
 }
 
 resolve_latest_stable_tag_from_list() {
   local json_file="$1"
 
-  # The GitHub API returns releases ordered newest-first.
-  # We'll pick the first non-draft, non-prerelease tag.
+  # GitHub's release API order is not stable after release edits.
+  # Collect all stable tags and choose the highest version.
+  local candidates=()
   local tag=""
   local draft=""
   local prerelease=""
@@ -1052,8 +1057,7 @@ resolve_latest_stable_tag_from_list() {
 
     if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
       if [[ "$draft" == "false" && "$prerelease" == "false" ]]; then
-        printf '%s' "$tag"
-        return 0
+        candidates+=("$tag")
       fi
       tag=""
       draft=""
@@ -1061,7 +1065,11 @@ resolve_latest_stable_tag_from_list() {
     fi
   done < "$json_file"
 
-  return 1
+  if [[ "${#candidates[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "${candidates[@]}" | sort -V | tail -n1
 }
 
 resolve_release_tag() {

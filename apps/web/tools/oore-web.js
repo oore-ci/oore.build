@@ -476,9 +476,20 @@ async function fetchLatestRelease(repo, channel) {
   }
 
   const releases = await fetchJson(`${base}/releases?per_page=100`)
-  const release = releases.find((candidate) =>
-    releaseMatchesChannel(candidate, channel),
-  )
+  const release = releases
+    .filter((candidate) => releaseMatchesChannel(candidate, channel))
+    .map((candidate) => {
+      try {
+        return {
+          release: candidate,
+          version: parseVersion(candidate.tag_name),
+        }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => compareVersions(b.version, a.version))[0]?.release
   if (!release) throw new Error(`no ${channel} release found in ${repo}`)
   return release
 }
