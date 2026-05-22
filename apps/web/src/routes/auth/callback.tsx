@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
+import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
 
 export const Route = createFileRoute('/auth/callback')({
   component: AuthCallbackPage,
@@ -126,7 +127,12 @@ function AuthCallbackPage() {
     }
 
     // POST to verify-oidc with the setup session token
-    setupOidcVerify(instance.url, setupSessionToken, code, state)
+    setupOidcVerify(
+      resolveRequiredInstanceApiBaseUrl(instance),
+      setupSessionToken,
+      code,
+      state,
+    )
       .then(() => {
         cleanupOidcSessionStorage()
         void navigate({ to: '/setup/complete' })
@@ -170,7 +176,7 @@ function AuthCallbackPage() {
     useAuthStore.getState().setInstanceContext(instance.id)
 
     // Exchange code for token via POST
-    const callbackUrl = `${instance.url}/v1/auth/oidc/callback`
+    const callbackUrl = `${resolveRequiredInstanceApiBaseUrl(instance)}/v1/auth/oidc/callback`
 
     fetch(callbackUrl, {
       method: 'POST',

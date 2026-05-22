@@ -22,6 +22,7 @@ import {
   syncInstallations,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function useAuthToken(): string | null {
@@ -34,7 +35,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function useIntegrations(provider?: string) {

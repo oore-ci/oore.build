@@ -15,11 +15,10 @@ import {
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
+import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
 
 function requireInstance(instance: Instance | null): string {
-  if (!instance)
-    throw new Error('No active instance. Select or add an instance first.')
-  return instance.url
+  return resolveRequiredInstanceApiBaseUrl(instance)
 }
 
 function useSetupStatusKey() {

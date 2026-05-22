@@ -5,6 +5,7 @@ import { createStreamToken, getBuildLogs } from '@/lib/api'
 import { mergeBuildLogChunks } from '@/lib/log-stream-utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 interface UseLogStreamResult {
   logs: Array<BuildLogChunk>
@@ -32,7 +33,7 @@ export function useLogStream(
   const [error, setError] = useState<string | null>(null)
 
   const instance = useActiveInstance()
-  const baseUrl = instance?.url ?? null
+  const baseUrl = resolveInstanceApiBaseUrl(instance)
   const token = useAuthStore((s) => s.token)
 
   const eventSourceRef = useRef<EventSource | null>(null)

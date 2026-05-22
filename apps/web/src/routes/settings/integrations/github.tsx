@@ -15,6 +15,7 @@ import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useGitHubAppStart } from '@/hooks/use-integrations'
 import { PageMeta } from '@/lib/seo'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -38,7 +39,7 @@ function GitHubSetupPage() {
     useInstancePreferences()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
 
-  const backendUrl = instance?.url ?? ''
+  const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
   const redirectUrl = `${window.location.origin}/settings/integrations`
 

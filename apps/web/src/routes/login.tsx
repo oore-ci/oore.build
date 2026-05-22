@@ -28,6 +28,7 @@ import { getLastAuthMetaForInstance, useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { resolveLoginFlow } from '@/lib/login-flow'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -106,9 +107,10 @@ function LoginPage() {
     [instances, activeInstanceId],
   )
   const lastAuthMeta = instance ? getLastAuthMetaForInstance(instance.id) : null
+  const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-  const backendIsLoopback = instance
-    ? isLoopbackHostname(resolveBackendHostname(instance.url))
+  const backendIsLoopback = instanceApiBaseUrl
+    ? isLoopbackHostname(resolveBackendHostname(instanceApiBaseUrl))
     : false
   const loopbackLocalPath = uiIsLoopback && backendIsLoopback
   const loginFlow = setupStatusQuery.data
@@ -138,14 +140,16 @@ function LoginPage() {
 
   const handleLogin = useCallback(async () => {
     if (!instance) return
+    const baseUrl = resolveInstanceApiBaseUrl(instance)
+    if (!baseUrl) return
     setLoading(true)
     setError(null)
     setConnectivityIssue(null)
 
-    if (isMixedContentBlocked(window.location.origin, instance.url)) {
+    if (isMixedContentBlocked(window.location.origin, baseUrl)) {
       setConnectivityIssue(
         getConnectivityIssue(
-          instance.url,
+          baseUrl,
           new Error('mixed_content_blocked'),
           window.location.origin,
         ),
@@ -156,16 +160,14 @@ function LoginPage() {
     }
 
     try {
-      const status = await getSetupStatus(instance.url)
+      const status = await getSetupStatus(baseUrl)
       if (status.setup_mode && status.runtime_mode !== 'local') {
         void navigate({ to: '/setup' })
         setLoading(false)
         return
       }
       const localUi = isLoopbackHostname(window.location.hostname)
-      const localBackend = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
-      )
+      const localBackend = isLoopbackHostname(resolveBackendHostname(baseUrl))
       const canUseLoopbackLocalLogin = localUi && localBackend
       if (status.runtime_mode === 'local' && !canUseLoopbackLocalLogin) {
         setError(
@@ -181,7 +183,7 @@ function LoginPage() {
       )
 
       if (resolvedLoginFlow === 'local') {
-        const response = await localLogin(instance.url, {
+        const response = await localLogin(baseUrl, {
           email: localEmail.trim() || undefined,
         })
         if (!response.user.user_id || !response.user.role) {
@@ -205,7 +207,7 @@ function LoginPage() {
       }
 
       if (resolvedLoginFlow === 'trusted_proxy') {
-        const response = await trustedProxyLogin(instance.url)
+        const response = await trustedProxyLogin(baseUrl)
         if (!response.user.user_id || !response.user.role) {
           throw new Error('Incomplete user profile received from server')
         }
@@ -228,7 +230,7 @@ function LoginPage() {
 
       const callbackUrl = `${window.location.origin}/auth/callback`
       const res = await fetch(
-        `${instance.url}/v1/auth/oidc/start?redirect_uri=${encodeURIComponent(callbackUrl)}`,
+        `${baseUrl}/v1/auth/oidc/start?redirect_uri=${encodeURIComponent(callbackUrl)}`,
       )
 
       if (!res.ok) {
@@ -254,7 +256,7 @@ function LoginPage() {
       window.location.href = data.authorization_url
     } catch (e) {
       setConnectivityIssue(
-        getConnectivityIssue(instance.url, e, window.location.origin),
+        getConnectivityIssue(baseUrl, e, window.location.origin),
       )
       if (e instanceof ApiClientError) {
         if (e.code === 'local_login_loopback_required') {

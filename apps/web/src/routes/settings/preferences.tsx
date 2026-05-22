@@ -22,6 +22,7 @@ import {
 } from '@/lib/instance-context'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
 import {
@@ -289,8 +290,11 @@ function PreferencesPage() {
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const isOwner = user?.role === 'owner'
   const instance = useActiveInstance()
+  const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-  const backendIsLoopback = isLoopbackHostname(resolveHostname(instance?.url))
+  const backendIsLoopback = isLoopbackHostname(
+    resolveHostname(instanceApiBaseUrl),
+  )
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
   const settingsQuery = useArtifactStorageSettings()
   const preferencesQuery = useInstancePreferences()
@@ -303,11 +307,11 @@ function PreferencesPage() {
   const backendHealthQuery = useQuery({
     queryKey: [instance?.id ?? '__none__', 'runtime-health', 'oored'],
     queryFn: () => {
-      const baseUrl = instance?.url
+      const baseUrl = instanceApiBaseUrl
       if (!baseUrl) throw new Error('No active instance URL')
       return fetchRuntimeHealth(new URL('/healthz', baseUrl).toString())
     },
-    enabled: !!instance?.url,
+    enabled: !!instanceApiBaseUrl,
     retry: false,
     staleTime: 30_000,
   })

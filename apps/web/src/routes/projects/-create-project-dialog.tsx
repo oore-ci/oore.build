@@ -43,6 +43,7 @@ import { useSetupStatus } from '@/hooks/use-setup'
 import { listIntegrationRepos, listIntegrations } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -80,7 +81,7 @@ function resolveHostname(rawUrl: string | null | undefined): string {
 function useAvailableRepos(enabled: boolean) {
   const instance = useActiveInstance()
   const token = useAuthStore((s) => s.token)
-  const baseUrl = instance?.url ?? null
+  const baseUrl = resolveInstanceApiBaseUrl(instance)
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
@@ -116,9 +117,12 @@ export default function CreateProjectDialog({
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const isRemoteMode = runtimeMode === 'remote'
   const instance = useActiveInstance()
+  const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
 
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-  const backendIsLoopback = isLoopbackHostname(resolveHostname(instance?.url))
+  const backendIsLoopback = isLoopbackHostname(
+    resolveHostname(instanceApiBaseUrl),
+  )
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 
   const [sourceKind, setSourceKind] = useState<'local' | 'repo'>('local')
@@ -148,7 +152,11 @@ export default function CreateProjectDialog({
 
   // Derive effective sourceKind: fallback to 'local' if remote mode has no repos
   const effectiveSourceKind =
-    isRemoteMode && sourceKind === 'repo' && !hasRepos && !sourceKindTouched && !reposLoading
+    isRemoteMode &&
+    sourceKind === 'repo' &&
+    !hasRepos &&
+    !sourceKindTouched &&
+    !reposLoading
       ? 'local'
       : sourceKind
 
@@ -435,7 +443,8 @@ export default function CreateProjectDialog({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
-                    (effectiveSourceKind === 'repo' && (reposLoading || !hasRepos))
+                    (effectiveSourceKind === 'repo' &&
+                      (reposLoading || !hasRepos))
                   }
                 >
                   {createMutation.isPending ? (

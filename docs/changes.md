@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-22
 
+- **Same-origin proxy instance URL resolution**:
+  - Web API hooks now resolve empty or `local` instance URLs to the current browser origin, so frontend-only/proxied deployments use the oore-web same-origin `/v1` proxy instead of silently disabling server-state queries.
+  - Sources, setup status, login, project creation, and admin data hooks now share the same API base resolution for local-proxy instances.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Runtime version visibility and restart flag accuracy**:
   - Backend health and `oore-web` health responses now expose the loaded runtime version/channel so split deployments can confirm which frontend bundle and daemon are actually serving requests.
   - Instance preferences no longer hardcode `restart_required: true`; current supported preference changes apply without advertising a misleading pending restart.

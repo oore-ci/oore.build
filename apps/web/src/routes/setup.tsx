@@ -29,6 +29,10 @@ import {
   normalizeTrustedProxySetupPreset,
   saveTrustedProxySetupPrefill,
 } from '@/lib/setup-prefill'
+import {
+  resolveInstanceApiBaseUrl,
+  resolveRequiredInstanceApiBaseUrl,
+} from '@/lib/instance-url'
 import { useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 
@@ -89,13 +93,14 @@ export const Route = createFileRoute('/setup')({
     maybeAutoAddBackendInstance()
 
     const instance = getActiveInstanceOrRedirect()
+    const baseUrl = resolveRequiredInstanceApiBaseUrl(instance)
     syncSetupStoreContext(instance.id)
-    if (isMixedContentBlocked(window.location.origin, instance.url)) {
+    if (isMixedContentBlocked(window.location.origin, baseUrl)) {
       throw new Error('mixed_content_blocked')
     }
 
     try {
-      const status = await getSetupStatus(instance.url)
+      const status = await getSetupStatus(baseUrl)
       if (status.is_configured) {
         throw redirect({ to: '/' })
       }
@@ -219,7 +224,7 @@ function SetupError({ error }: { error: Error }) {
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const instances = useInstanceStore((s) => s.instances)
   const instance = activeInstanceId ? instances[activeInstanceId] : null
-  const backendUrl = instance?.url ?? ''
+  const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const frontendOrigin = window.location.origin
   const issue =
     backendUrl.length > 0

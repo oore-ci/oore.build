@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 
 import type { Instance, SetupStatus } from '@/lib/types'
 import { localLogin, trustedProxyLogin } from '@/lib/api'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -51,6 +52,8 @@ export function useIndexAuthGuard(
 
   useEffect(() => {
     if (!status || !instance) return
+    const baseUrl = resolveInstanceApiBaseUrl(instance)
+    if (!baseUrl) return
 
     if (status.setup_mode && status.runtime_mode !== 'local') {
       void navigate({ to: '/setup' })
@@ -64,7 +67,7 @@ export function useIndexAuthGuard(
     if (status.runtime_mode === 'local') {
       const uiIsLoopback = isLoopbackHostname(window.location.hostname)
       const backendIsLoopback = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
+        resolveBackendHostname(baseUrl),
       )
 
       if (!uiIsLoopback || !backendIsLoopback) {
@@ -81,7 +84,7 @@ export function useIndexAuthGuard(
       autoLoginInstanceRef.current = instance.id
       setIsAutoSigningIn(true)
       clearAuth()
-      void localLogin(instance.url, {})
+      void localLogin(baseUrl, {})
         .then((response) => {
           if (!response.user.user_id || !response.user.role) {
             throw new Error('Incomplete user profile received from server')
@@ -118,7 +121,7 @@ export function useIndexAuthGuard(
       autoLoginInstanceRef.current = instance.id
       setIsAutoSigningIn(true)
       clearAuth()
-      void trustedProxyLogin(instance.url)
+      void trustedProxyLogin(baseUrl)
         .then((response) => {
           if (!response.user.user_id || !response.user.role) {
             throw new Error('Incomplete user profile received from server')
