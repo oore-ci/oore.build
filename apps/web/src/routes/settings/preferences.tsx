@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -223,6 +224,33 @@ type ExternalAccessNetworkFormValues = z.infer<
   typeof externalAccessNetworkSchema
 >
 
+interface RuntimeHealth {
+  ok?: boolean
+  version?: string
+  channel?: string | null
+  github_repo?: string | null
+  backend_url?: string
+  package_version?: string
+}
+
+async function fetchRuntimeHealth(path: string): Promise<RuntimeHealth> {
+  const response = await fetch(path, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error(`Health check failed (${response.status})`)
+  }
+  return (await response.json()) as RuntimeHealth
+}
+
+function healthVersionLabel(
+  health: RuntimeHealth | undefined,
+  isLoading: boolean,
+  isError: boolean,
+): string {
+  if (isLoading) return 'Checking...'
+  if (isError) return 'Unavailable'
+  return health?.version?.trim() || 'Unknown'
+}
+
 function parseAllowedOriginsInput(value: string): Array<string> {
   return value
     .split(/[\n,]/g)
@@ -266,6 +294,23 @@ function PreferencesPage() {
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
   const settingsQuery = useArtifactStorageSettings()
   const preferencesQuery = useInstancePreferences()
+  const webHealthQuery = useQuery({
+    queryKey: ['runtime-health', 'oore-web'],
+    queryFn: () => fetchRuntimeHealth('/__oore_web_healthz'),
+    retry: false,
+    staleTime: 30_000,
+  })
+  const backendHealthQuery = useQuery({
+    queryKey: [instance?.id ?? '__none__', 'runtime-health', 'oored'],
+    queryFn: () => {
+      const baseUrl = instance?.url
+      if (!baseUrl) throw new Error('No active instance URL')
+      return fetchRuntimeHealth(new URL('/healthz', baseUrl).toString())
+    },
+    enabled: !!instance?.url,
+    retry: false,
+    staleTime: 30_000,
+  })
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
   const oidcConfigQuery = useExternalAccessOidc()
@@ -616,6 +661,16 @@ function PreferencesPage() {
   const preferences = preferencesQuery.data?.preferences
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
   const remoteAuthMode = preferences?.remote_auth_mode ?? 'oidc'
+  const webVersionLabel = healthVersionLabel(
+    webHealthQuery.data,
+    webHealthQuery.isLoading,
+    webHealthQuery.isError,
+  )
+  const backendVersionLabel = healthVersionLabel(
+    backendHealthQuery.data,
+    backendHealthQuery.isLoading,
+    backendHealthQuery.isError,
+  )
   const identityCheckId =
     remoteAuthMode === 'trusted_proxy'
       ? 'trusted_proxy_configured'
@@ -1469,7 +1524,7 @@ function PreferencesPage() {
         </DialogContent>
       </Dialog>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardContent>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -1493,6 +1548,36 @@ function PreferencesPage() {
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Effective settings source
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Frontend version
+            </p>
+            <p className="mt-3 font-mono text-2xl font-bold tracking-tight">
+              {webVersionLabel}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {webHealthQuery.data?.channel
+                ? `${webHealthQuery.data.channel} channel`
+                : 'Loaded oore-web bundle'}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent>
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Backend version
+            </p>
+            <p className="mt-3 font-mono text-2xl font-bold tracking-tight">
+              {backendVersionLabel}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {backendHealthQuery.data?.channel
+                ? `${backendHealthQuery.data.channel} channel`
+                : 'Loaded oored daemon'}
             </p>
           </CardContent>
         </Card>

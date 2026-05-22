@@ -57,7 +57,7 @@ GET /v1/settings/preferences
   "preferences": {
     "key_storage_mode": "file",
     "runtime_mode": "local",
-    "restart_required": true,
+    "restart_required": false,
     "updated_at": 1738886400
   }
 }

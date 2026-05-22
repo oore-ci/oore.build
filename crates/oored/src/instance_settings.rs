@@ -424,7 +424,7 @@ fn preferences_response(
             key_storage_mode: mode,
             runtime_mode,
             remote_auth_mode,
-            restart_required: true,
+            restart_required: false,
             updated_at,
         },
     }

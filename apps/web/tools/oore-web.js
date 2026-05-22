@@ -565,6 +565,17 @@ function readInstalledVersion(installRoot) {
   return readTrimmedFile(path.join(installRoot, 'VERSION'))
 }
 
+function readInstalledMetadata() {
+  const installRoot = resolveInstallRoot()
+  return {
+    version: readInstalledVersion(installRoot) || 'unknown',
+    channel: readTrimmedFile(path.join(installRoot, 'CHANNEL')),
+    github_repo:
+      readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
+      DEFAULT_GITHUB_REPO,
+  }
+}
+
 function printVersion() {
   const installRoot = resolveInstallRoot()
   const version = readInstalledVersion(installRoot)
@@ -859,11 +870,19 @@ async function main() {
       const url = new URL(request.url)
 
       if (url.pathname === '/__oore_web_healthz') {
-        return Response.json({
-          ok: true,
-          backend_url: backendUrl.toString(),
-          dist_dir: distDir,
-        })
+        return Response.json(
+          {
+            ok: true,
+            ...readInstalledMetadata(),
+            backend_url: backendUrl.toString(),
+            dist_dir: distDir,
+          },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          },
+        )
       }
 
       if (isApiPath(url.pathname)) {

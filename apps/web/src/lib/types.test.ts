@@ -206,12 +206,12 @@ describe('types', () => {
       key_storage_mode: 'file',
       runtime_mode: 'local',
       remote_auth_mode: 'oidc',
-      restart_required: true,
+      restart_required: false,
       updated_at: 123,
     }
     const response: InstancePreferencesResponse = { preferences: prefs }
     expect(response.preferences.key_storage_mode).toBe('file')
     expect(response.preferences.runtime_mode).toBe('local')
-    expect(response.preferences.restart_required).toBe(true)
+    expect(response.preferences.restart_required).toBe(false)
   })
 })

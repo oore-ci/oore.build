@@ -10,6 +10,13 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-05-22
+
+- **Runtime version visibility and restart flag accuracy**:
+  - Backend health and `oore-web` health responses now expose the loaded runtime version/channel so split deployments can confirm which frontend bundle and daemon are actually serving requests.
+  - Instance preferences no longer hardcode `restart_required: true`; current supported preference changes apply without advertising a misleading pending restart.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 ## 2026-05-21
 
 - **Release latest resolution sorting**:

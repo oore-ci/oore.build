@@ -35,6 +35,7 @@ pub mod util;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, DefaultBodyLimit, State};
@@ -457,8 +458,31 @@ fn validate_session(
 
 // ── Handlers ─────────────────────────────────────────────────────
 
+fn installed_runtime_metadata() -> serde_json::Value {
+    let install_root = std::env::var_os("OORE_INSTALL_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".oore")));
+
+    let read_trimmed = |name: &str| -> Option<String> {
+        let root = install_root.as_ref()?;
+        let value = std::fs::read_to_string(root.join(name)).ok()?;
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
+
+    json!({
+        "version": read_trimmed("VERSION").unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+        "channel": read_trimmed("CHANNEL"),
+        "package_version": env!("CARGO_PKG_VERSION"),
+    })
+}
+
 async fn healthz() -> Json<serde_json::Value> {
-    Json(json!({"ok": true}))
+    let mut metadata = installed_runtime_metadata();
+    if let serde_json::Value::Object(ref mut map) = metadata {
+        map.insert("ok".to_string(), serde_json::Value::Bool(true));
+    }
+    Json(metadata)
 }
 
 async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {

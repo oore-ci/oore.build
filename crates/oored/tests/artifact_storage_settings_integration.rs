@@ -364,7 +364,7 @@ async fn test_owner_can_update_instance_preferences_key_storage_mode() {
     );
     assert_eq!(
         json["preferences"]["restart_required"].as_bool(),
-        Some(true)
+        Some(false)
     );
 
     let req = Request::builder()

@@ -365,7 +365,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'local',
-        restart_required: true,
+        restart_required: false,
         updated_at: 123,
       },
     }
@@ -392,7 +392,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'remote',
-        restart_required: true,
+        restart_required: false,
       },
     }
     mockFetch.mockReturnValue(mockJsonResponse(200, payload))
