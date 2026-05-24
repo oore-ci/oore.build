@@ -11,6 +11,7 @@ import {
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useGitLabStart } from '@/hooks/use-integrations'
 import { PageMeta } from '@/lib/seo'
+import SetupHint from '@/components/setup-hint'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -238,6 +239,13 @@ function GitLabSetupPage() {
                     <p className="text-xs text-muted-foreground">
                       Use the same secret when creating the webhook in GitLab.
                     </p>
+                    <SetupHint
+                      title="Where this goes in GitLab"
+                      items={[
+                        'Project Settings -> Webhooks -> Secret token.',
+                        'Use the Oore GitLab webhook URL from the connected source details page after this source is saved.',
+                      ]}
+                    />
                     <FormMessage />
                   </FormItem>
                 )}
@@ -257,11 +265,28 @@ function GitLabSetupPage() {
                           placeholder="glpat-..."
                         />
                       </FormControl>
-                      <p className="text-xs text-muted-foreground">
-                        Create a token with api scope at{' '}
-                        {hostUrl || 'https://gitlab.com'}
-                        /-/user_settings/personal_access_tokens.
-                      </p>
+                      <SetupHint
+                        title="Required GitLab PAT scopes"
+                        items={[
+                          <span>
+                            Select <code>read_user</code>,{' '}
+                            <code>read_api</code>, and{' '}
+                            <code>read_repository</code>.
+                          </span>,
+                          <span>
+                            Do not select full <code>api</code> unless you are
+                            testing a future write-capable GitLab feature.
+                          </span>,
+                          <span>
+                            Create it at{' '}
+                            <code>
+                              {hostUrl || 'https://gitlab.com'}
+                              /-/user_settings/personal_access_tokens
+                            </code>
+                            .
+                          </span>,
+                        ]}
+                      />
                       <FormMessage />
                     </FormItem>
                   )}
@@ -277,6 +302,10 @@ function GitLabSetupPage() {
                         <FormControl>
                           <Input {...field} placeholder="Application ID" />
                         </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Create a GitLab OAuth application and paste its
+                          Application ID here.
+                        </p>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -294,6 +323,10 @@ function GitLabSetupPage() {
                             placeholder="Application secret"
                           />
                         </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Use the Secret from the same GitLab OAuth
+                          application.
+                        </p>
                         <FormMessage />
                       </FormItem>
                     )}

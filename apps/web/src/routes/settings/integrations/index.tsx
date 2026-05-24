@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import SetupHint from '@/components/setup-hint'
 import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/settings/integrations/')({
@@ -117,6 +118,13 @@ function IntegrationsPage() {
               backend is in Remote mode. In Local Only mode, choose a local
               repository during project creation.
             </p>
+            <SetupHint
+              title="Local only path"
+              items={[
+                'Use Projects to create a project from a repository path available on the runner host.',
+                'Switch to Remote mode only when browser users or external webhooks need to reach the backend.',
+              ]}
+            />
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
@@ -144,6 +152,14 @@ function IntegrationsPage() {
                 Create and install a GitHub App to enable repository discovery
                 and webhook events.
               </p>
+              <SetupHint
+                title="What GitHub will ask for"
+                items={[
+                  'Repository contents and metadata read access for checkout and repository discovery.',
+                  'Pull request read access plus statuses/checks write access for CI feedback.',
+                  'Webhook events for pushes and pull requests.',
+                ]}
+              />
               <Button
                 render={<Link to="/settings/integrations/github" />}
                 nativeButton={false}
@@ -165,6 +181,19 @@ function IntegrationsPage() {
                 Connect gitlab.com or self-managed GitLab through OAuth or
                 personal access token.
               </p>
+              <SetupHint
+                title="Personal access token scopes"
+                items={[
+                  <span>
+                    Use <code>read_user</code>, <code>read_api</code>, and{' '}
+                    <code>read_repository</code>.
+                  </span>,
+                  <span>
+                    Avoid full <code>api</code> unless a future GitLab write
+                    feature explicitly needs it.
+                  </span>,
+                ]}
+              />
               <Button
                 variant="outline"
                 render={<Link to="/settings/integrations/gitlab" />}

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import SetupHint from '@/components/setup-hint'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/github')({
@@ -79,6 +80,14 @@ function GitHubSetupPage() {
               oore creates a GitHub App manifest, redirects you to GitHub, then
               returns here after install.
             </p>
+            <SetupHint
+              title="Generated GitHub App access"
+              items={[
+                'Repository contents, metadata, and pull requests are read-only.',
+                'Statuses and checks are writable so builds can report CI feedback.',
+                'Webhook events are push, pull_request, check_run, and check_suite.',
+              ]}
+            />
             <Button
               onClick={handleConnect}
               disabled={

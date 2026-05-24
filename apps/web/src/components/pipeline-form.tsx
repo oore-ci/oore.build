@@ -45,6 +45,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import SetupHint from '@/components/setup-hint'
 import { TRIGGER_EVENTS, pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseEnvVars,
@@ -137,6 +138,22 @@ const CONFIG_SOURCES: Record<string, string> = {
   auto: 'Use repo config if found (.oore.yaml, .oore.yml)',
   explicit: 'Use a specific config file path',
 }
+
+const ANDROID_GRADLE_SIGNING_SNIPPET = `android {
+    signingConfigs {
+        release {
+            storeFile file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
+            storePassword System.getenv("OORE_ANDROID_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("OORE_ANDROID_KEY_ALIAS")
+            keyPassword System.getenv("OORE_ANDROID_KEY_PASSWORD")
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+        }
+    }
+}`
 
 function SectionHeader({
   title,
@@ -895,6 +912,19 @@ export default function PipelineForm({
                       <p className="text-xs text-muted-foreground">
                         One KEY=VALUE per line. Available in all build steps.
                       </p>
+                      <SetupHint
+                        title="Built-in CI variables"
+                        items={[
+                          <span>
+                            Oore also injects <code>PROJECT_ID</code>,{' '}
+                            <code>PIPELINE_ID</code>, <code>BUILD_ID</code>,{' '}
+                            <code>PROJECT_BUILD_NUMBER</code>,{' '}
+                            <code>BUILD_NUMBER</code>, <code>CI=true</code>,
+                            and branch/commit values when present.
+                          </span>,
+                          'Use this section for app-specific values such as API_BASE_URL, APP_FLAVOR, SENTRY_DSN, or feature flags.',
+                        ]}
+                      />
                       <FormMessage />
                     </FormItem>
                   )}
@@ -972,6 +1002,15 @@ export default function PipelineForm({
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <CardContent className="space-y-4">
+                  <SetupHint
+                    title="Android project setup"
+                    code={ANDROID_GRADLE_SIGNING_SNIPPET}
+                    items={[
+                      'For standard Flutter release builds, upload the keystore here and Oore prepares the signing files for the runner.',
+                      'For custom Gradle flavors or signingConfigs, read the OORE_ANDROID_* environment variables shown below.',
+                      'Oore also writes OORE_ANDROID_KEY_PROPERTIES_PATH if your Gradle setup prefers a generated key.properties file.',
+                    ]}
+                  />
                   <FormField
                     control={form.control}
                     name="android_signing_release_enabled"
@@ -1233,6 +1272,15 @@ export default function PipelineForm({
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <CardContent className="space-y-4">
+                  <SetupHint
+                    title="iOS project setup"
+                    items={[
+                      'Manual mode uses your uploaded .p12 certificate and .mobileprovision files.',
+                      'API mode uses App Store Connect credentials to sync signing assets; hybrid mode combines API sync with a manually uploaded certificate.',
+                      'During a build, Oore installs profiles, creates a temporary keychain, and pins CODE_SIGN_IDENTITY when a signing identity is available.',
+                      'Keep bundle identifiers aligned with the Xcode targets you expect to sign.',
+                    ]}
+                  />
                   <FormField
                     control={form.control}
                     name="ios_signing_enabled"

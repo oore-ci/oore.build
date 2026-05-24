@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/select'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import SetupHint from '@/components/setup-hint'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -223,32 +224,45 @@ function BuildsListPage() {
                   ? 'Builds run through pipelines under projects. Create your first project from a local Git repository.'
                   : 'Builds run through pipelines under projects. Create your first project before triggering builds.'}
               </p>
-              {canWriteProjects ? (
-                <Button render={<Link to="/projects" />} nativeButton={false}>
-                  <HugeiconsIcon icon={Add01Icon} size={16} />
-                  Go To Projects
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Ask an owner/admin/developer to create the first project.
-                </p>
-              )}
+              <SetupHint
+                title="Fastest path to the first build"
+                items={[
+                  runtimeMode === 'local'
+                    ? 'Create a project from a local repository path on the runner host.'
+                    : 'Connect GitHub or GitLab if you want repository discovery and webhook triggers.',
+                  'Create a pipeline and pick the platforms Oore should build.',
+                  'Trigger the first build from the pipeline page, or let a configured webhook do it.',
+                ]}
+              />
 
-              {runtimeMode === 'remote' ? (
-                canWriteIntegrations ? (
-                  <Button
-                    variant="outline"
-                    render={<Link to={integrationConnectTo} />}
-                    nativeButton={false}
-                  >
-                    Connect Source
+              <div className="flex flex-wrap items-center gap-2">
+                {canWriteProjects ? (
+                  <Button render={<Link to="/projects" />} nativeButton={false}>
+                    <HugeiconsIcon icon={Add01Icon} size={16} />
+                    Go To Projects
                   </Button>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    Ask an owner/admin to connect a source.
+                    Ask an owner/admin/developer to create the first project.
                   </p>
-                )
-              ) : null}
+                )}
+
+                {runtimeMode === 'remote' ? (
+                  canWriteIntegrations ? (
+                    <Button
+                      variant="outline"
+                      render={<Link to={integrationConnectTo} />}
+                      nativeButton={false}
+                    >
+                      Connect Source
+                    </Button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Ask an owner/admin to connect a source.
+                    </p>
+                  )
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         ) : (

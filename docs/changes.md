@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-22
 
+- **Frontend guided setup hints**:
+  - Builds empty state now spaces and aligns first-run actions consistently and explains the shortest path from source/project setup to the first build.
+  - Source setup screens now surface GitHub App access, GitLab PAT scopes, webhook secret placement, built-in CI variables, and Android/iOS signing project hints directly in the UI.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 - **Same-origin proxy instance URL resolution**:
   - Web API hooks now resolve empty or `local` instance URLs to the current browser origin, so frontend-only/proxied deployments use the oore-web same-origin `/v1` proxy instead of silently disabling server-state queries.
   - Sources, setup status, login, project creation, and admin data hooks now share the same API base resolution for local-proxy instances.
