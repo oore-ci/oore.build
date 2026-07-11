@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-05-22
 
+- **Product trust hardening: local-first installer and operator diagnostics**:
+  - Default macOS installation now installs and starts the loopback daemon and local web UI as launch-at-login services, opens the local web root for interactive installs, and relies on loopback local login instead of bootstrap tokens or `/setup` routing. Split and remote topology choices remain available through `scripts/install.sh --advanced`; `--no-open` and `OORE_OPEN_BROWSER` control browser opening.
+  - `oore doctor` now separates core runner requirements from repeatable Android, iOS, and macOS platform checks. Java, Android SDK, and Xcode checks are target-specific; signing and notarization are warnings rather than release-runner blockers; JSON statuses are explicit.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 - **Frontend guided setup hints**:
   - Builds empty state now spaces and aligns first-run actions consistently and explains the shortest path from source/project setup to the first build.
   - Source setup screens now surface GitHub App access, GitLab PAT scopes, webhook secret placement, built-in CI variables, and Android/iOS signing project hints directly in the UI.

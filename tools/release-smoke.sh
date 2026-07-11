@@ -6,6 +6,9 @@ cd "$ROOT_DIR"
 
 echo "[release-smoke] Running local-first regression smoke checks..."
 
+# Release installer local-first defaults and browser-open policy.
+bash scripts/install-acceptance.sh
+
 # Runner checkout reliability: nested submodules + explicit failure markers.
 cargo test -p oore-runner checkout_
 

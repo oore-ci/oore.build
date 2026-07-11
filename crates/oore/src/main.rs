@@ -60,6 +60,7 @@ struct DoctorCheckResult {
 struct DoctorReport {
     checks: Vec<DoctorCheckResult>,
     missing_count: usize,
+    warning_count: usize,
 }
 
 #[derive(Debug, Parser)]
@@ -291,6 +292,21 @@ struct ConfigGetArgs {
 struct DoctorArgs {
     #[arg(long, default_value = "false")]
     json: bool,
+
+    /// Check requirements for a build platform. Repeat for multiple platforms.
+    #[arg(long, value_enum)]
+    platform: Vec<DoctorPlatform>,
+
+    /// Check Android, iOS, and macOS requirements.
+    #[arg(long, conflicts_with = "platform")]
+    all: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DoctorPlatform {
+    Android,
+    Ios,
+    Macos,
 }
 
 fn parse_ttl(raw: &str) -> anyhow::Result<Duration> {
@@ -2410,7 +2426,12 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
     command_output(cmd, args)
         .and_then(|out| {
             if out.status.success() {
-                String::from_utf8(out.stdout).ok()
+                let output = if out.stdout.is_empty() {
+                    out.stderr
+                } else {
+                    out.stdout
+                };
+                String::from_utf8(output).ok()
             } else {
                 None
             }
@@ -2418,26 +2439,115 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
         .and_then(|s| s.lines().next().map(|line| line.trim().to_string()))
 }
 
+fn doctor_check(
+    name: &str,
+    status: &str,
+    detail: Option<String>,
+    install_hint: Option<&str>,
+) -> DoctorCheckResult {
+    DoctorCheckResult {
+        name: name.to_string(),
+        status: status.to_string(),
+        detail,
+        install_hint: install_hint.map(str::to_string),
+    }
+}
+
+fn doctor_has_platform(args: &DoctorArgs, platform: DoctorPlatform) -> bool {
+    args.all || args.platform.contains(&platform)
+}
+
+fn android_sdk_root() -> Option<PathBuf> {
+    ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .into_iter()
+        .find_map(|key| {
+            std::env::var_os(key)
+                .map(PathBuf::from)
+                .filter(|path| path.is_dir())
+        })
+}
+
+fn add_xcode_checks(checks: &mut Vec<DoctorCheckResult>) {
+    if std::env::consts::OS != "macos" {
+        checks.push(doctor_check(
+            "xcode",
+            "missing",
+            Some("iOS and macOS builds require a macOS runner".to_string()),
+            Some("run this job on macOS with Xcode installed"),
+        ));
+        return;
+    }
+
+    let developer_dir =
+        command_version("xcode-select", &["-p"]).filter(|path| Path::new(path).is_dir());
+    let xcode_version = command_version("xcodebuild", &["-version"]);
+    if let (Some(developer_dir), Some(xcode_version)) = (developer_dir, xcode_version) {
+        checks.push(doctor_check(
+            "xcode",
+            "ok",
+            Some(format!("{} ({})", xcode_version, developer_dir)),
+            None,
+        ));
+    } else {
+        checks.push(doctor_check(
+            "xcode",
+            "missing",
+            None,
+            Some("install Xcode, then run: sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer"),
+        ));
+    }
+}
+
+fn add_signing_warnings(checks: &mut Vec<DoctorCheckResult>) {
+    let codesign = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
+    match codesign {
+        Some(output) if output.status.success() => {
+            let output = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if output.contains("0 valid identities found") {
+                checks.push(doctor_check(
+                    "codesign_identity",
+                    "warning",
+                    Some("0 valid identities found".to_string()),
+                    Some("import an Apple development or distribution certificate before signing"),
+                ));
+            } else {
+                checks.push(doctor_check(
+                    "codesign_identity",
+                    "ok",
+                    Some("signing identity available".to_string()),
+                    None,
+                ));
+            }
+        }
+        _ => checks.push(doctor_check(
+            "codesign_identity",
+            "warning",
+            None,
+            Some("import an Apple development or distribution certificate before signing"),
+        )),
+    }
+
+    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
+        checks.push(doctor_check("notarytool", "ok", Some(version), None));
+    } else {
+        checks.push(doctor_check(
+            "notarytool",
+            "warning",
+            None,
+            Some("install a current Xcode version before notarizing macOS apps"),
+        ));
+    }
+}
+
 fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
-    let base_checks: [(&str, &[&str], &str); 6] = [
+    let base_checks: [(&str, &[&str], &str); 3] = [
         ("git", &["--version"], "brew install git"),
-        (
-            "rustc",
-            &["--version"],
-            "curl https://sh.rustup.rs -sSf | sh",
-        ),
-        (
-            "cargo",
-            &["--version"],
-            "curl https://sh.rustup.rs -sSf | sh",
-        ),
-        (
-            "bun",
-            &["--version"],
-            "curl -fsSL https://bun.sh/install | bash",
-        ),
         (
             "fvm",
             &["--version"],
@@ -2452,109 +2562,87 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
 
     for (name, command_args, install_hint) in base_checks {
         if let Some(version) = command_version(name, command_args) {
-            checks.push(DoctorCheckResult {
-                name: name.to_string(),
-                status: "ok".to_string(),
-                detail: Some(version),
-                install_hint: None,
-            });
+            checks.push(doctor_check(name, "ok", Some(version), None));
         } else {
-            checks.push(DoctorCheckResult {
-                name: name.to_string(),
-                status: "missing".to_string(),
-                detail: None,
-                install_hint: Some(install_hint.to_string()),
-            });
+            checks.push(doctor_check(name, "missing", None, Some(install_hint)));
         }
     }
 
-    let xcode_ready = command_version("xcodebuild", &["-version"]).is_some()
-        && command_version("xcode-select", &["-p"]).is_some();
-    checks.push(if xcode_ready {
-        DoctorCheckResult {
-            name: "xcode_cli".to_string(),
-            status: "ok".to_string(),
-            detail: Some("xcodebuild + xcode-select configured".to_string()),
-            install_hint: None,
+    if doctor_has_platform(&args, DoctorPlatform::Android) {
+        if let Some(version) = command_version("java", &["-version"]) {
+            checks.push(doctor_check("java", "ok", Some(version), None));
+        } else {
+            checks.push(doctor_check(
+                "java",
+                "missing",
+                None,
+                Some("install a supported JDK and set JAVA_HOME"),
+            ));
         }
-    } else {
-        DoctorCheckResult {
-            name: "xcode_cli".to_string(),
-            status: "missing".to_string(),
-            detail: None,
-            install_hint: Some(
-                "install/configure Xcode CLI tools: xcode-select --install".to_string(),
-            ),
-        }
-    });
 
-    let codesign_check = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
-    match codesign_check {
-        Some(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let merged = format!("{stdout}\n{stderr}");
-            if merged.contains("0 valid identities found") {
-                checks.push(DoctorCheckResult {
-                    name: "codesign_identity".to_string(),
-                    status: "missing".to_string(),
-                    detail: Some("0 valid identities found".to_string()),
-                    install_hint: Some(
-                        "import a Developer/Application certificate into Keychain Access"
-                            .to_string(),
-                    ),
-                });
+        if let Some(sdk_root) = android_sdk_root() {
+            let adb = sdk_root.join("platform-tools/adb");
+            if adb.is_file() {
+                checks.push(doctor_check(
+                    "android_sdk",
+                    "ok",
+                    Some(sdk_root.display().to_string()),
+                    None,
+                ));
             } else {
-                let identity_count = merged
-                    .lines()
-                    .filter(|line| line.contains('"') && line.contains(") "))
-                    .count();
-                checks.push(DoctorCheckResult {
-                    name: "codesign_identity".to_string(),
-                    status: "ok".to_string(),
-                    detail: Some(format!("{identity_count} identity entries available")),
-                    install_hint: None,
-                });
+                checks.push(doctor_check(
+                    "android_sdk",
+                    "missing",
+                    Some(sdk_root.display().to_string()),
+                    Some("install Android SDK Platform-Tools in this SDK"),
+                ));
             }
+        } else {
+            checks.push(doctor_check(
+                "android_sdk",
+                "missing",
+                None,
+                Some("install Android Studio, then set ANDROID_HOME to its SDK directory"),
+            ));
         }
-        _ => {
-            checks.push(DoctorCheckResult {
-                name: "codesign_identity".to_string(),
-                status: "missing".to_string(),
-                detail: None,
-                install_hint: Some(
-                    "run `security find-identity -v -p codesigning` and import required certificates"
-                        .to_string(),
-                ),
-            });
-        }
+    } else {
+        checks.push(doctor_check(
+            "android",
+            "skipped",
+            Some("run `oore doctor --platform android` for Android checks".to_string()),
+            None,
+        ));
     }
 
-    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
-        checks.push(DoctorCheckResult {
-            name: "notarytool".to_string(),
-            status: "ok".to_string(),
-            detail: Some(version),
-            install_hint: None,
-        });
+    let apple_selected = doctor_has_platform(&args, DoctorPlatform::Ios)
+        || doctor_has_platform(&args, DoctorPlatform::Macos);
+    if apple_selected {
+        add_xcode_checks(&mut checks);
+        add_signing_warnings(&mut checks);
     } else {
-        checks.push(DoctorCheckResult {
-            name: "notarytool".to_string(),
-            status: "missing".to_string(),
-            detail: None,
-            install_hint: Some(
-                "install/update Xcode CLT and verify with `xcrun notarytool --version`".to_string(),
+        checks.push(doctor_check(
+            "apple_platforms",
+            "skipped",
+            Some(
+                "run `oore doctor --platform ios` or `--platform macos` for Xcode checks"
+                    .to_string(),
             ),
-        });
+            None,
+        ));
     }
 
     let missing_count = checks
         .iter()
         .filter(|check| check.status == "missing")
         .count();
+    let warning_count = checks
+        .iter()
+        .filter(|check| check.status == "warning")
+        .count();
     let report = DoctorReport {
         checks,
         missing_count,
+        warning_count,
     };
 
     if args.json {
@@ -2562,24 +2650,20 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     } else {
         println!("oore doctor -- environment checks");
         for check in &report.checks {
-            if check.status == "ok" {
-                println!(
-                    "  [ok] {:<18} {}",
-                    check.name,
-                    check.detail.as_deref().unwrap_or("")
-                );
-            } else {
-                println!(
-                    "  [missing] {:<18} install: {}",
-                    check.name,
-                    check.install_hint.as_deref().unwrap_or("")
-                );
-            }
+            let detail = check
+                .detail
+                .as_deref()
+                .or(check.install_hint.as_deref())
+                .unwrap_or("");
+            println!("  [{}] {:<18} {}", check.status, check.name, detail);
         }
         if report.missing_count == 0 {
-            println!("All required tools are installed.");
+            println!("All selected required checks passed.");
         } else {
-            println!("{} issue(s) found.", report.missing_count);
+            println!("{} required issue(s) found.", report.missing_count);
+        }
+        if report.warning_count > 0 {
+            println!("{} optional warning(s) found.", report.warning_count);
         }
     }
 

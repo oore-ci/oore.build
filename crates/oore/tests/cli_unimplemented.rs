@@ -185,6 +185,43 @@ fn login_command_surfaces_loopback_rejection() {
 }
 
 #[test]
+fn doctor_accepts_repeatable_platforms_and_reports_json_statuses() {
+    let output = run(&[
+        "doctor",
+        "--platform",
+        "android",
+        "--platform",
+        "ios",
+        "--json",
+    ]);
+    assert!(matches!(output.status.code(), Some(0 | 1)));
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("doctor should return JSON");
+    let checks = report["checks"].as_array().expect("checks array");
+    assert!(checks.iter().any(|check| check["name"] == "java"));
+    assert!(checks.iter().any(|check| check["name"] == "android_sdk"));
+    assert!(checks.iter().any(|check| check["name"] == "xcode"));
+    assert!(checks.iter().all(|check| matches!(
+        check["status"].as_str(),
+        Some("ok" | "warning" | "missing" | "skipped")
+    )));
+}
+
+#[test]
+fn doctor_all_includes_each_platform() {
+    let output = run(&["doctor", "--all", "--json"]);
+    assert!(matches!(output.status.code(), Some(0 | 1)));
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("doctor should return JSON");
+    let checks = report["checks"].as_array().expect("checks array");
+    assert!(checks.iter().any(|check| check["name"] == "java"));
+    assert!(checks.iter().any(|check| check["name"] == "android_sdk"));
+    assert!(checks.iter().any(|check| check["name"] == "xcode"));
+}
+
+#[test]
 fn config_set_get_round_trip_supported_keys() {
     let config_path = temp_config_path("config-roundtrip");
     let cfg = config_path.to_string_lossy().into_owned();
