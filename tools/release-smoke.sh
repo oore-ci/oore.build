@@ -23,5 +23,6 @@ cargo test -p oore --test cli_unimplemented
 
 # Installed-state backup format and integrity verification.
 cargo test -p oore --test cli_unimplemented backup_create_and_verify_round_trip
+cargo test -p oore update_rollback_restores_previous_release
 
 echo "[release-smoke] All smoke checks passed."

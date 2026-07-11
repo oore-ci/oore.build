@@ -3949,3 +3949,48 @@ fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_rollback_restores_previous_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let install = temp.path().join("install");
+        let stage = temp.path().join("stage");
+        let snapshot = temp.path().join("snapshot");
+
+        for root in [&install, &stage] {
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::create_dir_all(root.join("web-dist")).unwrap();
+        }
+        fs::write(install.join("bin/oore"), "old-binary").unwrap();
+        fs::write(install.join("VERSION"), "1.0.0").unwrap();
+        fs::write(install.join("web-dist/index.html"), "old-web").unwrap();
+        fs::write(stage.join("bin/oore"), "new-binary").unwrap();
+        fs::write(stage.join("VERSION"), "2.0.0").unwrap();
+        fs::write(stage.join("web-dist/index.html"), "new-web").unwrap();
+
+        copy_release_snapshot(&install, &snapshot).unwrap();
+        install_staged_release(&stage, &install, ReleaseChannel::Stable, "oorebuild/oore").unwrap();
+        assert_eq!(
+            fs::read_to_string(install.join("VERSION")).unwrap(),
+            "2.0.0"
+        );
+
+        restore_release_snapshot(&install, &snapshot).unwrap();
+        assert_eq!(
+            fs::read_to_string(install.join("bin/oore")).unwrap(),
+            "old-binary"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("VERSION")).unwrap(),
+            "1.0.0"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("web-dist/index.html")).unwrap(),
+            "old-web"
+        );
+    }
+}

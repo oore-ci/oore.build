@@ -19,6 +19,7 @@ Rules:
   - `oore doctor` now separates core runner requirements from repeatable Android, iOS, and macOS platform checks. Java, Android SDK, and Xcode checks are target-specific; signing and notarization are warnings rather than release-runner blockers; JSON statuses are explicit.
   - Added liveness-only `/healthz` and dependency-aware `/readyz`; added verified `oore backup create|verify|restore`; and made `oore update` stage, back up, atomically replace, verify, and roll back installed releases while preserving managed service state.
   - Validation now covers master/alpha/beta/stable, release-tooling paths, and only runs autotag after Validate succeeds for the exact pushed commit.
+  - Release smoke now exercises updater snapshot/install/rollback restoration, and build list/detail responses include project, pipeline, and runner display context for truthful operator UI.
   - Quick Debug APK pipelines now explicitly run `flutter build apk --debug`, and generated defaults use Flutter's real Android, iOS, and macOS output paths.
   - Pipeline creation preserves a successful create when a later signing request fails, then routes to a signing-only retry with the failed signing section expanded.
   - Builds show project context globally and accept optional named project/pipeline/runner context from the backend; terminal details prioritize failure reasons, failed steps, final-log states, and status-appropriate artifact empty states.
