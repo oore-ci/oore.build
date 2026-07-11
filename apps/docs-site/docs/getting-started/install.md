@@ -16,11 +16,16 @@ Installation puts the daemon, CLI, and/or frontend launcher on disk. First-run s
 - Internet access to GitHub (`github.com`) and the installer endpoint for your channel
 - Access to `ci.oore.build` only if you plan to use the hosted UI
 
-## Install (latest release)
+## Install on one Mac (default)
 
 ```bash
 curl -fsSL https://oore.build/install | bash
 ```
+
+On macOS, this is the local-first path: it installs the daemon, CLI, embedded runner, and local web UI; keeps both services on loopback; enables launch-at-login; starts them; and opens `http://127.0.0.1:4173`.
+It uses loopback local login, so it does not generate a bootstrap token or send you to `/setup`.
+
+Use `--no-open` to suppress the browser. Non-interactive installs do not open a browser unless you explicitly set `OORE_OPEN_BROWSER=true`.
 
 ## Install by channel (stable/beta/alpha)
 
@@ -43,9 +48,15 @@ curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 
 `OORE_VERSION` (pinned tag/version) always overrides channel selection. Use the matching channel installer endpoint when testing prerelease installer behavior; `https://oore.build/install` is the stable production installer.
 
-## Install modes
+## Advanced topology install modes
 
-The installer is role-based:
+For split, remote, or frontend-only deployments, keep the existing topology wizard behind `--advanced`:
+
+```bash
+curl -fsSL https://oore.build/install | bash -s -- --advanced
+```
+
+The advanced installer is role-based:
 
 - `auto`: macOS prompts for a role in interactive shells; Linux defaults to frontend-only mode.
 - `all`: installs the daemon, CLI, embedded runner, `oore-web`, and local web assets on one macOS host.
@@ -66,7 +77,7 @@ Install roles describe where binaries run. Setup modes describe how the backend 
 | Split frontend/backend | `backend` on macOS plus `frontend` on Linux/macOS | Usually `Remote Trusted Proxy` or `Remote OIDC` | A browser-facing `oore-web` host proxies API calls to the macOS backend over a controlled network path. |
 | Hosted UI | `backend` on macOS | `Remote OIDC` or `Remote Trusted Proxy` | `ci.oore.build` serves only the frontend app; your macOS backend still owns setup, auth, data, builds, and signing keys. |
 
-The installer:
+The advanced installer:
 
 - Detects your architecture (`arm64` or `x86_64`)
 - Prompts for the macOS role and chooses frontend-only mode on Linux when `OORE_INSTALL_MODE=auto`
@@ -243,13 +254,14 @@ Continue with [Set Up Your Instance](/getting-started/first-instance). If you pl
 |---|---|---|
 | `OORE_VERSION` | `latest` | Release selector (`latest` or tag like `v0.2.0`) |
 | `OORE_CHANNEL` | `stable` | Channel selector when `OORE_VERSION=latest`: `stable`, `beta`, or `alpha` |
-| `OORE_INSTALL_MODE` | `auto` | Install mode: `auto`, `all`, `backend`, or `frontend`; `full` is accepted as a legacy alias for `all` |
+| `OORE_INSTALL_MODE` | `auto` | Advanced install mode: `auto`, `all`, `backend`, or `frontend`; use it with `--advanced`; `full` is accepted as a legacy alias for `all` |
 | `OORE_INSTALL_ROOT` | `~/.oore` | Installation directory |
 | `OORE_GITHUB_REPO` | `devaryakjha/oore.build` | GitHub repository used to resolve `latest` and download assets |
 | `OORE_RELEASE_BASE_URL` | `https://github.com/<repo>/releases/download` | Base URL that contains `<tag>/` release assets |
 | `OORE_RELEASE_MANIFEST_URL` | `https://api.github.com/repos/<repo>/releases/latest` | Metadata URL used when `OORE_VERSION=latest` |
 | `OORE_RELEASES_LIST_URL` | `https://api.github.com/repos/<repo>/releases?per_page=100` | Release list URL used when `OORE_VERSION=latest` and `OORE_CHANNEL` is `alpha` or `beta` |
 | `OORE_NONINTERACTIVE` | `0` | Disable prompts when set to `1` |
+| `OORE_OPEN_BROWSER` | interactive local install only | Open the local web root after a default macOS install; set `true` to opt in for non-interactive installs |
 | `OORE_DAEMON_LISTEN` | from `OORE_DAEMON_URL` | Daemon listen address for `all` and `backend` installs, for example `127.0.0.1:8787` for same-host reverse proxy or `10.0.0.20:8787` for a private frontend host |
 | `OORE_START_DAEMON` | unset | Non-interactive daemon startup behavior (`true` or `false`) |
 | `OORE_INSTALL_DAEMON_SERVICE` | unset | Non-interactive launchd service install/start behavior for `all` and `backend` macOS installs (`true` or `false`) |

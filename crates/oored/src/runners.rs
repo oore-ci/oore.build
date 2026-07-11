@@ -5,10 +5,10 @@ use axum::extract::{FromRequestParts, Path, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use oore_contract::{
-    ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobResponse, ClaimedJob,
-    JobStatusResponse, ListRunnersResponse, RegisterRunnerRequest, RegisterRunnerResponse, Runner,
-    RunnerHeartbeatRequest, RunnerStatus, UpdateJobStatusRequest, UpdateRunnerRequest,
-    UpdateRunnerResponse,
+    ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobRequest, ClaimJobResponse,
+    ClaimedJob, JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION,
+    RegisterRunnerRequest, RegisterRunnerResponse, Runner, RunnerHeartbeatRequest, RunnerStatus,
+    UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
 };
 use sqlx::Row;
 use tracing::{error, info, warn};
@@ -268,12 +268,23 @@ pub async fn claim_job(
     State(state): State<Arc<AppState>>,
     Path(runner_id): Path<String>,
     runner_auth: RunnerAuth,
+    Json(req): Json<ClaimJobRequest>,
 ) -> ApiResult<ClaimJobResponse> {
     if runner_auth.runner_id != runner_id {
         return Err(api_err(
             StatusCode::FORBIDDEN,
             "runner_mismatch",
             "Runner token does not match the requested runner ID",
+        ));
+    }
+    if req.protocol_version != RUNNER_PROTOCOL_VERSION {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "runner_protocol_mismatch",
+            format!(
+                "Runner protocol {} is unsupported; expected {}",
+                req.protocol_version, RUNNER_PROTOCOL_VERSION
+            ),
         ));
     }
 

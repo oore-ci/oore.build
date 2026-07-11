@@ -16,6 +16,7 @@ OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://github.com/$OORE_GITHUB_
 OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases/latest}"
 OORE_RELEASES_LIST_URL="${OORE_RELEASES_LIST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases?per_page=100}"
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
+OORE_OPEN_BROWSER="${OORE_OPEN_BROWSER:-}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_INSTALL_DAEMON_SERVICE="${OORE_INSTALL_DAEMON_SERVICE:-}"
 OORE_DAEMON_LISTEN="${OORE_DAEMON_LISTEN:-}"
@@ -72,6 +73,8 @@ UI_ACCENT=""
 UI_SUCCESS=""
 UI_WARNING=""
 UI_ERROR=""
+OORE_ADVANCED=0
+OORE_NO_OPEN=0
 
 print_help() {
   cat <<'EOF'
@@ -79,6 +82,8 @@ Oore CI installer
 
 Usage:
   ./scripts/install.sh
+  ./scripts/install.sh --advanced
+  ./scripts/install.sh --no-open
   ./scripts/install.sh --help
 
 Environment overrides:
@@ -87,6 +92,7 @@ Environment overrides:
   OORE_INSTALL_MODE          Install mode: auto|all|backend|frontend (default: auto; full is a legacy alias for all)
   OORE_INSTALL_ROOT          Install root (default: ~/.oore)
   OORE_NONINTERACTIVE        Non-interactive mode (true/false)
+  OORE_OPEN_BROWSER          Open the local web root after install (true/false; defaults to true only for interactive local installs)
   OORE_DAEMON_LISTEN         Daemon listen address for all/backend installs (default: from OORE_DAEMON_URL)
   OORE_START_DAEMON          Start daemon in non-interactive mode (true/false)
   OORE_INSTALL_DAEMON_SERVICE Install oored as a launchd service in all/backend mode (true/false)
@@ -113,6 +119,32 @@ Environment overrides:
   OORE_RELEASE_MANIFEST_URL  Release metadata URL for latest tag resolution (default: GitHub Releases API)
   OORE_RELEASES_LIST_URL     Release list URL for prerelease channel resolution (default: GitHub Releases API list)
 EOF
+}
+
+is_default_local_install() {
+  [[ "$RELEASE_OS" == "darwin" && "$OORE_ADVANCED" -eq 0 && "$OORE_INSTALL_MODE" == "all" ]]
+}
+
+should_open_browser() {
+  [[ "$OORE_NO_OPEN" -eq 0 ]] || return 1
+
+  if [[ -n "$OORE_OPEN_BROWSER" ]]; then
+    normalize_bool "$OORE_OPEN_BROWSER"
+    return $?
+  fi
+
+  ! is_noninteractive
+}
+
+report_component_failure() {
+  local component="$1"
+  local log_path="$2"
+  local retry_command="$3"
+  local expected_url="$4"
+
+  log "$component failed. Logs: $log_path"
+  log "Retry: $retry_command"
+  log "Expected URL: $expected_url"
 }
 
 step() {
@@ -713,6 +745,11 @@ normalize_runtime_config() {
 configure_install_mode() {
   normalize_install_mode
 
+  if [[ "$OORE_ADVANCED" -eq 0 && "$RELEASE_OS" == "darwin" ]]; then
+    OORE_INSTALL_MODE="all"
+    return 0
+  fi
+
   if [[ "$OORE_INSTALL_MODE" == "auto" ]]; then
     case "$RELEASE_OS" in
       linux)
@@ -749,6 +786,17 @@ configure_backend_install() {
     OORE_DAEMON_LISTEN="$(url_to_host_port "$DAEMON_URL")"
   fi
   [[ -n "$OORE_DAEMON_LISTEN" ]] || OORE_DAEMON_LISTEN="127.0.0.1:8787"
+
+  if is_default_local_install; then
+    OORE_DAEMON_LISTEN="127.0.0.1:8787"
+    OORE_DAEMON_URL="http://127.0.0.1:8787"
+    DAEMON_URL="$OORE_DAEMON_URL"
+    OORE_WEB_BACKEND_URL="$DAEMON_URL"
+    WEB_BACKEND_URL="$DAEMON_URL"
+    OORE_INSTALL_DAEMON_SERVICE=true
+    OORE_START_DAEMON=true
+    return 0
+  fi
 
   if ! is_noninteractive && has_prompt_tty; then
     local listen_default="$OORE_DAEMON_LISTEN"
@@ -828,9 +876,17 @@ configure_backend_install() {
 }
 
 configure_frontend_install() {
-  [[ "$OORE_INSTALL_MODE" == "frontend" ]] || return 0
+  is_web_install || return 0
 
-  if ! is_noninteractive && has_prompt_tty; then
+  if is_default_local_install; then
+    OORE_LOCAL_WEB_LISTEN="127.0.0.1:4173"
+    OORE_LOCAL_WEB_MODE=login
+    WEB_BACKEND_URL="$DAEMON_URL"
+    resolve_local_web_url
+    return 0
+  fi
+
+  if [[ "$OORE_INSTALL_MODE" == "frontend" ]] && ! is_noninteractive && has_prompt_tty; then
     local backend_default="$WEB_BACKEND_URL"
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
       backend_default=""
@@ -906,11 +962,13 @@ configure_frontend_install() {
         )"
       fi
     fi
-  else
+  elif [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
       die 'Frontend-only non-interactive install requires OORE_WEB_BACKEND_URL, for example http://<backend-host>:8787.'
     fi
   fi
+
+  [[ "$OORE_INSTALL_MODE" == "frontend" ]] || return 0
 
   ensure_frontend_secret_files
   WEB_BACKEND_URL="$OORE_WEB_BACKEND_URL"
@@ -919,6 +977,8 @@ configure_frontend_install() {
 
 configure_setup_prefill() {
   is_daemon_install || return 0
+
+  is_default_local_install && return 0
 
   if ! is_noninteractive && has_prompt_tty; then
     print_prompt_section \
@@ -1377,7 +1437,11 @@ start_daemon() {
     return 0
   fi
 
-  log "Daemon failed to start. Check logs: $DAEMON_LOG"
+  report_component_failure \
+    "oored" \
+    "$DAEMON_LOG" \
+    "$BIN_DIR/oored run --listen $OORE_DAEMON_LISTEN" \
+    "$DAEMON_URL/healthz"
   return 1
 }
 
@@ -1392,7 +1456,14 @@ install_daemon_service() {
   fi
   cmd+=("--env" "RUST_LOG=${RUST_LOG:-info}")
 
-  "${cmd[@]}" || return 1
+  if ! "${cmd[@]}"; then
+    report_component_failure \
+      "oored launchd service" \
+      "$DAEMON_LOG" \
+      "$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN" \
+      "$DAEMON_URL/healthz"
+    return 1
+  fi
 
   local i
   for i in $(seq 1 15); do
@@ -1404,6 +1475,15 @@ install_daemon_service() {
     fi
     sleep 1
   done
+
+  if is_default_local_install; then
+    report_component_failure \
+      "oored launchd service" \
+      "$DAEMON_LOG" \
+      "$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN" \
+      "$DAEMON_URL/healthz"
+    return 1
+  fi
 
   log "Daemon service was installed, but this host could not reach $DAEMON_URL/healthz. Continuing; check logs if clients cannot connect."
   DAEMON_STARTED=1
@@ -1560,7 +1640,11 @@ start_local_web() {
     sleep 1
   done
 
-  log "Local web UI failed to become healthy. Check logs: $WEB_LOG"
+  report_component_failure \
+    "oore-web" \
+    "$WEB_LOG" \
+    "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR" \
+    "$LOCAL_WEB_URL"
   return 1
 }
 
@@ -1607,8 +1691,14 @@ EOF
 
   if ! launchctl bootstrap "gui/$uid" "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
     # Fallback for older macOS launchctl variants.
-    launchctl load -w "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1 \
-      || return 1
+    if ! launchctl load -w "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+      report_component_failure \
+        "oore-web launch agent" \
+        "$WEB_LOG" \
+        "launchctl load -w $WEB_LAUNCH_AGENT_PLIST" \
+        "$LOCAL_WEB_URL"
+      return 1
+    fi
   fi
 
   launchctl kickstart -k "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 \
@@ -1723,7 +1813,7 @@ configure_local_web_noninteractive() {
     login)
       install_local_web_autostart \
         || die "Failed to install local web autostart in non-interactive mode."
-      start_local_web || true
+      start_local_web
       ;;
     *)
       die 'OORE_LOCAL_WEB_MODE must be one of: off,run,login.'
@@ -1942,6 +2032,9 @@ print_next_steps() {
     fi
     if [[ "$BACKEND_SETUP_INITIALIZED" -eq 1 ]]; then
       printf 'Setup is initialized. Sign in through your configured auth path.\n'
+    elif is_default_local_install; then
+      printf 'Open the local web UI and use loopback local login:\n'
+      printf '  %s\n' "$LOCAL_WEB_URL"
     else
       printf 'Complete setup:\n'
       if has_local_web_bundle; then
@@ -1998,17 +2091,24 @@ cleanup() {
 }
 
 main() {
-  if [[ $# -gt 0 ]]; then
+  while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
         print_help
         return 0
         ;;
+      --advanced)
+        OORE_ADVANCED=1
+        ;;
+      --no-open)
+        OORE_NO_OPEN=1
+        ;;
       *)
         die "Unknown argument: $1 (use --help)"
         ;;
     esac
-  fi
+    shift
+  done
 
   trap cleanup EXIT
   init_ui_theme
@@ -2018,6 +2118,7 @@ main() {
   validate_optional_bool_env OORE_START_DAEMON "$OORE_START_DAEMON"
   validate_optional_bool_env OORE_INSTALL_DAEMON_SERVICE "$OORE_INSTALL_DAEMON_SERVICE"
   validate_optional_bool_env OORE_ENABLE_LINGER "$OORE_ENABLE_LINGER"
+  validate_optional_bool_env OORE_OPEN_BROWSER "$OORE_OPEN_BROWSER"
 
   if normalize_bool "$OORE_NONINTERACTIVE"; then
     :
@@ -2099,8 +2200,11 @@ main() {
     # Step 5: Non-interactive daemon handling
     if should_install_daemon_service; then
       step "Installing daemon service..."
-      install_daemon_service || die "Daemon service startup failed. Check logs: $DAEMON_LOG"
+      install_daemon_service || exit 1
       initialize_backend_setup_if_requested
+      if is_default_local_install; then
+        configure_local_web_noninteractive || exit 1
+      fi
       if [[ "$DAEMON_HEALTH_REACHABLE" -eq 1 ]]; then
         step_done "$DAEMON_URL (launchd)"
       else
@@ -2109,7 +2213,7 @@ main() {
     elif [[ -n "$OORE_START_DAEMON" ]]; then
       if normalize_bool "$OORE_START_DAEMON"; then
         step "Starting daemon..."
-        start_daemon || die "Daemon startup failed. Check logs: $DAEMON_LOG"
+        start_daemon || exit 1
         initialize_backend_setup_if_requested
         if is_localhost_backend; then
           configure_local_web_noninteractive
@@ -2136,6 +2240,9 @@ main() {
       step "Installing daemon service..."
       if install_daemon_service; then
         initialize_backend_setup_if_requested
+        if is_default_local_install; then
+          configure_local_web_noninteractive
+        fi
         daemon_started=0
       else
         daemon_started=1
@@ -2165,6 +2272,9 @@ main() {
       if [[ "$BACKEND_SETUP_INITIALIZED" -eq 1 ]]; then
         printf '\n'
         log "Backend setup was initialized by the installer."
+      elif is_default_local_install; then
+        printf '\n'
+        log "Local web UI is ready. Loopback local login will complete first-run setup."
       elif ! is_already_configured; then
         printf '\n'
         generate_setup_token || true
@@ -2186,6 +2296,19 @@ main() {
   fi
 
   print_next_steps
+
+  if is_default_local_install && should_open_browser; then
+    if is_local_web_healthy; then
+      open "$LOCAL_WEB_URL" >/dev/null 2>&1 || log "Could not open browser. Open: $LOCAL_WEB_URL"
+    else
+      report_component_failure \
+        "oore-web" \
+        "$WEB_LOG" \
+        "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR" \
+        "$LOCAL_WEB_URL"
+      return 1
+    fi
+  fi
 }
 
 main "$@"

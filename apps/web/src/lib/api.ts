@@ -107,6 +107,7 @@ import type {
   ValidatePipelineRequest,
   ValidatePipelineResponse,
 } from '@/lib/types'
+import { READ_ONLY_REASON, isDemoMutationBlocked } from '@/lib/demo-mode'
 
 // ── Error class ─────────────────────────────────────────────────
 
@@ -132,6 +133,12 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const method = (options.method ?? 'GET').toUpperCase()
+  if (isDemoMutationBlocked(method, path)) {
+    throw new ApiClientError(403, {
+      error: READ_ONLY_REASON,
+      code: 'demo_read_only',
+    })
+  }
   // Only set Content-Type on requests with a body. GET/HEAD without it
   // avoids triggering CORS preflight (important for tunneled backends).
   const headers: Record<string, string> = {
@@ -1067,6 +1074,12 @@ export async function deleteProject(
   token: string,
   projectId: string,
 ): Promise<void> {
+  if (isDemoMutationBlocked('DELETE', `/v1/projects/${projectId}`)) {
+    throw new ApiClientError(403, {
+      error: READ_ONLY_REASON,
+      code: 'demo_read_only',
+    })
+  }
   const res = await fetch(`${baseUrl}/v1/projects/${projectId}`, {
     method: 'DELETE',
     headers: {
@@ -1158,6 +1171,12 @@ export async function deletePipeline(
   token: string,
   pipelineId: string,
 ): Promise<void> {
+  if (isDemoMutationBlocked('DELETE', `/v1/pipelines/${pipelineId}`)) {
+    throw new ApiClientError(403, {
+      error: READ_ONLY_REASON,
+      code: 'demo_read_only',
+    })
+  }
   const res = await fetch(`${baseUrl}/v1/pipelines/${pipelineId}`, {
     method: 'DELETE',
     headers: {

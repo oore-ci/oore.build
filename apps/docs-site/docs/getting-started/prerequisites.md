@@ -76,7 +76,7 @@ Run diagnostics after installation:
 oore doctor
 ```
 
-`oore doctor` currently checks a broad toolchain set (including Rust and Bun). Missing Rust/Bun does not block release-binary installation, but it does block source-development workflows.
+`oore doctor` checks the runner runtime by default. Add `--platform android`, `--platform ios`, or `--platform macos` (repeatable), or use `--all`, for target-specific requirements. Rust and Bun are source-development tools and are not release-runner requirements.
 
 ## Next step
 

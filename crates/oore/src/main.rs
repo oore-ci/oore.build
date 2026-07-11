@@ -15,7 +15,7 @@ use oore_contract::{
     OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode,
     RuntimeMode, SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse,
     SetupOidcVerifyRequest, SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
-    UserProfileResponse,
+    UserProfileResponse, parse_repository_pipeline_yaml,
 };
 use rand::RngCore;
 use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
@@ -60,6 +60,7 @@ struct DoctorCheckResult {
 struct DoctorReport {
     checks: Vec<DoctorCheckResult>,
     missing_count: usize,
+    warning_count: usize,
 }
 
 #[derive(Debug, Parser)]
@@ -78,10 +79,90 @@ enum Commands {
     Runner(RunnerArgs),
     Config(ConfigArgs),
     Doctor(DoctorArgs),
+    Pipeline(PipelineArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
     Update(UpdateArgs),
+    /// Create, verify, or restore an encrypted-state backup
+    Backup(BackupArgs),
+}
+
+#[derive(Debug, Args)]
+struct BackupArgs {
+    #[command(subcommand)]
+    command: BackupSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BackupSubcommand {
+    /// Create a consistent SQLite snapshot and package it with the encryption key.
+    Create(BackupCreateArgs),
+    /// Verify a backup manifest, checksums, and SQLite integrity.
+    Verify(BackupVerifyArgs),
+    /// Atomically restore a verified backup while the daemon is stopped.
+    Restore(BackupRestoreArgs),
+}
+
+#[derive(Debug, Args)]
+struct BackupCreateArgs {
+    /// Destination .tar.gz file.
+    #[arg(long)]
+    output: PathBuf,
+    /// Path to the SQLite state file.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct BackupVerifyArgs {
+    /// Backup .tar.gz file.
+    #[arg(long)]
+    input: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct BackupRestoreArgs {
+    /// Backup .tar.gz file.
+    #[arg(long)]
+    input: PathBuf,
+    /// Path to the SQLite state file to restore.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct BackupManifest {
+    format: String,
+    created_at: i64,
+    files: HashMap<String, String>,
+}
+
+#[derive(Debug, Args)]
+struct PipelineArgs {
+    #[command(subcommand)]
+    command: PipelineSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PipelineSubcommand {
+    /// Validate repository pipeline YAML using the runner's schema.
+    Validate(PipelineValidateArgs),
+}
+
+#[derive(Debug, Args)]
+struct PipelineValidateArgs {
+    /// Repository pipeline file to validate.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+}
+
+fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
+    let raw = fs::read_to_string(&args.path)
+        .with_context(|| format!("failed to read {}", args.path.display()))?;
+    parse_repository_pipeline_yaml(&raw).map_err(anyhow::Error::msg)?;
+    println!("{} is valid", args.path.display());
+    Ok(())
 }
 
 #[derive(Debug, Args)]
@@ -291,6 +372,21 @@ struct ConfigGetArgs {
 struct DoctorArgs {
     #[arg(long, default_value = "false")]
     json: bool,
+
+    /// Check requirements for a build platform. Repeat for multiple platforms.
+    #[arg(long, value_enum)]
+    platform: Vec<DoctorPlatform>,
+
+    /// Check Android, iOS, and macOS requirements.
+    #[arg(long, conflicts_with = "platform")]
+    all: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DoctorPlatform {
+    Android,
+    Ios,
+    Macos,
 }
 
 fn parse_ttl(raw: &str) -> anyhow::Result<Duration> {
@@ -2410,7 +2506,12 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
     command_output(cmd, args)
         .and_then(|out| {
             if out.status.success() {
-                String::from_utf8(out.stdout).ok()
+                let output = if out.stdout.is_empty() {
+                    out.stderr
+                } else {
+                    out.stdout
+                };
+                String::from_utf8(output).ok()
             } else {
                 None
             }
@@ -2418,26 +2519,115 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
         .and_then(|s| s.lines().next().map(|line| line.trim().to_string()))
 }
 
+fn doctor_check(
+    name: &str,
+    status: &str,
+    detail: Option<String>,
+    install_hint: Option<&str>,
+) -> DoctorCheckResult {
+    DoctorCheckResult {
+        name: name.to_string(),
+        status: status.to_string(),
+        detail,
+        install_hint: install_hint.map(str::to_string),
+    }
+}
+
+fn doctor_has_platform(args: &DoctorArgs, platform: DoctorPlatform) -> bool {
+    args.all || args.platform.contains(&platform)
+}
+
+fn android_sdk_root() -> Option<PathBuf> {
+    ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .into_iter()
+        .find_map(|key| {
+            std::env::var_os(key)
+                .map(PathBuf::from)
+                .filter(|path| path.is_dir())
+        })
+}
+
+fn add_xcode_checks(checks: &mut Vec<DoctorCheckResult>) {
+    if std::env::consts::OS != "macos" {
+        checks.push(doctor_check(
+            "xcode",
+            "missing",
+            Some("iOS and macOS builds require a macOS runner".to_string()),
+            Some("run this job on macOS with Xcode installed"),
+        ));
+        return;
+    }
+
+    let developer_dir =
+        command_version("xcode-select", &["-p"]).filter(|path| Path::new(path).is_dir());
+    let xcode_version = command_version("xcodebuild", &["-version"]);
+    if let (Some(developer_dir), Some(xcode_version)) = (developer_dir, xcode_version) {
+        checks.push(doctor_check(
+            "xcode",
+            "ok",
+            Some(format!("{} ({})", xcode_version, developer_dir)),
+            None,
+        ));
+    } else {
+        checks.push(doctor_check(
+            "xcode",
+            "missing",
+            None,
+            Some("install Xcode, then run: sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer"),
+        ));
+    }
+}
+
+fn add_signing_warnings(checks: &mut Vec<DoctorCheckResult>) {
+    let codesign = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
+    match codesign {
+        Some(output) if output.status.success() => {
+            let output = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if output.contains("0 valid identities found") {
+                checks.push(doctor_check(
+                    "codesign_identity",
+                    "warning",
+                    Some("0 valid identities found".to_string()),
+                    Some("import an Apple development or distribution certificate before signing"),
+                ));
+            } else {
+                checks.push(doctor_check(
+                    "codesign_identity",
+                    "ok",
+                    Some("signing identity available".to_string()),
+                    None,
+                ));
+            }
+        }
+        _ => checks.push(doctor_check(
+            "codesign_identity",
+            "warning",
+            None,
+            Some("import an Apple development or distribution certificate before signing"),
+        )),
+    }
+
+    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
+        checks.push(doctor_check("notarytool", "ok", Some(version), None));
+    } else {
+        checks.push(doctor_check(
+            "notarytool",
+            "warning",
+            None,
+            Some("install a current Xcode version before notarizing macOS apps"),
+        ));
+    }
+}
+
 fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
-    let base_checks: [(&str, &[&str], &str); 6] = [
+    let base_checks: [(&str, &[&str], &str); 3] = [
         ("git", &["--version"], "brew install git"),
-        (
-            "rustc",
-            &["--version"],
-            "curl https://sh.rustup.rs -sSf | sh",
-        ),
-        (
-            "cargo",
-            &["--version"],
-            "curl https://sh.rustup.rs -sSf | sh",
-        ),
-        (
-            "bun",
-            &["--version"],
-            "curl -fsSL https://bun.sh/install | bash",
-        ),
         (
             "fvm",
             &["--version"],
@@ -2452,109 +2642,87 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
 
     for (name, command_args, install_hint) in base_checks {
         if let Some(version) = command_version(name, command_args) {
-            checks.push(DoctorCheckResult {
-                name: name.to_string(),
-                status: "ok".to_string(),
-                detail: Some(version),
-                install_hint: None,
-            });
+            checks.push(doctor_check(name, "ok", Some(version), None));
         } else {
-            checks.push(DoctorCheckResult {
-                name: name.to_string(),
-                status: "missing".to_string(),
-                detail: None,
-                install_hint: Some(install_hint.to_string()),
-            });
+            checks.push(doctor_check(name, "missing", None, Some(install_hint)));
         }
     }
 
-    let xcode_ready = command_version("xcodebuild", &["-version"]).is_some()
-        && command_version("xcode-select", &["-p"]).is_some();
-    checks.push(if xcode_ready {
-        DoctorCheckResult {
-            name: "xcode_cli".to_string(),
-            status: "ok".to_string(),
-            detail: Some("xcodebuild + xcode-select configured".to_string()),
-            install_hint: None,
+    if doctor_has_platform(&args, DoctorPlatform::Android) {
+        if let Some(version) = command_version("java", &["-version"]) {
+            checks.push(doctor_check("java", "ok", Some(version), None));
+        } else {
+            checks.push(doctor_check(
+                "java",
+                "missing",
+                None,
+                Some("install a supported JDK and set JAVA_HOME"),
+            ));
         }
-    } else {
-        DoctorCheckResult {
-            name: "xcode_cli".to_string(),
-            status: "missing".to_string(),
-            detail: None,
-            install_hint: Some(
-                "install/configure Xcode CLI tools: xcode-select --install".to_string(),
-            ),
-        }
-    });
 
-    let codesign_check = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
-    match codesign_check {
-        Some(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let merged = format!("{stdout}\n{stderr}");
-            if merged.contains("0 valid identities found") {
-                checks.push(DoctorCheckResult {
-                    name: "codesign_identity".to_string(),
-                    status: "missing".to_string(),
-                    detail: Some("0 valid identities found".to_string()),
-                    install_hint: Some(
-                        "import a Developer/Application certificate into Keychain Access"
-                            .to_string(),
-                    ),
-                });
+        if let Some(sdk_root) = android_sdk_root() {
+            let adb = sdk_root.join("platform-tools/adb");
+            if adb.is_file() {
+                checks.push(doctor_check(
+                    "android_sdk",
+                    "ok",
+                    Some(sdk_root.display().to_string()),
+                    None,
+                ));
             } else {
-                let identity_count = merged
-                    .lines()
-                    .filter(|line| line.contains('"') && line.contains(") "))
-                    .count();
-                checks.push(DoctorCheckResult {
-                    name: "codesign_identity".to_string(),
-                    status: "ok".to_string(),
-                    detail: Some(format!("{identity_count} identity entries available")),
-                    install_hint: None,
-                });
+                checks.push(doctor_check(
+                    "android_sdk",
+                    "missing",
+                    Some(sdk_root.display().to_string()),
+                    Some("install Android SDK Platform-Tools in this SDK"),
+                ));
             }
+        } else {
+            checks.push(doctor_check(
+                "android_sdk",
+                "missing",
+                None,
+                Some("install Android Studio, then set ANDROID_HOME to its SDK directory"),
+            ));
         }
-        _ => {
-            checks.push(DoctorCheckResult {
-                name: "codesign_identity".to_string(),
-                status: "missing".to_string(),
-                detail: None,
-                install_hint: Some(
-                    "run `security find-identity -v -p codesigning` and import required certificates"
-                        .to_string(),
-                ),
-            });
-        }
+    } else {
+        checks.push(doctor_check(
+            "android",
+            "skipped",
+            Some("run `oore doctor --platform android` for Android checks".to_string()),
+            None,
+        ));
     }
 
-    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
-        checks.push(DoctorCheckResult {
-            name: "notarytool".to_string(),
-            status: "ok".to_string(),
-            detail: Some(version),
-            install_hint: None,
-        });
+    let apple_selected = doctor_has_platform(&args, DoctorPlatform::Ios)
+        || doctor_has_platform(&args, DoctorPlatform::Macos);
+    if apple_selected {
+        add_xcode_checks(&mut checks);
+        add_signing_warnings(&mut checks);
     } else {
-        checks.push(DoctorCheckResult {
-            name: "notarytool".to_string(),
-            status: "missing".to_string(),
-            detail: None,
-            install_hint: Some(
-                "install/update Xcode CLT and verify with `xcrun notarytool --version`".to_string(),
+        checks.push(doctor_check(
+            "apple_platforms",
+            "skipped",
+            Some(
+                "run `oore doctor --platform ios` or `--platform macos` for Xcode checks"
+                    .to_string(),
             ),
-        });
+            None,
+        ));
     }
 
     let missing_count = checks
         .iter()
         .filter(|check| check.status == "missing")
         .count();
+    let warning_count = checks
+        .iter()
+        .filter(|check| check.status == "warning")
+        .count();
     let report = DoctorReport {
         checks,
         missing_count,
+        warning_count,
     };
 
     if args.json {
@@ -2562,24 +2730,20 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     } else {
         println!("oore doctor -- environment checks");
         for check in &report.checks {
-            if check.status == "ok" {
-                println!(
-                    "  [ok] {:<18} {}",
-                    check.name,
-                    check.detail.as_deref().unwrap_or("")
-                );
-            } else {
-                println!(
-                    "  [missing] {:<18} install: {}",
-                    check.name,
-                    check.install_hint.as_deref().unwrap_or("")
-                );
-            }
+            let detail = check
+                .detail
+                .as_deref()
+                .or(check.install_hint.as_deref())
+                .unwrap_or("");
+            println!("  [{}] {:<18} {}", check.status, check.name, detail);
         }
         if report.missing_count == 0 {
-            println!("All required tools are installed.");
+            println!("All selected required checks passed.");
         } else {
-            println!("{} issue(s) found.", report.missing_count);
+            println!("{} required issue(s) found.", report.missing_count);
+        }
+        if report.warning_count > 0 {
+            println!("{} optional warning(s) found.", report.warning_count);
         }
     }
 
@@ -2959,6 +3123,519 @@ fn set_executable(path: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("failed to set permissions on {}", path.display()))
 }
 
+const BACKUP_DATABASE_FILE: &str = "oore.db";
+const BACKUP_KEY_FILE: &str = "encryption.key";
+const BACKUP_MANIFEST_FILE: &str = "manifest.json";
+
+fn resolve_key_path() -> anyhow::Result<PathBuf> {
+    Ok(resolve_data_dir()?.join(BACKUP_KEY_FILE))
+}
+
+fn set_private_permissions(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).with_context(|| {
+            format!(
+                "failed to set restrictive permissions on {}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn snapshot_sqlite_path(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    use std::str::FromStr;
+
+    let source_url = format!("sqlite://{}?mode=rw", source.display());
+    let options = SqliteConnectOptions::from_str(&source_url)
+        .with_context(|| format!("failed to open SQLite database {}", source.display()))?;
+    let destination = destination.display().to_string().replace('\'', "''");
+    let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+    runtime.block_on(async move {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .context("failed to connect to SQLite database")?;
+        sqlx::query(&format!("VACUUM INTO '{destination}'"))
+            .execute(&pool)
+            .await
+            .context("failed to create a consistent SQLite snapshot")?;
+        pool.close().await;
+        Ok::<(), anyhow::Error>(())
+    })
+}
+
+fn sqlite_integrity_check(path: &Path) -> anyhow::Result<()> {
+    use std::str::FromStr;
+
+    let source_url = format!("sqlite://{}?mode=ro", path.display());
+    let options = SqliteConnectOptions::from_str(&source_url)
+        .with_context(|| format!("failed to open SQLite snapshot {}", path.display()))?;
+    let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+    runtime.block_on(async move {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .context("failed to connect to SQLite snapshot")?;
+        let result: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .context("failed to run SQLite integrity check")?;
+        pool.close().await;
+        if result != "ok" {
+            anyhow::bail!("SQLite integrity check failed: {result}");
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+}
+
+fn unpack_backup(input: &Path, destination: &Path) -> anyhow::Result<BackupManifest> {
+    let file = fs::File::open(input)
+        .with_context(|| format!("failed to open backup {}", input.display()))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let mut found = HashMap::new();
+
+    for entry in archive.entries().context("failed to read backup archive")? {
+        let mut entry = entry.context("failed to read backup entry")?;
+        let path = entry.path().context("invalid backup entry path")?;
+        let name = path
+            .to_str()
+            .context("backup entry path is not UTF-8")?
+            .to_string();
+        if !matches!(
+            name.as_str(),
+            BACKUP_DATABASE_FILE | BACKUP_KEY_FILE | BACKUP_MANIFEST_FILE
+        ) || path.components().count() != 1
+        {
+            anyhow::bail!("backup contains unsupported path: {name}");
+        }
+        if found.insert(name.clone(), ()).is_some() {
+            anyhow::bail!("backup contains duplicate path: {name}");
+        }
+        entry
+            .unpack(destination.join(&name))
+            .with_context(|| format!("failed to unpack backup entry {name}"))?;
+    }
+
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE, BACKUP_MANIFEST_FILE] {
+        if !found.contains_key(name) {
+            anyhow::bail!("backup is missing {name}");
+        }
+    }
+
+    let manifest = serde_json::from_slice::<BackupManifest>(
+        &fs::read(destination.join(BACKUP_MANIFEST_FILE))
+            .context("failed to read backup manifest")?,
+    )
+    .context("failed to parse backup manifest")?;
+    if manifest.format != "oore-backup-v1" {
+        anyhow::bail!("unsupported backup format: {}", manifest.format);
+    }
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE] {
+        let expected = manifest
+            .files
+            .get(name)
+            .with_context(|| format!("backup manifest is missing checksum for {name}"))?;
+        let actual = hex::encode(Sha256::digest(
+            fs::read(destination.join(name))
+                .with_context(|| format!("failed to read backup {name}"))?,
+        ));
+        if expected != &actual {
+            anyhow::bail!("backup checksum mismatch for {name}");
+        }
+    }
+
+    let key = fs::read(destination.join(BACKUP_KEY_FILE)).context("failed to read backup key")?;
+    if key.len() != 32 {
+        anyhow::bail!("backup encryption key has invalid length");
+    }
+    sqlite_integrity_check(&destination.join(BACKUP_DATABASE_FILE))?;
+    Ok(manifest)
+}
+
+fn backup_create(args: BackupCreateArgs) -> anyhow::Result<()> {
+    let database = resolve_db_path(args.state_file.as_deref())?;
+    let key = resolve_key_path()?;
+    if !database.is_file() {
+        anyhow::bail!("database does not exist: {}", database.display());
+    }
+    if !key.is_file() {
+        anyhow::bail!("encryption key does not exist: {}", key.display());
+    }
+    if args.output.exists() {
+        anyhow::bail!(
+            "backup destination already exists: {}",
+            args.output.display()
+        );
+    }
+    let parent = args
+        .output
+        .parent()
+        .context("backup output must have a parent directory")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create backup directory {}", parent.display()))?;
+
+    let stage =
+        tempfile::tempdir_in(parent).context("failed to create backup staging directory")?;
+    let snapshot = stage.path().join(BACKUP_DATABASE_FILE);
+    snapshot_sqlite_path(&database, &snapshot)?;
+    let staged_key = stage.path().join(BACKUP_KEY_FILE);
+    fs::copy(&key, &staged_key).context("failed to copy encryption key into backup")?;
+    set_private_permissions(&staged_key)?;
+
+    let mut files = HashMap::new();
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE] {
+        files.insert(
+            name.to_string(),
+            hex::encode(Sha256::digest(fs::read(stage.path().join(name))?)),
+        );
+    }
+    let manifest = BackupManifest {
+        format: "oore-backup-v1".to_string(),
+        created_at: now_epoch_secs(),
+        files,
+    };
+    fs::write(
+        stage.path().join(BACKUP_MANIFEST_FILE),
+        serde_json::to_vec_pretty(&manifest).context("failed to serialize backup manifest")?,
+    )
+    .context("failed to write backup manifest")?;
+
+    let temp_output = parent.join(format!(
+        ".{}.tmp",
+        args.output
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    ));
+    let file = fs::File::create(&temp_output)
+        .with_context(|| format!("failed to create backup {}", temp_output.display()))?;
+    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE, BACKUP_MANIFEST_FILE] {
+        archive
+            .append_path_with_name(stage.path().join(name), name)
+            .with_context(|| format!("failed to add {name} to backup"))?;
+    }
+    archive
+        .finish()
+        .context("failed to finish backup archive")?;
+    let encoder = archive
+        .into_inner()
+        .context("failed to finalize backup archive")?;
+    encoder
+        .finish()
+        .context("failed to finalize backup compression")?;
+    set_private_permissions(&temp_output)?;
+    fs::rename(&temp_output, &args.output)
+        .with_context(|| format!("failed to publish backup {}", args.output.display()))?;
+    println!("Created backup: {}", args.output.display());
+    Ok(())
+}
+
+fn backup_verify(args: BackupVerifyArgs) -> anyhow::Result<()> {
+    let stage = tempfile::tempdir().context("failed to create backup verification directory")?;
+    let manifest = unpack_backup(&args.input, stage.path())?;
+    println!(
+        "Backup verified: {} (created {})",
+        args.input.display(),
+        manifest.created_at
+    );
+    Ok(())
+}
+
+fn database_is_open(path: &Path) -> bool {
+    std::process::Command::new("lsof")
+        .args(["-t", "--", &path.display().to_string()])
+        .output()
+        .map(|output| output.status.success() && !output.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+fn backup_restore(args: BackupRestoreArgs) -> anyhow::Result<()> {
+    let client = github_client()?;
+    let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+    if runtime.block_on(check_daemon_running(&client)) {
+        anyhow::bail!(
+            "refusing restore while oored is running; stop the managed service or daemon first"
+        );
+    }
+
+    let database = resolve_db_path(args.state_file.as_deref())?;
+    if database_is_open(&database) {
+        anyhow::bail!(
+            "refusing restore while the state database is open; stop the managed or unmanaged oored process first"
+        );
+    }
+    let stage = tempfile::tempdir().context("failed to create restore staging directory")?;
+    unpack_backup(&args.input, stage.path())?;
+    let key = resolve_key_path()?;
+    for path in [&database, &key] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create restore directory {}", parent.display())
+            })?;
+        }
+    }
+
+    let nonce = now_epoch_secs();
+    let database_old = database.with_extension(format!("restore-{nonce}.old"));
+    let key_old = key.with_extension(format!("restore-{nonce}.old"));
+    let database_new = database.with_extension(format!("restore-{nonce}.new"));
+    let key_new = key.with_extension(format!("restore-{nonce}.new"));
+    fs::copy(stage.path().join(BACKUP_DATABASE_FILE), &database_new)?;
+    fs::copy(stage.path().join(BACKUP_KEY_FILE), &key_new)?;
+    set_private_permissions(&key_new)?;
+
+    let rollback = || -> anyhow::Result<()> {
+        if database_old.exists() {
+            fs::rename(&database_old, &database)?;
+        }
+        if key_old.exists() {
+            fs::rename(&key_old, &key)?;
+        }
+        Ok(())
+    };
+    if database.exists() {
+        fs::rename(&database, &database_old)?;
+    }
+    if key.exists() {
+        fs::rename(&key, &key_old)?;
+    }
+    let result = (|| -> anyhow::Result<()> {
+        fs::rename(&database_new, &database)?;
+        fs::rename(&key_new, &key)?;
+        set_private_permissions(&key)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&database);
+        let _ = fs::remove_file(&key);
+        rollback().context("restore failed and rollback failed")?;
+        return Err(error);
+    }
+    let _ = fs::remove_file(database_old);
+    let _ = fs::remove_file(key_old);
+    println!("Restored backup: {}", args.input.display());
+    Ok(())
+}
+
+const DAEMON_SERVICE_LABEL: &str = "build.oore.oored";
+const WEB_SERVICE_LABEL: &str = "build.oore.oore-web";
+
+fn launch_agent_plist(label: &str) -> anyhow::Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .context("could not determine home directory")?
+        .join("Library/LaunchAgents")
+        .join(format!("{label}.plist")))
+}
+
+fn launchd_service_loaded(label: &str) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    let Ok(uid) = std::process::Command::new("id").arg("-u").output() else {
+        return false;
+    };
+    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+    std::process::Command::new("launchctl")
+        .args(["print", &format!("gui/{uid}/{label}")])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("managed service restart is supported on macOS only");
+    }
+    let plist = launch_agent_plist(label)?;
+    if !plist.is_file() {
+        anyhow::bail!("managed service plist is missing: {}", plist.display());
+    }
+    let uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .context("failed to determine current user id")?;
+    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+    let service = format!("gui/{uid}/{label}");
+    let domain = format!("gui/{uid}");
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &service])
+        .status();
+    let status = std::process::Command::new("launchctl")
+        .args(["bootstrap", &domain, &plist.display().to_string()])
+        .status()
+        .context("failed to bootstrap launchd service")?;
+    if !status.success() {
+        anyhow::bail!("failed to bootstrap managed service {label}");
+    }
+    let _ = std::process::Command::new("launchctl")
+        .args(["kickstart", "-k", &service])
+        .status();
+    Ok(())
+}
+
+async fn endpoint_is_healthy(client: &reqwest::Client, url: &str) -> bool {
+    client
+        .get(url)
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn wait_for_endpoint(client: &reqwest::Client, url: &str, name: &str) -> anyhow::Result<()> {
+    for _ in 0..15 {
+        if endpoint_is_healthy(client, url).await {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    anyhow::bail!("{name} failed its readiness check: {url}")
+}
+
+fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result<()> {
+    for relative in [
+        "bin/oore",
+        "bin/oored",
+        "bin/oore-web",
+        "VERSION",
+        "CHANNEL",
+        "GITHUB_REPO",
+        "LICENSE",
+    ] {
+        let source = install_root.join(relative);
+        if source.is_file() {
+            let destination = snapshot.join(relative);
+            fs::create_dir_all(destination.parent().expect("snapshot file parent"))?;
+            fs::copy(&source, &destination)?;
+        }
+    }
+    let web = install_root.join("web-dist");
+    if web.is_dir() {
+        copy_dir_recursive(&web, &snapshot.join("web-dist"))?;
+    }
+    Ok(())
+}
+
+fn atomic_replace_file(source: &Path, destination: &Path, executable: bool) -> anyhow::Result<()> {
+    let parent = destination
+        .parent()
+        .context("release destination has no parent")?;
+    fs::create_dir_all(parent)?;
+    let next = parent.join(format!(
+        ".{}.update-{}",
+        destination
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        std::process::id()
+    ));
+    fs::copy(source, &next)
+        .with_context(|| format!("failed to stage {}", destination.display()))?;
+    if executable {
+        set_executable(&next)?;
+    }
+    fs::rename(&next, destination)
+        .with_context(|| format!("failed to atomically replace {}", destination.display()))?;
+    Ok(())
+}
+
+fn atomic_replace_directory(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    let parent = destination
+        .parent()
+        .context("release destination has no parent")?;
+    let stem = destination
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let next = parent.join(format!(".{stem}.update-{}", std::process::id()));
+    let old = parent.join(format!(".{stem}.previous-{}", std::process::id()));
+    if next.exists() {
+        fs::remove_dir_all(&next)?;
+    }
+    copy_dir_recursive(source, &next)?;
+    if destination.exists() {
+        fs::rename(destination, &old)?;
+    }
+    if let Err(error) = fs::rename(&next, destination) {
+        if old.exists() {
+            let _ = fs::rename(&old, destination);
+        }
+        return Err(error)
+            .with_context(|| format!("failed to atomically replace {}", destination.display()));
+    }
+    if old.exists() {
+        fs::remove_dir_all(old)?;
+    }
+    Ok(())
+}
+
+fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result<()> {
+    for relative in [
+        "bin/oore",
+        "bin/oored",
+        "bin/oore-web",
+        "VERSION",
+        "CHANNEL",
+        "GITHUB_REPO",
+        "LICENSE",
+    ] {
+        let source = snapshot.join(relative);
+        let destination = install_root.join(relative);
+        if source.is_file() {
+            atomic_replace_file(&source, &destination, relative.starts_with("bin/"))?;
+        } else if destination.exists() {
+            fs::remove_file(destination)?;
+        }
+    }
+    let source = snapshot.join("web-dist");
+    let destination = install_root.join("web-dist");
+    if source.is_dir() {
+        atomic_replace_directory(&source, &destination)?;
+    } else if destination.exists() {
+        fs::remove_dir_all(destination)?;
+    }
+    Ok(())
+}
+
+fn install_staged_release(
+    stage: &Path,
+    install_root: &Path,
+    channel: ReleaseChannel,
+    repo: &str,
+) -> anyhow::Result<()> {
+    for (relative, executable) in [
+        ("bin/oore", true),
+        ("bin/oored", true),
+        ("bin/oore-web", true),
+        ("VERSION", false),
+    ] {
+        let source = stage.join(relative);
+        if source.is_file() {
+            atomic_replace_file(&source, &install_root.join(relative), executable)?;
+        }
+    }
+    let web = stage.join("web-dist");
+    if web.is_dir() {
+        atomic_replace_directory(&web, &install_root.join("web-dist"))?;
+    }
+    let license = stage.join("LICENSE");
+    if license.is_file() {
+        atomic_replace_file(&license, &install_root.join("LICENSE"), false)?;
+    }
+    fs::write(install_root.join("CHANNEL"), channel.as_str())?;
+    fs::write(install_root.join("GITHUB_REPO"), repo)?;
+    Ok(())
+}
+
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
 
@@ -3059,7 +3736,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     }
     println!("Checksum verified (SHA-256).");
 
-    // 7. Extract tar.gz into tempdir
+    // 7. Extract outside the install then stage the verified release inside it.
     let tmpdir = tempfile::tempdir().context("failed to create temporary directory")?;
     let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
     let mut archive = tar::Archive::new(decoder);
@@ -3067,14 +3744,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         .unpack(tmpdir.path())
         .context("failed to extract archive")?;
 
-    // 8. Verify expected files exist
+    // 8. Verify expected files exist.
     let extracted_bin = tmpdir.path().join("bin");
     let extracted_oore = extracted_bin.join("oore");
     let extracted_oored = extracted_bin.join("oored");
-    let extracted_oore_web = extracted_bin.join("oore-web");
     let extracted_version = tmpdir.path().join("VERSION");
-    let extracted_license = tmpdir.path().join("LICENSE");
-    let extracted_web_dist = tmpdir.path().join("web-dist");
 
     if !extracted_oore.exists() {
         anyhow::bail!("archive missing bin/oore");
@@ -3086,58 +3760,88 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         anyhow::bail!("archive missing VERSION");
     }
 
-    // 9. Stop daemon if running
+    // Keep both a restorable release snapshot and a consistent data backup before
+    // touching the installed files. The staging directory is inside the install
+    // root so the final renames stay on one filesystem.
+    fs::create_dir_all(&install_root)
+        .with_context(|| format!("failed to create install root {}", install_root.display()))?;
+    let update_stage = tempfile::Builder::new()
+        .prefix(".update-")
+        .tempdir_in(&install_root)
+        .context("failed to create update staging directory")?;
+    let staged_release = update_stage.path().join("release");
+    copy_dir_recursive(tmpdir.path(), &staged_release)?;
+    let previous_release = update_stage.path().join("previous");
+    copy_release_snapshot(&install_root, &previous_release)?;
+
+    let backup_dir = install_root.join("backups");
+    let backup_path = backup_dir.join(format!(
+        "pre-update-{}-{}.tar.gz",
+        current,
+        now_epoch_secs()
+    ));
+    backup_create(BackupCreateArgs {
+        output: backup_path.clone(),
+        state_file: None,
+    })?;
+    println!("Created pre-update backup: {}", backup_path.display());
+
+    // 9. Preserve running service state. launchd keeps the old executable alive
+    // until it is explicitly reloaded after replacement.
     let daemon_was_running = check_daemon_running(&client).await;
-    if daemon_was_running {
+    let daemon_is_managed = launchd_service_loaded(DAEMON_SERVICE_LABEL);
+    let web_url = "http://127.0.0.1:4173/__oore_web_healthz";
+    let web_was_running = endpoint_is_healthy(&client, web_url).await;
+    let web_is_managed = launchd_service_loaded(WEB_SERVICE_LABEL);
+    if daemon_was_running && !daemon_is_managed {
         println!("oored daemon is running. Stopping before update...");
         stop_daemon(&install_root)?;
     }
 
-    // 10. Copy binaries + assets into install root
-    let bin_dir = install_root.join("bin");
-    fs::create_dir_all(&bin_dir).context("failed to create bin directory")?;
-
-    fs::copy(&extracted_oore, bin_dir.join("oore")).context("failed to copy oore binary")?;
-    fs::copy(&extracted_oored, bin_dir.join("oored")).context("failed to copy oored binary")?;
-
-    if extracted_oore_web.exists() {
-        fs::copy(&extracted_oore_web, bin_dir.join("oore-web"))
-            .context("failed to copy oore-web binary")?;
-        set_executable(&bin_dir.join("oore-web"))?;
-    }
-
-    if extracted_web_dist.is_dir() {
-        let dst = install_root.join("web-dist");
-        if dst.exists() {
-            fs::remove_dir_all(&dst)
-                .with_context(|| format!("failed to remove {}", dst.display()))?;
+    // 10. Atomically install the staged release and only retain it if every
+    // readiness check succeeds. On any failure, restore the prior release.
+    let update_result = async {
+        install_staged_release(&staged_release, &install_root, channel, &repo)?;
+        if daemon_is_managed {
+            restart_launchd_service(DAEMON_SERVICE_LABEL)?;
+        } else if daemon_was_running {
+            restart_daemon(&install_root, &client).await?;
         }
-        copy_dir_recursive(&extracted_web_dist, &dst).context("failed to copy web-dist")?;
+        if daemon_was_running {
+            wait_for_endpoint(&client, "http://127.0.0.1:8787/readyz", "oored").await?;
+        }
+        if web_is_managed {
+            restart_launchd_service(WEB_SERVICE_LABEL)?;
+        } else if web_was_running {
+            anyhow::bail!("refusing to replace an unmanaged local web process; install it as the launchd service first");
+        }
+        if web_was_running {
+            wait_for_endpoint(&client, web_url, "oore-web").await?;
+        }
+        Ok::<(), anyhow::Error>(())
     }
-
-    fs::copy(&extracted_version, install_root.join("VERSION"))
-        .context("failed to copy VERSION file")?;
-    fs::write(install_root.join("CHANNEL"), channel.as_str())
-        .context("failed to write CHANNEL file")?;
-    fs::write(install_root.join("GITHUB_REPO"), &repo)
-        .context("failed to write GITHUB_REPO file")?;
-
-    if extracted_license.exists() {
-        fs::copy(&extracted_license, install_root.join("LICENSE"))
-            .context("failed to copy LICENSE")?;
+    .await;
+    if let Err(error) = update_result {
+        eprintln!("Update failed; restoring the previous release...");
+        let rollback = async {
+            restore_release_snapshot(&install_root, &previous_release)?;
+            if daemon_is_managed {
+                restart_launchd_service(DAEMON_SERVICE_LABEL)?;
+            } else if daemon_was_running {
+                restart_daemon(&install_root, &client).await?;
+            }
+            if web_is_managed && web_was_running {
+                restart_launchd_service(WEB_SERVICE_LABEL)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if let Err(rollback_error) = rollback {
+            return Err(error.context(format!("rollback also failed: {rollback_error}")));
+        }
+        return Err(error);
     }
-
-    set_executable(&bin_dir.join("oore"))?;
-    set_executable(&bin_dir.join("oored"))?;
-
     println!("Updated to version {latest}.");
-
-    // 11. Restart daemon if it was running
-    if daemon_was_running {
-        println!("Restarting oored daemon...");
-        restart_daemon(&install_root, &client).await?;
-        println!("Daemon restarted successfully.");
-    }
 
     // 12. Note about current process
     if current != latest {
@@ -3220,6 +3924,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor(args) => {
             run_doctor_checks(args)?;
         }
+        Commands::Pipeline(pipeline) => match pipeline.command {
+            PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
+        },
         Commands::Version => {
             let install_root = resolve_install_root()?;
             if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {
@@ -3233,7 +3940,57 @@ fn main() -> anyhow::Result<()> {
                 tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
             runtime.block_on(handle_update(args))?;
         }
+        Commands::Backup(args) => match args.command {
+            BackupSubcommand::Create(args) => backup_create(args)?,
+            BackupSubcommand::Verify(args) => backup_verify(args)?,
+            BackupSubcommand::Restore(args) => backup_restore(args)?,
+        },
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_rollback_restores_previous_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let install = temp.path().join("install");
+        let stage = temp.path().join("stage");
+        let snapshot = temp.path().join("snapshot");
+
+        for root in [&install, &stage] {
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::create_dir_all(root.join("web-dist")).unwrap();
+        }
+        fs::write(install.join("bin/oore"), "old-binary").unwrap();
+        fs::write(install.join("VERSION"), "1.0.0").unwrap();
+        fs::write(install.join("web-dist/index.html"), "old-web").unwrap();
+        fs::write(stage.join("bin/oore"), "new-binary").unwrap();
+        fs::write(stage.join("VERSION"), "2.0.0").unwrap();
+        fs::write(stage.join("web-dist/index.html"), "new-web").unwrap();
+
+        copy_release_snapshot(&install, &snapshot).unwrap();
+        install_staged_release(&stage, &install, ReleaseChannel::Stable, "oorebuild/oore").unwrap();
+        assert_eq!(
+            fs::read_to_string(install.join("VERSION")).unwrap(),
+            "2.0.0"
+        );
+
+        restore_release_snapshot(&install, &snapshot).unwrap();
+        assert_eq!(
+            fs::read_to_string(install.join("bin/oore")).unwrap(),
+            "old-binary"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("VERSION")).unwrap(),
+            "1.0.0"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("web-dist/index.html")).unwrap(),
+            "old-web"
+        );
+    }
 }

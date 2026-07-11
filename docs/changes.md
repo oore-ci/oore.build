@@ -10,6 +10,22 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-12
+
+- **Product trust hardening release**:
+  - Repository YAML now uses one strict parser across runner execution, daemon validation, and `oore pipeline validate`; repository YAML no longer accepts trigger/concurrency fields and artifact globs are safe workspace-relative patterns.
+  - Runner protocol v2 prevents old runners from claiming work and adds artifact reservation, upload, completion/abort, pending visibility, stale cleanup, required-artifact failure, and `.app` bundle packaging.
+  - Default macOS installation now installs and starts the loopback daemon and local web UI as launch-at-login services, opens the local web root for interactive installs, and relies on loopback local login instead of bootstrap tokens or `/setup` routing. Split and remote topology choices remain available through `scripts/install.sh --advanced`; `--no-open` and `OORE_OPEN_BROWSER` control browser opening.
+  - `oore doctor` now separates core runner requirements from repeatable Android, iOS, and macOS platform checks. Java, Android SDK, and Xcode checks are target-specific; signing and notarization are warnings rather than release-runner blockers; JSON statuses are explicit.
+  - Added liveness-only `/healthz` and dependency-aware `/readyz`; added verified `oore backup create|verify|restore`; and made `oore update` stage, back up, atomically replace, verify, and roll back installed releases while preserving managed service state.
+  - Validation now covers master/alpha/beta/stable, release-tooling paths, and only runs autotag after Validate succeeds for the exact pushed commit.
+  - Release smoke now exercises updater snapshot/install/rollback restoration, and build list/detail responses include project, pipeline, and runner display context for truthful operator UI.
+  - Quick Debug APK pipelines now explicitly run `flutter build apk --debug`, and generated defaults use Flutter's real Android, iOS, and macOS output paths.
+  - Pipeline creation preserves a successful create when a later signing request fails, then routes to a signing-only retry with the failed signing section expanded.
+  - Builds show project context globally and accept optional named project/pipeline/runner context from the backend; terminal details prioritize failure reasons, failed steps, final-log states, and status-appropriate artifact empty states.
+  - The hosted demo is explicitly sample-data, read-only UI: common build/project/pipeline mutations are visibly disabled and the API guard rejects all other mutations without returning fake success.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 ## 2026-05-22
 
 - **Frontend guided setup hints**:

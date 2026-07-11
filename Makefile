@@ -1,6 +1,6 @@
 .PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
 		       test-web lint-web fix-web \
-		       test-docs lint-docs fix-docs test-rust \
+		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
@@ -140,6 +140,9 @@ install-local:
 
 test-rust:
 	cargo test -p oored --features test-support
+
+test-install:
+	bash scripts/install-acceptance.sh
 
 # ── Rust: Lint/Fmt/Clippy/Test ───────────────────────────────────
 fmt-rust:

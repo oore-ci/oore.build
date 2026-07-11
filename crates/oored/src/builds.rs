@@ -4,9 +4,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, Build, BuildDetailResponse, BuildEvent, BuildStatus, CancelBuildResponse,
-    ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, ListBuildsResponse,
-    PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
+    ApiError, Build, BuildContext, BuildDetailResponse, BuildEvent, BuildStatus,
+    CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse,
+    ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -32,6 +32,15 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
 
     let step_results_str: Option<String> = row.get("step_results");
     let step_results = step_results_str.and_then(|s| serde_json::from_str(&s).ok());
+    let context = BuildContext {
+        project_name: row.try_get("project_name").ok(),
+        pipeline_name: row.try_get("pipeline_name").ok(),
+        runner_name: row.try_get("runner_name").ok(),
+    };
+    let context = (context.project_name.is_some()
+        || context.pipeline_name.is_some()
+        || context.runner_name.is_some())
+    .then_some(context);
 
     Build {
         id: row.get("id"),
@@ -48,6 +57,7 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         source_build_id: row.get("source_build_id"),
         config_snapshot,
         runner_id: row.get("runner_id"),
+        context,
         step_results,
         exit_code: row.get("exit_code"),
         queued_at: row.get("queued_at"),
@@ -677,6 +687,7 @@ pub async fn create_build(
         source_build_id: None,
         config_snapshot,
         runner_id: None,
+        context: None,
         step_results: None,
         exit_code: None,
         queued_at: now,
@@ -714,19 +725,19 @@ pub async fn list_builds(
     }
     if let Some(ref project_id) = params.project_id {
         bind_values.push(project_id.clone());
-        conditions.push(format!("project_id = ?{}", bind_values.len()));
+        conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
     }
     if let Some(ref pipeline_id) = params.pipeline_id {
         bind_values.push(pipeline_id.clone());
-        conditions.push(format!("pipeline_id = ?{}", bind_values.len()));
+        conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
     }
     if let Some(ref status) = params.status {
         bind_values.push(status.clone());
-        conditions.push(format!("status = ?{}", bind_values.len()));
+        conditions.push(format!("builds.status = ?{}", bind_values.len()));
     }
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());
-        conditions.push(format!("branch = ?{}", bind_values.len()));
+        conditions.push(format!("builds.branch = ?{}", bind_values.len()));
     }
 
     let where_clause = if conditions.is_empty() {
@@ -737,7 +748,12 @@ pub async fn list_builds(
 
     let count_query = format!("SELECT COUNT(*) FROM builds {where_clause}");
     let list_query = format!(
-        "SELECT * FROM builds {where_clause} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
+        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         {where_clause} ORDER BY builds.created_at DESC LIMIT ?{} OFFSET ?{}",
         bind_values.len() + 1,
         bind_values.len() + 2
     );
@@ -779,7 +795,14 @@ pub async fn get_build(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    let build_row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
+    let build_row = sqlx::query(
+        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         WHERE builds.id = ?1",
+    )
         .bind(&build_id)
         .fetch_optional(pool)
         .await
@@ -1067,6 +1090,7 @@ pub async fn rerun_build(
         source_build_id: Some(build_id),
         config_snapshot,
         runner_id: None,
+        context: None,
         step_results: None,
         exit_code: None,
         queued_at: now,
@@ -1302,6 +1326,7 @@ pub async fn trigger_build_from_webhook(
                 source_build_id: None,
                 config_snapshot,
                 runner_id: None,
+                context: None,
                 step_results: None,
                 exit_code: None,
                 queued_at: now,

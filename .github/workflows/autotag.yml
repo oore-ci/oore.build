@@ -1,7 +1,9 @@
 name: Autotag
 
 on:
-  push:
+  workflow_run:
+    workflows: [Validate]
+    types: [completed]
     branches: [stable, alpha, beta]
 
 concurrency:
@@ -11,6 +13,10 @@ concurrency:
 jobs:
   autotag:
     name: Cut release tag
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      contains(fromJSON('["stable","alpha","beta"]'), github.event.workflow_run.head_branch)
     runs-on: [self-hosted, jarvis]
     # Only run after validate completes — but since validate is a separate workflow,
     # we rely on branch protection rules to enforce this ordering.
@@ -19,10 +25,12 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Autotag
         env:
-          AUTOTAG_CHANNEL: ${{ github.ref_name }}
-          AUTOTAG_BRANCH: ${{ github.ref_name }}
+          AUTOTAG_CHANNEL: ${{ github.event.workflow_run.head_branch }}
+          AUTOTAG_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          AUTOTAG_SHA: ${{ github.event.workflow_run.head_sha }}
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: bash tools/autotag.sh

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
@@ -38,6 +38,7 @@ import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
 import { PageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   staticData: { breadcrumbLabel: 'New Pipeline' },
@@ -82,7 +83,7 @@ const emptyDefaults: PipelineFormValues = {
   ios_command_override: '',
   macos_command_override: '',
   env_vars: '',
-  artifact_patterns: '*.apk',
+  artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
   branches: '',
   max_concurrent: undefined,
 }
@@ -98,7 +99,9 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: false,
       platform_macos: false,
-      artifact_patterns: '*.apk',
+      enable_customization: true,
+      android_command_override: 'flutter build apk --debug',
+      artifact_patterns: 'build/app/outputs/flutter-apk/app-debug.apk',
     } satisfies PipelineFormValues,
     events: ['push'],
   },
@@ -113,7 +116,8 @@ const PIPELINE_TEMPLATES = [
       platform_ios: false,
       platform_macos: false,
       android_signing_release_enabled: true,
-      artifact_patterns: '*.apk\n*.aab',
+      artifact_patterns:
+        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab',
     } satisfies PipelineFormValues,
     events: ['push', 'tag_push'],
   },
@@ -127,7 +131,8 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: true,
       platform_macos: false,
-      artifact_patterns: '*.apk\n*.aab\n*.ipa',
+      artifact_patterns:
+        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab\nbuild/ios/ipa/*.ipa',
     } satisfies PipelineFormValues,
     events: ['push', 'tag_push'],
   },
@@ -141,7 +146,8 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: true,
       platform_macos: true,
-      artifact_patterns: '*.apk\n*.aab\n*.ipa\n*.app',
+      artifact_patterns:
+        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab\nbuild/ios/ipa/*.ipa\nbuild/macos/Build/Products/Release/*.app',
     } satisfies PipelineFormValues,
     events: ['push', 'tag_push'],
   },
@@ -167,6 +173,7 @@ function NewPipelinePage() {
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
   const [validationErrors, setValidationErrors] = useState<Array<string>>([])
+  const createdPipelineId = useRef<string | null>(null)
   const [selectedTemplate, setSelectedTemplate] = useState<string>('custom')
   const activeTemplate =
     PIPELINE_TEMPLATES.find((t) => t.key === selectedTemplate) ??
@@ -184,6 +191,7 @@ function NewPipelinePage() {
       profileFiles: Record<string, File | null>
     },
   ) {
+    if (createdPipelineId.current) return
     const platforms = selectedPlatforms(data)
     if (platforms.length === 0) {
       setValidationErrors(['Pick at least one platform to build'])
@@ -283,11 +291,20 @@ function NewPipelinePage() {
       return
     }
 
+    let created: { pipeline: { id: string } }
     try {
-      const created = await createMutation.mutateAsync({
+      created = await createMutation.mutateAsync({
         projectId,
         data: payload,
       })
+      createdPipelineId.current = created.pipeline.id
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      toast.error(`Failed to create pipeline: ${message}`)
+      return
+    }
+
+    try {
       if (signingPayload) {
         await updateSigningMutation.mutateAsync({
           pipelineId: created.pipeline.id,
@@ -304,7 +321,15 @@ function NewPipelinePage() {
       void navigate({ to: '/projects/$projectId', params: { projectId } })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
-      toast.error(`Failed to create pipeline: ${message}`)
+      const signing = signingPayload ? 'android' : 'ios'
+      toast.error(
+        `Pipeline was created, but ${signing} signing failed: ${message}`,
+      )
+      void navigate({
+        to: '/projects/$projectId/pipelines/$pipelineId/edit',
+        params: { projectId, pipelineId: created.pipeline.id },
+        search: { signing, signingError: message },
+      })
     }
   }
 
@@ -580,6 +605,8 @@ function NewPipelinePage() {
             updateIosSigningMutation.isPending
           }
           validationErrors={validationErrors}
+          readOnly={isDemoMode}
+          readOnlyReason={READ_ONLY_REASON}
         />
       </div>
     </PageLayout>

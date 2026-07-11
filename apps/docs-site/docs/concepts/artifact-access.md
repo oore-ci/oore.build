@@ -35,7 +35,12 @@ When a runner produces a build artifact:
    - Maximum file size: 512 MiB
    - The upload URL is single-use and time-limited
 
-4. **Daemon records the artifact** with its storage location and metadata
+4. **Runner finalizes the reservation**
+   - `POST .../artifacts/{artifact_id}/complete` makes the artifact available
+   - `POST .../artifacts/{artifact_id}/abort` records a failed upload
+   - Pending and failed artifacts are not listed or downloadable
+
+Declared artifact patterns are part of build success: an empty pattern list requires no artifact, while a non-empty list must produce at least one finalized artifact. Missing matches and upload/finalization failures fail the build.
 
 ## Download flow
 

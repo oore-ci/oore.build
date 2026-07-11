@@ -3376,6 +3376,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Job claimed (or null)",
@@ -3528,6 +3538,128 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreateArtifactResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "operationId": "abort_artifact",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteArtifactResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "operationId": "complete_artifact",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteArtifactResponse"
                 }
               }
             }
@@ -5940,7 +6072,8 @@
           "artifact_type",
           "file_path",
           "metadata",
-          "created_at"
+          "created_at",
+          "state"
         ],
         "properties": {
           "artifact_type": {
@@ -5983,6 +6116,9 @@
             "type": "object"
           },
           "name": {
+            "type": "string"
+          },
+          "state": {
             "type": "string"
           }
         }
@@ -6330,6 +6466,16 @@
           "config_snapshot": {
             "type": "object"
           },
+          "context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildContext"
+              }
+            ]
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -6416,6 +6562,29 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "BuildContext": {
+        "type": "object",
+        "properties": {
+          "pipeline_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -6551,6 +6720,19 @@
           }
         }
       },
+      "ClaimJobRequest": {
+        "type": "object",
+        "required": [
+          "protocol_version"
+        ],
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ClaimJobResponse": {
         "type": "object",
         "properties": {
@@ -6608,6 +6790,28 @@
           },
           "project_id": {
             "type": "string"
+          }
+        }
+      },
+      "CompleteArtifactRequest": {
+        "type": "object",
+        "properties": {
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CompleteArtifactResponse": {
+        "type": "object",
+        "required": [
+          "artifact"
+        ],
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
           }
         }
       },
@@ -8398,7 +8602,8 @@
               "type": "string"
             }
           }
-        }
+        },
+        "additionalProperties": false
       },
       "PipelineDetailResponse": {
         "type": "object",
@@ -8429,7 +8634,8 @@
           "value": {
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "PipelineExecutionConfig": {
         "type": "object",
@@ -8581,7 +8787,8 @@
               "type": "string"
             }
           }
-        }
+        },
+        "additionalProperties": false
       },
       "PlatformBuildCommands": {
         "type": "object",
@@ -8604,7 +8811,8 @@
               "null"
             ]
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Project": {
         "type": "object",
@@ -10491,6 +10699,12 @@
               {
                 "$ref": "#/components/schemas/PipelineExecutionConfig"
               }
+            ]
+          },
+          "repository_yaml": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "trigger_config": {

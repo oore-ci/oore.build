@@ -42,7 +42,7 @@ The daemon uses heartbeat data to track which runners are available.
 
 ### 3. Job claim
 
-The runner calls `POST /v1/runners/{runner_id}/claim` to request work. The daemon:
+The runner calls `POST /v1/runners/{runner_id}/claim` with `{"protocol_version": 2}` to request work. The daemon rejects incompatible runners before assigning work.
 
 1. Finds the oldest build with `status = queued`
 2. Transitions the build: `queued` → `scheduled` → `assigned`
@@ -97,6 +97,7 @@ After a successful build, the runner uploads artifacts:
 1. **Create artifact record**: `POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts` with the artifact name, type (`apk`, `ipa`, `app`, `generic`), and checksum
 2. **Receive upload URL**: The daemon returns a presigned upload URL (S3/R2) or a local upload token
 3. **Upload the file**: The runner PUTs the file to the upload URL (max 512 MiB)
+4. **Finalize or abort**: The runner calls the artifact `complete` endpoint after a successful upload, or `abort` after a failed upload. Pending artifacts are not visible or downloadable.
 
 See [Artifact Access Model](/concepts/artifact-access) for details on how uploads and downloads are secured.
 

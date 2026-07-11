@@ -3,12 +3,15 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use base64::Engine as _;
 use oore_contract::{
-    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobResponse, ClaimedJob,
-    JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
-    PlatformBuildArgs, PlatformBuildCommands, RunnerAndroidSigningProfile,
+    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
+    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, JobStatusResponse,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
+    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
+    artifact_pattern_matches, parse_repository_pipeline_yaml,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -1071,6 +1074,9 @@ async fn claim_and_execute(
             daemon_url, config.runner_id
         ))
         .bearer_auth(&config.runner_token)
+        .json(&ClaimJobRequest {
+            protocol_version: RUNNER_PROTOCOL_VERSION,
+        })
         .send()
         .await?;
 
@@ -1184,72 +1190,6 @@ impl std::fmt::Display for BuildTerminated {
 }
 
 impl std::error::Error for BuildTerminated {}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoPipelineConfig {
-    version: u32,
-    platforms: Vec<BuildPlatform>,
-    #[serde(default)]
-    flutter_version: Option<String>,
-    #[serde(default)]
-    commands: RepoCommandStages,
-    #[serde(default)]
-    platform_build_args: RepoPlatformBuildArgs,
-    #[serde(default)]
-    platform_commands: RepoPlatformBuildCommands,
-    #[serde(default)]
-    env: Vec<RepoEnvVar>,
-    #[serde(default)]
-    artifacts: RepoArtifacts,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoCommandStages {
-    #[serde(default)]
-    pre_build: Vec<String>,
-    #[serde(default)]
-    build: Vec<String>,
-    #[serde(default)]
-    post_build: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoArtifacts {
-    #[serde(default)]
-    patterns: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoPlatformBuildArgs {
-    #[serde(default)]
-    android: Vec<String>,
-    #[serde(default)]
-    ios: Vec<String>,
-    #[serde(default)]
-    macos: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoPlatformBuildCommands {
-    #[serde(default)]
-    android: Option<String>,
-    #[serde(default)]
-    ios: Option<String>,
-    #[serde(default)]
-    macos: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoEnvVar {
-    key: String,
-    value: String,
-}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1494,41 +1434,7 @@ fn normalize_execution_config(
 }
 
 fn parse_repo_config_file(raw: &str) -> anyhow::Result<PipelineExecutionConfig> {
-    let parsed: RepoPipelineConfig =
-        serde_yaml::from_str(raw).map_err(|e| anyhow::anyhow!("YAML parse error: {e}"))?;
-
-    if parsed.version != 1 {
-        anyhow::bail!("unsupported config version {}, expected 1", parsed.version);
-    }
-
-    normalize_execution_config(PipelineExecutionConfig {
-        platforms: parsed.platforms,
-        flutter_version: parsed.flutter_version,
-        commands: PipelineCommandStages {
-            pre_build: parsed.commands.pre_build,
-            build: parsed.commands.build,
-            post_build: parsed.commands.post_build,
-        },
-        platform_build_args: PlatformBuildArgs {
-            android: parsed.platform_build_args.android,
-            ios: parsed.platform_build_args.ios,
-            macos: parsed.platform_build_args.macos,
-        },
-        platform_commands: PlatformBuildCommands {
-            android: parsed.platform_commands.android,
-            ios: parsed.platform_commands.ios,
-            macos: parsed.platform_commands.macos,
-        },
-        env: parsed
-            .env
-            .into_iter()
-            .map(|entry| PipelineEnvVar {
-                key: entry.key,
-                value: entry.value,
-            })
-            .collect(),
-        artifact_patterns: parsed.artifacts.patterns,
-    })
+    parse_repository_pipeline_yaml(raw).map_err(anyhow::Error::msg)
 }
 
 fn build_default_command_with_args(base: &str, args: &[String]) -> String {
@@ -1686,6 +1592,9 @@ async fn check_build_active(
             daemon_url, config.runner_id, build_id
         ))
         .bearer_auth(&config.runner_token)
+        .json(&ClaimJobRequest {
+            protocol_version: RUNNER_PROTOCOL_VERSION,
+        })
         .send()
         .await;
 
@@ -2391,7 +2300,8 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
             })
         });
 
-    scan_and_upload_artifacts(
+    let artifacts_started = now_unix();
+    let artifact_result = scan_and_upload_artifacts(
         workspace.as_path(),
         client,
         daemon_url,
@@ -2401,6 +2311,23 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         ios_artifact_metadata.as_ref(),
     )
     .await;
+    let artifacts_finished = now_unix();
+    steps.push(StepResult {
+        name: "artifacts".to_string(),
+        status: if artifact_result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        }
+        .to_string(),
+        exit_code: artifact_result.as_ref().err().map(|_| 1),
+        started_at: artifacts_started,
+        finished_at: artifacts_finished,
+        duration_ms: (artifacts_finished - artifacts_started) * 1000,
+    });
+    if let Err(error) = artifact_result {
+        return (steps, Err(error));
+    }
 
     drop(ios_signing_cleanup);
 
@@ -2625,16 +2552,22 @@ fn artifact_type_for_extension(ext: &str) -> Option<&'static str> {
     }
 }
 
-fn walk_dir_files(dir: &std::path::Path) -> Vec<PathBuf> {
+fn walk_artifact_candidates(dir: &Path) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    fn walk(dir: &std::path::Path, result: &mut Vec<PathBuf>) {
+    fn walk(dir: &Path, result: &mut Vec<PathBuf>) {
         let entries = match fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
                 let is_hidden_dir = path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -2642,8 +2575,12 @@ fn walk_dir_files(dir: &std::path::Path) -> Vec<PathBuf> {
                 if is_hidden_dir {
                     continue;
                 }
+                if path.extension().and_then(|ext| ext.to_str()) == Some("app") {
+                    result.push(path);
+                    continue;
+                }
                 walk(&path, result);
-            } else if path.is_file() {
+            } else if file_type.is_file() {
                 result.push(path);
             }
         }
@@ -2676,48 +2613,79 @@ async fn scan_and_upload_artifacts(
     build_id: &str,
     artifact_patterns: &[String],
     ios_metadata: Option<&serde_json::Value>,
-) {
-    let all_files = walk_dir_files(workspace);
+) -> anyhow::Result<()> {
+    if artifact_patterns.is_empty() {
+        return Ok(());
+    }
 
-    let custom_extensions: Vec<String> = artifact_patterns
-        .iter()
-        .filter_map(|pat| pat.strip_prefix("*."))
-        .map(|ext| ext.to_lowercase())
-        .collect();
+    let mut artifacts: Vec<(PathBuf, String, String)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in walk_artifact_candidates(workspace) {
+        let relative = path
+            .strip_prefix(workspace)
+            .ok()
+            .and_then(Path::to_str)
+            .map(|value| value.replace(std::path::MAIN_SEPARATOR, "/"));
+        let Some(relative) = relative else { continue };
+        if !artifact_patterns
+            .iter()
+            .any(|pattern| artifact_pattern_matches(pattern, &relative))
+            || !seen.insert(relative)
+        {
+            continue;
+        }
 
-    let mut artifacts: Vec<(PathBuf, String)> = Vec::new();
-
-    for path in &all_files {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if let Some(art_type) = artifact_type_for_extension(ext) {
-                artifacts.push((path.clone(), art_type.to_string()));
-            } else if custom_extensions.contains(&ext.to_lowercase()) {
-                artifacts.push((path.clone(), "generic".to_string()));
+        if path.extension().and_then(|ext| ext.to_str()) == Some("app") && path.is_dir() {
+            let bundle_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("app.app");
+            let package_dir = workspace.join(".oore-artifacts");
+            fs::create_dir_all(&package_dir)?;
+            let package_path = package_dir.join(format!("{bundle_name}.zip"));
+            let status = tokio::process::Command::new("ditto")
+                .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
+                .arg(&path)
+                .arg(&package_path)
+                .status()
+                .await
+                .context("failed to package .app bundle with ditto")?;
+            if !status.success() {
+                anyhow::bail!("failed to package .app bundle {}", path.display());
             }
+            artifacts.push((
+                package_path,
+                "app".to_string(),
+                format!("{bundle_name}.zip"),
+            ));
+        } else {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("artifact")
+                .to_string();
+            let artifact_type = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .and_then(artifact_type_for_extension)
+                .unwrap_or("generic")
+                .to_string();
+            artifacts.push((path, artifact_type, name));
         }
     }
 
     if artifacts.is_empty() {
-        return;
+        anyhow::bail!(
+            "artifact patterns matched no files: {}",
+            artifact_patterns.join(", ")
+        );
     }
 
     println!("Found {} artifact(s) to upload", artifacts.len());
 
-    for (path, artifact_type) in &artifacts {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-
+    for (path, artifact_type, name) in &artifacts {
         let file_size = fs::metadata(path).map(|m| m.len() as i64).ok();
-
-        let checksum = match compute_file_sha256(path) {
-            Ok(c) => Some(c),
-            Err(e) => {
-                eprintln!("Warning: failed to compute checksum for {}: {}", name, e);
-                None
-            }
-        };
+        let checksum = Some(compute_file_sha256(path)?);
 
         let metadata = match ios_metadata {
             Some(value) if artifact_type == "ipa" => value.clone(),
@@ -2732,7 +2700,7 @@ async fn scan_and_upload_artifacts(
             "metadata": metadata,
         });
 
-        let resp = match client
+        let resp = client
             .post(format!(
                 "{}/v1/runners/{}/jobs/{}/artifacts",
                 daemon_url, config.runner_id, build_id
@@ -2741,68 +2709,92 @@ async fn scan_and_upload_artifacts(
             .json(&body)
             .send()
             .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Warning: failed to register artifact {}: {}", name, e);
-                continue;
-            }
-        };
+            .with_context(|| format!("failed to reserve artifact {name}"))?;
 
         if !resp.status().is_success() {
-            eprintln!(
-                "Warning: artifact registration failed for {} (HTTP {})",
-                name,
+            anyhow::bail!(
+                "artifact reservation failed for {name} (HTTP {})",
                 resp.status()
             );
-            continue;
         }
 
-        let create_resp: serde_json::Value = match resp.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "Warning: failed to parse artifact response for {}: {}",
-                    name, e
-                );
-                continue;
-            }
-        };
-
-        let upload_url = create_resp
-            .get("upload_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let create_resp: oore_contract::CreateArtifactResponse = resp.json().await?;
+        let artifact_id = create_resp.artifact.id;
+        let upload_url = create_resp.upload_url;
 
         if upload_url.is_empty() {
-            println!(
-                "  Registered artifact {} (no S3 upload URL — storage not configured)",
-                name
-            );
-            continue;
+            abort_artifact(
+                client,
+                daemon_url,
+                config,
+                build_id,
+                &artifact_id,
+                "artifact storage is not configured",
+            )
+            .await;
+            anyhow::bail!("artifact storage is not configured for {name}");
         }
 
-        match tokio::fs::read(path).await {
-            Ok(bytes) => match client.put(upload_url).body(bytes).send().await {
-                Ok(r) if r.status().is_success() => {
-                    println!("  Uploaded artifact {}", name);
-                }
-                Ok(r) => {
-                    eprintln!(
-                        "Warning: S3 upload failed for {} (HTTP {})",
-                        name,
-                        r.status()
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Warning: S3 upload failed for {}: {}", name, e);
-                }
-            },
-            Err(e) => {
-                eprintln!("Warning: failed to read artifact file {}: {}", name, e);
+        let upload = async {
+            let bytes = tokio::fs::read(path).await?;
+            let response = client.put(&upload_url).body(bytes).send().await?;
+            if !response.status().is_success() {
+                anyhow::bail!("upload returned HTTP {}", response.status());
             }
+            let response = client
+                .post(format!(
+                    "{}/v1/runners/{}/jobs/{}/artifacts/{}/complete",
+                    daemon_url, config.runner_id, build_id, artifact_id
+                ))
+                .bearer_auth(&config.runner_token)
+                .json(&CompleteArtifactRequest {
+                    error_message: None,
+                })
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                anyhow::bail!("completion returned HTTP {}", response.status());
+            }
+            let _: CompleteArtifactResponse = response.json().await?;
+            Ok::<_, anyhow::Error>(())
         }
+        .await;
+        if let Err(error) = upload {
+            abort_artifact(
+                client,
+                daemon_url,
+                config,
+                build_id,
+                &artifact_id,
+                &error.to_string(),
+            )
+            .await;
+            return Err(error.context(format!("failed to finalize artifact {name}")));
+        }
+        println!("  Uploaded artifact {}", name);
     }
+    Ok(())
+}
+
+async fn abort_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    artifact_id: &str,
+    error_message: &str,
+) {
+    let _ = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/artifacts/{}/abort",
+            daemon_url, config.runner_id, build_id, artifact_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(&CompleteArtifactRequest {
+            error_message: Some(error_message.to_string()),
+        })
+        .send()
+        .await;
 }
 
 struct StatusReport<'a> {

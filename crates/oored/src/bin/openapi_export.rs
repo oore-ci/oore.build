@@ -143,6 +143,8 @@ use utoipa::OpenApi;
         paths::create_stream_token,
         // ── Artifacts ──
         paths::create_artifact,
+        paths::complete_artifact,
+        paths::abort_artifact,
         paths::list_artifacts,
         paths::generate_download_link,
         // ── Scoped Download Tokens (OOR-140) ──
@@ -299,6 +301,7 @@ use utoipa::OpenApi;
         oore_contract::RunnerHeartbeatRequest,
         oore_contract::UpdateRunnerRequest,
         oore_contract::UpdateRunnerResponse,
+        oore_contract::ClaimJobRequest,
         oore_contract::ClaimJobResponse,
         oore_contract::ClaimedJob,
         oore_contract::UpdateJobStatusRequest,
@@ -311,6 +314,8 @@ use utoipa::OpenApi;
         oore_contract::Artifact,
         oore_contract::CreateArtifactRequest,
         oore_contract::CreateArtifactResponse,
+        oore_contract::CompleteArtifactRequest,
+        oore_contract::CompleteArtifactResponse,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
         oore_contract::CreateScopedDownloadTokenRequest,
@@ -1573,6 +1578,7 @@ mod paths {
     /// Runner claims the next queued build. Returns `null` job if no builds are available.
     #[utoipa::path(post, path = "/v1/runners/{runner_id}/claim", tag = "Runners",
         params(("runner_id" = String, Path, description = "Runner ID")),
+        request_body = ClaimJobRequest,
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Job claimed (or null)", body = ClaimJobResponse),
@@ -1692,6 +1698,30 @@ mod paths {
         )
     )]
     pub(super) async fn create_artifact() {}
+
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete", tag = "Artifacts",
+        params(
+            ("runner_id" = String, Path),
+            ("job_id" = String, Path),
+            ("artifact_id" = String, Path),
+        ),
+        request_body = CompleteArtifactRequest,
+        security(("bearer_auth" = [])),
+        responses((status = 200, body = CompleteArtifactResponse))
+    )]
+    pub(super) async fn complete_artifact() {}
+
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort", tag = "Artifacts",
+        params(
+            ("runner_id" = String, Path),
+            ("job_id" = String, Path),
+            ("artifact_id" = String, Path),
+        ),
+        request_body = CompleteArtifactRequest,
+        security(("bearer_auth" = [])),
+        responses((status = 200, body = CompleteArtifactResponse))
+    )]
+    pub(super) async fn abort_artifact() {}
 
     /// List build artifacts
     #[utoipa::path(get, path = "/v1/builds/{build_id}/artifacts", tag = "Artifacts",

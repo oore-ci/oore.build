@@ -60,6 +60,8 @@ Choosing the right path depends on how your browser reaches the backend. The bac
 
 ![Oore CI Dashboard screenshot](/demo-dashboard.webp)
 
+> The public demo uses fixed sample data. It is read-only and does not create projects, pipelines, builds, or settings changes.
+
 ### Path A: Local-first (no HTTPS required)
 
 Best when you want to try it on a single Mac first.

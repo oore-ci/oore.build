@@ -14,6 +14,7 @@ import {
   AlertCircleIcon,
   ArrowLeft02Icon,
   Home01Icon,
+  InformationCircleIcon,
   RotateClockwiseIcon,
   Search01Icon,
 } from '@hugeicons/core-free-icons'
@@ -37,6 +38,8 @@ import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 const CommandPalette = lazy(() => import('@/components/command-palette'))
 
@@ -237,6 +240,15 @@ function RootLayout() {
                   </button>
                 </div>
               </header>
+              {isDemoMode ? (
+                <div className="border-b bg-background px-4 py-2">
+                  <Alert>
+                    <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+                    <AlertTitle>Sample demo</AlertTitle>
+                    <AlertDescription>{READ_ONLY_REASON}</AlertDescription>
+                  </Alert>
+                </div>
+              ) : null}
               <ConnectivityBanner />
               <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />
@@ -257,7 +269,7 @@ function RootLayout() {
             <CommandPalette />
           </Suspense>
         ) : null}
-        {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        {isDemoMode && (
           <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
             <span className="size-1.5 animate-pulse bg-primary" />
             Demo Mode

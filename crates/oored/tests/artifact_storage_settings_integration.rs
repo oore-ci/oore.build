@@ -86,6 +86,29 @@ async fn seed_running_build(
     build_id
 }
 
+async fn complete_artifact(
+    app: &axum::Router,
+    runner_id: &str,
+    runner_token: &str,
+    build_id: &str,
+    artifact_id: &str,
+) {
+    let req = Request::builder()
+        .uri(format!(
+            "/v1/runners/{runner_id}/jobs/{build_id}/artifacts/{artifact_id}/complete"
+        ))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::from("{}"))
+        .unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn test_owner_can_configure_local_storage_and_download_artifact() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -160,6 +183,7 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let artifact_id = create_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")
@@ -263,6 +287,7 @@ async fn test_local_storage_large_artifact_upload_download() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let artifact_id = create_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")

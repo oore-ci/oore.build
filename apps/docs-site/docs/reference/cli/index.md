@@ -10,6 +10,12 @@ Oore CI provides two command-line tools:
 - **`oored`** — the daemon (control plane and API server)
 - **`oore`** — the operator CLI for setup, administration, and daily use
 
+Validate repository pipeline YAML locally with the exact parser used by the daemon and runner:
+
+```bash
+oore pipeline validate .oore.yaml
+```
+
 ## oored (Daemon)
 
 The daemon serves the HTTP API and manages instance state.
@@ -110,6 +116,8 @@ The operator CLI handles setup, authentication, and administration.
 | [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values | Implemented |
 | [`oore config get <key>`](/reference/cli/oore-config) | Get CLI configuration values | Implemented |
 | [`oore doctor`](/reference/cli/oore-doctor) | Run environment/signing diagnostics | Implemented |
+| `oore backup create|verify|restore` | Create and recover verified SQLite/key backups | Implemented |
+| `oore update` | Safely install a verified release update | Implemented |
 
 ### Global behavior
 
