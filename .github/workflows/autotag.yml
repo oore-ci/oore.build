@@ -17,7 +17,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       contains(fromJSON('["stable","alpha","beta"]'), github.event.workflow_run.head_branch)
-    runs-on: [self-hosted, jarvis]
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     # Only run after validate completes — but since validate is a separate workflow,
     # we rely on branch protection rules to enforce this ordering.
     steps:

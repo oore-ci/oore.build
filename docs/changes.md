@@ -12,6 +12,8 @@ Rules:
 
 ## 2026-07-12
 
+- Release automation now uses the configurable macOS runner with a `macos-latest` fallback for validation, autotagging, and release packaging, so an unavailable self-hosted runner cannot indefinitely block alpha delivery.
+  - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
 - **Product trust hardening release**:
   - Repository YAML now uses one strict parser across runner execution, daemon validation, and `oore pipeline validate`; repository YAML no longer accepts trigger/concurrency fields and artifact globs are safe workspace-relative patterns.
   - Runner protocol v2 prevents old runners from claiming work and adds artifact reservation, upload, completion/abort, pending visibility, stale cleanup, required-artifact failure, and `.app` bundle packaging.

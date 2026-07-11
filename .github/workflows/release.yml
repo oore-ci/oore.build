@@ -11,7 +11,7 @@ concurrency:
 jobs:
   release:
     name: Build, deploy & publish
-    runs-on: [self-hosted, jarvis]
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     permissions:
       contents: write
     steps:
