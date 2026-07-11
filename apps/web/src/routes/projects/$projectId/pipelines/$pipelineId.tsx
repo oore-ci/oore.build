@@ -151,7 +151,11 @@ function PipelineDetailPage() {
 
   const label = data?.pipeline.name ?? 'Pipeline Details'
 
-  useBreadcrumbLabel(setLabel, '/projects/$projectId/pipelines/$pipelineId', data?.pipeline.name)
+  useBreadcrumbLabel(
+    setLabel,
+    '/projects/$projectId/pipelines/$pipelineId',
+    data?.pipeline.name,
+  )
 
   if (isLoading) {
     return (
@@ -258,6 +262,7 @@ function PipelineDetailPage() {
                     <Link
                       to="/projects/$projectId/pipelines/$pipelineId/edit"
                       params={{ projectId, pipelineId }}
+                      search={{}}
                     />
                   }
                   nativeButton={false}

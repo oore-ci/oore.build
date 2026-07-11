@@ -93,10 +93,12 @@ export function defaultArtifactPatterns(
   platforms: Array<BuildPlatform>,
 ): Array<string> {
   const patterns = new Set<string>()
-  if (platforms.includes('android')) patterns.add('*.apk')
-  if (platforms.includes('ios')) patterns.add('*.ipa')
-  if (platforms.includes('macos')) patterns.add('*.app')
-  if (patterns.size === 0) patterns.add('*.apk')
+  if (platforms.includes('android'))
+    patterns.add('build/app/outputs/flutter-apk/*.apk')
+  if (platforms.includes('ios')) patterns.add('build/ios/ipa/*.ipa')
+  if (platforms.includes('macos'))
+    patterns.add('build/macos/Build/Products/Release/*.app')
+  if (patterns.size === 0) patterns.add('build/app/outputs/flutter-apk/*.apk')
   return [...patterns]
 }
 

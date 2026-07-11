@@ -51,6 +51,7 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 const PAGE_SIZE = 20
 
@@ -123,7 +124,11 @@ function BuildsListPage() {
         description="Queue, execution, and historical run inventory across projects."
         actions={
           !missingProjects && canTriggerBuild ? (
-            <Button onClick={() => setTriggerBuildOpen(true)}>
+            <Button
+              onClick={() => setTriggerBuildOpen(true)}
+              disabled={isDemoMode}
+              title={isDemoMode ? READ_ONLY_REASON : undefined}
+            >
               <HugeiconsIcon icon={PlayIcon} size={16} />
               Run Build
             </Button>
@@ -284,7 +289,12 @@ function BuildsListPage() {
                     No builds yet.
                   </p>
                   {canTriggerBuild ? (
-                    <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                    <Button
+                      size="sm"
+                      onClick={() => setTriggerBuildOpen(true)}
+                      disabled={isDemoMode}
+                      title={isDemoMode ? READ_ONLY_REASON : undefined}
+                    >
                       <HugeiconsIcon icon={PlayIcon} size={14} />
                       Trigger first build
                     </Button>
@@ -295,6 +305,7 @@ function BuildsListPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Build</TableHead>
+                      <TableHead>Project</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Trigger</TableHead>
                       <TableHead>Branch</TableHead>
@@ -334,6 +345,20 @@ function BuildsListPage() {
                               {build.id.slice(0, 8)}
                             </p>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm">
+                            {build.context?.project_name ??
+                              projects.find(
+                                (project) => project.id === build.project_id,
+                              )?.name ??
+                              'Unknown project'}
+                          </p>
+                          {build.context?.pipeline_name ? (
+                            <p className="text-xs text-muted-foreground">
+                              {build.context.pipeline_name}
+                            </p>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <Badge variant={getStatusVariant(build.status)}>

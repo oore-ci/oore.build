@@ -78,6 +78,10 @@ interface PipelineFormProps {
   children?: React.ReactNode
   /** Local-mode repositories only support manual/API build triggers for now. */
   manualOnlyTriggers?: boolean
+  readOnly?: boolean
+  readOnlyReason?: string
+  retrySigning?: 'android' | 'ios'
+  signingError?: string
   signingData?: {
     release: {
       has_keystore: boolean
@@ -203,6 +207,10 @@ export default function PipelineForm({
   validationErrors = [],
   children,
   manualOnlyTriggers = false,
+  readOnly = false,
+  readOnlyReason,
+  retrySigning,
+  signingError,
   signingData,
   iosSigningData,
 }: PipelineFormProps) {
@@ -233,15 +241,16 @@ export default function PipelineForm({
   const [platformArgsOpen, setPlatformArgsOpen] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
+  const [iosSigningOpen, setIosSigningOpen] = useState(
+    () => !!initialValues.ios_signing_enabled || retrySigning === 'ios',
+  )
   const [signingOpen, setSigningOpen] = useState(
     () =>
+      retrySigning === 'android' ||
       !!(
         initialValues.android_signing_release_enabled ||
         initialValues.android_signing_debug_enabled
       ),
-  )
-  const [iosSigningOpen, setIosSigningOpen] = useState(
-    () => !!initialValues.ios_signing_enabled,
   )
 
   useMountEffect(() => {
@@ -919,8 +928,8 @@ export default function PipelineForm({
                             Oore also injects <code>PROJECT_ID</code>,{' '}
                             <code>PIPELINE_ID</code>, <code>BUILD_ID</code>,{' '}
                             <code>PROJECT_BUILD_NUMBER</code>,{' '}
-                            <code>BUILD_NUMBER</code>, <code>CI=true</code>,
-                            and branch/commit values when present.
+                            <code>BUILD_NUMBER</code>, <code>CI=true</code>, and
+                            branch/commit values when present.
                           </span>,
                           'Use this section for app-specific values such as API_BASE_URL, APP_FLAVOR, SENTRY_DSN, or feature flags.',
                         ]}
@@ -1575,6 +1584,17 @@ export default function PipelineForm({
           </div>
         ) : null}
 
+        {signingError ? (
+          <Alert variant="destructive">
+            <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+            <AlertDescription>
+              Pipeline creation completed, but {retrySigning} signing failed:{' '}
+              {signingError}. Fix the signing fields below and retry only
+              signing.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {values.ios_signing_enabled &&
           (values.ios_signing_mode === 'api' ||
             values.ios_signing_mode === 'hybrid') &&
@@ -1591,7 +1611,8 @@ export default function PipelineForm({
             </Button>
             <Button
               type="button"
-              disabled={isPending}
+              disabled={isPending || readOnly}
+              title={readOnly ? readOnlyReason : undefined}
               onClick={() => {
                 void form.handleSubmit(handleFormSubmit)()
               }}
@@ -1601,6 +1622,8 @@ export default function PipelineForm({
                   <Spinner className="size-4" />
                   Saving...
                 </>
+              ) : readOnly ? (
+                'Demo is read-only'
               ) : (
                 submitLabel
               )}

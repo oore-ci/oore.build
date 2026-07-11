@@ -410,6 +410,8 @@ export interface Build {
   source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
+  /** Optional display context supplied by newer backend responses. */
+  context?: BuildContext
   step_results?: Array<StepResult>
   exit_code?: number
   queued_at: number
@@ -417,6 +419,12 @@ export interface Build {
   finished_at?: number
   created_at: number
   updated_at: number
+}
+
+export interface BuildContext {
+  project_name?: string
+  pipeline_name?: string
+  runner_name?: string
 }
 
 export interface BuildEvent {

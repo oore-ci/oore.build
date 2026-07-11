@@ -14,7 +14,11 @@ import {
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import type { Artifact, BuildLogChunk, CreateScopedDownloadTokenResponse } from '@/lib/types'
+import type {
+  Artifact,
+  BuildLogChunk,
+  CreateScopedDownloadTokenResponse,
+} from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -66,6 +70,7 @@ import {
   relativeTime,
 } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -120,7 +125,11 @@ function BuildDetailPage() {
     ? `Build #${data.build.build_number}`
     : 'Build Details'
 
-  useBreadcrumbLabel(setLabel, '/builds/$buildId', data?.build.build_number ? `Build #${data.build.build_number}` : undefined)
+  useBreadcrumbLabel(
+    setLabel,
+    '/builds/$buildId',
+    data?.build.build_number ? `Build #${data.build.build_number}` : undefined,
+  )
 
   // ── Build notifications (title + browser Notification) ──
   useBuildNotification(data?.build, isTerminal)
@@ -138,7 +147,8 @@ function BuildDetailPage() {
       void refetchArtifacts()
     }, [refetchBuild, refetchArtifacts]),
   })
-  const { data: fullLogsData } = useBuildLogs(buildId)
+  const fullLogsQuery = useBuildLogs(buildId)
+  const { data: fullLogsData } = fullLogsQuery
 
   const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
     if (streamEnabled && streamLogs.length > 0) return streamLogs
@@ -194,6 +204,17 @@ function BuildDetailPage() {
   const duration = build.started_at
     ? (build.finished_at ?? Math.floor(Date.now() / 1000)) - build.started_at
     : null
+  const failureReason =
+    build.status === 'failed'
+      ? ([...events].reverse().find((event) => event.reason)?.reason ??
+        `Build failed${build.exit_code != null ? ` with exit code ${build.exit_code}` : ''}.`)
+      : build.status === 'timed_out'
+        ? ([...events].reverse().find((event) => event.reason)?.reason ??
+          'Build timed out.')
+        : build.status === 'canceled'
+          ? ([...events].reverse().find((event) => event.reason)?.reason ??
+            'Build was canceled.')
+          : undefined
 
   return (
     <PageLayout width="full">
@@ -255,7 +276,9 @@ function BuildDetailPage() {
                 onClick={() => {
                   rerunMutation.mutate(build.id, {
                     onSuccess: (result) => {
-                      toast.success(`Re-run queued as build #${result.build.build_number}`)
+                      toast.success(
+                        `Re-run queued as build #${result.build.build_number}`,
+                      )
                       void navigate({
                         to: '/builds/$buildId',
                         params: { buildId: result.build.id },
@@ -266,7 +289,8 @@ function BuildDetailPage() {
                     },
                   })
                 }}
-                disabled={rerunMutation.isPending}
+                disabled={rerunMutation.isPending || isDemoMode}
+                title={isDemoMode ? READ_ONLY_REASON : undefined}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
@@ -277,7 +301,8 @@ function BuildDetailPage() {
                 variant="destructive"
                 size="sm"
                 onClick={handleCancel}
-                disabled={cancelMutation.isPending}
+                disabled={cancelMutation.isPending || isDemoMode}
+                title={isDemoMode ? READ_ONLY_REASON : undefined}
               >
                 {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
               </Button>
@@ -285,6 +310,29 @@ function BuildDetailPage() {
           </div>
         }
       />
+
+      {failureReason ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>{failureReason}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {build.context?.project_name ||
+      build.context?.pipeline_name ||
+      build.context?.runner_name ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {build.context.project_name ? (
+            <span>Project: {build.context.project_name}</span>
+          ) : null}
+          {build.context.pipeline_name ? (
+            <span>Pipeline: {build.context.pipeline_name}</span>
+          ) : null}
+          {build.context.runner_name ? (
+            <span>Runner: {build.context.runner_name}</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Two-column layout: logs + sidebar */}
       <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
@@ -294,7 +342,9 @@ function BuildDetailPage() {
             logs={mergedLogs}
             stepResults={build.step_results ?? []}
             isStreaming={isStreaming}
-            streamError={streamError ?? undefined}
+            streamError={isTerminal ? undefined : (streamError ?? undefined)}
+            logsUnavailable={fullLogsQuery.isError}
+            isTerminal={isTerminal}
           />
         </div>
 
@@ -309,7 +359,6 @@ function BuildDetailPage() {
           <EventTimeline events={events} />
         </aside>
       </div>
-
     </PageLayout>
   )
 }
@@ -324,6 +373,22 @@ function artifactExpiryLabel(artifact: Artifact): string | null {
   const now = Math.floor(Date.now() / 1000)
   if (artifact.expires_at <= now) return 'Expired'
   return `Expires ${relativeTime(artifact.expires_at)}`
+}
+
+function artifactEmptyMessage(buildStatus: string): string {
+  switch (buildStatus) {
+    case 'succeeded':
+      return 'Build succeeded, but no files matched the pipeline artifact patterns.'
+    case 'failed':
+    case 'timed_out':
+      return 'This build ended before it could publish artifacts.'
+    case 'canceled':
+      return 'This build was canceled before artifacts were published.'
+    case 'expired':
+      return 'Artifacts are no longer available for this expired build.'
+    default:
+      return 'Artifacts will appear here once the build produces them.'
+  }
 }
 
 const TTL_OPTIONS = [
@@ -348,7 +413,8 @@ function ArtifactsPanel({
   const [shareArtifact, setShareArtifact] = useState<Artifact | null>(null)
   const [ttlSecs, setTtlSecs] = useState('86400')
   const [singleUse, setSingleUse] = useState(false)
-  const [createdToken, setCreatedToken] = useState<CreateScopedDownloadTokenResponse | null>(null)
+  const [createdToken, setCreatedToken] =
+    useState<CreateScopedDownloadTokenResponse | null>(null)
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {
@@ -433,9 +499,7 @@ function ArtifactsPanel({
             </div>
           ) : !artifacts.length ? (
             <p className="text-xs text-muted-foreground">
-              {buildStatus === 'succeeded' || buildStatus === 'failed'
-                ? 'No artifacts were produced. Check that your pipeline has artifact patterns configured.'
-                : 'Artifacts will appear here once the build produces them.'}
+              {artifactEmptyMessage(buildStatus)}
             </p>
           ) : (
             <div className="space-y-2">
@@ -454,7 +518,9 @@ function ArtifactsPanel({
                       </p>
                       <div className="mt-0.5 flex items-center gap-1.5">
                         <Badge
-                          variant={artifactTypeBadgeVariant(artifact.artifact_type)}
+                          variant={artifactTypeBadgeVariant(
+                            artifact.artifact_type,
+                          )}
                           className="text-[10px]"
                         >
                           {artifact.artifact_type}
@@ -465,7 +531,9 @@ function ArtifactsPanel({
                             : '—'}
                         </span>
                         {expiryLabel ? (
-                          <span className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}>
+                          <span
+                            className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}
+                          >
                             {expiryLabel}
                           </span>
                         ) : null}
@@ -489,7 +557,9 @@ function ArtifactsPanel({
                         className="size-7 shrink-0"
                         title="Copy download link"
                         aria-label={`Copy link for ${artifact.name}`}
-                        onClick={() => handleCopyLink(artifact.id, artifact.name)}
+                        onClick={() =>
+                          handleCopyLink(artifact.id, artifact.name)
+                        }
                         disabled={downloadMutation.isPending || expired}
                       >
                         <HugeiconsIcon icon={Copy01Icon} size={14} />
@@ -500,7 +570,9 @@ function ArtifactsPanel({
                         className="size-7 shrink-0"
                         title="Download"
                         aria-label={`Download ${artifact.name}`}
-                        onClick={() => handleDownload(artifact.id, artifact.name)}
+                        onClick={() =>
+                          handleDownload(artifact.id, artifact.name)
+                        }
                         disabled={downloadMutation.isPending || expired}
                       >
                         <HugeiconsIcon icon={Download04Icon} size={14} />
@@ -515,7 +587,12 @@ function ArtifactsPanel({
       </Card>
 
       {/* Share Link Dialog */}
-      <Dialog open={shareArtifact !== null} onOpenChange={(open) => { if (!open) setShareArtifact(null) }}>
+      <Dialog
+        open={shareArtifact !== null}
+        onOpenChange={(open) => {
+          if (!open) setShareArtifact(null)
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -538,15 +615,24 @@ function ArtifactsPanel({
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>Expires {relativeTime(createdToken.expires_at)}</span>
                 {createdToken.single_use ? (
-                  <Badge variant="secondary" className="text-[10px]">Single use</Badge>
+                  <Badge variant="secondary" className="text-[10px]">
+                    Single use
+                  </Badge>
                 ) : null}
               </div>
               <DialogFooter>
-                <Button variant="secondary" onClick={() => setShareArtifact(null)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setShareArtifact(null)}
+                >
                   Close
                 </Button>
                 <Button onClick={handleCopyShareUrl}>
-                  <HugeiconsIcon icon={Copy01Icon} size={14} className="mr-1.5" />
+                  <HugeiconsIcon
+                    icon={Copy01Icon}
+                    size={14}
+                    className="mr-1.5"
+                  />
                   Copy Link
                 </Button>
               </DialogFooter>
@@ -555,7 +641,12 @@ function ArtifactsPanel({
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="ttl-select">Expires after</Label>
-                <Select value={ttlSecs} onValueChange={(v) => { if (v != null) setTtlSecs(v) }}>
+                <Select
+                  value={ttlSecs}
+                  onValueChange={(v) => {
+                    if (v != null) setTtlSecs(v)
+                  }}
+                >
                   <SelectTrigger id="ttl-select">
                     <SelectValue />
                   </SelectTrigger>
@@ -579,10 +670,16 @@ function ArtifactsPanel({
                 </Label>
               </div>
               <DialogFooter>
-                <Button variant="secondary" onClick={() => setShareArtifact(null)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setShareArtifact(null)}
+                >
                   Cancel
                 </Button>
-                <Button onClick={handleCreateToken} disabled={createTokenMutation.isPending}>
+                <Button
+                  onClick={handleCreateToken}
+                  disabled={createTokenMutation.isPending}
+                >
                   {createTokenMutation.isPending ? (
                     <>
                       <Spinner className="mr-1.5" />

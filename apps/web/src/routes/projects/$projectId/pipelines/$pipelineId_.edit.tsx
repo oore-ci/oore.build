@@ -62,6 +62,19 @@ export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId_/edit',
 )({
   staticData: { breadcrumbLabel: 'Edit Pipeline' },
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    signing?: 'android' | 'ios'
+    signingError?: string
+  } => ({
+    signing:
+      search.signing === 'android' || search.signing === 'ios'
+        ? search.signing
+        : undefined,
+    signingError:
+      typeof search.signingError === 'string' ? search.signingError : undefined,
+  }),
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -71,6 +84,7 @@ export const Route = createFileRoute(
 
 function EditPipelinePage() {
   const { projectId, pipelineId } = Route.useParams()
+  const { signing: retrySigning, signingError } = Route.useSearch()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
   const repoProviderQuery = useRepositoryProvider(
@@ -287,30 +301,34 @@ function EditPipelinePage() {
     }
 
     try {
-      await updateMutation.mutateAsync({
-        pipelineId: pipeline.id,
-        data: payload,
-      })
-      if (signingPayload) {
+      if (!retrySigning) {
+        await updateMutation.mutateAsync({
+          pipelineId: pipeline.id,
+          data: payload,
+        })
+      }
+      if (signingPayload && retrySigning !== 'ios') {
         await updateSigningMutation.mutateAsync({
           pipelineId: pipeline.id,
           data: signingPayload,
         })
       }
-      if (iosSigningPayload) {
+      if (iosSigningPayload && retrySigning !== 'android') {
         await updateIosSigningMutation.mutateAsync({
           pipelineId: pipeline.id,
           data: iosSigningPayload,
         })
       }
-      toast.success('Pipeline updated')
+      toast.success(retrySigning ? 'Signing updated' : 'Pipeline updated')
       void navigate({
         to: '/projects/$projectId/pipelines/$pipelineId',
         params: { projectId, pipelineId },
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
-      toast.error(`Failed to update pipeline: ${message}`)
+      toast.error(
+        `Failed to ${retrySigning ? 'update signing' : 'update pipeline'}: ${message}`,
+      )
     }
   }
 
@@ -611,7 +629,11 @@ function EditPipelinePage() {
           to: `/projects/${projectId}/pipelines/${pipelineId}`,
           label: 'Pipeline',
         }}
-        description="Update pipeline configuration."
+        description={
+          retrySigning
+            ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`
+            : 'Update pipeline configuration.'
+        }
       />
       <div className="mx-auto max-w-4xl">
         <PipelineForm
@@ -628,13 +650,15 @@ function EditPipelinePage() {
               params: { projectId, pipelineId },
             })
           }
-          submitLabel="Save"
+          submitLabel={retrySigning ? `Retry ${retrySigning} signing` : 'Save'}
           isPending={
             updateMutation.isPending ||
             updateSigningMutation.isPending ||
             updateIosSigningMutation.isPending
           }
           validationErrors={validationErrors}
+          retrySigning={retrySigning}
+          signingError={signingError}
           signingData={signingQuery.data}
           iosSigningData={iosSigningQuery.data}
         >

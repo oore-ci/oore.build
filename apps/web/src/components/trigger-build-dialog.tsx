@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 const triggerBuildSchema = z
   .object({
@@ -220,7 +221,9 @@ export default function TriggerBuildDialog({
     pipelines.length === 0
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
         if (nextOpen) {
           form.reset(
             defaults(
@@ -233,7 +236,8 @@ export default function TriggerBuildDialog({
           )
         }
         onOpenChange(nextOpen)
-      }}>
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -411,6 +415,7 @@ export default function TriggerBuildDialog({
                 type="button"
                 disabled={
                   createBuildMutation.isPending ||
+                  isDemoMode ||
                   noProjects ||
                   noPipelines ||
                   sourceMissing ||
@@ -419,6 +424,7 @@ export default function TriggerBuildDialog({
                 onClick={() => {
                   void form.handleSubmit(onSubmit)()
                 }}
+                title={isDemoMode ? READ_ONLY_REASON : undefined}
               >
                 {createBuildMutation.isPending ? (
                   <>

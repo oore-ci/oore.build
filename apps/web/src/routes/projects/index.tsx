@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/table'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
@@ -108,7 +109,11 @@ function ProjectsListPage() {
         description="Repository and pipeline entry points for your build system."
         actions={
           projects.length > 0 && canWriteProjects ? (
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button
+              onClick={() => setCreateOpen(true)}
+              disabled={isDemoMode}
+              title={isDemoMode ? READ_ONLY_REASON : undefined}
+            >
               <HugeiconsIcon icon={Add01Icon} size={16} />
               New Project
             </Button>
@@ -152,7 +157,11 @@ function ProjectsListPage() {
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {canWriteProjects ? (
-                <Button onClick={() => setCreateOpen(true)}>
+                <Button
+                  onClick={() => setCreateOpen(true)}
+                  disabled={isDemoMode}
+                  title={isDemoMode ? READ_ONLY_REASON : undefined}
+                >
                   <HugeiconsIcon icon={Add01Icon} size={16} />
                   Create Project
                 </Button>

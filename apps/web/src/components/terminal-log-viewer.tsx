@@ -28,6 +28,8 @@ export interface TerminalLogViewerProps {
   stepResults: Array<StepResult>
   isStreaming: boolean
   streamError?: string
+  logsUnavailable?: boolean
+  isTerminal?: boolean
 }
 
 interface StepGroup {
@@ -143,6 +145,8 @@ export default function TerminalLogViewer({
   stepResults,
   isStreaming,
   streamError,
+  logsUnavailable = false,
+  isTerminal = false,
 }: TerminalLogViewerProps) {
   const [userSelectedStep, setUserSelectedStep] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -222,7 +226,12 @@ export default function TerminalLogViewer({
         userSelectedStep === 'all' || stepGroupsByName.has(userSelectedStep)
       if (valid) return userSelectedStep
     }
-    return runningStepName ?? stepGroups.at(0)?.name ?? 'all'
+    return (
+      runningStepName ??
+      stepGroups.find((group) => group.status === 'failed')?.name ??
+      stepGroups.at(0)?.name ??
+      'all'
+    )
   }, [userSelectedStep, stepGroups, stepGroupsByName, runningStepName])
 
   // ── Filtered logs ──────────────────────────────────────────
@@ -556,7 +565,13 @@ export default function TerminalLogViewer({
           {filteredLogs.length === 0 ? (
             <div className="flex h-48 items-center justify-center">
               <span className="text-xs text-[oklch(0.52_0_0)]">
-                {searchQuery ? 'No matching lines' : 'No logs yet'}
+                {searchQuery
+                  ? 'No matching lines'
+                  : logsUnavailable
+                    ? 'Logs are unavailable for this build.'
+                    : isTerminal
+                      ? 'This build completed without recorded logs.'
+                      : 'No logs yet'}
               </span>
             </div>
           ) : (
