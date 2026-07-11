@@ -6466,6 +6466,16 @@
           "config_snapshot": {
             "type": "object"
           },
+          "context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildContext"
+              }
+            ]
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -6552,6 +6562,29 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "BuildContext": {
+        "type": "object",
+        "properties": {
+          "pipeline_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

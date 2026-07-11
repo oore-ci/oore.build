@@ -1928,16 +1928,10 @@ pub async fn update_instance_preferences(
         preflight_result = Some(result);
     }
 
-    let active_source =
-        crypto::persist_current_key_for_mode(state.encryption_key.as_ref(), KeyStorageMode::File)
-            .map_err(|e| {
-            error!(error = %e, mode = %KeyStorageMode::File, "failed to persist key storage mode");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "key_storage_error",
-                "Failed to persist key storage mode",
-            )
-        })?;
+    // File mode is the only supported mode in this release. The runtime key was
+    // already loaded from (or created in) file storage during daemon startup, so
+    // updating unrelated preferences must not rewrite it through a global path.
+    let active_source = crypto::KeySource::LegacyFile;
 
     sqlx::query(
         "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, remote_auth_mode, updated_by, created_at, updated_at)

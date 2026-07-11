@@ -200,6 +200,29 @@ async fn complete_artifact(
 // ── Log ingestion tests ─────────────────────────────────────────
 
 #[tokio::test]
+async fn test_build_list_and_detail_include_display_context() {
+    let (app, _pool, session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+
+    let (status, list) = json_request(&app, "GET", "/v1/builds", &session_token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let build = &list["builds"][0];
+    assert_eq!(build["context"]["project_name"], "Test Project");
+    assert_eq!(build["context"]["pipeline_name"], "Default");
+    assert_eq!(build["context"]["runner_name"], "test-runner");
+
+    let (status, detail) = json_request(
+        &app,
+        "GET",
+        &format!("/v1/builds/{build_id}"),
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["build"]["context"], build["context"]);
+}
+
+#[tokio::test]
 async fn test_append_build_logs() {
     let (app, _pool, _session_token, runner_id, runner_token, build_id) = full_scaffold().await;
 

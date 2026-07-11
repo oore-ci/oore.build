@@ -958,6 +958,8 @@ pub struct Build {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runner_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<BuildContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub step_results: Option<Vec<StepResult>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
@@ -968,6 +970,16 @@ pub struct Build {
     pub finished_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildContext {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runner_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
