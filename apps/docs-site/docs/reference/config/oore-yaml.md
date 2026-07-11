@@ -31,17 +31,13 @@ commands:                            # Required. Build command stages.
 
 platform_build_args:                 # Optional. Per-platform build arguments.
   android:
-    extra_args: "--split-per-abi"
+    - "--split-per-abi"
   ios:
-    export_method: "ad-hoc"          # Options: ad-hoc, app-store, development, enterprise
+    - "--flavor=staging"
 
 platform_commands:                   # Optional. Override commands per platform.
-  android:
-    build:
-      - flutter build apk --release --split-per-abi
-  ios:
-    build:
-      - flutter build ipa --release --export-method ad-hoc
+  android: flutter build apk --release --split-per-abi
+  ios: flutter build ipa --release
 
 env:                                 # Optional. Environment variables for builds.
   - key: JAVA_HOME
@@ -49,20 +45,8 @@ env:                                 # Optional. Environment variables for build
 
 artifacts:                           # Optional. Artifact collection patterns.
   patterns:
-    - "**/*.apk"
-    - "**/*.ipa"
-
-triggers:                            # Optional. Webhook trigger configuration.
-  events:
-    - push                           # Options: push, pull_request
-    - pull_request
-  branches:
-    - main
-    - "release/*"                    # Supports glob patterns
-
-concurrency:                         # Optional. Concurrency controls.
-  max_concurrent: 1                  # Max simultaneous builds for this pipeline.
-  cancel_in_progress: true           # Cancel older builds when a new one starts.
+    - "build/app/outputs/flutter-apk/*.apk"
+    - "build/ios/ipa/*.ipa"
 ```
 
 ## Field reference
@@ -79,8 +63,6 @@ concurrency:                         # Optional. Concurrency controls.
 | `platform_commands` | `object` | No | — | Per-platform command overrides. |
 | `env` | `object[]` | No | `[]` | Environment variables. |
 | `artifacts` | `object` | No | — | Artifact collection config. |
-| `triggers` | `object` | No | — | Webhook trigger rules. |
-| `concurrency` | `object` | No | — | Concurrency controls. |
 
 ### commands
 
@@ -94,10 +76,7 @@ Commands are executed sequentially. If any command returns a non-zero exit code,
 
 ### platform_build_args
 
-| Platform | Field | Type | Description |
-|---|---|---|---|
-| `android` | `extra_args` | `string` | Extra arguments passed to the Android build command |
-| `ios` | `export_method` | `string` | IPA export method: `ad-hoc`, `app-store`, `development`, `enterprise` |
+Each platform value is a string array appended to its default build command.
 
 ### env
 
@@ -109,20 +88,7 @@ Commands are executed sequentially. If any command returns a non-zero exit code,
 ### artifacts.patterns
 
 An array of glob patterns matched against the build workspace. Matched files are collected as build artifacts.
-
-### triggers
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `events` | `string[]` | No | Trigger events: `push`, `pull_request` |
-| `branches` | `string[]` | No | Branch filters (supports glob patterns) |
-
-### concurrency
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `max_concurrent` | `integer` | No | `1` | Maximum simultaneous builds |
-| `cancel_in_progress` | `boolean` | No | `false` | Cancel running builds when a new one is triggered |
+Patterns are workspace-relative. Absolute paths, parent traversal, and symlink traversal are rejected. Filename-only patterns such as `*.apk` match anywhere in the workspace. Trigger and concurrency policy are configured on the pipeline through the UI/API; they are not repository YAML fields.
 
 ## Config resolution order
 

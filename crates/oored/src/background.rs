@@ -41,7 +41,49 @@ pub fn start_background_tasks(
     tokio::spawn(build_timeout_monitor(pool.clone(), scheduler.clone()));
     tokio::spawn(runner_heartbeat_monitor(pool.clone(), scheduler));
     tokio::spawn(retention_cleanup_monitor(pool.clone(), storage.clone()));
+    tokio::spawn(stale_pending_artifact_monitor(
+        pool.clone(),
+        storage.clone(),
+    ));
     tokio::spawn(expired_artifact_monitor(pool, storage));
+}
+
+async fn stale_pending_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageBackend>>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let cutoff = now_unix() - 30 * 60;
+        let rows = match sqlx::query(
+            "SELECT id, file_path FROM artifacts WHERE state = 'pending' AND created_at < ?1",
+        )
+        .bind(cutoff)
+        .fetch_all(&pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                warn!(error = %error, "stale_pending_artifact_monitor: query failed");
+                continue;
+            }
+        };
+        for row in rows {
+            let artifact_id: String = row.get("id");
+            let file_path: String = row.get("file_path");
+            if let Err(error) = storage.read().await.delete_object(&file_path).await {
+                warn!(artifact_id = %artifact_id, error = %error, "stale_pending_artifact_monitor: storage cleanup failed");
+                continue;
+            }
+            if let Err(error) = sqlx::query(
+                "UPDATE artifacts SET state = 'failed', finalized_at = ?1, error_message = 'upload reservation expired' WHERE id = ?2 AND state = 'pending'",
+            )
+            .bind(now_unix())
+            .bind(&artifact_id)
+            .execute(&pool)
+            .await
+            {
+                warn!(artifact_id = %artifact_id, error = %error, "stale_pending_artifact_monitor: state update failed");
+            }
+        }
+    }
 }
 
 /// Monitor assigned builds whose lease has expired.

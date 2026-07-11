@@ -15,7 +15,7 @@ use oore_contract::{
     OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode,
     RuntimeMode, SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse,
     SetupOidcVerifyRequest, SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
-    UserProfileResponse,
+    UserProfileResponse, parse_repository_pipeline_yaml,
 };
 use rand::RngCore;
 use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
@@ -79,6 +79,7 @@ enum Commands {
     Runner(RunnerArgs),
     Config(ConfigArgs),
     Doctor(DoctorArgs),
+    Pipeline(PipelineArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
@@ -135,6 +136,33 @@ struct BackupManifest {
     format: String,
     created_at: i64,
     files: HashMap<String, String>,
+}
+
+#[derive(Debug, Args)]
+struct PipelineArgs {
+    #[command(subcommand)]
+    command: PipelineSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PipelineSubcommand {
+    /// Validate repository pipeline YAML using the runner's schema.
+    Validate(PipelineValidateArgs),
+}
+
+#[derive(Debug, Args)]
+struct PipelineValidateArgs {
+    /// Repository pipeline file to validate.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+}
+
+fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
+    let raw = fs::read_to_string(&args.path)
+        .with_context(|| format!("failed to read {}", args.path.display()))?;
+    parse_repository_pipeline_yaml(&raw).map_err(anyhow::Error::msg)?;
+    println!("{} is valid", args.path.display());
+    Ok(())
 }
 
 #[derive(Debug, Args)]
@@ -3896,6 +3924,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor(args) => {
             run_doctor_checks(args)?;
         }
+        Commands::Pipeline(pipeline) => match pipeline.command {
+            PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
+        },
         Commands::Version => {
             let install_root = resolve_install_root()?;
             if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {

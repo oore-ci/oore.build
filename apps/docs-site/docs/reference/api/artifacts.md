@@ -85,6 +85,14 @@ POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts
 
 This endpoint is called by the runner process, not by end users.
 
+The returned artifact is `pending`. After uploading, the runner must call:
+
+```
+POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete
+```
+
+If upload fails, it calls the corresponding `/abort` endpoint. Only completed (`available`) artifacts appear in list and download APIs.
+
 ---
 
 ## Local Upload (Runner) {#local-upload}

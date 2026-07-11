@@ -2410,6 +2410,14 @@ async fn build_router_inner(
             post(artifacts::create_artifact),
         )
         .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete",
+            post(artifacts::complete_artifact),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort",
+            post(artifacts::abort_artifact),
+        )
+        .route(
             "/v1/builds/{build_id}/artifacts",
             get(artifacts::list_artifacts),
         )

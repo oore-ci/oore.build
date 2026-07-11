@@ -256,7 +256,8 @@ async fn test_runner_claim_empty_queue() {
             http::header::AUTHORIZATION,
             format!("Bearer {runner_token}"),
         )
-        .body(Body::empty())
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"protocol_version":2}"#))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -298,7 +299,8 @@ async fn test_runner_claim_and_execute() {
             http::header::AUTHORIZATION,
             format!("Bearer {runner_token}"),
         )
-        .body(Body::empty())
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"protocol_version":2}"#))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -391,7 +393,8 @@ async fn test_no_double_claim() {
             http::header::AUTHORIZATION,
             format!("Bearer {runner1_token}"),
         )
-        .body(Body::empty())
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"protocol_version":2}"#))
         .unwrap();
 
     let resp1 = app.clone().oneshot(req1).await.unwrap();
@@ -406,7 +409,8 @@ async fn test_no_double_claim() {
             http::header::AUTHORIZATION,
             format!("Bearer {runner2_token}"),
         )
-        .body(Body::empty())
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"protocol_version":2}"#))
         .unwrap();
 
     let resp2 = app.clone().oneshot(req2).await.unwrap();
@@ -421,6 +425,30 @@ async fn test_no_double_claim() {
         got_job_1 ^ got_job_2,
         "exactly one runner should get the job: runner1={got_job_1}, runner2={got_job_2}"
     );
+}
+
+#[tokio::test]
+async fn test_incompatible_runner_cannot_claim() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session_token = create_session_token(&pool, &user_id).await;
+    let (runner_id, runner_token) = register_runner(&app, &session_token, "old-runner").await;
+
+    let request = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/claim"))
+        .method("POST")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"protocol_version":1}"#))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
