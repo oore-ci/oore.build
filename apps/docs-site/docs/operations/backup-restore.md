@@ -1,86 +1,41 @@
 ---
 status: implemented
-description: "Back up and restore Oore CI data including SQLite database and configuration."
+description: "Create, verify, and restore Oore CI backups."
 ---
 
 # Backup and Restore
 
-Oore CI stores all state in two files: the SQLite database and the encryption key. Regular backups of both are essential.
+`oore backup` packages a consistent SQLite snapshot, the matching encryption key, and a checksum manifest into one owner-readable archive. Both database and key are required to recover encrypted credentials.
 
-## What to back up
-
-| File | Default location | Contains |
-|---|---|---|
-| **Database** | `~/Library/Application Support/oore/oore.db` | All instance state, users, projects, builds, configs |
-| **Encryption key** | `~/Library/Application Support/oore/encryption.key` | AES-256-GCM key for encrypted secrets |
-
-::: danger
-Both files are required for a successful restore. The database contains encrypted secrets that can only be decrypted with the corresponding encryption key. If you lose the encryption key, encrypted data (OIDC client secrets, signing credentials) is unrecoverable.
-:::
-
-## Backup
-
-### Manual backup
+## Create and verify
 
 ```bash
-# Stop the daemon first for a consistent snapshot
-# Or use SQLite's backup API for online backups
-
-# Copy database
-cp ~/Library/Application\ Support/oore/oore.db /backups/oore-$(date +%Y%m%d).db
-
-# Copy encryption key
-cp ~/Library/Application\ Support/oore/encryption.key /backups/encryption-$(date +%Y%m%d).key
+oore backup create --output /Volumes/backups/oore-$(date +%F).tar.gz
+oore backup verify --input /Volumes/backups/oore-$(date +%F).tar.gz
 ```
 
-### SQLite online backup
+The snapshot uses SQLite's online backup operation, so creating it does not require stopping `oored`. The archive and copied key are written with restrictive owner-only permissions. Keep archives on separate encrypted storage.
 
-For zero-downtime backups, use SQLite's `.backup` command:
-
-```bash
-sqlite3 ~/Library/Application\ Support/oore/oore.db ".backup /backups/oore-$(date +%Y%m%d).db"
-```
-
-### Automated backups
-
-Schedule backups with cron or launchd:
+For a non-default database, use the same state-file path as the daemon:
 
 ```bash
-# crontab -e
-0 2 * * * sqlite3 ~/Library/Application\ Support/oore/oore.db ".backup /backups/oore-$(date +\%Y\%m\%d).db" && cp ~/Library/Application\ Support/oore/encryption.key /backups/encryption-$(date +\%Y\%m\%d).key
+oore backup create --state-file "$HOME/Library/Application Support/oore-prod/oore.db" --output /Volumes/backups/oore-prod.tar.gz
 ```
 
 ## Restore
 
-### 1. Stop the daemon
+Stop the daemon first. Restore refuses to run while the default managed daemon is reachable, preventing a live process from writing over restored state.
 
 ```bash
-# Stop oored process
+launchctl bootout gui/$(id -u)/build.oore.oored
+oore backup restore --input /Volumes/backups/oore-2026-07-12.tar.gz
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/build.oore.oored.plist
 ```
 
-### 2. Restore files
+The command verifies the manifest, both SHA-256 checksums, key length, and SQLite integrity before replacing files. It swaps database and key atomically and restores the previous pair if replacement fails.
 
-```bash
-cp /backups/oore-20260210.db ~/Library/Application\ Support/oore/oore.db
-cp /backups/encryption-20260210.key ~/Library/Application\ Support/oore/encryption.key
-```
+## Storage guidance
 
-### 3. Start the daemon
-
-```bash
-oored run
-```
-
-### 4. Verify
-
-```bash
-curl http://127.0.0.1:8787/v1/public/setup-status
-curl http://127.0.0.1:8787/healthz
-```
-
-## Backup storage recommendations
-
-- Store backups on a separate volume or remote storage
-- Encrypt backups at rest (the encryption key file is especially sensitive)
-- Retain at least 7 daily backups
-- Test restores periodically
+- Keep at least one verified copy outside the daemon host.
+- Treat the archive as sensitive: it contains the encryption key.
+- Test `oore backup verify` after copying an archive and rehearse a restore before relying on it.

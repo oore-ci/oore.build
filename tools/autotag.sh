@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 CHANNEL="${AUTOTAG_CHANNEL:-}"
 BRANCH="${AUTOTAG_BRANCH:-$CHANNEL}"
+SHA="${AUTOTAG_SHA:-}"
 
 if [[ -z "$CHANNEL" ]]; then
   echo "AUTOTAG_CHANNEL is required (stable|alpha|beta)." >&2
@@ -98,7 +99,13 @@ fi
 maybe_configure_github_token_remote
 
 git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" "+refs/tags/*:refs/tags/*"
-git checkout -B "$BRANCH" "origin/$BRANCH"
+if [[ -n "$SHA" ]]; then
+  git merge-base --is-ancestor "$SHA" "origin/$BRANCH" \
+    || { echo "Validated commit $SHA is not on origin/$BRANCH" >&2; exit 1; }
+  git checkout --detach "$SHA"
+else
+  git checkout -B "$BRANCH" "origin/$BRANCH"
+fi
 
 cargo_ver="$(read_workspace_version)"
 if [[ -z "$cargo_ver" ]]; then

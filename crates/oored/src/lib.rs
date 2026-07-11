@@ -485,6 +485,31 @@ async fn healthz() -> Json<serde_json::Value> {
     Json(metadata)
 }
 
+/// Liveness is intentionally independent of SQLite so a process which can
+/// accept requests remains observable while a dependency is being repaired.
+async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
+    let db_ready = {
+        let store = state.store.lock().await;
+        sqlx::query("SELECT 1").execute(store.pool()).await.is_ok()
+    };
+    let encryption_ready = state.encryption_key.len() == 32;
+    let ready = db_ready && encryption_ready;
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(json!({
+            "ok": ready,
+            "database": db_ready,
+            // Migrations and the runtime key are completed before the router is built.
+            "migrations": db_ready,
+            "encryption": encryption_ready,
+        })),
+    )
+}
+
 async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {
     let store = state.store.lock().await;
     let sf = store.load().await.map_err(|e| {
@@ -2113,6 +2138,7 @@ async fn build_router_inner(
 
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .route("/v1/public/setup-status", get(setup_status))
         .route(
             "/v1/setup/bootstrap-token/verify",

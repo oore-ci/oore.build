@@ -110,6 +110,8 @@ The operator CLI handles setup, authentication, and administration.
 | [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values | Implemented |
 | [`oore config get <key>`](/reference/cli/oore-config) | Get CLI configuration values | Implemented |
 | [`oore doctor`](/reference/cli/oore-doctor) | Run environment/signing diagnostics | Implemented |
+| `oore backup create|verify|restore` | Create and recover verified SQLite/key backups | Implemented |
+| `oore update` | Safely install a verified release update | Implemented |
 
 ### Global behavior
 

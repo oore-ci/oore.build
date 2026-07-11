@@ -565,6 +565,29 @@ async fn test_healthz() {
     assert_eq!(body["ok"], true);
 }
 
+#[tokio::test]
+async fn test_readyz_reports_runtime_dependencies() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["database"], true);
+    assert_eq!(body["migrations"], true);
+    assert_eq!(body["encryption"], true);
+}
+
 // ── Bootstrap token edge cases ──────────────────────────────────
 
 #[tokio::test]

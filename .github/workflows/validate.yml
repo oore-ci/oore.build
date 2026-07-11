@@ -2,9 +2,9 @@ name: Validate
 
 on:
   pull_request:
-    branches: [master]
+    branches: [master, alpha, beta, stable]
   push:
-    branches: [master]
+    branches: [master, alpha, beta, stable]
   workflow_dispatch:
 
 concurrency:
@@ -32,11 +32,18 @@ jobs:
             docs:
               - 'apps/docs-site/**'
               - 'docs/**'
+              - 'scripts/**'
               - 'tools/docs-check.sh'
+              - 'tools/release-smoke.sh'
+              - 'tools/autotag.sh'
+              - '.github/workflows/**'
             rust:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'tools/release-smoke.sh'
+              - 'tools/autotag.sh'
+              - '.github/workflows/**'
 
   frontend:
     name: Frontend

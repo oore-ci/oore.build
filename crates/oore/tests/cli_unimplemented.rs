@@ -42,6 +42,55 @@ fn cleanup_config_path(path: &Path) {
     }
 }
 
+fn temp_dir(name: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("oore-cli-test-{name}-{nanos}"));
+    fs::create_dir_all(&path).expect("create test directory");
+    path
+}
+
+#[test]
+fn backup_create_and_verify_round_trip() {
+    let root = temp_dir("backup");
+    let data_dir = root.join("data");
+    let database = root.join("oore.db");
+    let backup = root.join("backup.tar.gz");
+    fs::create_dir_all(&data_dir).expect("create data directory");
+    fs::write(data_dir.join("encryption.key"), [7u8; 32]).expect("write encryption key");
+
+    let database_arg = database.to_string_lossy().into_owned();
+    let data_dir_arg = data_dir.to_string_lossy().into_owned();
+    let backup_arg = backup.to_string_lossy().into_owned();
+    let setup = run_with_env(
+        &["setup", "token", "--state-file", database_arg.as_str()],
+        &[("OORE_DATA_DIR", data_dir_arg.as_str())],
+    );
+    assert_eq!(setup.status.code(), Some(0));
+
+    let create = run_with_env(
+        &[
+            "backup",
+            "create",
+            "--state-file",
+            database_arg.as_str(),
+            "--output",
+            backup_arg.as_str(),
+        ],
+        &[("OORE_DATA_DIR", data_dir_arg.as_str())],
+    );
+    assert_eq!(create.status.code(), Some(0));
+    assert!(backup.is_file());
+
+    let verify = run(&["backup", "verify", "--input", backup_arg.as_str()]);
+    assert_eq!(verify.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&verify.stdout).contains("Backup verified"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn http_reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
