@@ -9,8 +9,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  deploy:
+    name: Deploy Pages
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and deploy Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          pages_branch="stable"
+          if echo "$tag" | grep -q -- '-alpha\.'; then
+            pages_branch="alpha"
+          elif echo "$tag" | grep -q -- '-beta\.'; then
+            pages_branch="beta"
+          fi
+
+          export PAGES_PROJECT_SITE="oore"
+          export PAGES_PROJECT_DOCS="oore-docs"
+          export PAGES_PROJECT_WEB="oore-ci"
+          export PAGES_PROJECT_DEMO="oore-demo"
+          export PAGES_BRANCH="$pages_branch"
+          PAGES_COMMIT_HASH="$(git rev-list -n 1 "$tag")"
+          export PAGES_COMMIT_HASH
+          export PAGES_COMMIT_MESSAGE="$tag"
+          export WRANGLER="./node_modules/.bin/wrangler"
+
+          make build-web build-site build-docs
+
+          status=0
+          make deploy-site-only & pid_site=$!
+          make deploy-docs-only & pid_docs=$!
+          make deploy-web-only & pid_web=$!
+          wait "$pid_site" || status=$?
+          wait "$pid_docs" || status=$?
+          wait "$pid_web" || status=$?
+          [ "$status" -eq 0 ] || exit "$status"
+
+          make build-demo
+          make deploy-demo-only
+
   release:
-    name: Build, deploy & publish
+    name: Build & publish assets
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     permissions:
       contents: write
@@ -24,6 +77,11 @@ jobs:
 
       - name: Setup Rust targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -155,63 +213,6 @@ jobs:
             fi
             echo
           } > "$out"
-
-      - name: Deploy to Cloudflare Pages
-        env:
-          CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-
-          channel="prod"
-          pages_branch="stable"
-          if echo "$tag" | grep -q -- '-alpha\.'; then
-            channel="alpha"
-            pages_branch="alpha"
-          elif echo "$tag" | grep -q -- '-beta\.'; then
-            channel="beta"
-            pages_branch="beta"
-          fi
-
-          export PAGES_PROJECT_SITE="oore"
-          export PAGES_PROJECT_DOCS="oore-docs"
-          export PAGES_PROJECT_WEB="oore-ci"
-          export PAGES_PROJECT_DEMO="oore-demo"
-          export PAGES_BRANCH="$pages_branch"
-          PAGES_COMMIT_HASH="$(git rev-list -n 1 "$tag")"
-          export PAGES_COMMIT_HASH
-          export PAGES_COMMIT_MESSAGE="$tag"
-          export WRANGLER="./node_modules/.bin/wrangler"
-
-          echo "Deploy channel=$channel branch=$PAGES_BRANCH"
-
-          make build-site build-docs
-
-          # Deploy site, docs, web in parallel
-          status=0
-
-          make deploy-site-only &
-          pid_site=$!
-
-          make deploy-docs-only &
-          pid_docs=$!
-
-          make deploy-web-only &
-          pid_web=$!
-
-          wait "$pid_site" || status=$?
-          wait "$pid_docs" || status=$?
-          wait "$pid_web" || status=$?
-
-          if [ "$status" -ne 0 ]; then
-            echo "One or more Pages deploy commands failed." >&2
-            exit "$status"
-          fi
-
-          # Demo build intentionally overwrites apps/web/dist
-          make build-demo
-          make deploy-demo-only
 
       - name: Create GitHub Release
         env:
