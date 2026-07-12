@@ -48,6 +48,7 @@ function printHelp() {
 
 Usage:
   oore-web [serve] [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
+  oore-web status [--url <frontend-url>] [--json]
   oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
   oore-web version
 
@@ -68,6 +69,19 @@ Options:
   --upstream-trusted-proxy-secret-header
                   Header carrying the upstream proof (default: ${DEFAULT_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER})
   --help          Show this help text
+`)
+}
+
+function printStatusHelp() {
+  console.log(`oore-web status - check frontend and backend readiness
+
+Usage:
+  oore-web status [--url <frontend-url>] [--json]
+
+Options:
+  --url    Frontend URL (default: derived from ${DEFAULT_LISTEN})
+  --json   Print machine-readable output
+  --help   Show this help text
 `)
 }
 
@@ -142,6 +156,46 @@ function parseListen(raw) {
   }
 
   return { hostname, port }
+}
+
+function defaultStatusUrl() {
+  const { hostname, port } = parseListen(DEFAULT_LISTEN)
+  const host = hostname.includes(':') ? `[${hostname}]` : hostname
+  return `http://${host}:${port}`
+}
+
+function parseStatusArgs(argv) {
+  const config = { url: defaultStatusUrl(), json: false }
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === '--help' || arg === '-h') {
+      printStatusHelp()
+      process.exit(0)
+    }
+    if (arg === '--url') {
+      const value = argv[i + 1]
+      if (!value) throw new Error('--url requires a value')
+      config.url = value
+      i += 1
+      continue
+    }
+    if (arg === '--json') {
+      config.json = true
+      continue
+    }
+    throw new Error(`unknown status argument: ${arg}`)
+  }
+
+  const url = new URL(config.url)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('--url must use http or https')
+  }
+  if (url.username || url.password) {
+    throw new Error('--url must not include credentials')
+  }
+  config.url = url.origin
+  return config
 }
 
 function parseServeArgs(argv) {
@@ -582,6 +636,156 @@ function printVersion() {
   console.log(version || 'unknown')
 }
 
+async function statusProbe(baseUrl, pathname) {
+  let response
+  try {
+    response = await fetch(new URL(pathname, baseUrl), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    return { ok: false, error: 'connection_failed' }
+  }
+
+  let data
+  try {
+    data = await response.json()
+  } catch {
+    return { ok: false, status: response.status, error: 'invalid_json' }
+  }
+
+  return {
+    ok: response.ok && data?.ok === true,
+    status: response.status,
+    proxied: response.headers.get('x-oore-web-proxy') === '1',
+    data,
+  }
+}
+
+function statusValue(value) {
+  if (typeof value !== 'string') return 'unknown'
+  return value.replace(/[^\x20-\x7e]/g, '').slice(0, 128) || 'unknown'
+}
+
+function probeFailure(probe) {
+  if (probe.error === 'connection_failed') return 'connection failed'
+  if (probe.error === 'invalid_json') return 'invalid JSON response'
+  if (probe.status) return `HTTP ${probe.status}`
+  return 'unhealthy response'
+}
+
+async function getStatus(baseUrl) {
+  const frontendProbe = await statusProbe(baseUrl, '/__oore_web_healthz')
+  if (!frontendProbe.ok) {
+    return {
+      ok: false,
+      url: baseUrl,
+      frontend: {
+        ok: false,
+        version: 'unknown',
+        error: `Frontend check failed (${probeFailure(frontendProbe)}). Check that oore-web is running and --url is correct.`,
+      },
+      backend: {
+        ok: false,
+        version: 'unknown',
+        skipped: true,
+        error: 'Backend check skipped because the frontend is unavailable.',
+      },
+    }
+  }
+
+  const [backendHealth, backendReady] = await Promise.all([
+    statusProbe(baseUrl, '/healthz'),
+    statusProbe(baseUrl, '/readyz'),
+  ])
+  const checks = {
+    database:
+      typeof backendReady.data?.database === 'boolean'
+        ? backendReady.data.database
+        : null,
+    migrations:
+      typeof backendReady.data?.migrations === 'boolean'
+        ? backendReady.data.migrations
+        : null,
+    encryption:
+      typeof backendReady.data?.encryption === 'boolean'
+        ? backendReady.data.encryption
+        : null,
+  }
+
+  let backendError
+  if (!backendHealth.ok) {
+    backendError = `Backend liveness check failed (${probeFailure(backendHealth)}). Check OORE_WEB_BACKEND_URL and that oored is running.`
+  } else if (!backendHealth.proxied) {
+    backendError =
+      'Backend response did not pass through oore-web. Check that --url points to oore-web.'
+  } else if (!backendReady.ok) {
+    if (backendReady.proxied) {
+      const failed = Object.entries(checks)
+        .filter(([, ok]) => ok === false)
+        .map(([name]) => name)
+        .join(', ')
+      backendError = `Backend is not ready${failed ? ` (${failed} failed)` : ''}. Check oored logs and dependencies.`
+    } else {
+      backendError = `Backend readiness check failed (${probeFailure(backendReady)}). Check OORE_WEB_BACKEND_URL and that oored is running.`
+    }
+  } else if (!backendReady.proxied) {
+    backendError =
+      'Backend response did not pass through oore-web. Check that --url points to oore-web.'
+  }
+
+  const backendOk = !backendError
+  return {
+    ok: backendOk,
+    url: baseUrl,
+    frontend: {
+      ok: true,
+      version: statusValue(frontendProbe.data?.version),
+      channel: statusValue(frontendProbe.data?.channel),
+    },
+    backend: {
+      ok: backendOk,
+      version: statusValue(backendHealth.data?.version),
+      channel: statusValue(backendHealth.data?.channel),
+      ready: backendReady.ok,
+      checks,
+      ...(backendError ? { error: backendError } : {}),
+    },
+  }
+}
+
+function printStatus(report, json) {
+  if (json) {
+    console.log(JSON.stringify(report, null, 2))
+    return
+  }
+
+  console.log(`URL:      ${report.url}`)
+  console.log(
+    `Frontend: ${report.frontend.ok ? 'ok' : 'failed'} (version ${report.frontend.version}, channel ${report.frontend.channel || 'unknown'})`,
+  )
+  if (report.frontend.error) console.log(`          ${report.frontend.error}`)
+
+  if (report.backend.skipped) {
+    console.log(`Backend:  skipped - ${report.backend.error}`)
+    return
+  }
+
+  console.log(
+    `Backend:  ${report.backend.ok ? 'ok' : 'failed'} (version ${report.backend.version}, channel ${report.backend.channel})`,
+  )
+  if (report.backend.error) console.log(`          ${report.backend.error}`)
+  console.log(
+    `Ready:    database=${report.backend.checks.database ?? 'unknown'} migrations=${report.backend.checks.migrations ?? 'unknown'} encryption=${report.backend.checks.encryption ?? 'unknown'}`,
+  )
+}
+
+async function runStatus(config) {
+  const report = await getStatus(config.url)
+  printStatus(report, config.json)
+  if (!report.ok) process.exitCode = 1
+}
+
 async function runUpdate(config) {
   const installRoot = resolveInstallRoot()
   const currentRaw = readInstalledVersion(installRoot) || '0.0.0'
@@ -681,9 +885,12 @@ async function runUpdate(config) {
   )
 }
 
-function isApiPath(pathname) {
+export function isApiPath(pathname) {
   return (
-    pathname === '/healthz' || pathname === '/v1' || pathname.startsWith('/v1/')
+    pathname === '/healthz' ||
+    pathname === '/readyz' ||
+    pathname === '/v1' ||
+    pathname.startsWith('/v1/')
   )
 }
 
@@ -706,7 +913,7 @@ function headersToStripForTrustedProxy(config) {
   ])
 }
 
-function applyTrustedProxyHeaders(request, headers, config) {
+export function applyTrustedProxyHeaders(request, headers, config) {
   const trustedProxySecret = config.trustedProxySecret.trim()
   const upstreamSecret = config.upstreamTrustedProxySecret.trim()
   const identityHeader = config.trustedProxyUserEmailHeader
@@ -802,6 +1009,20 @@ async function main() {
   }
   if (parsedCommand.command === 'version') {
     printVersion()
+    return
+  }
+  if (parsedCommand.command === 'status') {
+    let statusConfig
+    try {
+      statusConfig = parseStatusArgs(parsedCommand.args)
+    } catch (error) {
+      console.error(
+        `[oore-web] ${error instanceof Error ? error.message : 'failed to parse status args'}`,
+      )
+      printStatusHelp()
+      process.exit(2)
+    }
+    await runStatus(statusConfig)
     return
   }
   if (parsedCommand.command === 'update') {
@@ -923,7 +1144,11 @@ async function main() {
   process.on('SIGTERM', shutdown)
 }
 
-main().catch((error) => {
-  console.error(`[oore-web] ${error instanceof Error ? error.message : error}`)
-  process.exit(1)
-})
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(
+      `[oore-web] ${error instanceof Error ? error.message : error}`,
+    )
+    process.exit(1)
+  })
+}

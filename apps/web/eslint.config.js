@@ -10,6 +10,7 @@ export default [
       'prettier.config.js',
       'public/mockServiceWorker.js',
       'tools/oore-web.js',
+      'tools/oore-web.test.js',
     ],
   },
   {

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -3019,61 +3020,124 @@ fn parse_checksum(text: &str, filename: &str) -> anyhow::Result<String> {
     anyhow::bail!("checksum not found for {filename} in checksums.txt")
 }
 
-/// Check if the daemon is reachable on 127.0.0.1:8787.
-async fn check_daemon_running(client: &reqwest::Client) -> bool {
-    client
-        .get("http://127.0.0.1:8787/healthz")
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
+fn endpoint_url(base_url: &str, path: &str) -> String {
+    format!("{}{}", base_url.trim_end_matches('/'), path)
+}
+
+/// Check whether the daemon is reachable at its configured address.
+async fn check_daemon_running(client: &reqwest::Client, daemon_url: &str) -> bool {
+    endpoint_is_healthy(client, &endpoint_url(daemon_url, "/healthz")).await
+}
+
+fn lsof_name_matches_socket(name: &str, listen: SocketAddr) -> bool {
+    let name = name.strip_prefix("TCP ").unwrap_or(name);
+    let name = name.strip_suffix(" (LISTEN)").unwrap_or(name);
+    if name == listen.to_string() {
+        return true;
+    }
+    listen.ip().is_unspecified() && name == format!("*:{}", listen.port())
+}
+
+fn oored_listener_pids(lsof_fields: &str, listen: SocketAddr) -> Vec<i32> {
+    let mut pid = None;
+    let mut command_is_oored = false;
+    let mut matches = Vec::new();
+
+    for field in lsof_fields.lines() {
+        match field.as_bytes().first() {
+            Some(b'p') => {
+                pid = field[1..].parse().ok();
+                command_is_oored = false;
+            }
+            Some(b'c') => command_is_oored = field.get(1..) == Some("oored"),
+            Some(b'n') if command_is_oored && lsof_name_matches_socket(&field[1..], listen) => {
+                if let Some(pid) = pid
+                    && !matches.contains(&pid)
+                {
+                    matches.push(pid);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    matches
+}
+
+fn process_is_oored(pid: i32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            let command = String::from_utf8(output.stdout).ok()?;
+            Path::new(command.trim())
+                .file_name()
+                .map(|name| name == "oored")
+        })
         .unwrap_or(false)
 }
 
+fn terminate_oored(pid: i32) -> bool {
+    if !process_is_oored(pid) {
+        return false;
+    }
+    unsafe { libc::kill(pid, 0) == 0 && libc::kill(pid, libc::SIGTERM) == 0 }
+}
+
 /// Stop the daemon using PID file first, then lsof fallback (mirrors uninstall.sh).
-fn stop_daemon(install_root: &Path) -> anyhow::Result<()> {
+fn stop_daemon(install_root: &Path, listen: &str) -> anyhow::Result<()> {
     let pid_file = install_root.join("oored.pid");
+    let mut stopped = false;
 
     // Try PID file first
     if pid_file.exists() {
         if let Ok(contents) = fs::read_to_string(&pid_file)
             && let Ok(pid) = contents.trim().parse::<i32>()
+            && terminate_oored(pid)
         {
-            // Check if process exists (kill -0)
-            unsafe {
-                if libc::kill(pid, 0) == 0 {
-                    libc::kill(pid, libc::SIGTERM);
-                    std::thread::sleep(Duration::from_secs(1));
-                }
-            }
+            stopped = true;
         }
         let _ = fs::remove_file(&pid_file);
     }
 
-    // lsof fallback: kill anything still listening on port 8787
+    let listen = listen
+        .parse::<SocketAddr>()
+        .with_context(|| format!("invalid daemon listen address: {listen}"))?;
+
+    // Ask by port, then filter the structured output by exact address and command.
     if let Ok(output) = std::process::Command::new("lsof")
-        .args(["-nP", "-iTCP:8787", "-sTCP:LISTEN", "-t"])
+        .args([
+            "-nP",
+            "-a",
+            &format!("-iTCP:{}", listen.port()),
+            "-sTCP:LISTEN",
+            "-Fpcn",
+        ])
         .output()
         && output.status.success()
     {
-        let pids = String::from_utf8_lossy(&output.stdout);
-        for pid_str in pids.split_whitespace() {
-            if let Ok(pid) = pid_str.parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, libc::SIGTERM);
-                }
+        for pid in oored_listener_pids(&String::from_utf8_lossy(&output.stdout), listen) {
+            if terminate_oored(pid) {
+                stopped = true;
             }
         }
-        if !pids.trim().is_empty() {
-            std::thread::sleep(Duration::from_secs(1));
-        }
+    }
+    if stopped {
+        std::thread::sleep(Duration::from_secs(1));
     }
 
     Ok(())
 }
 
 /// Restart the daemon and verify it becomes healthy.
-async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow::Result<()> {
+async fn restart_daemon(
+    install_root: &Path,
+    listen: &str,
+    daemon_url: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
     let bin_dir = install_root.join("bin");
     let oored_bin = bin_dir.join("oored");
     let log_path = install_root.join("logs").join("oored.log");
@@ -3091,7 +3155,7 @@ async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow
         .with_context(|| format!("failed to open log file: {}", log_path.display()))?;
 
     let child = std::process::Command::new(&oored_bin)
-        .args(["run", "--listen", "127.0.0.1:8787"])
+        .args(["run", "--listen", listen])
         .stdout(log_file.try_clone()?)
         .stderr(log_file)
         .stdin(std::process::Stdio::null())
@@ -3104,7 +3168,7 @@ async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow
     // Poll healthz up to 15 seconds
     for _ in 0..15 {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if check_daemon_running(client).await {
+        if check_daemon_running(client, daemon_url).await {
             return Ok(());
         }
     }
@@ -3360,7 +3424,8 @@ fn database_is_open(path: &Path) -> bool {
 fn backup_restore(args: BackupRestoreArgs) -> anyhow::Result<()> {
     let client = github_client()?;
     let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
-    if runtime.block_on(check_daemon_running(&client)) {
+    let daemon_url = resolve_daemon_url(None)?;
+    if runtime.block_on(check_daemon_running(&client, &daemon_url)) {
         anyhow::bail!(
             "refusing restore while oored is running; stop the managed service or daemon first"
         );
@@ -3433,6 +3498,115 @@ fn launch_agent_plist(label: &str) -> anyhow::Result<PathBuf> {
         .context("could not determine home directory")?
         .join("Library/LaunchAgents")
         .join(format!("{label}.plist")))
+}
+
+fn url_from_socket_address(address: SocketAddr) -> String {
+    let ip = match address.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    format!("http://{}", SocketAddr::new(ip, address.port()))
+}
+
+fn url_from_listen_address(listen: &str) -> anyhow::Result<String> {
+    let listen = listen.trim();
+    if listen.is_empty() {
+        anyhow::bail!("service listen address is empty");
+    }
+    if let Ok(address) = listen.parse::<SocketAddr>() {
+        return Ok(url_from_socket_address(address));
+    }
+
+    let url = url::Url::parse(listen)
+        .or_else(|_| url::Url::parse(&format!("http://{listen}")))
+        .with_context(|| format!("invalid service listen address: {listen}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("unsupported service URL scheme: {}", url.scheme());
+    }
+    let host = url
+        .host_str()
+        .context("service listen URL is missing a host")?;
+    let port = url.port().unwrap_or(80);
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(url_from_socket_address(SocketAddr::new(ip, port)));
+    }
+    Ok(format!("http://{host}:{port}"))
+}
+
+fn daemon_url_from_listen_address(listen: &str) -> anyhow::Result<String> {
+    let address = listen
+        .trim()
+        .parse::<SocketAddr>()
+        .with_context(|| format!("invalid daemon listen address: {listen}"))?;
+    Ok(url_from_socket_address(address))
+}
+
+fn daemon_listen_address_from_url(daemon_url: &str) -> anyhow::Result<String> {
+    let url =
+        url::Url::parse(daemon_url).with_context(|| format!("invalid daemon URL: {daemon_url}"))?;
+    if url.scheme() != "http" {
+        anyhow::bail!("unmanaged daemon URL must use http: {daemon_url}");
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        anyhow::bail!(
+            "unmanaged daemon URL must not include a path, query, or fragment: {daemon_url}"
+        );
+    }
+    let host = url
+        .host_str()
+        .context("unmanaged daemon URL is missing a host")?;
+    let ip = if host.eq_ignore_ascii_case("localhost") {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    } else {
+        host.parse::<IpAddr>()
+            .with_context(|| format!("unmanaged daemon URL must use an IP address: {daemon_url}"))?
+    };
+    let port = url
+        .port_or_known_default()
+        .context("unmanaged daemon URL is missing a port")?;
+    Ok(SocketAddr::new(ip, port).to_string())
+}
+
+fn plist_program_arguments(plist: &Path) -> anyhow::Result<Vec<String>> {
+    let output = std::process::Command::new("plutil")
+        .args(["-extract", "ProgramArguments", "json", "-o", "-"])
+        .arg(plist)
+        .output()
+        .with_context(|| format!("failed to read launchd plist {}", plist.display()))?;
+    if !output.status.success() {
+        anyhow::bail!("failed to read ProgramArguments from {}", plist.display());
+    }
+    serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("invalid ProgramArguments in {}", plist.display()))
+}
+
+fn listen_address_from_program_arguments(program_args: &[String]) -> anyhow::Result<String> {
+    for (index, arg) in program_args.iter().enumerate() {
+        if arg == "--listen" {
+            return program_args
+                .get(index + 1)
+                .filter(|value| !value.trim().is_empty())
+                .cloned()
+                .context("--listen has no value");
+        }
+        if let Some(value) = arg.strip_prefix("--listen=")
+            && !value.trim().is_empty()
+        {
+            return Ok(value.to_string());
+        }
+    }
+    anyhow::bail!("service ProgramArguments do not include --listen")
+}
+
+fn managed_service_listen_address(label: &str) -> anyhow::Result<String> {
+    let plist = launch_agent_plist(label)?;
+    if !plist.is_file() {
+        anyhow::bail!("managed service plist is missing: {}", plist.display());
+    }
+    let program_args = plist_program_arguments(&plist)?;
+    listen_address_from_program_arguments(&program_args)
+        .with_context(|| format!("failed to find listen address in {}", plist.display()))
 }
 
 fn launchd_service_loaded(label: &str) -> bool {
@@ -3786,16 +3960,43 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     })?;
     println!("Created pre-update backup: {}", backup_path.display());
 
-    // 9. Preserve running service state. launchd keeps the old executable alive
-    // until it is explicitly reloaded after replacement.
-    let daemon_was_running = check_daemon_running(&client).await;
+    // 9. Preserve running service state. The managed service plist is the source
+    // of truth for its address; unmanaged daemons use the persisted CLI URL.
     let daemon_is_managed = launchd_service_loaded(DAEMON_SERVICE_LABEL);
-    let web_url = "http://127.0.0.1:4173/__oore_web_healthz";
-    let web_was_running = endpoint_is_healthy(&client, web_url).await;
+    let managed_daemon_listen = daemon_is_managed
+        .then(|| managed_service_listen_address(DAEMON_SERVICE_LABEL))
+        .transpose()?;
+    let daemon_url = match managed_daemon_listen.as_deref() {
+        Some(listen) => daemon_url_from_listen_address(listen)?,
+        None => resolve_daemon_url(None)?,
+    };
+    let daemon_was_running = check_daemon_running(&client, &daemon_url).await;
+    let unmanaged_daemon_listen = if daemon_was_running && !daemon_is_managed {
+        Some(daemon_listen_address_from_url(&daemon_url)?)
+    } else {
+        None
+    };
+    let daemon_should_be_running = daemon_is_managed || daemon_was_running;
+    let daemon_ready_url = endpoint_url(&daemon_url, "/readyz");
+
     let web_is_managed = launchd_service_loaded(WEB_SERVICE_LABEL);
-    if daemon_was_running && !daemon_is_managed {
+    let web_ready_url = web_is_managed
+        .then(|| -> anyhow::Result<String> {
+            let listen = managed_service_listen_address(WEB_SERVICE_LABEL)?;
+            Ok(endpoint_url(
+                &url_from_listen_address(&listen)?,
+                "/__oore_web_healthz",
+            ))
+        })
+        .transpose()?;
+    let web_was_running = match web_ready_url.as_deref() {
+        Some(url) => endpoint_is_healthy(&client, url).await,
+        None => false,
+    };
+
+    if let Some(listen) = &unmanaged_daemon_listen {
         println!("oored daemon is running. Stopping before update...");
-        stop_daemon(&install_root)?;
+        stop_daemon(&install_root, listen)?;
     }
 
     // 10. Atomically install the staged release and only retain it if every
@@ -3804,19 +4005,19 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         install_staged_release(&staged_release, &install_root, channel, &repo)?;
         if daemon_is_managed {
             restart_launchd_service(DAEMON_SERVICE_LABEL)?;
-        } else if daemon_was_running {
-            restart_daemon(&install_root, &client).await?;
+        } else if let Some(listen) = &unmanaged_daemon_listen {
+            restart_daemon(&install_root, listen, &daemon_url, &client).await?;
         }
-        if daemon_was_running {
-            wait_for_endpoint(&client, "http://127.0.0.1:8787/readyz", "oored").await?;
+        if daemon_should_be_running {
+            wait_for_endpoint(&client, &daemon_ready_url, "oored").await?;
         }
         if web_is_managed {
             restart_launchd_service(WEB_SERVICE_LABEL)?;
         } else if web_was_running {
             anyhow::bail!("refusing to replace an unmanaged local web process; install it as the launchd service first");
         }
-        if web_was_running {
-            wait_for_endpoint(&client, web_url, "oore-web").await?;
+        if let Some(url) = &web_ready_url {
+            wait_for_endpoint(&client, url, "oore-web").await?;
         }
         Ok::<(), anyhow::Error>(())
     }
@@ -3827,11 +4028,17 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             restore_release_snapshot(&install_root, &previous_release)?;
             if daemon_is_managed {
                 restart_launchd_service(DAEMON_SERVICE_LABEL)?;
-            } else if daemon_was_running {
-                restart_daemon(&install_root, &client).await?;
+            } else if let Some(listen) = &unmanaged_daemon_listen {
+                restart_daemon(&install_root, listen, &daemon_url, &client).await?;
             }
-            if web_is_managed && web_was_running {
+            if daemon_should_be_running {
+                wait_for_endpoint(&client, &daemon_ready_url, "rollback oored").await?;
+            }
+            if web_is_managed {
                 restart_launchd_service(WEB_SERVICE_LABEL)?;
+            }
+            if let Some(url) = &web_ready_url {
+                wait_for_endpoint(&client, url, "rollback oore-web").await?;
             }
             Ok::<(), anyhow::Error>(())
         }
@@ -3991,6 +4198,62 @@ mod tests {
         assert_eq!(
             fs::read_to_string(install.join("web-dist/index.html")).unwrap(),
             "old-web"
+        );
+    }
+
+    #[test]
+    fn managed_daemon_uses_the_plist_listen_address() {
+        let program_args = vec![
+            "/Users/me/.oore/bin/oored".to_string(),
+            "run".to_string(),
+            "--listen".to_string(),
+            "10.23.0.8:9876".to_string(),
+        ];
+
+        let listen = listen_address_from_program_arguments(&program_args).unwrap();
+        assert_eq!(listen, "10.23.0.8:9876");
+        assert_eq!(
+            daemon_url_from_listen_address(&listen).unwrap(),
+            "http://10.23.0.8:9876"
+        );
+    }
+
+    #[test]
+    fn readiness_url_uses_a_reachable_wildcard_bind_address() {
+        assert_eq!(
+            url_from_listen_address("0.0.0.0:9876").unwrap(),
+            "http://127.0.0.1:9876"
+        );
+        assert_eq!(
+            url_from_listen_address("http://web.internal:4174/ignored").unwrap(),
+            "http://web.internal:4174"
+        );
+        assert_eq!(
+            daemon_listen_address_from_url("http://10.23.0.8:9876").unwrap(),
+            "10.23.0.8:9876"
+        );
+    }
+
+    #[test]
+    fn lsof_fallback_only_selects_oored_on_the_exact_socket() {
+        let fields = "\
+p101\n\
+coored\n\
+n10.23.0.9:9876\n\
+p102\n\
+cother\n\
+n10.23.0.8:9876\n\
+p103\n\
+coored\n\
+n10.23.0.8:9876\n";
+
+        assert_eq!(
+            oored_listener_pids(fields, "10.23.0.8:9876".parse().unwrap()),
+            vec![103]
+        );
+        assert_eq!(
+            oored_listener_pids("p104\ncoored\nn*:9876\n", "0.0.0.0:9876".parse().unwrap()),
+            vec![104]
         );
     }
 }

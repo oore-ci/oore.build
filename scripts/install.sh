@@ -351,6 +351,30 @@ ensure_frontend_secret_files() {
     OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$(upstream_trusted_proxy_secret_file_path)"
     write_secret_file "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET"
   fi
+
+  if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+    [[ -s "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
+      || die "Backend Trusted Proxy proof file is missing or empty: $OORE_TRUSTED_PROXY_SHARED_SECRET_FILE"
+    [[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
+      || die 'Trusted Proxy frontend installs require a separate auth-proxy proof. Set OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET or OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE.'
+    [[ -s "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
+      || die "Auth-proxy proof file is missing or empty: $OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
+    local backend_proof upstream_proof
+    backend_proof="$(< "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE")"
+    upstream_proof="$(< "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE")"
+    backend_proof="${backend_proof#"${backend_proof%%[![:space:]]*}"}"
+    backend_proof="${backend_proof%"${backend_proof##*[![:space:]]}"}"
+    upstream_proof="${upstream_proof#"${upstream_proof%%[![:space:]]*}"}"
+    upstream_proof="${upstream_proof%"${upstream_proof##*[![:space:]]}"}"
+    [[ -n "$backend_proof" ]] || die 'Backend Trusted Proxy proof file is empty after trimming whitespace.'
+    [[ -n "$upstream_proof" ]] || die 'Auth-proxy proof file is empty after trimming whitespace.'
+    if [[ "$backend_proof" == "$upstream_proof" ]]; then
+      die 'Backend and auth-proxy proof files must contain different values.'
+    fi
+    unset backend_proof upstream_proof
+  elif [[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+    die 'Auth-proxy proof requires a backend Trusted Proxy proof. Set OORE_TRUSTED_PROXY_SHARED_SECRET or OORE_TRUSTED_PROXY_SHARED_SECRET_FILE.'
+  fi
 }
 
 launchd_env_entry() {
@@ -958,7 +982,7 @@ configure_frontend_install() {
           prompt_text \
             "Auth proxy -> oore-web proof secret. Configure your auth proxy to send this in ${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER} with the user email header." \
             "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" \
-            "optional"
+            "required"
         )"
       fi
     fi
@@ -1600,11 +1624,34 @@ is_local_web_healthy() {
   curl_quick "${LOCAL_WEB_URL}/__oore_web_healthz" >/dev/null 2>&1
 }
 
+preflight_local_web_listen() {
+  # A healthy existing oore-web instance already owns this address.
+  is_local_web_healthy && return 0
+
+  local port="${OORE_LOCAL_WEB_LISTEN##*:}"
+  [[ "$port" =~ ^[0-9]+$ ]] || die "OORE_LOCAL_WEB_LISTEN must include a numeric port (got: $OORE_LOCAL_WEB_LISTEN)"
+
+  local listeners=""
+  if have_cmd lsof; then
+    listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  elif have_cmd ss; then
+    if ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .; then
+      listeners=1
+    fi
+  else
+    die "Cannot check whether $OORE_LOCAL_WEB_LISTEN is available: install lsof or ss."
+  fi
+
+  [[ -z "$listeners" ]] || die "Cannot start oore-web: $OORE_LOCAL_WEB_LISTEN is already in use. Set OORE_LOCAL_WEB_LISTEN to an available host:port."
+}
+
 start_local_web() {
   if ! has_local_web_bundle; then
     log "Bundled local web UI not found in this release."
     return 1
   fi
+
+  preflight_local_web_listen
 
   mkdir -p "$LOG_DIR"
 
@@ -1653,6 +1700,8 @@ install_local_web_launch_agent() {
     log "Cannot install launch agent: bundled local web UI is unavailable."
     return 1
   fi
+
+  preflight_local_web_listen
 
   mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
   cat > "$WEB_LAUNCH_AGENT_PLIST" <<EOF
@@ -1713,6 +1762,9 @@ install_local_web_systemd_user_service() {
     log "Cannot install systemd user service: bundled web UI is unavailable."
     return 1
   fi
+
+  preflight_local_web_listen
+
   if ! have_cmd systemctl; then
     log "Cannot install systemd user service: systemctl is unavailable."
     return 1
@@ -2000,6 +2052,7 @@ print_next_steps() {
     printf 'Backend proxy target: %s\n\n' "$WEB_BACKEND_URL"
     if "$local_web_running"; then
       printf 'Frontend status: running\n'
+      printf 'Verify frontend + backend: oore-web status --url %s\n' "$LOCAL_WEB_URL"
     else
       printf 'Start the frontend:\n'
       printf '  oore-web --listen %s --backend-url %s\n' "$OORE_LOCAL_WEB_LISTEN" "$WEB_BACKEND_URL"

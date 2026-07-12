@@ -5,7 +5,41 @@ description: "CLI reference for the oore setup command and bootstrap token manag
 
 # oore setup
 
-The `setup` command configures a fresh Oore CI instance. It can be run interactively (default) or used to generate bootstrap tokens with the `token` subcommand.
+The `setup` command configures a fresh Oore CI instance. It can initialize a known deployment mode directly, run the legacy interactive OIDC flow, or generate bootstrap tokens.
+
+## Backend-owned initialization {#setup-init}
+
+```bash
+oore setup init --mode local|trusted-proxy --owner-email <email> [options]
+```
+
+Use `setup init` when the backend operator already knows the deployment mode. It creates the real owner and completes setup without a browser bootstrap token. This is the recommended path for split frontend/backend Trusted Proxy deployments.
+
+Trusted Proxy example:
+
+```bash
+OORE_TRUSTED_PROXY_SHARED_SECRET_FILE="$HOME/.oore/trusted-proxy-shared-secret" \
+  oore setup init \
+  --mode trusted-proxy \
+  --owner-email owner@example.com \
+  --user-email-header x-warpgate-username \
+  --trusted-proxy-cidr 100.64.10.30/32
+```
+
+The secret file must contain the backend proof that `oore-web` injects when proxying API requests. Keep it mode `0600`, distribute it to the frontend service account through an approved secret-delivery path, and never reuse the separate HAProxy-to-`oore-web` frontend proof.
+
+Run `oored` once before `setup init` so database migrations exist. Initialization refuses to overwrite an owner-created setup unless `--force` is explicitly supplied.
+
+### Flags
+
+| Flag | Description |
+|---|---|
+| `--mode` | `local` or `trusted-proxy` |
+| `--owner-email` | Initial owner identity |
+| `--user-email-header` | Trusted-proxy identity header; required for Trusted Proxy mode |
+| `--trusted-proxy-cidr` | Allowed proxy peer CIDR; repeat for additional peers |
+| `--shared-secret-file` | File containing the backend trusted-proxy proof |
+| `--force` | Reinitialize only before owner creation; use deliberately |
 
 ## Interactive setup
 

@@ -12,6 +12,13 @@ Rules:
 
 ## 2026-07-12
 
+- **Split deployment reliability**:
+  - Frontend-only installs now reject occupied listen ports before changing service state and require both the auth-proxy proof and backend proof for Trusted Proxy identity forwarding.
+  - `oore-web status` verifies launcher health plus dependency-aware backend readiness through the real frontend proxy path, while the proxy now forwards `/readyz` alongside `/healthz` and `/v1/*`.
+  - `oore update` derives managed daemon and web addresses from launchd configuration, preserves custom private daemon addresses for unmanaged restarts, and verifies the real readiness endpoint before accepting an update or rollback.
+  - Linux uninstall now disables, stops, removes, and reloads the `oore-web` systemd user service instead of leaving a broken lingering unit.
+  - The Mac Studio + NetBird + Warpgate runbook now documents the deployed HAProxy topology, separate frontend/backend proofs, backend-owned owner initialization, and an unused loopback port for `oore-web`.
+  - Linear feature docs: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6 and https://linear.app/oorebuild/document/feature-backend-owned-setup-init-for-local-and-trusted-proxy-modes-e850cb76e746
 - Release automation now uses the configurable macOS runner with a `macos-latest` fallback for validation, autotagging, and release packaging, and bootstraps Bun plus both Rust macOS targets so an unavailable pre-provisioned self-hosted runner cannot block alpha delivery.
   - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
 - **Product trust hardening release**:
