@@ -77,7 +77,9 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Verify core shadcn components against the current registry and update frontend dependencies within current major versions.
 - [ ] Handle Vite, Vitest, ESLint, shadcn, Hugeicons, and TypeScript major upgrades separately.
 - [x] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.
-- [ ] Publish an alpha release and complete signed-in desktop/mobile smoke testing.
+- [x] Publish an alpha release and complete signed-in desktop/mobile smoke testing.
+
+Release evidence: `v0.1.29-alpha.30` passed the release workflow and was verified through the signed-in AWS frontend at desktop and 390 px widths. Dashboard, projects, builds, sources, and GitLab setup loaded without page-level overflow. A live build-detail smoke remains dependent on creating the first real project and build; correctness and responsive log states are covered by the focused frontend suite in the meantime.
 
 **Gate:** initial payload is smaller than the baseline, validation is green, and the alpha build is testable through the real AWS frontend.
 
