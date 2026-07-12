@@ -217,15 +217,16 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
               Build logs
             </h2>
             <p className="text-xs text-muted-foreground">
-              Live output, errors, and step-level context.
+              {isTerminal
+                ? 'Output, errors, and step-level context.'
+                : 'Live output, errors, and step-level context.'}
             </p>
           </div>
-          {isStreaming ? <Badge variant="info">Live</Badge> : null}
         </div>
         <TerminalLogViewer
           logs={mergedLogs}
           stepResults={build.step_results ?? []}
-          isStreaming={isStreaming}
+          isStreaming={isStreaming && !isTerminal}
           streamError={isTerminal ? undefined : (streamError ?? undefined)}
           logsUnavailable={fullLogsQuery.isError}
           isTerminal={isTerminal}

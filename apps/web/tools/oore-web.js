@@ -1164,8 +1164,6 @@ async function main() {
           {
             ok: true,
             ...readInstalledMetadata(),
-            backend_url: backendUrl.toString(),
-            dist_dir: distDir,
           },
           {
             headers: {

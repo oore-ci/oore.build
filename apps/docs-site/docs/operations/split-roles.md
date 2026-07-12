@@ -89,6 +89,8 @@ The installer checks the selected listen port before changing service state. If 
 
 `OORE_FRONTEND_PAIRING_CODE` exchanges the code with the backend over the private path, writes the returned backend proof into the frontend service's restrictive secret file, and generates a separate local proof for the authenticated reverse proxy -> `oore-web` hop. The pairing code is consumed once and is not saved. `oore-web` proxies `/v1/*`, `/healthz`, and `/readyz` to `OORE_WEB_BACKEND_URL`; browser-supplied identity and proof headers are stripped, and the identity header is forwarded only when the upstream proof matches.
 
+Browsers opening this paired frontend do not need to add the backend manually. When no Oore instance is saved in that browser, the UI recognizes the same-origin `oore-web` proxy and selects it automatically before authentication. Users who already manage multiple instances keep their existing registry unchanged.
+
 Manual `OORE_TRUSTED_PROXY_SHARED_SECRET_FILE` plus `OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE` configuration remains available for advanced Trusted Proxy secret-management workflows. Do not set a pairing code and manually reuse either proof value.
 
 During first-run setup, choose `Remote (Trusted Proxy)`, enter the initial owner email, and select a proxy preset. `Generic proxy` uses `x-oore-user-email`, `Warpgate` uses `x-warpgate-username`, and `Custom header` lets you enter the exact header your proxy forwards. The first owner claim must come from that same proxy-authenticated email, avoiding manual database edits.

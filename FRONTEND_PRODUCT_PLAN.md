@@ -99,3 +99,30 @@ Remote-mode HttpOnly cookie sessions require frontend/backend architecture work 
 - [ ] Add detached-runner remote updates after runner-only packaging and a managed runner service/supervisor contract exist.
 
 **Gate:** shared, server, form, and lifecycle state each have one clear owner; runtime updates remain owner-only and unavailable for unmanaged processes; frontend/backend restart through their existing service managers.
+
+## Milestone 8 — Real Flutter project migration
+
+- [x] Make repository selection explicit; never create a project from an unshown fallback repository.
+- [x] Use the connected repository's name and default branch as visible project defaults while keeping them editable.
+- [x] Keep remote project creation focused on connected sources and local mode focused on local paths.
+- [x] Auto-connect a paired same-origin frontend when a browser has no saved instances, while preserving manual multi-instance setup.
+- [x] Keep UI-configured artifact paths consistent with the repository config and runner contracts.
+- [x] Validate a mature FVM Flutter project flow using Kite's existing build/release commands as a read-only benchmark.
+- [ ] Cover project creation, pipeline configuration, first build, logs, artifacts, and recovery UX with happy and failure paths.
+- [ ] Publish an alpha release, then verify owner-driven frontend and backend updates from the real AWS UI.
+
+**Gate:** a connected GitLab repository using `develop` can be turned into a truthful Android/iOS pipeline without editing or pushing to that repository; the first build either produces the configured artifacts or reports an actionable prerequisite failure; both managed Oore runtimes can be updated from the UI.
+
+## Milestone 9 — Guided setup and repository-owned workflows
+
+- [ ] Start project setup with an outcome-focused choice (for example, test an Android build or prepare a release) instead of presenting the full pipeline schema.
+- [ ] Derive project name, default branch, Flutter/FVM metadata, available platforms, flavors, and likely artifacts from the selected repository where the source provider permits read access.
+- [ ] Keep the common path short and progressively disclose triggers, command overrides, environment, artifacts, concurrency, and signing only when relevant.
+- [ ] Detect `.oore.yaml` and `.oore.yml` on the project's default branch before pipeline creation, including an explicitly configured path.
+- [ ] Preview every detected repository-owned workflow with its source path, resolved commands, triggers, platforms, artifacts, and validation state before it is imported or run.
+- [ ] Explain invalid config, unsupported keys, multiple-config conflicts, missing secrets, and runner/toolchain prerequisites with a concrete recovery action.
+- [ ] Keep repository config read-only unless a user explicitly asks Oore to prepare a change; never silently write or push workflow files.
+- [ ] Test auto-detection, explicit paths, multiple workflows, config changes between commits, malformed YAML, missing config, and UI-fallback behavior across GitHub, GitLab.com, and self-managed GitLab.
+- [ ] Use Kite read-only as the mature multi-workflow benchmark without copying its legacy pipeline defects or exposing repository secrets.
+
+**Gate:** after selecting a repository, a new user can understand the recommended next action without CI-specific knowledge; when repository-owned Oore config exists, the UI visibly discovers and validates it before the first run, and the runner executes the exact config from the checked-out commit.

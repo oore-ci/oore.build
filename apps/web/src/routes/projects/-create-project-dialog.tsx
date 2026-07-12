@@ -36,18 +36,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useCreateProject } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { useSourceRepositories } from '@/hooks/use-source-repositories'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
+import { repositoryProjectDefaults } from '@/lib/project-form-utils'
 
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
   default_branch: z.string().optional(),
   local_repository_path: z.string().optional(),
+  repository_id: z.string().optional(),
 })
 
 type CreateProjectForm = z.infer<typeof createProjectSchema>
@@ -100,11 +101,9 @@ export default function CreateProjectDialog({
   )
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 
-  const [sourceKind, setSourceKind] = useState<'local' | 'repo'>('local')
   const { data: repos, isLoading: reposLoading } = useSourceRepositories(
-    open && isRemoteMode && sourceKind === 'repo',
+    open && isRemoteMode,
   )
-  const [selectedRepoId, setSelectedRepoId] = useState<string>('')
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const repoItems = useMemo(
@@ -126,12 +125,10 @@ export default function CreateProjectDialog({
       description: '',
       default_branch: '',
       local_repository_path: '',
+      repository_id: '',
     },
     mode: 'onBlur',
   })
-
-  const effectiveSourceKind = sourceKind
-  const effectiveSelectedRepoId = selectedRepoId || repos?.[0]?.id || ''
 
   function applyLocalPath(path: string, closePicker = false) {
     form.setValue('local_repository_path', path, {
@@ -159,7 +156,7 @@ export default function CreateProjectDialog({
       return
     }
 
-    if (effectiveSourceKind === 'local') {
+    if (!isRemoteMode) {
       const localRepositoryPath = data.local_repository_path?.trim()
       if (!localRepositoryPath) {
         toast.error('Path is required.')
@@ -191,7 +188,8 @@ export default function CreateProjectDialog({
       return
     }
 
-    if (!effectiveSelectedRepoId) {
+    const repositoryId = data.repository_id?.trim()
+    if (!repositoryId) {
       toast.error('Select a source repository before creating a project.')
       return
     }
@@ -200,14 +198,13 @@ export default function CreateProjectDialog({
       {
         name,
         description: data.description?.trim() || undefined,
-        repository_id: effectiveSelectedRepoId,
+        repository_id: repositoryId,
         default_branch: data.default_branch?.trim() || undefined,
       },
       {
         onSuccess: (res) => {
           toast.success('Project created')
           form.reset()
-          setSelectedRepoId('')
           onOpenChange(false)
           void navigate({
             to: '/projects/$projectId',
@@ -222,13 +219,8 @@ export default function CreateProjectDialog({
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen) {
-      setSourceKind(isRemoteMode ? 'repo' : 'local')
-      setSelectedRepoId('')
-    } else {
+    if (!nextOpen) {
       form.reset()
-      setSelectedRepoId('')
-      setSourceKind('local')
       setPickerOpen(false)
     }
     onOpenChange(nextOpen)
@@ -241,14 +233,87 @@ export default function CreateProjectDialog({
           <DialogHeader>
             <DialogTitle>Create Project</DialogTitle>
             <DialogDescription>
-              {effectiveSourceKind === 'local'
-                ? 'Create a project from a local repository path.'
-                : 'Create a project linked to a connected source repository.'}
+              {isRemoteMode
+                ? 'Choose a repository from a connected source. Project defaults are filled in for you.'
+                : 'Create a project from a repository on this Mac.'}
             </DialogDescription>
           </DialogHeader>
 
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              {isRemoteMode ? (
+                <FormField
+                  control={form.control}
+                  name="repository_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Repository</FormLabel>
+                      {reposLoading ? (
+                        <div className="flex items-center gap-2 py-2">
+                          <Spinner className="size-4" />
+                          <span className="text-sm text-muted-foreground">
+                            Loading repositories...
+                          </span>
+                        </div>
+                      ) : hasRepos ? (
+                        <Select
+                          value={field.value}
+                          onValueChange={(value) => {
+                            field.onChange(value ?? '')
+                            const repository = repos?.find(
+                              (repo) => repo.id === value,
+                            )
+                            if (!repository) return
+                            const defaults =
+                              repositoryProjectDefaults(repository)
+                            if (!form.getFieldState('name').isDirty) {
+                              form.setValue('name', defaults.name)
+                            }
+                            if (!form.getFieldState('default_branch').isDirty) {
+                              form.setValue(
+                                'default_branch',
+                                defaults.defaultBranch,
+                              )
+                            }
+                          }}
+                          items={repoItems}
+                        >
+                          <FormControl>
+                            <SelectTrigger autoFocus>
+                              <SelectValue placeholder="Select a repository..." />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {(repos ?? []).map((repo) => (
+                              <SelectItem key={repo.id} value={repo.id}>
+                                {repo.full_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="space-y-3">
+                          <FormDescription>
+                            No repositories are available. Connect a source and
+                            sync its repositories first.
+                          </FormDescription>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            render={<Link to="/settings/integrations" />}
+                            nativeButton={false}
+                          >
+                            <HugeiconsIcon icon={Link04Icon} />
+                            Connect source
+                          </Button>
+                        </div>
+                      )}
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : null}
+
               <FormField
                 control={form.control}
                 name="name"
@@ -256,7 +321,11 @@ export default function CreateProjectDialog({
                   <FormItem>
                     <FormLabel>Name</FormLabel>
                     <FormControl>
-                      <Input placeholder="My App" autoFocus {...field} />
+                      <Input
+                        placeholder="My App"
+                        autoFocus={!isRemoteMode}
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -285,111 +354,51 @@ export default function CreateProjectDialog({
                 )}
               />
 
-              <Tabs
-                value={effectiveSourceKind}
-                onValueChange={(v) => {
-                  setSourceKind(v as 'local' | 'repo')
-                }}
-              >
-                <TabsList className="w-full">
-                  <TabsTrigger value="local">Local path</TabsTrigger>
-                  <TabsTrigger value="repo" disabled={!isRemoteMode}>
-                    Connected repo
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="local" className="space-y-4">
-                  <FormField
-                    control={form.control}
-                    name="local_repository_path"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Path</FormLabel>
-                        <div className="flex flex-col gap-2 md:flex-row">
-                          <FormControl>
-                            <Input
-                              {...field}
-                              placeholder="/absolute/path/to/repository"
-                              className="font-mono text-xs"
-                            />
-                          </FormControl>
-                          {canBrowseLocalFs ? (
-                            <div className="flex gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                aria-label="Browse"
-                                title="Browse"
-                                onClick={handleOpenPicker}
-                              >
-                                <HugeiconsIcon icon={Folder02Icon} />
-                              </Button>
-                            </div>
-                          ) : null}
-                        </div>
-                        <FormDescription>
-                          Absolute path to the Git repository.
-                          {!canBrowseLocalFs ? (
-                            <>
-                              {' '}
-                              For security, folder browsing is only available
-                              from localhost.
-                            </>
-                          ) : null}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </TabsContent>
-
-                <TabsContent value="repo" className="space-y-2">
-                  <FormLabel>Source repository</FormLabel>
-                  {reposLoading ? (
-                    <div className="flex items-center gap-2 py-2">
-                      <Spinner className="size-4" />
-                      <span className="text-sm text-muted-foreground">
-                        Loading source repositories...
-                      </span>
-                    </div>
-                  ) : hasRepos ? (
-                    <Select
-                      value={selectedRepoId}
-                      onValueChange={(v) => setSelectedRepoId(v ?? '')}
-                      items={repoItems}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a repository..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(repos ?? []).map((repo) => (
-                          <SelectItem key={repo.id} value={repo.id}>
-                            {repo.full_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="space-y-3">
-                      <p className="text-sm text-muted-foreground">
-                        No source repositories are available yet. Connect a
-                        source, then sync its repositories before creating a
-                        project.
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        render={<Link to="/settings/integrations" />}
-                        nativeButton={false}
-                      >
-                        <HugeiconsIcon icon={Link04Icon} />
-                        Connect source
-                      </Button>
-                    </div>
+              {!isRemoteMode ? (
+                <FormField
+                  control={form.control}
+                  name="local_repository_path"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Path</FormLabel>
+                      <div className="flex flex-col gap-2 md:flex-row">
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder="/absolute/path/to/repository"
+                            className="font-mono text-xs"
+                          />
+                        </FormControl>
+                        {canBrowseLocalFs ? (
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              aria-label="Browse"
+                              title="Browse"
+                              onClick={handleOpenPicker}
+                            >
+                              <HugeiconsIcon icon={Folder02Icon} />
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                      <FormDescription>
+                        Absolute path to the Git repository.
+                        {!canBrowseLocalFs ? (
+                          <>
+                            {' '}
+                            For security, folder browsing is only available from
+                            localhost.
+                          </>
+                        ) : null}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                </TabsContent>
-              </Tabs>
+                />
+              ) : null}
 
               <FormField
                 control={form.control}
@@ -397,7 +406,7 @@ export default function CreateProjectDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>
-                      Default Branch{' '}
+                      Default branch{' '}
                       <span className="text-muted-foreground font-normal">
                         (optional)
                       </span>
@@ -422,8 +431,7 @@ export default function CreateProjectDialog({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
-                    (effectiveSourceKind === 'repo' &&
-                      (reposLoading || !hasRepos))
+                    (isRemoteMode && (reposLoading || !hasRepos))
                   }
                 >
                   {createMutation.isPending ? (
@@ -432,7 +440,7 @@ export default function CreateProjectDialog({
                       Creating...
                     </>
                   ) : (
-                    'Create'
+                    'Create project'
                   )}
                 </Button>
               </DialogFooter>
@@ -444,7 +452,7 @@ export default function CreateProjectDialog({
       <LocalFolderPickerDialog
         open={pickerOpen}
         onOpenChange={setPickerOpen}
-        enabled={open && effectiveSourceKind === 'local' && canBrowseLocalFs}
+        enabled={open && !isRemoteMode && canBrowseLocalFs}
         initialPath={form.getValues('local_repository_path')}
         title="Browse Local Folders"
         description="Select a Git repository folder and use it for this project."

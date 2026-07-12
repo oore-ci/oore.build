@@ -28,14 +28,12 @@ import {
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useProject } from '@/hooks/use-projects'
 import {
-  defaultArtifactPatterns,
+  executionConfigFromForm,
   fileToBase64,
   fileToUtf8,
   hasCustomFallback,
   parseBundleIdsInput,
   parseCsv,
-  parseEnvVars,
-  parseMultiline,
   selectedPlatforms,
   toMultiline,
   trimToUndefined,
@@ -230,18 +228,6 @@ function EditPipelinePage() {
         : undefined,
     }
 
-    const commands = values.enable_customization
-      ? {
-          pre_build: parseMultiline(values.pre_build_commands),
-          build: parseMultiline(values.build_commands),
-          post_build: parseMultiline(values.post_build_commands),
-        }
-      : { pre_build: [], build: [], post_build: [] }
-
-    const customPatterns = values.enable_customization
-      ? parseMultiline(values.artifact_patterns)
-      : []
-
     const payload: UpdatePipelineRequest = {
       name: values.name.trim(),
       config_path:
@@ -249,30 +235,7 @@ function EditPipelinePage() {
           ? values.config_path?.trim()
           : '.oore.yaml',
       config_path_explicit: values.config_mode === 'explicit',
-      execution_config: {
-        platforms,
-        flutter_version: values.flutter_version?.trim() || undefined,
-        commands,
-        platform_build_args: values.enable_customization
-          ? {
-              android: parseMultiline(values.android_build_args),
-              ios: parseMultiline(values.ios_build_args),
-              macos: parseMultiline(values.macos_build_args),
-            }
-          : { android: [], ios: [], macos: [] },
-        platform_commands: values.enable_customization
-          ? {
-              android: values.android_command_override?.trim() || undefined,
-              ios: values.ios_command_override?.trim() || undefined,
-              macos: values.macos_command_override?.trim() || undefined,
-            }
-          : {},
-        env: values.enable_customization ? parseEnvVars(values.env_vars) : [],
-        artifact_patterns:
-          customPatterns.length > 0
-            ? customPatterns
-            : defaultArtifactPatterns(platforms),
-      },
+      execution_config: executionConfigFromForm(values),
       trigger_config,
       concurrency,
     }

@@ -232,7 +232,6 @@ interface RuntimeHealth {
   version?: string
   channel?: string | null
   github_repo?: string | null
-  backend_url?: string
   package_version?: string
 }
 

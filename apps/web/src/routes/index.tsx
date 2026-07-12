@@ -42,6 +42,7 @@ import { getSetupStatus } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 
@@ -102,15 +103,25 @@ function IndexPage() {
 
   useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
-    if (!isLoopbackHostname(window.location.hostname)) return
 
     autoDetectAttemptedRef.current = true
     setIsDetectingLocalInstance(true)
 
-    void detectReachableLocalDaemonUrl()
-      .then((detectedUrl) => {
-        if (!detectedUrl) return
+    void Promise.all([
+      isManagedFrontend(),
+      isLoopbackHostname(window.location.hostname)
+        ? detectReachableLocalDaemonUrl()
+        : Promise.resolve(null),
+    ])
+      .then(([managedFrontend, detectedUrl]) => {
         const store = useInstanceStore.getState()
+        if (Object.keys(store.instances).length > 0) return
+        if (managedFrontend) {
+          const instanceId = store.addInstance(window.location.hostname, '')
+          store.setActiveInstance(instanceId)
+          return
+        }
+        if (!detectedUrl) return
         const existingInstance = Object.values(store.instances).find(
           (candidate) =>
             normalizeUrl(candidate.url) === normalizeUrl(detectedUrl),
