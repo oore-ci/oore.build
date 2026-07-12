@@ -243,7 +243,7 @@ function PipelineDetailPage() {
                   disabled={!projectHasSource}
                 >
                   <HugeiconsIcon icon={PlayIcon} size={16} />
-                  Run Build
+                  Run build
                 </Button>
               ) : null}
               {canWrite ? (

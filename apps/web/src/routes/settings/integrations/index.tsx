@@ -134,7 +134,7 @@ function IntegrationsPage() {
                 Open Preferences
               </Button>
               <Button render={<Link to="/projects" />} nativeButton={false}>
-                Go To Projects
+                Go to projects
               </Button>
             </div>
           </CardContent>

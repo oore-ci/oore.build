@@ -232,10 +232,7 @@ function ProjectDetailPage() {
     string | undefined
   >()
 
-  const builds = useMemo(
-    () => buildsData?.builds ?? [],
-    [buildsData?.builds],
-  )
+  const builds = useMemo(() => buildsData?.builds ?? [], [buildsData?.builds])
   const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
     const byPipeline = new Map<string, { status: string; time: number }>()
     let latestSucceeded: (typeof builds)[number] | null = null
@@ -354,7 +351,7 @@ function ProjectDetailPage() {
                     disabled={pipelines.length === 0 || !projectHasSource}
                   >
                     <HugeiconsIcon icon={PlayIcon} size={16} />
-                    Run Build
+                    Run build
                   </Button>
                 </span>
               ) : null}

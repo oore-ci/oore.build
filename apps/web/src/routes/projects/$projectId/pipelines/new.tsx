@@ -572,6 +572,7 @@ function NewPipelinePage() {
               <button
                 key={tmpl.key}
                 type="button"
+                aria-pressed={selectedTemplate === tmpl.key}
                 onClick={() => setSelectedTemplate(tmpl.key)}
                 className={cn(
                   'flex flex-col items-start gap-1 border p-3 text-left text-sm transition-colors hover:bg-accent',
