@@ -12,6 +12,10 @@ Rules:
 
 ## 2026-07-12
 
+- **Atomic installer executable upgrades**:
+  - The installer now stages each executable beside its destination and atomically renames it into place, so reinstalling over a running macOS LaunchDaemon does not mutate its live executable inode and trigger `Killed: 9` during service replacement.
+  - Installer acceptance coverage asserts that replacement changes the destination inode while preserving executable permissions and content.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 - **Frontend Trusted Proxy pairing**:
   - `oore frontend invite` now creates a short-lived, single-use pairing code for a ready Trusted Proxy backend. A frontend-only installer can exchange `OORE_FRONTEND_PAIRING_CODE` through the private, CIDR-restricted `/v1/frontend/pair` capability, save the backend proof, and generate a separate local HAProxy-to-`oore-web` proof.
   - The split-role, installer, Mac Studio + NetBird + Warpgate, CLI, and OpenAPI documentation now describe pairing as the normal path while keeping manual proof files as an advanced fallback.
