@@ -20,6 +20,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -298,6 +307,8 @@ export default function TerminalLogViewer({
   useMountEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        const target = e.target as HTMLElement | null
+        if (target?.closest('input, textarea, [contenteditable="true"]')) return
         const el = scrollContainerRef.current
         if (!el) return
         // Only intercept when the log viewer is likely in view
@@ -346,23 +357,24 @@ export default function TerminalLogViewer({
     filteredLogs.length > 0 ? filteredLogs[filteredLogs.length - 1].sequence : 0
   const lineNumWidth = Math.max(String(maxSeq).length, 3)
 
-  const hasSteps = stepGroups.length > 0
+  const logStepGroups = stepGroups.filter((group) => group.logs.length > 0)
+  const hasSteps = logStepGroups.length > 0
 
   return (
-    <div className="flex h-[calc(100vh-18rem)] min-h-80 flex-col">
+    <div className="flex h-[60dvh] min-h-96 max-h-[48rem] flex-col">
       {/* Toolbar */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border border-b-0 border-border/60 bg-[oklch(0.18_0_0)] px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border border-b-0 bg-muted/50 px-3 py-2">
         <div className="flex items-center gap-1.5">
           {isStreaming ? (
-            <span className="flex items-center gap-1.5 text-xs text-[oklch(0.75_0_0)]">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className="relative flex size-2">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-[oklch(0.8_0.15_145)] opacity-75" />
-                <span className="relative inline-flex size-2 rounded-full bg-[oklch(0.75_0.15_145)]" />
+                <span className="absolute inline-flex size-full bg-success opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex size-2 bg-success" />
               </span>
               Live
             </span>
           ) : (
-            <span className="text-xs text-[oklch(0.72_0_0)]">
+            <span className="text-xs text-muted-foreground">
               {filteredLogs.length} lines
             </span>
           )}
@@ -370,83 +382,84 @@ export default function TerminalLogViewer({
 
         <div className="flex-1" />
 
-        {streamError ? (
-          <span className="text-xs text-[oklch(0.80_0.15_25)]">
-            {streamError}
-          </span>
-        ) : null}
-
         {searchOpen ? (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-48 flex-1 items-center gap-1 sm:max-w-64">
             <Input
               ref={searchInputRef}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search logs..."
-              className="h-7 w-32 sm:w-48 border-[oklch(0.30_0_0)] bg-[oklch(0.14_0_0)] font-mono text-xs text-[oklch(0.92_0_0)] placeholder:text-[oklch(0.48_0_0)]"
+              className="h-9 min-w-0 flex-1 font-mono text-xs"
             />
             <Button
               variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-[oklch(0.80_0_0)] hover:bg-[oklch(0.25_0_0)] hover:text-[oklch(0.95_0_0)]"
+              size="icon-sm"
+              className="max-md:size-11"
+              aria-label="Close log search"
               onClick={() => {
                 setSearchOpen(false)
                 setSearchQuery('')
               }}
             >
-              <HugeiconsIcon icon={Cancel01Icon} size={12} />
+              <HugeiconsIcon icon={Cancel01Icon} />
             </Button>
           </div>
         ) : (
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-[oklch(0.80_0_0)] hover:bg-[oklch(0.25_0_0)] hover:text-[oklch(0.95_0_0)]"
+            size="icon-sm"
+            className="max-md:size-11"
+            aria-label="Search logs"
             onClick={() => {
               setSearchOpen(true)
               setTimeout(() => searchInputRef.current?.focus(), 0)
             }}
             title="Search (Ctrl+F)"
           >
-            <HugeiconsIcon icon={Search01Icon} size={13} />
+            <HugeiconsIcon icon={Search01Icon} />
           </Button>
         )}
 
         <Button
           variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-[oklch(0.80_0_0)] hover:bg-[oklch(0.25_0_0)] hover:text-[oklch(0.95_0_0)]"
+          size="icon-sm"
+          className="max-md:size-11"
+          aria-label="Jump to first error"
           onClick={jumpToFirstError}
           title="Jump to first error"
         >
-          <HugeiconsIcon icon={AlertCircleIcon} size={13} />
+          <HugeiconsIcon icon={AlertCircleIcon} />
         </Button>
 
         <Button
           variant="ghost"
-          size="sm"
-          className={`h-7 px-2 ${wrapLines ? 'text-[oklch(0.95_0_0)]' : 'text-[oklch(0.80_0_0)]'} hover:bg-[oklch(0.25_0_0)] hover:text-[oklch(0.95_0_0)]`}
+          size="icon-sm"
+          className="text-muted-foreground aria-pressed:text-foreground max-md:size-11"
+          aria-label="Toggle line wrapping"
+          aria-pressed={wrapLines}
           onClick={() => setWrapLines((prev) => !prev)}
           title="Toggle word wrap"
         >
-          <HugeiconsIcon icon={TextWrapIcon} size={13} />
+          <HugeiconsIcon icon={TextWrapIcon} />
         </Button>
 
         <Button
           variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-[oklch(0.80_0_0)] hover:bg-[oklch(0.25_0_0)] hover:text-[oklch(0.95_0_0)]"
+          size="icon-sm"
+          className="max-md:size-11"
+          aria-label="Download raw logs"
           onClick={downloadRawLogs}
           title="Download raw logs"
         >
-          <HugeiconsIcon icon={Download04Icon} size={13} />
+          <HugeiconsIcon icon={Download04Icon} />
         </Button>
 
         {!autoScroll && filteredLogs.length > 0 ? (
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-[oklch(0.80_0_0)] hover:bg-[oklch(0.25_0_0)] hover:text-[oklch(0.95_0_0)]"
+            size="icon-sm"
+            className="max-md:size-11"
+            aria-label="Scroll to latest log"
             onClick={() => {
               setAutoScroll(true)
               virtualizer.scrollToIndex(filteredLogs.length - 1, {
@@ -455,109 +468,108 @@ export default function TerminalLogViewer({
             }}
             title="Scroll to bottom"
           >
-            <HugeiconsIcon icon={ArrowDown01Icon} size={13} />
+            <HugeiconsIcon icon={ArrowDown01Icon} />
           </Button>
         ) : null}
       </div>
 
+      {streamError ? (
+        <Alert variant="destructive" className="rounded-none border-b-0 py-2">
+          <HugeiconsIcon icon={AlertCircleIcon} />
+          <AlertDescription>{streamError}</AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* Main log area */}
       {/* Mobile step selector */}
       {hasSteps ? (
-        <div className="flex items-center gap-2 border border-b-0 border-[oklch(0.25_0_0)] bg-[oklch(0.17_0_0)] px-3 py-2 md:hidden">
-          <select
+        <div className="border border-b-0 bg-muted/30 px-3 py-2 md:hidden">
+          <Select
             aria-label="Build step"
             value={selectedStep}
-            onChange={(e) => setUserSelectedStep(e.target.value)}
-            className="w-full bg-[oklch(0.14_0_0)] text-[oklch(0.92_0_0)] text-xs border border-[oklch(0.30_0_0)] px-2 py-1.5"
+            onValueChange={(value) => setUserSelectedStep(value ?? 'all')}
           >
-            <option value="all">All logs ({allVisibleLogs.length})</option>
-            {stepGroups.map((group) => (
-              <option key={group.name} value={group.name}>
-                {group.status === 'running'
-                  ? '● '
-                  : group.status === 'succeeded'
-                    ? '✓ '
-                    : group.status === 'failed' ||
-                        group.status === 'canceled' ||
-                        group.status === 'timed_out'
-                      ? '✗ '
-                      : '○ '}
-                {group.name}
-                {group.durationMs != null
-                  ? ` (${formatDuration(group.durationMs / 1000)})`
-                  : ''}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-11 w-full" aria-label="Build step">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">
+                  All logs ({allVisibleLogs.length})
+                </SelectItem>
+                {logStepGroups.map((group) => (
+                  <SelectItem key={group.name} value={group.name}>
+                    <StepStatusIcon status={group.status} />
+                    {group.name}
+                    {group.durationMs != null
+                      ? ` (${formatDuration(group.durationMs / 1000)})`
+                      : ''}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
       ) : null}
 
       <div
         className={
           hasSteps
-            ? 'grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] overflow-hidden border border-[oklch(0.25_0_0)]'
-            : 'min-h-0 flex-1 overflow-hidden border border-[oklch(0.25_0_0)]'
+            ? 'grid min-h-0 flex-1 grid-cols-1 overflow-hidden border md:grid-cols-[220px_minmax(0,1fr)]'
+            : 'min-h-0 flex-1 overflow-hidden border'
         }
       >
         {/* Step sidebar (desktop only) */}
         {hasSteps ? (
-          <aside className="hidden md:flex flex-col gap-0 overflow-y-auto border-r border-[oklch(0.25_0_0)] bg-[oklch(0.15_0_0)] py-1">
-            <button
-              type="button"
+          <aside className="hidden flex-col overflow-y-auto border-r bg-muted/20 p-1 md:flex">
+            <Button
+              variant={selectedStep === 'all' ? 'secondary' : 'ghost'}
+              size="xs"
               onClick={() => setUserSelectedStep('all')}
-              className={`flex items-center justify-between px-3 py-1.5 text-left text-xs transition-colors ${
-                selectedStep === 'all'
-                  ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
-                  : 'border-l-2 border-l-transparent text-[oklch(0.78_0_0)] hover:bg-[oklch(0.19_0_0)] hover:text-[oklch(0.90_0_0)]'
-              }`}
+              className="h-auto w-full justify-start rounded-none px-2 py-1.5"
             >
               <span className="font-medium">All logs</span>
-              <span className="font-mono text-[10px] text-[oklch(0.65_0_0)]">
+              <span className="ml-auto font-mono text-[10px] text-muted-foreground">
                 {allVisibleLogs.length}
               </span>
-            </button>
-            {stepGroups.map((group) => (
-              <button
+            </Button>
+            {logStepGroups.map((group) => (
+              <Button
                 key={group.name}
-                type="button"
+                variant={selectedStep === group.name ? 'secondary' : 'ghost'}
+                size="xs"
                 onClick={() => setUserSelectedStep(group.name)}
-                className={`flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
-                  selectedStep === group.name
-                    ? 'border-l-2 border-l-[oklch(0.77_0.16_70)] bg-[oklch(0.20_0_0)] text-[oklch(0.95_0_0)]'
-                    : 'border-l-2 border-l-transparent text-[oklch(0.78_0_0)] hover:bg-[oklch(0.19_0_0)] hover:text-[oklch(0.90_0_0)]'
-                }`}
+                className="h-auto w-full justify-start rounded-none px-2 py-1.5"
                 title={group.command}
               >
                 <StepStatusIcon status={group.status} />
                 <span className="min-w-0 flex-1 truncate">{group.name}</span>
                 {group.durationMs != null ? (
-                  <span className="shrink-0 font-mono text-[10px] text-[oklch(0.65_0_0)]">
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
                     {formatDuration(group.durationMs / 1000)}
                   </span>
                 ) : null}
-              </button>
+              </Button>
             ))}
           </aside>
         ) : null}
 
         {/* Log content */}
-        <div className="flex min-h-0 flex-col overflow-hidden bg-[oklch(0.14_0_0)]">
+        <div className="flex min-h-0 flex-col overflow-hidden bg-card">
           {/* Sticky step header */}
           {selectedStepMeta ? (
-            <div className="flex shrink-0 items-center gap-3 border-b border-[oklch(0.25_0_0)] bg-[oklch(0.17_0_0)] px-4 py-2">
+            <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-2">
               <Badge variant={stepStatusVariant(selectedStepMeta.status)}>
                 {selectedStepMeta.status}
               </Badge>
-              <span className="text-xs font-medium text-[oklch(0.92_0_0)]">
-                {selectedStep}
-              </span>
+              <span className="text-xs font-medium">{selectedStep}</span>
               {selectedStepMeta.command ? (
-                <code className="font-mono text-[11px] text-[oklch(0.78_0_0)]">
+                <code className="font-mono text-[11px] text-muted-foreground">
                   $ {selectedStepMeta.command}
                 </code>
               ) : null}
               {selectedStepMeta.durationMs != null ? (
-                <span className="ml-auto font-mono text-[11px] text-[oklch(0.72_0_0)]">
+                <span className="ml-auto font-mono text-[11px] text-muted-foreground">
                   {formatDuration(selectedStepMeta.durationMs / 1000)}
                 </span>
               ) : null}
@@ -567,7 +579,7 @@ export default function TerminalLogViewer({
           {/* Virtualized log lines */}
           {filteredLogs.length === 0 ? (
             <div className="flex h-48 items-center justify-center">
-              <span className="text-xs text-[oklch(0.52_0_0)]">
+              <span className="text-xs text-muted-foreground">
                 {searchQuery
                   ? 'No matching lines'
                   : logsUnavailable
@@ -581,6 +593,8 @@ export default function TerminalLogViewer({
             <ScrollArea
               className="min-h-0 flex-1"
               viewportRef={scrollContainerRef}
+              role="region"
+              aria-label="Build log output"
             >
               <div
                 style={{
@@ -607,14 +621,14 @@ export default function TerminalLogViewer({
                       }}
                       className={`flex font-mono text-[13px] leading-[20px] ${
                         isStderr
-                          ? 'text-[oklch(0.80_0.15_25)]'
+                          ? 'text-destructive'
                           : isError
-                            ? 'text-[oklch(0.80_0.15_25)] bg-[oklch(0.80_0.15_25/0.06)]'
-                            : 'text-[oklch(0.88_0_0)]'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'text-card-foreground'
                       }`}
                     >
                       <span
-                        className="shrink-0 select-none text-right text-[oklch(0.48_0_0)] pr-3 pl-3"
+                        className="shrink-0 select-none px-3 text-right text-muted-foreground"
                         style={{ width: `${lineNumWidth + 4}ch` }}
                       >
                         {chunk.sequence}
@@ -648,8 +662,7 @@ function StepStatusIcon({ status }: { status: string }) {
     return (
       <HugeiconsIcon
         icon={Loading03Icon}
-        size={12}
-        className="shrink-0 animate-spin text-[oklch(0.72_0.14_250)]"
+        className="shrink-0 animate-spin text-info"
       />
     )
   }
@@ -657,8 +670,7 @@ function StepStatusIcon({ status }: { status: string }) {
     return (
       <HugeiconsIcon
         icon={CheckmarkCircle02Icon}
-        size={12}
-        className="shrink-0 text-[oklch(0.75_0.17_149)]"
+        className="shrink-0 text-success"
       />
     )
   }
@@ -670,14 +682,13 @@ function StepStatusIcon({ status }: { status: string }) {
     return (
       <HugeiconsIcon
         icon={AlertCircleIcon}
-        size={12}
-        className="shrink-0 text-[oklch(0.80_0.15_25)]"
+        className="shrink-0 text-destructive"
       />
     )
   }
   return (
     <span className="flex size-3 shrink-0 items-center justify-center">
-      <span className="size-1.5 rounded-full bg-[oklch(0.48_0_0)]" />
+      <span className="size-1.5 bg-muted-foreground" />
     </span>
   )
 }

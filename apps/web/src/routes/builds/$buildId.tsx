@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 
 import type {
   Artifact,
+  Build,
   BuildLogChunk,
   CreateScopedDownloadTokenResponse,
 } from '@/lib/types'
@@ -93,6 +94,112 @@ function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
     default:
       return 'secondary' as const
   }
+}
+
+function BuildSummary({
+  build,
+  duration,
+}: {
+  build: Build
+  duration: number | null
+}) {
+  const hasContext =
+    build.context?.project_name ||
+    build.context?.pipeline_name ||
+    build.context?.runner_name ||
+    build.source_build_id
+
+  return (
+    <Card size="sm" aria-label="Build summary">
+      <CardContent>
+        <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="min-w-0 space-y-1">
+            <dt className="text-xs font-medium text-muted-foreground">
+              Source
+            </dt>
+            <dd className="flex min-w-0 items-center gap-2">
+              {build.branch ? (
+                <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-xs">
+                  <HugeiconsIcon icon={GitBranchIcon} />
+                  <span className="truncate">{build.branch}</span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Not recorded</span>
+              )}
+              {build.commit_sha ? (
+                <span className="inline-flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
+                  <HugeiconsIcon icon={GitCommitIcon} />
+                  {build.commit_sha.slice(0, 7)}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+
+          <div className="space-y-1">
+            <dt className="text-xs font-medium text-muted-foreground">
+              Duration
+            </dt>
+            <dd className="inline-flex items-center gap-1.5">
+              <HugeiconsIcon icon={TimeQuarterPassIcon} />
+              {duration != null ? formatDuration(duration) : 'Not started'}
+            </dd>
+          </div>
+
+          <div className="space-y-1">
+            <dt className="text-xs font-medium text-muted-foreground">
+              Timeline
+            </dt>
+            <dd className="text-xs leading-5">
+              <span>Queued {relativeTime(build.queued_at)}</span>
+              {build.started_at ? (
+                <span className="block text-muted-foreground">
+                  Started {relativeTime(build.started_at)}
+                </span>
+              ) : null}
+              {build.finished_at ? (
+                <span className="block text-muted-foreground">
+                  Finished {relativeTime(build.finished_at)}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+
+          <div className="space-y-1">
+            <dt className="text-xs font-medium text-muted-foreground">
+              Context
+            </dt>
+            <dd className="text-xs leading-5">
+              {build.context?.project_name ? (
+                <span className="block">{build.context.project_name}</span>
+              ) : null}
+              {build.context?.pipeline_name ? (
+                <span className="block text-muted-foreground">
+                  {build.context.pipeline_name}
+                </span>
+              ) : null}
+              {build.context?.runner_name ? (
+                <span className="block text-muted-foreground">
+                  Runner: {build.context.runner_name}
+                </span>
+              ) : null}
+              {build.source_build_id ? (
+                <Link
+                  to="/builds/$buildId"
+                  params={{ buildId: build.source_build_id }}
+                  className="text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  Re-run of a previous build
+                </Link>
+              ) : null}
+              {!hasContext ? (
+                <span className="text-muted-foreground">Not recorded</span>
+              ) : null}
+            </dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
+  )
 }
 
 function BuildDetailPageWrapper() {
@@ -225,43 +332,6 @@ function BuildDetailPage() {
               {build.status}
             </Badge>
             <Badge variant="outline">{build.trigger_type}</Badge>
-            {build.source_build_id ? (
-              <Link
-                to="/builds/$buildId"
-                params={{ buildId: build.source_build_id }}
-                className="text-xs text-muted-foreground underline hover:text-foreground"
-              >
-                Re-run of a previous build
-              </Link>
-            ) : null}
-            {build.branch ? (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-                <HugeiconsIcon icon={GitBranchIcon} size={12} />
-                {build.branch}
-              </span>
-            ) : null}
-            {build.commit_sha ? (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-                <HugeiconsIcon icon={GitCommitIcon} size={12} />
-                {build.commit_sha.slice(0, 7)}
-              </span>
-            ) : null}
-            {duration != null ? (
-              <span className="inline-flex items-center gap-1">
-                <HugeiconsIcon icon={TimeQuarterPassIcon} size={12} />
-                {formatDuration(duration)}
-              </span>
-            ) : null}
-            <span className="text-border">|</span>
-            <span>
-              Queued {relativeTime(build.queued_at)}
-              {build.started_at
-                ? ` \u2192 Started ${relativeTime(build.started_at)}`
-                : ''}
-              {build.finished_at
-                ? ` \u2192 Finished ${relativeTime(build.finished_at)}`
-                : ''}
-            </span>
           </>
         }
         actions={
@@ -308,6 +378,8 @@ function BuildDetailPage() {
         }
       />
 
+      <BuildSummary build={build} duration={duration} />
+
       {failureReason ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
@@ -315,46 +387,38 @@ function BuildDetailPage() {
         </Alert>
       ) : null}
 
-      {build.context?.project_name ||
-      build.context?.pipeline_name ||
-      build.context?.runner_name ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {build.context.project_name ? (
-            <span>Project: {build.context.project_name}</span>
-          ) : null}
-          {build.context.pipeline_name ? (
-            <span>Pipeline: {build.context.pipeline_name}</span>
-          ) : null}
-          {build.context.runner_name ? (
-            <span>Runner: {build.context.runner_name}</span>
-          ) : null}
+      <section
+        aria-labelledby="build-logs-heading"
+        className="min-w-0 space-y-2"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="build-logs-heading" className="text-sm font-medium">
+              Build logs
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Live output, errors, and step-level context.
+            </p>
+          </div>
+          {isStreaming ? <Badge variant="info">Live</Badge> : null}
         </div>
-      ) : null}
+        <TerminalLogViewer
+          logs={mergedLogs}
+          stepResults={build.step_results ?? []}
+          isStreaming={isStreaming}
+          streamError={isTerminal ? undefined : (streamError ?? undefined)}
+          logsUnavailable={fullLogsQuery.isError}
+          isTerminal={isTerminal}
+        />
+      </section>
 
-      {/* Two-column layout: logs + sidebar */}
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-        {/* Main: Terminal log viewer */}
-        <div className="min-w-0">
-          <TerminalLogViewer
-            logs={mergedLogs}
-            stepResults={build.step_results ?? []}
-            isStreaming={isStreaming}
-            streamError={isTerminal ? undefined : (streamError ?? undefined)}
-            logsUnavailable={fullLogsQuery.isError}
-            isTerminal={isTerminal}
-          />
-        </div>
-
-        {/* Sidebar: Artifacts + Event Timeline */}
-        <aside className="space-y-4 xl:sticky xl:top-16 xl:max-h-[calc(100vh-5rem)] xl:overflow-y-auto">
-          <ArtifactsPanel
-            artifacts={artifactsQuery.data?.artifacts ?? []}
-            isLoading={artifactsQuery.isLoading}
-            buildStatus={build.status}
-          />
-
-          <EventTimeline events={events} />
-        </aside>
+      <div className="grid items-start gap-6 xl:grid-cols-2">
+        <ArtifactsPanel
+          artifacts={artifactsQuery.data?.artifacts ?? []}
+          isLoading={artifactsQuery.isLoading}
+          buildStatus={build.status}
+        />
+        <EventTimeline events={events} />
       </div>
     </PageLayout>
   )

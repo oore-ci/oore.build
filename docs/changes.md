@@ -3,10 +3,12 @@
 This file is the only required in-repo internal documentation artifact.
 
 Purpose:
+
 - Provide a lightweight, reviewable ledger of behavior/contract changes.
 - Point reviewers to the corresponding Linear doc(s) / ADR(s).
 
 Rules:
+
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
@@ -15,7 +17,9 @@ Rules:
 - **Frontend build-log correctness foundation**:
   - Terminal build details now fetch the final log snapshot only after completion and merge it with streamed chunks by sequence, preventing visible output from regressing while persistence catches up.
   - Completed steps without runner log markers now default to All logs instead of selecting an empty step.
-  - Added focused regression coverage and fixed conditional React Hook ordering in project detail and owner setup.
+  - Build logs are now the primary full-width workspace, with a compact summary above and artifacts and event history moved into secondary sections below.
+  - Step filtering now appears only for logs that can be associated truthfully; terminal controls use Base UI-backed shadcn components, semantic colors, and accessible labels.
+  - Added focused regression coverage and removed render-phase routing/store mutations from setup, instance, project, and build flows.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Updater runtime hotfix**:
   - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.
@@ -253,7 +257,6 @@ Rules:
   - Hygiene: Added missing trailing newline to `.gitignore`.
 
 ## 2026-03-18
-
 
 - **Doc improvements for early testers** ([#49](https://github.com/devaryakjha/oore.build/issues/49), [#44](https://github.com/devaryakjha/oore.build/issues/44), [#40](https://github.com/devaryakjha/oore.build/issues/40), [#48](https://github.com/devaryakjha/oore.build/issues/48), [#41](https://github.com/devaryakjha/oore.build/issues/41), [#42](https://github.com/devaryakjha/oore.build/issues/42), [#43](https://github.com/devaryakjha/oore.build/issues/43)):
   - Added "Alpha Feedback Playbook" with 10-minute test flow and templates.

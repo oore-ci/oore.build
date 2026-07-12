@@ -15,7 +15,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 ## Milestone 1 — Correctness and log truth
 
-- [ ] Fix conditional Hooks and render-time side effects in affected routes.
+- [x] Fix conditional Hooks and render-time side effects in affected routes.
 - [x] Fetch final logs only when a build becomes terminal and preserve streamed lines during the transition.
 - [x] Default to All logs when step results cannot be associated with log markers.
 - [ ] Keep polling and SSE cleanup deterministic across build and instance changes.
@@ -25,12 +25,12 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 ## Milestone 2 — Build details and logs experience
 
-- [ ] Replace the overloaded metadata row with a compact build summary.
-- [ ] Make logs the primary full-width workspace; move artifacts and event history to secondary sections.
-- [ ] Show step navigation only when it provides truthful filtering.
-- [ ] Replace raw controls with shadcn/Base UI equivalents and label every icon-only action.
-- [ ] Make mobile logs usable with a sticky toolbar, deliberate wrapping/scrolling, and no overlays covering output.
-- [ ] Replace terminal hard-coded colors with semantic log tokens supporting both themes.
+- [x] Replace the overloaded metadata row with a compact build summary.
+- [x] Make logs the primary full-width workspace; move artifacts and event history to secondary sections.
+- [x] Show step navigation only when it provides truthful filtering.
+- [x] Replace raw controls with shadcn/Base UI equivalents and label every icon-only action.
+- [x] Make mobile logs usable with a persistent toolbar, deliberate wrapping/scrolling, and no overlays covering output.
+- [x] Replace terminal hard-coded colors with semantic tokens supporting both themes.
 
 **Gate:** build details work at desktop and 390 px widths, keyboard navigation is complete, and visual regression checks cover running, failed, successful, empty, and long-log states.
 

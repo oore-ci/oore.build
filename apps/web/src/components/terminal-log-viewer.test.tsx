@@ -22,7 +22,12 @@ describe('TerminalLogViewer', () => {
       />,
     )
 
-    const stepSelect = screen.getByRole('combobox', { name: 'Build step' })
-    expect((stepSelect as HTMLSelectElement).value).toBe('all')
+    expect(screen.queryByRole('combobox', { name: 'Build step' })).toBeNull()
+    expect(
+      screen.getByRole('region', { name: 'Build log output' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Download raw logs' }),
+    ).toBeTruthy()
   })
 })
