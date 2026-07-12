@@ -12,6 +12,9 @@ Rules:
 
 ## 2026-07-12
 
+- **Verified launchd service installation**:
+  - macOS service installation now retries modern `launchctl bootstrap`, requires `kickstart` and service lookup to succeed, and reports the real launchctl error instead of accepting the legacy `load` command's unreliable exit status.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 - **Atomic installer executable upgrades**:
   - The installer now stages each executable beside its destination and atomically renames it into place, so reinstalling over a running macOS LaunchDaemon does not mutate its live executable inode and trigger `Killed: 9` during service replacement.
   - Installer acceptance coverage asserts that replacement changes the destination inode while preserving executable permissions and content.
