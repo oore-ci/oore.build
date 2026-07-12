@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-13
 
+- **Reliable release tagging and Pages deployment**:
+  - Release tags are again cut from pushes to protected release-channel branches, avoiding a `workflow_run` trigger that GitHub only evaluates from the default branch.
+  - Pages projects now deploy serially and retry only transient Cloudflare 5xx API failures with bounded backoff; authentication and configuration errors still fail immediately.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
 - **Runtime versions, owner-managed updates, and frontend state boundaries**:
   - Preferences now reports frontend and backend versions independently, checks the installed release channel for updates, and lets the owner update managed `oore-web` and `oored` services through their existing systemd/launchd supervisors.
   - Runner inventory now reports embedded and detached runner versions. Remote runner updates stay disabled until a runner-only package and managed service contract exist.

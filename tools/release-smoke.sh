@@ -6,6 +6,17 @@ cd "$ROOT_DIR"
 
 echo "[release-smoke] Running local-first regression smoke checks..."
 
+# Release automation must remain taggable and resilient to transient Pages outages.
+grep -q '^  push:' .github/workflows/autotag.yml
+grep -q 'deploy_pages deploy-site-only' .github/workflows/release.yml
+grep -q 'deploy_pages deploy-docs-only' .github/workflows/release.yml
+grep -q 'deploy_pages deploy-web-only' .github/workflows/release.yml
+grep -q 'deploy_pages deploy-demo-only' .github/workflows/release.yml
+if grep -Eq 'make deploy-(site|docs|web)-only &' .github/workflows/release.yml; then
+  echo "[release-smoke] Pages deploys must not run concurrently." >&2
+  exit 1
+fi
+
 # Release installer local-first defaults and browser-open policy.
 bash scripts/install-acceptance.sh
 
