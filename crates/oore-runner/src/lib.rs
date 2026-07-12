@@ -1706,6 +1706,24 @@ fi
     anyhow::bail!("Build has neither commit_sha nor branch — cannot checkout source")
 }
 
+fn add_checkout_proxy_config(
+    checkout: &mut CheckoutInvocation,
+    proxy_url: &str,
+    runner_token: &str,
+) {
+    checkout.env.extend([
+        ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+        (
+            "GIT_CONFIG_KEY_0".to_string(),
+            format!("http.{proxy_url}.extraHeader"),
+        ),
+        (
+            "GIT_CONFIG_VALUE_0".to_string(),
+            format!("Authorization: Bearer {runner_token}"),
+        ),
+    ]);
+}
+
 async fn execute_build(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -1749,13 +1767,23 @@ async fn execute_build(
         );
     }
 
+    let proxy_path = snapshot.get("checkout_proxy_path").and_then(|v| v.as_str());
+    let effective_repo_url = proxy_path
+        .map(|path| format!("{}{}", daemon_url.trim_end_matches('/'), path))
+        .unwrap_or_else(|| repo_url.to_string());
+
     let start = now_unix();
-    let checkout =
-        match build_checkout_invocation(repo_url, job.commit_sha.as_deref(), job.branch.as_deref())
-        {
-            Ok(checkout) => checkout,
-            Err(e) => return (steps, Err(e)),
-        };
+    let mut checkout = match build_checkout_invocation(
+        &effective_repo_url,
+        job.commit_sha.as_deref(),
+        job.branch.as_deref(),
+    ) {
+        Ok(checkout) => checkout,
+        Err(e) => return (steps, Err(e)),
+    };
+    if proxy_path.is_some() {
+        add_checkout_proxy_config(&mut checkout, &effective_repo_url, &config.runner_token);
+    }
 
     let _ = append_runner_log_line(
         client,
@@ -3192,6 +3220,31 @@ mod tests {
                 .preview_command
                 .contains("git submodule update --init --recursive")
         );
+    }
+
+    #[test]
+    fn checkout_proxy_scopes_runner_token_to_daemon_url() {
+        let mut checkout =
+            build_checkout_invocation("http://127.0.0.1:8787/proxy/repo.git", None, Some("main"))
+                .expect("checkout invocation");
+        add_checkout_proxy_config(
+            &mut checkout,
+            "http://127.0.0.1:8787/proxy/repo.git",
+            "runner-secret",
+        );
+
+        assert!(checkout.env.contains(&(
+            "GIT_CONFIG_KEY_0".to_string(),
+            "http.http://127.0.0.1:8787/proxy/repo.git.extraHeader".to_string(),
+        )));
+        assert!(
+            !checkout
+                .env
+                .iter()
+                .any(|(_, value)| value == "http.extraHeader")
+        );
+        assert!(!checkout.preview_command.contains("runner-secret"));
+        assert!(!checkout.shell_script.contains("runner-secret"));
     }
 
     #[test]

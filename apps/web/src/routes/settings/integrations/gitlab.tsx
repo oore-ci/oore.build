@@ -1,8 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Copy01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
+import type { UseFormReturn } from 'react-hook-form'
 
 import {
   getActiveInstanceOrRedirect,
@@ -10,6 +14,7 @@ import {
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useGitLabStart } from '@/hooks/use-integrations'
+import { normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
 import SetupHint from '@/components/setup-hint'
 import { Button } from '@/components/ui/button'
@@ -18,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -36,7 +42,14 @@ import {
 
 const gitLabSetupSchema = z
   .object({
-    host_url: z.string().trim().min(1, 'Host URL is required'),
+    host_url: z
+      .string()
+      .trim()
+      .min(1, 'Host URL is required')
+      .refine(
+        (value) => normalizeGitLabHostUrl(value) !== null,
+        'Use an HTTP(S) host URL only, without a path, query, or credentials.',
+      ),
     auth_mode: z.enum(['personal_token', 'oauth_app']),
     webhook_secret: z.string().trim().min(1, 'Webhook secret is required'),
     access_token: z.string().optional(),
@@ -71,6 +84,11 @@ const gitLabSetupSchema = z
 
 type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
 
+function generateWebhookSecret(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24))
+  return `oore_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
 export const Route = createFileRoute('/settings/integrations/gitlab')({
   staticData: { breadcrumbLabel: 'GitLab' },
   beforeLoad: () => {
@@ -86,6 +104,7 @@ function GitLabSetupPage() {
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
+  const [webhookSecret] = useState(generateWebhookSecret)
 
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
@@ -93,7 +112,7 @@ function GitLabSetupPage() {
     defaultValues: {
       host_url: 'https://gitlab.com',
       auth_mode: 'personal_token',
-      webhook_secret: '',
+      webhook_secret: webhookSecret,
       access_token: '',
       client_id: '',
       client_secret: '',
@@ -102,12 +121,19 @@ function GitLabSetupPage() {
 
   const authMode = form.watch('auth_mode')
   const hostUrl = form.watch('host_url')
+  const normalizedHostUrl =
+    normalizeGitLabHostUrl(hostUrl) ?? 'https://gitlab.com'
+  const proxyOrigin = window.location.origin
+  const webhookUrl = `${proxyOrigin}/v1/webhooks/gitlab`
+  const callbackUrl = `${proxyOrigin}/v1/integrations/gitlab/callback`
 
   function handleSubmit(data: GitLabSetupForm) {
     if (!remoteEnabled) return
+    const submittedHostUrl = normalizeGitLabHostUrl(data.host_url)
+    if (!submittedHostUrl) return
     startMutation.mutate(
       {
-        host_url: data.host_url.trim(),
+        host_url: submittedHostUrl,
         auth_mode: data.auth_mode,
         webhook_secret: data.webhook_secret.trim(),
         access_token:
@@ -147,12 +173,34 @@ function GitLabSetupPage() {
     )
   }
 
+  function normalizeHostUrl() {
+    const normalized = normalizeGitLabHostUrl(form.getValues('host_url'))
+    if (normalized) {
+      form.setValue('host_url', normalized, { shouldValidate: true })
+    }
+  }
+
+  function replaceWebhookSecret() {
+    form.setValue('webhook_secret', generateWebhookSecret(), {
+      shouldDirty: true,
+      shouldTouch: true,
+      shouldValidate: true,
+    })
+  }
+
+  function copyWebhookSecret() {
+    void navigator.clipboard.writeText(form.getValues('webhook_secret')).then(
+      () => toast.success('Webhook secret copied'),
+      () => toast.error('Could not copy webhook secret'),
+    )
+  }
+
   return (
     <PageLayout width="wide">
       <PageMeta title="Connect GitLab Source" noindex />
       <PageHeader
         title="Connect GitLab Source"
-        description="Connect gitlab.com or a self-managed GitLab source for repositories and webhook events."
+        description="Connect GitLab.com or a self-managed GitLab host for repository discovery and webhook-triggered builds."
         back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
@@ -183,8 +231,19 @@ function GitLabSetupPage() {
                   <FormItem>
                     <FormLabel>GitLab host URL</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="https://gitlab.com" />
+                      <Input
+                        {...field}
+                        placeholder="https://gitlab.example.com"
+                        onBlur={() => {
+                          field.onBlur()
+                          normalizeHostUrl()
+                        }}
+                      />
                     </FormControl>
+                    <FormDescription>
+                      Host origin only. Oore normalizes a trailing slash; do not
+                      include <code>/api/v4</code> or a group path.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -223,116 +282,19 @@ function GitLabSetupPage() {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="webhook_secret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Webhook secret</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        {...field}
-                        placeholder="Shared secret for GitLab webhook settings"
-                      />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">
-                      Use the same secret when creating the webhook in GitLab.
-                    </p>
-                    <SetupHint
-                      title="Where this goes in GitLab"
-                      items={[
-                        'Project Settings -> Webhooks -> Secret token.',
-                        'Use the Oore GitLab webhook URL from the connected source details page after this source is saved.',
-                      ]}
-                    />
-                    <FormMessage />
-                  </FormItem>
-                )}
+              <GitLabWebhookSecretField
+                form={form}
+                webhookUrl={webhookUrl}
+                onCopy={copyWebhookSecret}
+                onRegenerate={replaceWebhookSecret}
               />
 
-              {authMode === 'personal_token' ? (
-                <FormField
-                  control={form.control}
-                  name="access_token"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Access token</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          {...field}
-                          placeholder="glpat-..."
-                        />
-                      </FormControl>
-                      <SetupHint
-                        title="Required GitLab PAT scopes"
-                        items={[
-                          <span>
-                            Select <code>read_user</code>,{' '}
-                            <code>read_api</code>, and{' '}
-                            <code>read_repository</code>.
-                          </span>,
-                          <span>
-                            Do not select full <code>api</code> unless you are
-                            testing a future write-capable GitLab feature.
-                          </span>,
-                          <span>
-                            Create it at{' '}
-                            <code>
-                              {hostUrl || 'https://gitlab.com'}
-                              /-/user_settings/personal_access_tokens
-                            </code>
-                            .
-                          </span>,
-                        ]}
-                      />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="client_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Client ID</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Application ID" />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">
-                          Create a GitLab OAuth application and paste its
-                          Application ID here.
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="client_secret"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Client secret</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            {...field}
-                            placeholder="Application secret"
-                          />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">
-                          Use the Secret from the same GitLab OAuth
-                          application.
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
+              <GitLabCredentialsFields
+                form={form}
+                authMode={authMode}
+                hostUrl={normalizedHostUrl}
+                callbackUrl={callbackUrl}
+              />
 
               <Button
                 type="submit"
@@ -355,5 +317,167 @@ function GitLabSetupPage() {
         </CardContent>
       </Card>
     </PageLayout>
+  )
+}
+
+function GitLabWebhookSecretField({
+  form,
+  webhookUrl,
+  onCopy,
+  onRegenerate,
+}: {
+  form: UseFormReturn<GitLabSetupForm>
+  webhookUrl: string
+  onCopy: () => void
+  onRegenerate: () => void
+}) {
+  return (
+    <FormField
+      control={form.control}
+      name="webhook_secret"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>Webhook secret</FormLabel>
+          <div className="flex gap-2">
+            <FormControl>
+              <Input type="password" {...field} />
+            </FormControl>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={onCopy}
+              aria-label="Copy webhook secret"
+              title="Copy webhook secret"
+            >
+              <HugeiconsIcon icon={Copy01Icon} size={16} />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={onRegenerate}
+              aria-label="Generate a new webhook secret"
+              title="Generate a new webhook secret"
+            >
+              <HugeiconsIcon icon={Refresh01Icon} size={16} />
+            </Button>
+          </div>
+          <FormDescription>
+            Generated securely in this browser. Copy it into GitLab; Oore
+            encrypts it when this source is saved.
+          </FormDescription>
+          <SetupHint
+            title="Webhook setup in GitLab"
+            items={[
+              <span>
+                URL: <code>{webhookUrl}</code>
+              </span>,
+              'Project Settings -> Webhooks -> Secret token. Enable Push events (and Merge request events if your pipeline uses them).',
+            ]}
+          />
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+function GitLabCredentialsFields({
+  form,
+  authMode,
+  hostUrl,
+  callbackUrl,
+}: {
+  form: UseFormReturn<GitLabSetupForm>
+  authMode: GitLabSetupForm['auth_mode']
+  hostUrl: string
+  callbackUrl: string
+}) {
+  if (authMode === 'personal_token') {
+    return (
+      <FormField
+        control={form.control}
+        name="access_token"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Access token</FormLabel>
+            <FormControl>
+              <Input type="password" {...field} placeholder="glpat-..." />
+            </FormControl>
+            <SetupHint
+              title="Required GitLab PAT scopes"
+              items={[
+                <span>
+                  Select <code>read_user</code>, <code>read_api</code>, and{' '}
+                  <code>read_repository</code>.
+                </span>,
+                <span>
+                  Do not select full <code>api</code> unless you are testing a
+                  future write-capable GitLab feature.
+                </span>,
+                <span>
+                  Create it at{' '}
+                  <code>{hostUrl}/-/user_settings/personal_access_tokens</code>.
+                </span>,
+              ]}
+            />
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    )
+  }
+
+  return (
+    <>
+      <FormField
+        control={form.control}
+        name="client_id"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Client ID</FormLabel>
+            <FormControl>
+              <Input {...field} placeholder="Application ID" />
+            </FormControl>
+            <FormDescription>
+              Create an OAuth application on {hostUrl} and paste its Application
+              ID here.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="client_secret"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Client secret</FormLabel>
+            <FormControl>
+              <Input
+                type="password"
+                {...field}
+                placeholder="Application secret"
+              />
+            </FormControl>
+            <FormDescription>
+              Use the Secret from the same GitLab OAuth application.
+            </FormDescription>
+            <SetupHint
+              title="OAuth callback"
+              items={[
+                <span>
+                  Register this redirect URI in GitLab:{' '}
+                  <code>{callbackUrl}</code>
+                </span>,
+                'Save this source, then choose Authorize on GitLab from its source details page.',
+              ]}
+            />
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </>
   )
 }

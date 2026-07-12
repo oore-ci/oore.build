@@ -72,6 +72,8 @@ Replace `100.64.10.20` with the Mac NetBird address, `100.64.10.30/32` with the 
 
 Backend-only macOS installs use a system LaunchDaemon running as the installing account. The installer asks for `sudo` so the daemon starts at boot without a GUI login session.
 
+When the daemon binds a specific NetBird address, it also opens the same port on loopback for the embedded runner and local operator commands. It does not add a wildcard listener; the NetBird address remains the only non-loopback daemon address.
+
 ### 2. Create a frontend pairing code
 
 On the Mac, after backend setup is ready, create a short-lived single-use code:
@@ -130,6 +132,14 @@ backend oore_web
 Manual backend-proof transfer and a manually managed frontend proof remain an advanced fallback. Configure `OORE_TRUSTED_PROXY_SHARED_SECRET_FILE` and `OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE` with different mode-`0600` files only when you intentionally manage that distribution yourself.
 
 ### 5. Verify before opening access
+
+On the Mac:
+
+```bash
+curl -fsS http://127.0.0.1:8787/readyz
+```
+
+The loopback readiness request must succeed. After signing in, **Runners** must show the embedded runner as `online`; backend readiness alone is not sufficient for a testable build host.
 
 On Ubuntu:
 

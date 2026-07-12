@@ -315,10 +315,45 @@ pub async fn claim_job(
     let pipeline_id: String = build_row.get("pipeline_id");
     let build_number: i64 = build_row.get("build_number");
     let config_snapshot_str: String = build_row.get("config_snapshot");
-    let config_snapshot: serde_json::Value =
+    let mut config_snapshot: serde_json::Value =
         serde_json::from_str(&config_snapshot_str).unwrap_or_default();
     let commit_sha: Option<String> = build_row.get("commit_sha");
     let branch: Option<String> = build_row.get("branch");
+
+    let source_row = sqlx::query(
+        "SELECT i.provider, r.full_name \
+         FROM projects p \
+         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE p.id = ?1",
+    )
+    .bind(&project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to resolve runner checkout source");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve checkout",
+        )
+    })?;
+    if let Some(source) = source_row
+        && source.get::<String, _>("provider") == "gitlab"
+        && let Some(snapshot) = config_snapshot.as_object_mut()
+    {
+        let full_name: String = source.get("full_name");
+        let encoded_name = full_name
+            .split('/')
+            .map(|part| urlencoding::encode(part).into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        snapshot.insert(
+            "checkout_proxy_path".to_string(),
+            format!("/v1/runners/{runner_id}/jobs/{build_id}/gitlab/{encoded_name}.git").into(),
+        );
+    }
 
     let actor_str = format!("runner:{runner_id}");
 

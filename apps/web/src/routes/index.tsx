@@ -35,6 +35,7 @@ import { useBuilds } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
+import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -293,6 +294,7 @@ function ConfiguredDashboard({
     [projectsQuery.data?.projects],
   )
   const integrationsQuery = useIntegrations()
+  const runnersQuery = useRunners()
   const integrations = useMemo(
     () => integrationsQuery.data?.integrations ?? [],
     [integrationsQuery.data?.integrations],
@@ -323,7 +325,12 @@ function ConfiguredDashboard({
     integrationsResolved &&
     activeIntegrationsCount === 0
   const integrationConnectTo = '/settings/integrations'
-  const canShowRunBuild = canWriteBuilds && hasProjects
+  const noOnlineRunners =
+    !!runnersQuery.data &&
+    !runnersQuery.data.runners.some(
+      (runner) => runner.status === 'online' || runner.status === 'busy',
+    )
+  const canShowRunBuild = canWriteBuilds && hasProjects && !noOnlineRunners
 
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
@@ -383,6 +390,16 @@ function ConfiguredDashboard({
             >
               Dismiss
             </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {noOnlineRunners ? (
+        <Alert variant="destructive">
+          <AlertTitle>No runner is available</AlertTitle>
+          <AlertDescription>
+            Builds cannot run until a runner checks in. Verify that the Oore
+            daemon is running on the runner host.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -455,7 +472,6 @@ function ConfiguredDashboard({
                         </p>
                         {canWriteIntegrations ? (
                           <Button
-                            variant="outline"
                             size="sm"
                             render={<Link to={integrationConnectTo} />}
                             nativeButton={false}
@@ -483,7 +499,7 @@ function ConfiguredDashboard({
                           ? 'Point to a local Flutter repository to get started.'
                           : 'Pick a repository from a connected source or use a local path.'}
                       </p>
-                      {canWriteProjects ? (
+                      {canWriteProjects && !noConnectedSources ? (
                         <Button
                           size="sm"
                           render={

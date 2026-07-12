@@ -393,6 +393,50 @@ async fn test_gitlab_webhook_idempotency() {
 }
 
 #[tokio::test]
+async fn test_gitlab_webhook_idempotency_without_event_uuid() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let secret = "gl-test-fallback-idemp";
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    let (project_id, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "group/fallback-proj").await;
+    let body = serde_json::to_vec(&common::gitlab_push_payload(
+        "group/fallback-proj",
+        "main",
+        "gl-sha-fallback",
+    ))
+    .unwrap();
+
+    for expected_duplicate in [false, true] {
+        let request = Request::post("/v1/webhooks/gitlab")
+            .header("content-type", "application/json")
+            .header("x-gitlab-token", secret)
+            .header("x-gitlab-event", "Push Hook")
+            .body(Body::from(body.clone()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let json = common::body_json(response.into_body()).await;
+        assert_eq!(
+            json["duplicate"].as_bool().unwrap_or(false),
+            expected_duplicate
+        );
+        if !expected_duplicate {
+            common::wait_for_builds(&pool, &project_id, 1, 2000).await;
+        }
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let builds = common::wait_for_builds(&pool, &project_id, 1, 500).await;
+    assert_eq!(builds.len(), 1);
+}
+
+#[tokio::test]
 async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");

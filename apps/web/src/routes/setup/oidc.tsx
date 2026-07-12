@@ -247,7 +247,7 @@ function OidcConfigStep() {
           Configure the OpenID Connect provider for authentication. You will
           need a client ID (and optionally secret) from your identity provider.
         </p>
-        <p className="text-xs text-amber-600 dark:text-amber-400">
+        <p className="text-xs text-warning">
           You can edit this until owner verification is completed. After owner
           verification, setup can only move forward to finalize.
         </p>

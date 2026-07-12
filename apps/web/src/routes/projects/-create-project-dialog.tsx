@@ -2,13 +2,13 @@ import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Folder02Icon } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
 import { useQuery } from '@tanstack/react-query'
-import type { IntegrationRepository } from '@/lib/types'
+import type { IntegrationRepository, ScmProvider } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
@@ -59,6 +59,18 @@ interface CreateProjectDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+type SourceRepository = IntegrationRepository & {
+  integration_id: string
+  provider: ScmProvider
+  host_url: string
+}
+
+function sourceProviderLabel(provider: ScmProvider): string {
+  if (provider === 'gitlab') return 'GitLab'
+  if (provider === 'github') return 'GitHub'
+  return 'Local Git'
+}
+
 function isLoopbackHostname(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
@@ -88,7 +100,7 @@ function useAvailableRepos(enabled: boolean) {
     queryFn: async () => {
       if (!baseUrl || !token) return []
       const intResp = await listIntegrations(baseUrl, token)
-      const repos: Array<IntegrationRepository> = []
+      const repos: Array<SourceRepository> = []
       for (const integration of intResp.integrations) {
         try {
           const repoResp = await listIntegrationRepos(
@@ -96,7 +108,14 @@ function useAvailableRepos(enabled: boolean) {
             token,
             integration.id,
           )
-          repos.push(...repoResp.repositories)
+          repos.push(
+            ...repoResp.repositories.map((repository) => ({
+              ...repository,
+              integration_id: integration.id,
+              provider: integration.provider,
+              host_url: integration.host_url,
+            })),
+          )
         } catch {
           // skip failed sources
         }
@@ -126,15 +145,20 @@ export default function CreateProjectDialog({
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 
   const [sourceKind, setSourceKind] = useState<'local' | 'repo'>('local')
-  const [sourceKindTouched, setSourceKindTouched] = useState(false)
-
   const { data: repos, isLoading: reposLoading } = useAvailableRepos(
     open && isRemoteMode && sourceKind === 'repo',
   )
   const [selectedRepoId, setSelectedRepoId] = useState<string>('')
   const [pickerOpen, setPickerOpen] = useState(false)
+
   const repoItems = useMemo(
-    () => Object.fromEntries((repos ?? []).map((r) => [r.id, r.full_name])),
+    () =>
+      Object.fromEntries(
+        (repos ?? []).map((repository) => [
+          repository.id,
+          `${repository.full_name} · ${sourceProviderLabel(repository.provider)} (${repository.host_url})`,
+        ]),
+      ),
     [repos],
   )
   const hasRepos = (repos?.length ?? 0) > 0
@@ -150,17 +174,7 @@ export default function CreateProjectDialog({
     mode: 'onBlur',
   })
 
-  // Derive effective sourceKind: fallback to 'local' if remote mode has no repos
-  const effectiveSourceKind =
-    isRemoteMode &&
-    sourceKind === 'repo' &&
-    !hasRepos &&
-    !sourceKindTouched &&
-    !reposLoading
-      ? 'local'
-      : sourceKind
-
-  // Derive effective selectedRepoId: auto-select first repo
+  const effectiveSourceKind = sourceKind
   const effectiveSelectedRepoId = selectedRepoId || repos?.[0]?.id || ''
 
   function applyLocalPath(path: string, closePicker = false) {
@@ -254,13 +268,11 @@ export default function CreateProjectDialog({
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen) {
       setSourceKind(isRemoteMode ? 'repo' : 'local')
-      setSourceKindTouched(false)
       setSelectedRepoId('')
     } else {
       form.reset()
       setSelectedRepoId('')
       setSourceKind('local')
-      setSourceKindTouched(false)
       setPickerOpen(false)
     }
     onOpenChange(nextOpen)
@@ -320,7 +332,6 @@ export default function CreateProjectDialog({
               <Tabs
                 value={effectiveSourceKind}
                 onValueChange={(v) => {
-                  setSourceKindTouched(true)
                   setSourceKind(v as 'local' | 'repo')
                 }}
               >
@@ -404,10 +415,21 @@ export default function CreateProjectDialog({
                       </SelectContent>
                     </Select>
                   ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No source repositories available. Connect a source and
-                      sync repositories first.
-                    </p>
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        No source repositories are available yet. Connect a
+                        source, then sync its repositories before creating a
+                        project.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        render={<Link to="/settings/integrations" />}
+                        nativeButton={false}
+                      >
+                        Connect Source
+                      </Button>
+                    </div>
                   )}
                 </TabsContent>
               </Tabs>

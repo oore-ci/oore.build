@@ -12,6 +12,12 @@ Rules:
 
 ## 2026-07-12
 
+- **Build-ready split runtime, consistent onboarding, and first-class GitLab**:
+  - Private-address daemon installs now keep a loopback companion listener for the embedded runner without adding a wildcard/public bind, so backend readiness and runner readiness agree.
+  - The dashboard and project/source flows now expose build-blocking runner state, preserve the required first-run action order, and avoid remote local-path dead ends.
+  - Shared UI tokens and core onboarding/source screens now use consistent shape, color, heading, and action hierarchy.
+  - GitLab.com and self-managed GitLab flows now provide split-proxy-safe OAuth/webhook guidance, hardened host validation, private checkout support, complete repository sync, and retry-safe webhook identity.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-readiness-consistent-onboarding-and-first-class-gitlab-6e925460f155
 - **Verified launchd service installation**:
   - macOS service installation now retries modern `launchctl bootstrap`, requires `kickstart` and service lookup to succeed, and reports the real launchctl error instead of accepting the legacy `load` command's unreliable exit status.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
