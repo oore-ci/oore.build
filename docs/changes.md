@@ -12,6 +12,9 @@ Rules:
 
 ## 2026-07-12
 
+- **Updater runtime hotfix**:
+  - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-readiness-consistent-onboarding-and-first-class-gitlab-6e925460f155
 - **Build-ready split runtime, consistent onboarding, and first-class GitLab**:
   - Private-address daemon installs now keep a loopback companion listener for the embedded runner without adding a wildcard/public bind, so backend readiness and runner readiness agree.
   - The dashboard and project/source flows now expose build-blocking runner state, preserve the required first-run action order, and avoid remote local-path dead ends.

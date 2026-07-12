@@ -3942,6 +3942,16 @@ fn install_staged_release(
     Ok(())
 }
 
+async fn run_blocking_update_step<F, T>(operation: F) -> anyhow::Result<T>
+where
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .context("blocking update step failed")?
+}
+
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
 
@@ -4086,10 +4096,14 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         current,
         now_epoch_secs()
     ));
-    backup_create(BackupCreateArgs {
-        output: backup_path.clone(),
-        state_file: None,
-    })?;
+    let backup_output = backup_path.clone();
+    run_blocking_update_step(move || {
+        backup_create(BackupCreateArgs {
+            output: backup_output,
+            state_file: None,
+        })
+    })
+    .await?;
     println!("Created pre-update backup: {}", backup_path.display());
 
     // 9. Preserve running service state. The managed service plist is the source
@@ -4299,6 +4313,19 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_update_step_can_run_runtime_backed_backup_work() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let value = runtime
+            .block_on(run_blocking_update_step(|| {
+                let nested = tokio::runtime::Runtime::new()?;
+                nested.block_on(async { Ok::<_, anyhow::Error>(42) })
+            }))
+            .unwrap();
+
+        assert_eq!(value, 42);
+    }
 
     #[test]
     fn update_rollback_restores_previous_release() {
