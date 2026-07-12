@@ -210,7 +210,10 @@ export function useRerunBuild() {
   })
 }
 
-export function useBuildLogs(buildId: string) {
+export function useBuildLogs(
+  buildId: string,
+  options?: { enabled?: boolean },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -240,7 +243,7 @@ export function useBuildLogs(buildId: string) {
 
       return { logs: allLogs, total }
     },
-    enabled: !!baseUrl && !!token && !!buildId,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!buildId,
   })
 }
 

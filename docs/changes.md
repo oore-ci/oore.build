@@ -12,6 +12,11 @@ Rules:
 
 ## 2026-07-12
 
+- **Frontend build-log correctness foundation**:
+  - Terminal build details now fetch the final log snapshot only after completion and merge it with streamed chunks by sequence, preventing visible output from regressing while persistence catches up.
+  - Completed steps without runner log markers now default to All logs instead of selecting an empty step.
+  - Added focused regression coverage and fixed conditional React Hook ordering in project detail and owner setup.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Updater runtime hotfix**:
   - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-product-readiness-consistent-onboarding-and-first-class-gitlab-6e925460f155

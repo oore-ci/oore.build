@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import type { BuildLogChunk } from '@/lib/types'
-import { mergeBuildLogChunks } from '@/lib/log-stream-utils'
+import {
+  mergeBuildLogChunks,
+  mergeBuildLogSnapshots,
+} from '@/lib/log-stream-utils'
 
 function chunk(sequence: number, content: string): BuildLogChunk {
   return { sequence, content, stream: 'stdout' }
@@ -75,5 +78,14 @@ describe('mergeBuildLogChunks', () => {
     expect(result.changed).toBe(false)
     expect(result.logs).toBe(currentLogs)
     expect(result.lastSequence).toBe(1)
+  })
+
+  it('keeps streamed lines while the terminal snapshot catches up', () => {
+    const result = mergeBuildLogSnapshots(
+      [chunk(1, 'one'), chunk(2, 'two'), chunk(3, 'three')],
+      [chunk(1, 'one'), chunk(2, 'two')],
+    )
+
+    expect(result.map((log) => log.content)).toEqual(['one', 'two', 'three'])
   })
 })

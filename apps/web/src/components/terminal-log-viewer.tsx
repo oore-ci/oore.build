@@ -226,10 +226,12 @@ export default function TerminalLogViewer({
         userSelectedStep === 'all' || stepGroupsByName.has(userSelectedStep)
       if (valid) return userSelectedStep
     }
+    if (runningStepName) return runningStepName
     return (
-      runningStepName ??
-      stepGroups.find((group) => group.status === 'failed')?.name ??
-      stepGroups.at(0)?.name ??
+      stepGroups.find(
+        (group) => group.status === 'failed' && group.logs.length > 0,
+      )?.name ??
+      stepGroups.find((group) => group.logs.length > 0)?.name ??
       'all'
     )
   }, [userSelectedStep, stepGroups, stepGroupsByName, runningStepName])
@@ -463,6 +465,7 @@ export default function TerminalLogViewer({
       {hasSteps ? (
         <div className="flex items-center gap-2 border border-b-0 border-[oklch(0.25_0_0)] bg-[oklch(0.17_0_0)] px-3 py-2 md:hidden">
           <select
+            aria-label="Build step"
             value={selectedStep}
             onChange={(e) => setUserSelectedStep(e.target.value)}
             className="w-full bg-[oklch(0.14_0_0)] text-[oklch(0.92_0_0)] text-xs border border-[oklch(0.30_0_0)] px-2 py-1.5"

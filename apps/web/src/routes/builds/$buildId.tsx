@@ -71,6 +71,7 @@ import {
 } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
+import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: { breadcrumbLabel: 'Details' },
@@ -147,15 +148,12 @@ function BuildDetailPage() {
       void refetchArtifacts()
     }, [refetchBuild, refetchArtifacts]),
   })
-  const fullLogsQuery = useBuildLogs(buildId)
+  const fullLogsQuery = useBuildLogs(buildId, { enabled: isTerminal })
   const { data: fullLogsData } = fullLogsQuery
 
   const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
-    if (streamEnabled && streamLogs.length > 0) return streamLogs
-    if (isTerminal && fullLogsData?.logs) return fullLogsData.logs
-    if (streamLogs.length > 0) return streamLogs
-    return fullLogsData?.logs ?? []
-  }, [streamEnabled, streamLogs, isTerminal, fullLogsData?.logs])
+    return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
+  }, [streamLogs, fullLogsData?.logs])
 
   // ── Handlers ─────────────────────────────────────────────
 
