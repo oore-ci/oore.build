@@ -13,7 +13,7 @@ Rules:
 ## 2026-07-12
 
 - **CI and release latency**:
-  - Rust validation and release builds now reuse dependency artifacts, release-branch path filtering compares only the current push, and Pages deployment runs independently from binary packaging.
+  - Rust validation reuses dependency artifacts, release-branch path filtering compares only the current push, Pages deployment runs independently from binary packaging, and macOS ARM64/x86_64 release binaries build in parallel.
   - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
 - **Installer explicit-role and timeout fix**:
   - Explicit macOS `backend` and `frontend` roles are no longer overwritten by the simple all-in-one default.
