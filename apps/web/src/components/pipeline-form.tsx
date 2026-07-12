@@ -332,35 +332,6 @@ export default function PipelineForm({
     )
   }
 
-  async function handleValidate() {
-    const valid = await form.trigger()
-    if (!valid) {
-      const errors = form.formState.errors
-      dispatchSections({
-        type: 'reveal',
-        sections: {
-          config: !!(
-            errors.name ||
-            errors.config_mode ||
-            errors.config_path ||
-            errors.flutter_version
-          ),
-          triggers: !!(errors.max_concurrent || errors.branches),
-          commands: !!(
-            errors.pre_build_commands ||
-            errors.build_commands ||
-            errors.post_build_commands
-          ),
-          iosSigning: !!(
-            errors.ios_signing_enabled ||
-            errors.ios_signing_team_id ||
-            errors.ios_signing_bundle_ids
-          ),
-        },
-      })
-    }
-  }
-
   const values = form.watch()
   const configMode = values.config_mode
   const previewDefaults = previewPlatformCommands(values)
@@ -1663,9 +1634,6 @@ export default function PipelineForm({
           <div className="flex items-center justify-end gap-3 px-6 py-3">
             <Button type="button" variant="outline" onClick={onCancel}>
               Cancel
-            </Button>
-            <Button type="button" variant="outline" onClick={handleValidate}>
-              Validate
             </Button>
             <Button
               type="button"

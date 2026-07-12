@@ -14,6 +14,13 @@ Rules:
 
 ## 2026-07-13
 
+- **Managed frontend onboarding and real Flutter migration fixes**:
+  - A paired same-origin `oore-web` frontend now becomes the browser's instance automatically when no instance has been saved, so invited users can proceed directly to authentication; manual instance management remains available for generic and multi-instance clients.
+  - Remote project creation now requires an explicitly selected connected repository and fills its editable name and default branch, while local project paths stay confined to Local Only mode.
+  - Pipeline forms preserve platform arguments, environment variables, and artifacts independently from custom command toggles. Built-in artifact patterns and the runner now share the same valid workspace-relative glob contract.
+  - Terminal build logs no longer present stale or duplicate live state, and the no-op client-only Validate action was removed in favor of validation on save.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 - **Reliable release tagging and Pages deployment**:
   - Release tags are again cut from pushes to protected release-channel branches, avoiding a `workflow_run` trigger that GitHub only evaluates from the default branch.
   - Pages projects now deploy serially and retry only transient Cloudflare 5xx API failures with bounded backoff; authentication and configuration errors still fail immediately.

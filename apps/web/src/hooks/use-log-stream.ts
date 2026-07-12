@@ -116,7 +116,10 @@ export function useLogStream(
 
   useEffect(() => {
     cleanup()
-    if (!enabled || !baseUrl || !token) return cleanup
+    if (!enabled || !baseUrl || !token) {
+      updateStream({ isStreaming: false })
+      return cleanup
+    }
 
     updateStream('reset')
     logsBySequenceRef.current = new Map()

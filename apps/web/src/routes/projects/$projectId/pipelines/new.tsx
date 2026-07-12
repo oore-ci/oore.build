@@ -23,13 +23,11 @@ import {
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useProject } from '@/hooks/use-projects'
 import {
-  defaultArtifactPatterns,
+  executionConfigFromForm,
   fileToBase64,
   fileToUtf8,
   parseBundleIdsInput,
   parseCsv,
-  parseEnvVars,
-  parseMultiline,
   selectedPlatforms,
   trimToUndefined,
 } from '@/lib/pipeline-form-utils'
@@ -101,7 +99,7 @@ const PIPELINE_TEMPLATES = [
       platform_macos: false,
       enable_customization: true,
       android_command_override: 'flutter build apk --debug',
-      artifact_patterns: 'build/app/outputs/flutter-apk/app-debug.apk',
+      artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
     } satisfies PipelineFormValues,
     events: ['push'],
   },
@@ -212,18 +210,6 @@ function NewPipelinePage() {
         : undefined,
     }
 
-    const commands = data.enable_customization
-      ? {
-          pre_build: parseMultiline(data.pre_build_commands),
-          build: parseMultiline(data.build_commands),
-          post_build: parseMultiline(data.post_build_commands),
-        }
-      : { pre_build: [], build: [], post_build: [] }
-
-    const customPatterns = data.enable_customization
-      ? parseMultiline(data.artifact_patterns)
-      : []
-
     const payload: CreatePipelineRequest = {
       name: data.name.trim(),
       config_path:
@@ -231,30 +217,7 @@ function NewPipelinePage() {
           ? data.config_path?.trim()
           : '.oore.yaml',
       config_path_explicit: data.config_mode === 'explicit',
-      execution_config: {
-        platforms,
-        flutter_version: data.flutter_version?.trim() || undefined,
-        commands,
-        platform_build_args: data.enable_customization
-          ? {
-              android: parseMultiline(data.android_build_args),
-              ios: parseMultiline(data.ios_build_args),
-              macos: parseMultiline(data.macos_build_args),
-            }
-          : { android: [], ios: [], macos: [] },
-        platform_commands: data.enable_customization
-          ? {
-              android: data.android_command_override?.trim() || undefined,
-              ios: data.ios_command_override?.trim() || undefined,
-              macos: data.macos_command_override?.trim() || undefined,
-            }
-          : {},
-        env: data.enable_customization ? parseEnvVars(data.env_vars) : [],
-        artifact_patterns:
-          customPatterns.length > 0
-            ? customPatterns
-            : defaultArtifactPatterns(platforms),
-      },
+      execution_config: executionConfigFromForm(data),
       trigger_config,
       concurrency,
     }

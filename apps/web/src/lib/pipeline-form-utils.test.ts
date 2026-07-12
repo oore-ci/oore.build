@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import {
   defaultArtifactPatterns,
+  executionConfigFromForm,
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
 
@@ -57,6 +58,26 @@ describe('pipeline form defaults', () => {
   it('keeps the Quick Debug APK command in the pipeline payload preview', () => {
     expect(previewPlatformCommands(defaults)).toEqual([
       'flutter build apk --debug',
+    ])
+  })
+
+  it('keeps independent args, env, and artifacts when custom commands are off', () => {
+    const config = executionConfigFromForm({
+      ...defaults,
+      enable_customization: false,
+      build_commands: 'echo ignored',
+      android_build_args: '--target=lib/main_adhoc.dart',
+      env_vars: 'APP_FLAVOR=adhoc',
+      artifact_patterns: 'build/app/outputs/bundle/release/*.aab',
+    })
+
+    expect(config.commands.build).toEqual([])
+    expect(config.platform_build_args?.android).toEqual([
+      '--target=lib/main_adhoc.dart',
+    ])
+    expect(config.env).toEqual([{ key: 'APP_FLAVOR', value: 'adhoc' }])
+    expect(config.artifact_patterns).toEqual([
+      'build/app/outputs/bundle/release/*.aab',
     ])
   })
 })

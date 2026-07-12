@@ -11,7 +11,7 @@ use oore_contract::{
     PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
     PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
-    artifact_pattern_matches, parse_repository_pipeline_yaml,
+    artifact_pattern_matches, parse_repository_pipeline_yaml, validate_artifact_pattern,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -1321,9 +1321,8 @@ fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>
         if trimmed.is_empty() {
             anyhow::bail!("artifacts.patterns[{idx}] must not be empty");
         }
-        if !trimmed.starts_with("*.") || trimmed.chars().any(char::is_whitespace) {
-            anyhow::bail!("artifacts.patterns[{idx}] must be extension globs like '*.apk'");
-        }
+        validate_artifact_pattern(trimmed)
+            .map_err(|error| anyhow::anyhow!("artifacts.patterns[{idx}] {error}"))?;
         cleaned.push(trimmed.to_string());
     }
     Ok(cleaned)
@@ -3692,6 +3691,33 @@ mod tests {
 
         let error = resolve_execution_plan(&workspace, &snapshot).expect_err("should fail");
         assert!(error.to_string().contains(".fvmrc"));
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn ui_fallback_accepts_workspace_relative_artifact_patterns() {
+        let workspace = temp_workspace();
+        let snapshot = serde_json::json!({
+            "config_path_explicit": false,
+            "ui_execution_config": {
+                "platforms": ["android", "ios"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": [
+                    "build/app/outputs/bundle/release/*.aab",
+                    "build/ios/ipa/*.ipa"
+                ]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve UI fallback");
+        assert_eq!(
+            plan.artifact_patterns,
+            vec![
+                "build/app/outputs/bundle/release/*.aab".to_string(),
+                "build/ios/ipa/*.ipa".to_string(),
+            ]
+        );
 
         cleanup_workspace(&workspace);
     }
