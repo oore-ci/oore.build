@@ -20,6 +20,7 @@ Rules:
   - Build logs are now the primary full-width workspace, with a compact summary above and artifacts and event history moved into secondary sections below.
   - Step filtering now appears only for logs that can be associated truthfully; terminal controls use Base UI-backed shadcn components, semantic colors, and accessible labels.
   - Added focused regression coverage and removed render-phase routing/store mutations from setup, instance, project, and build flows.
+  - Core build and project actions now distinguish navigation, source connection, settings, and build execution with consistent labels and icons.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Updater runtime hotfix**:
   - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.
