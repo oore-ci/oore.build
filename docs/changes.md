@@ -21,6 +21,7 @@ Rules:
   - Step filtering now appears only for logs that can be associated truthfully; terminal controls use Base UI-backed shadcn components, semantic colors, and accessible labels.
   - Added focused regression coverage and removed render-phase routing/store mutations from setup, instance, project, and build flows.
   - Core build and project actions now distinguish navigation, source connection, settings, and build execution with consistent labels and icons.
+  - Projects and builds now share the registry-backed Empty pattern, with consistent sentence-case actions and task-specific recovery guidance.
   - Verified Button, Select, Card, and Sidebar against the current shadcn registry and refreshed frontend runtime/tooling dependencies within their existing major versions; major upgrades remain isolated for later work.
   - Corrected vendor chunk boundaries so Base UI is no longer swallowed by the React matcher; route-only controls are deferred and initial JavaScript fell by 15.46 kB gzip (6.3%) after the dependency refresh.
   - Added a production entry-bundle gate (240 KiB JavaScript and 22 KiB CSS gzip) to `make validate`, measured from the assets actually referenced by the built HTML.

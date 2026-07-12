@@ -11,6 +11,7 @@ export default [
       'public/mockServiceWorker.js',
       'tools/oore-web.js',
       'tools/oore-web.test.js',
+      'tools/check-bundle-budget.js',
     ],
   },
   {
