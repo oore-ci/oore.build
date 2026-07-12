@@ -1839,6 +1839,40 @@ pub struct PipelineExecutionConfig {
     pub artifact_patterns: Vec<String>,
 }
 
+/// Secret-free representation of a repository-owned pipeline config.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryWorkflowPreview {
+    pub path: String,
+    pub valid: bool,
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<RepositoryWorkflowExecutionPreview>,
+}
+
+/// Pipeline behavior safe to show before import. Environment values are never returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryWorkflowExecutionPreview {
+    pub platforms: Vec<BuildPlatform>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flutter_version: Option<String>,
+    pub commands: PipelineCommandStages,
+    pub platform_build_args: PlatformBuildArgs,
+    pub platform_commands: PlatformBuildCommands,
+    pub env_keys: Vec<String>,
+    pub artifact_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverRepositoryWorkflowsResponse {
+    pub project_id: String,
+    pub provider: ScmProvider,
+    /// Branch, tag, or commit requested for discovery.
+    pub reference: String,
+    pub workflows: Vec<RepositoryWorkflowPreview>,
+    /// True when more matching files existed than the bounded response could inspect.
+    pub truncated: bool,
+}
+
 fn default_platforms() -> Vec<BuildPlatform> {
     vec![BuildPlatform::Android]
 }
@@ -1936,6 +1970,29 @@ pub fn validate_artifact_pattern(pattern: &str) -> Result<(), String> {
         return Err("must be a workspace-relative path using '/' separators".to_string());
     }
     if pattern
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("must not contain empty, '.' or '..' path segments".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_repository_config_path(path: &str) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if path.len() > 512 {
+        return Err("is too long (max 512 chars)".to_string());
+    }
+    if path.starts_with('/') {
+        return Err("must be a repository-relative path".to_string());
+    }
+    if path.contains('\\') {
+        return Err("must use '/' separators".to_string());
+    }
+    if path
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
     {
@@ -2770,6 +2827,25 @@ artifacts:
         )
         .expect_err("parent traversal must fail");
         assert!(traversal.contains("'..'"));
+    }
+
+    #[test]
+    fn repository_config_paths_must_stay_within_the_checkout() {
+        for path in [".oore.yaml", ".oore/mobile.yaml", "ci/release.yml"] {
+            assert!(validate_repository_config_path(path).is_ok(), "{path}");
+        }
+
+        for path in [
+            "",
+            "/etc/oore.yaml",
+            "../.oore.yaml",
+            "./.oore.yaml",
+            ".oore//mobile.yaml",
+            ".oore\\mobile.yaml",
+            &"a".repeat(513),
+        ] {
+            assert!(validate_repository_config_path(path).is_err(), "{path}");
+        }
     }
 
     #[test]

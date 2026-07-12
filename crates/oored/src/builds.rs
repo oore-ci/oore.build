@@ -456,11 +456,13 @@ pub async fn create_build(
     Path(project_id): Path<String>,
     Json(req): Json<CreateBuildRequest>,
 ) -> ApiResult<CreateBuildResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     let effective = resolve_effective_project_role(
-        pool,
+        &pool,
         &auth.0.user_id,
         &auth.0.role,
         &project_id,
@@ -470,14 +472,14 @@ pub async fn create_build(
     require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
 
     let requested_branch = normalize_optional(req.branch);
-    let commit_sha = normalize_optional(req.commit_sha);
+    let mut commit_sha = normalize_optional(req.commit_sha);
     let trigger_ref = normalize_optional(req.trigger_ref);
 
     // Verify project exists and has source linkage.
     let project_row =
         sqlx::query("SELECT repository_id, default_branch FROM projects WHERE id = ?1")
             .bind(&project_id)
-            .fetch_optional(pool)
+            .fetch_optional(&pool)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to fetch project");
@@ -521,7 +523,7 @@ pub async fn create_build(
     )
     .bind(&req.pipeline_id)
     .bind(&project_id)
-    .fetch_optional(pool)
+    .fetch_optional(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch pipeline");
@@ -539,10 +541,24 @@ pub async fn create_build(
     let concurrency: ConcurrencyPolicy =
         serde_json::from_str(&concurrency_json).unwrap_or_default();
 
+    if commit_sha.is_none() {
+        commit_sha = Some(
+            crate::integrations::resolve_branch_commit(
+                &pool,
+                &state.encryption_key,
+                repository_id
+                    .as_deref()
+                    .expect("repository linkage checked"),
+                branch.as_deref().expect("branch presence checked"),
+            )
+            .await?,
+        );
+    }
+
     // Apply cancel_previous policy
     if concurrency.cancel_previous {
         let canceled = apply_cancel_previous(
-            pool,
+            &pool,
             &req.pipeline_id,
             branch.as_deref(),
             Some(&auth.0.email),
@@ -572,7 +588,7 @@ pub async fn create_build(
          WHERE p.id = ?1",
     )
     .bind(&project_id)
-    .fetch_optional(pool)
+    .fetch_optional(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, project_id = %project_id, "failed to resolve project repository URL");
@@ -610,7 +626,7 @@ pub async fn create_build(
 
     let snapshot_str = config_snapshot.to_string();
     insert_build_with_retry(
-        pool,
+        &pool,
         &BuildInsertBinds {
             build_id: &build_id,
             project_id: &project_id,
@@ -629,7 +645,7 @@ pub async fn create_build(
     )
     .await?;
 
-    let build_number = fetch_build_number(pool, &build_id).await?;
+    let build_number = fetch_build_number(&pool, &build_id).await?;
 
     // Insert initial build event
     sqlx::query(
@@ -640,7 +656,7 @@ pub async fn create_build(
     .bind(&build_id)
     .bind(&auth.0.email)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to insert initial build event");
@@ -656,7 +672,7 @@ pub async fn create_build(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "build_created",
         "build",

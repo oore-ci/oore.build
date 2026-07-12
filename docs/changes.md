@@ -14,6 +14,20 @@ Rules:
 
 ## 2026-07-13
 
+- **Repository-first build setup**:
+  - Empty projects now inspect the linked repository before asking users to configure a pipeline. Valid checked-in workflows are recommended with a secret-free preview; missing, invalid, loading, and provider-error states lead to an explicit next action instead of a dense blank form.
+  - Repository execution fields stay read-only in the setup form so the checked-in file remains the single source of truth. Manual templates remain available as a deliberate fallback.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Reproducible manual build revisions**:
+  - Manual and API builds that select a branch now resolve and store its exact commit before entering the queue. Config snapshots, reruns, and runner checkout retain that SHA even if the branch advances later.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Read-only repository workflow discovery API**:
+  - Project maintainers can discover and semantically validate root `.oore.yaml`/`.oore.yml`, bounded `.oore/*.yaml|yml`, and an explicit repository-relative workflow path at a selected ref across GitHub, GitLab.com, self-managed GitLab, and local Git.
+  - Discovery is protected by project `ManagePipelines` permission, limits file counts and response sizes, rejects unsafe paths and refs, and returns only secret-free execution previews: environment keys are visible but raw YAML, environment values, and provider credentials are never returned.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Repository workflow config path safety**:
+  - Explicit repository workflow paths now use one workspace-relative path contract across pipeline create, update, dry-run validation, and runner execution. Absolute paths, traversal, dot or empty segments, backslash separators, oversized paths, and symlink escapes are rejected before the runner reads them.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Managed frontend onboarding and real Flutter migration fixes**:
   - A paired same-origin `oore-web` frontend now becomes the browser's instance automatically when no instance has been saved, so invited users can proceed directly to authentication; manual instance management remains available for generic and multi-instance clients.
   - Remote project creation now requires an explicitly selected connected repository and fills its editable name and default branch, while local project paths stay confined to Local Only mode.

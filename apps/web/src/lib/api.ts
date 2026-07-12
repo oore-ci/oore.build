@@ -23,6 +23,7 @@ import type {
   CreateScopedDownloadTokenRequest,
   CreateScopedDownloadTokenResponse,
   DeleteNotificationChannelResponse,
+  DiscoverRepositoryWorkflowsResponse,
   EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
@@ -1145,6 +1146,23 @@ export function listPipelines(
   return request<ListPipelinesResponse>(
     baseUrl,
     `/v1/projects/${projectId}/pipelines${qs ? `?${qs}` : ''}`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function discoverRepositoryWorkflows(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  params?: { reference?: string; path?: string },
+): Promise<DiscoverRepositoryWorkflowsResponse> {
+  const query = new URLSearchParams()
+  if (params?.reference) query.set('ref', params.reference)
+  if (params?.path) query.set('path', params.path)
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return request<DiscoverRepositoryWorkflowsResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/repository-workflows${suffix}`,
     { headers: authHeaders(token) },
   )
 }

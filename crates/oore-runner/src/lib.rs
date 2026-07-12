@@ -12,6 +12,7 @@ use oore_contract::{
     PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
     artifact_pattern_matches, parse_repository_pipeline_yaml, validate_artifact_pattern,
+    validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -1531,17 +1532,35 @@ fn resolve_execution_plan(
         .to_string();
 
     let candidate_paths: Vec<String> = if config_path_explicit {
+        validate_repository_config_path(&snapshot_config_path)
+            .map_err(|error| anyhow::anyhow!("Invalid explicit repository config path: {error}"))?;
         vec![snapshot_config_path]
     } else {
         AUTO_CONFIG_PATHS.iter().map(|p| p.to_string()).collect()
     };
 
     let fvmrc_version = read_fvmrc_version(workspace)?;
+    let canonical_workspace = workspace
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("Failed to resolve build workspace: {error}"))?;
 
     for rel_path in &candidate_paths {
         let full_path = workspace.join(rel_path);
         if !full_path.exists() {
             continue;
+        }
+
+        let canonical_path = full_path.canonicalize().map_err(|error| {
+            anyhow::anyhow!(
+                "Failed to resolve repository config file {}: {error}",
+                full_path.display()
+            )
+        })?;
+        if !canonical_path.starts_with(&canonical_workspace) {
+            anyhow::bail!(
+                "Repository config path resolves outside the build workspace: {}",
+                full_path.display()
+            );
         }
 
         let content = fs::read_to_string(&full_path).map_err(|e| {
@@ -3298,6 +3317,12 @@ mod tests {
     fn checkout_sha_materializes_nested_submodules() {
         let fixture_root = temp_workspace();
         let fixture = create_nested_submodule_fixture(&fixture_root);
+        add_commit(
+            &fixture.root_repo,
+            "AFTER_PIN.md",
+            "created after the build was queued\n",
+            "advance branch after pin",
+        );
         let workspace = fixture_root.join("checkout-sha");
         fs::create_dir_all(&workspace).expect("create checkout workspace");
 
@@ -3315,6 +3340,7 @@ mod tests {
         );
 
         assert!(workspace.join("deps/child/README.md").exists());
+        assert!(!workspace.join("AFTER_PIN.md").exists());
         assert!(
             workspace
                 .join("deps/child/deps/grandchild/README.md")
@@ -3517,6 +3543,50 @@ mod tests {
         assert_eq!(plan.artifact_patterns, vec!["*.zip".to_string()]);
 
         cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn explicit_config_path_must_stay_within_workspace() {
+        let workspace = temp_workspace();
+        let snapshot = serde_json::json!({
+            "config_path_explicit": true,
+            "config_path": "../outside.oore.yaml",
+        });
+
+        let error = resolve_execution_plan(&workspace, &snapshot).expect_err("path must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid explicit repository config path")
+        );
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_config_symlink_must_stay_within_workspace() {
+        let workspace = temp_workspace();
+        let outside = temp_workspace();
+        let outside_config = outside.join(".oore.yaml");
+        fs::write(
+            &outside_config,
+            "version: 1\nplatforms: [android]\nartifacts:\n  patterns: [\"*.apk\"]\n",
+        )
+        .expect("write outside config");
+        std::os::unix::fs::symlink(&outside_config, workspace.join(".oore.yaml"))
+            .expect("link outside config");
+
+        let error = resolve_execution_plan(&workspace, &serde_json::json!({}))
+            .expect_err("symlink escape must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("resolves outside the build workspace")
+        );
+
+        cleanup_workspace(&workspace);
+        cleanup_workspace(&outside);
     }
 
     #[test]

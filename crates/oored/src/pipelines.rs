@@ -8,7 +8,7 @@ use oore_contract::{
     ApiError, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest, CreatePipelineResponse,
     ListPipelinesResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
     TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
-    parse_repository_pipeline_yaml, validate_artifact_pattern,
+    parse_repository_pipeline_yaml, validate_artifact_pattern, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -235,6 +235,8 @@ fn validate_config_path(path: &str, explicit: bool) -> Vec<String> {
         } else {
             errors.push("config_path must not be empty".to_string());
         }
+    } else if let Err(error) = validate_repository_config_path(path) {
+        errors.push(format!("config_path {error}"));
     }
     errors
 }

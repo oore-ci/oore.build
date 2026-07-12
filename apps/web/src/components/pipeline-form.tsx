@@ -74,6 +74,8 @@ interface PipelineFormProps {
   submitLabel: string
   isPending: boolean
   validationErrors?: Array<string>
+  /** Read-only repository workflow summary. When present, repository config owns execution fields. */
+  repositoryWorkflow?: React.ReactNode
   /** Content rendered after all form sections but before the sticky action bar */
   children?: React.ReactNode
   /** Local-mode repositories only support manual/API build triggers for now. */
@@ -266,6 +268,7 @@ export default function PipelineForm({
   submitLabel,
   isPending,
   validationErrors = [],
+  repositoryWorkflow,
   children,
   manualOnlyTriggers = false,
   readOnly = false,
@@ -387,13 +390,28 @@ export default function PipelineForm({
               <CardHeader>
                 <SectionHeader
                   title="Configuration"
-                  summary={`${platforms.length} platform${platforms.length !== 1 ? 's' : ''}, ${configMode === 'explicit' ? 'explicit config' : 'auto-detect'}`}
+                  summary={
+                    repositoryWorkflow
+                      ? 'Owned by repository'
+                      : `${platforms.length} platform${platforms.length !== 1 ? 's' : ''}, ${configMode === 'explicit' ? 'explicit config' : 'auto-detect'}`
+                  }
                   open={sections.config}
                 />
               </CardHeader>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <CardContent className="space-y-4">
+              <CardContent
+                className={
+                  repositoryWorkflow
+                    ? 'space-y-4 [&>:not(.repository-workflow-summary)]:hidden'
+                    : 'space-y-4'
+                }
+              >
+                {repositoryWorkflow ? (
+                  <div className="repository-workflow-summary">
+                    {repositoryWorkflow}
+                  </div>
+                ) : null}
                 <FormField
                   control={form.control}
                   name="config_mode"
@@ -644,6 +662,7 @@ export default function PipelineForm({
 
         {/* Build Commands section */}
         <Collapsible
+          className={repositoryWorkflow ? 'hidden' : undefined}
           open={sections.commands}
           onOpenChange={setSectionOpen('commands')}
         >
@@ -759,6 +778,7 @@ export default function PipelineForm({
 
         {/* Platform Build Args section */}
         <Collapsible
+          className={repositoryWorkflow ? 'hidden' : undefined}
           open={sections.platformArgs}
           onOpenChange={setSectionOpen('platformArgs')}
         >
@@ -905,7 +925,11 @@ export default function PipelineForm({
         </Collapsible>
 
         {/* Environment Variables section */}
-        <Collapsible open={sections.env} onOpenChange={setSectionOpen('env')}>
+        <Collapsible
+          className={repositoryWorkflow ? 'hidden' : undefined}
+          open={sections.env}
+          onOpenChange={setSectionOpen('env')}
+        >
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
@@ -965,6 +989,7 @@ export default function PipelineForm({
 
         {/* Artifacts section */}
         <Collapsible
+          className={repositoryWorkflow ? 'hidden' : undefined}
           open={sections.artifacts}
           onOpenChange={setSectionOpen('artifacts')}
         >
@@ -1604,8 +1629,8 @@ export default function PipelineForm({
               <HugeiconsIcon icon={AlertCircleIcon} size={16} />
               <AlertDescription>
                 <ul className="list-disc space-y-1 pl-4">
-                  {validationErrors.map((err, index) => (
-                    <li key={index}>{err}</li>
+                  {validationErrors.map((err) => (
+                    <li key={err}>{err}</li>
                   ))}
                 </ul>
               </AlertDescription>

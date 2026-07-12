@@ -98,6 +98,7 @@ use utoipa::OpenApi;
         paths::get_project,
         paths::update_project,
         paths::delete_project,
+        paths::discover_repository_workflows,
         // ── Project Members ──
         paths::list_project_members,
         paths::add_project_member,
@@ -248,6 +249,9 @@ use utoipa::OpenApi;
         oore_contract::UpdateProjectRequest,
         oore_contract::ProjectDetailResponse,
         oore_contract::ListProjectsResponse,
+        oore_contract::RepositoryWorkflowExecutionPreview,
+        oore_contract::RepositoryWorkflowPreview,
+        oore_contract::DiscoverRepositoryWorkflowsResponse,
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
@@ -1335,6 +1339,28 @@ mod paths {
         )
     )]
     pub(super) async fn remove_project_member() {}
+
+    /// Discover repository-owned workflows
+    ///
+    /// Reads supported Oore workflow files from the linked repository without
+    /// modifying it. The response contains validated behavior but never raw YAML,
+    /// environment values, or source credentials.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/repository-workflows", tag = "Pipelines",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("ref" = Option<String>, Query, description = "Branch, tag, or commit; defaults to the project branch"),
+            ("path" = Option<String>, Query, description = "Additional explicit repository-relative config path"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret-free repository workflow previews", body = DiscoverRepositoryWorkflowsResponse),
+            (status = 400, description = "Invalid ref or config path", body = ApiError),
+            (status = 403, description = "Manage Pipelines permission required", body = ApiError),
+            (status = 404, description = "Project source not found", body = ApiError),
+            (status = 502, description = "Source provider request failed", body = ApiError),
+        )
+    )]
+    pub(super) async fn discover_repository_workflows() {}
 
     // ── Pipelines ──
 

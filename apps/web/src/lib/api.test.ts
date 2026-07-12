@@ -5,6 +5,7 @@ import {
   configureExternalAccessOidc,
   configureOidc,
   createPipeline,
+  discoverRepositoryWorkflows,
   getApiErrorMessage,
   getArtifactStorageSettings,
   getExternalAccessOidc,
@@ -576,6 +577,34 @@ describe('external access oidc api', () => {
 })
 
 describe('pipeline api', () => {
+  it('discovers repository workflows at an encoded ref and path', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, {
+        project_id: 'proj-1',
+        provider: 'gitlab',
+        reference: 'feature/mobile',
+        workflows: [],
+        truncated: false,
+      }),
+    )
+
+    await discoverRepositoryWorkflows(
+      'https://ci.example.com',
+      'session-token',
+      'proj-1',
+      { reference: 'feature/mobile', path: '.oore/android release.yaml' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/proj-1/repository-workflows?ref=feature%2Fmobile&path=.oore%2Fandroid+release.yaml',
+      {
+        headers: {
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+  })
+
   it('calls POST /v1/projects/{project_id}/pipelines with execution config fields', async () => {
     const payload = {
       pipeline: {

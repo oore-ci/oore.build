@@ -3124,6 +3124,102 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/repository-workflows": {
+      "get": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Discover repository-owned workflows",
+        "description": "Reads supported Oore workflow files from the linked repository without\nmodifying it. The response contains validated behavior but never raw YAML,\nenvironment values, or source credentials.",
+        "operationId": "discover_repository_workflows",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "description": "Branch, tag, or commit; defaults to the project branch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Additional explicit repository-relative config path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret-free repository workflow previews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverRepositoryWorkflowsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ref or config path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Manage Pipelines permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source provider request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/retention": {
       "get": {
         "tags": [
@@ -7570,6 +7666,38 @@
           }
         }
       },
+      "DiscoverRepositoryWorkflowsResponse": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "provider",
+          "reference",
+          "workflows",
+          "truncated"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ScmProvider"
+          },
+          "reference": {
+            "type": "string",
+            "description": "Branch, tag, or commit requested for discovery."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when more matching files existed than the bounded response could inspect."
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryWorkflowPreview"
+            }
+          }
+        }
+      },
       "EffectiveProjectRetentionResponse": {
         "type": "object",
         "required": [
@@ -9475,6 +9603,86 @@
           "oidc",
           "trusted_proxy"
         ]
+      },
+      "RepositoryWorkflowExecutionPreview": {
+        "type": "object",
+        "description": "Pipeline behavior safe to show before import. Environment values are never returned.",
+        "required": [
+          "platforms",
+          "commands",
+          "platform_build_args",
+          "platform_commands",
+          "env_keys",
+          "artifact_patterns"
+        ],
+        "properties": {
+          "artifact_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commands": {
+            "$ref": "#/components/schemas/PipelineCommandStages"
+          },
+          "env_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "flutter_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform_build_args": {
+            "$ref": "#/components/schemas/PlatformBuildArgs"
+          },
+          "platform_commands": {
+            "$ref": "#/components/schemas/PlatformBuildCommands"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            }
+          }
+        }
+      },
+      "RepositoryWorkflowPreview": {
+        "type": "object",
+        "description": "Secret-free representation of a repository-owned pipeline config.",
+        "required": [
+          "path",
+          "valid",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "execution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RepositoryWorkflowExecutionPreview"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        }
       },
       "RerunBuildResponse": {
         "type": "object",
