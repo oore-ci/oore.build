@@ -94,16 +94,16 @@ function GitHubSetupPage() {
                 startMutation.isPending || preferencesLoading || !remoteEnabled
               }
             >
-              <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+              <HugeiconsIcon icon={LinkSquare02Icon} />
               {preferencesLoading
                 ? 'Checking access...'
                 : !remoteEnabled
-                  ? 'External Access Required'
+                  ? 'External access required'
                   : startMutation.isPending
                     ? 'Starting...'
-                    : 'Create GitHub App'}
+                    : 'Create GitHub app'}
               {!startMutation.isPending ? (
-                <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                <HugeiconsIcon icon={ArrowRight01Icon} />
               ) : null}
             </Button>
           </CardContent>

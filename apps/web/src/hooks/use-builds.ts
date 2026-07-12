@@ -4,8 +4,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import type { UseQueryOptions } from '@tanstack/react-query'
 import type {
   Build,
+  BuildDetailResponse,
   BuildLogChunk,
   BuildStatus,
   CreateBuildRequest,
@@ -28,6 +30,16 @@ import {
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
+
+const BUILD_POLL_INTERVAL_MS = 3_000
+
+const TERMINAL_STATUSES: Set<string> = new Set<string>([
+  'succeeded',
+  'failed',
+  'canceled',
+  'timed_out',
+  'expired',
+])
 
 function useAuthToken(): string | null {
   const token = useAuthStore((s) => s.token)
@@ -56,31 +68,30 @@ export function useBuilds(
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
+  const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
-    queryFn: () => listBuilds(baseUrl!, token!, params),
+    queryFn: ({ signal }) => listBuilds(baseUrl!, token!, params, { signal }),
     enabled: !!baseUrl && !!token,
-    refetchInterval: options?.refetchInterval,
+    staleTime: 5_000,
+    refetchInterval: (query) =>
+      hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
   })
 }
-
-const TERMINAL_STATUSES: Set<string> = new Set<string>([
-  'succeeded',
-  'failed',
-  'canceled',
-  'timed_out',
-  'expired',
-])
 
 export function isTerminalStatus(status: BuildStatus | string): boolean {
   return TERMINAL_STATUSES.has(status)
 }
 
+export function hasActiveBuilds(data: ListBuildsResponse | undefined): boolean {
+  return data?.builds.some((build) => !isTerminalStatus(build.status)) ?? false
+}
+
 export function useBuild(
   buildId: string,
-  options?: { refetchInterval?: number | false },
+  options?: Pick<UseQueryOptions<BuildDetailResponse>, 'refetchInterval'>,
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -88,8 +99,9 @@ export function useBuild(
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build', buildId],
-    queryFn: () => getBuild(baseUrl!, token!, buildId),
+    queryFn: ({ signal }) => getBuild(baseUrl!, token!, buildId, { signal }),
     enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -210,14 +222,14 @@ export function useRerunBuild() {
   })
 }
 
-export function useBuildLogs(buildId: string) {
+export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-logs', buildId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       // Fetch all log pages (server max per page is 5000)
       const pageSize = 5000
       let allLogs: Array<BuildLogChunk> = []
@@ -226,10 +238,17 @@ export function useBuildLogs(buildId: string) {
 
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       while (true) {
-        const page = await getBuildLogs(baseUrl!, token!, buildId, {
-          after_sequence: afterSeq >= 0 ? afterSeq : undefined,
-          limit: pageSize,
-        })
+        signal.throwIfAborted()
+        const page = await getBuildLogs(
+          baseUrl!,
+          token!,
+          buildId,
+          {
+            after_sequence: afterSeq >= 0 ? afterSeq : undefined,
+            limit: pageSize,
+          },
+          { signal },
+        )
         total = page.total
         if (page.logs.length === 0) break
         allLogs = allLogs.concat(page.logs)
@@ -240,7 +259,7 @@ export function useBuildLogs(buildId: string) {
 
       return { logs: allLogs, total }
     },
-    enabled: !!baseUrl && !!token && !!buildId,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!buildId,
   })
 }
 
@@ -254,8 +273,10 @@ export function useArtifacts(
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifacts', buildId],
-    queryFn: () => listArtifacts(baseUrl!, token!, buildId),
+    queryFn: ({ signal }) =>
+      listArtifacts(baseUrl!, token!, buildId, { signal }),
     enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
     refetchInterval: options?.refetchInterval,
   })
 }

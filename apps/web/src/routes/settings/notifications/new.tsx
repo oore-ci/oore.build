@@ -115,13 +115,35 @@ function NewNotificationChannelPage() {
       return
     }
     if (isEmail) {
-      if (!values.smtp_host) { form.setError('smtp_host', { message: 'SMTP host is required' }); return }
+      if (!values.smtp_host) {
+        form.setError('smtp_host', { message: 'SMTP host is required' })
+        return
+      }
       const port = Number(values.smtp_port)
-      if (!port || port < 1 || port > 65535) { form.setError('smtp_port', { message: 'Port must be 1-65535' }); return }
-      if (!values.smtp_username) { form.setError('smtp_username', { message: 'Username is required' }); return }
-      if (!values.smtp_password) { form.setError('smtp_password', { message: 'Password is required' }); return }
-      if (!values.smtp_from_address?.includes('@')) { form.setError('smtp_from_address', { message: 'Valid email address required' }); return }
-      if (!values.smtp_recipients?.trim()) { form.setError('smtp_recipients', { message: 'At least one recipient required' }); return }
+      if (!port || port < 1 || port > 65535) {
+        form.setError('smtp_port', { message: 'Port must be 1-65535' })
+        return
+      }
+      if (!values.smtp_username) {
+        form.setError('smtp_username', { message: 'Username is required' })
+        return
+      }
+      if (!values.smtp_password) {
+        form.setError('smtp_password', { message: 'Password is required' })
+        return
+      }
+      if (!values.smtp_from_address?.includes('@')) {
+        form.setError('smtp_from_address', {
+          message: 'Valid email address required',
+        })
+        return
+      }
+      if (!values.smtp_recipients?.trim()) {
+        form.setError('smtp_recipients', {
+          message: 'At least one recipient required',
+        })
+        return
+      }
     }
 
     const base = {
@@ -314,10 +336,7 @@ function NewNotificationChannelPage() {
                         <FormItem>
                           <FormLabel>SMTP Host</FormLabel>
                           <FormControl>
-                            <Input
-                              placeholder="smtp.example.com"
-                              {...field}
-                            />
+                            <Input placeholder="smtp.example.com" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -331,11 +350,7 @@ function NewNotificationChannelPage() {
                         <FormItem>
                           <FormLabel>Port</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="587"
-                              {...field}
-                            />
+                            <Input type="number" placeholder="587" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -351,10 +366,7 @@ function NewNotificationChannelPage() {
                         <FormItem>
                           <FormLabel>Username</FormLabel>
                           <FormControl>
-                            <Input
-                              placeholder="user@example.com"
-                              {...field}
-                            />
+                            <Input placeholder="user@example.com" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -499,7 +511,7 @@ function NewNotificationChannelPage() {
 
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? 'Creating...' : 'Create Channel'}
+                  {createMutation.isPending ? 'Creating...' : 'Create channel'}
                 </Button>
                 <Button
                   type="button"

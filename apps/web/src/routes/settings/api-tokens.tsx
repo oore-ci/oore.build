@@ -192,8 +192,7 @@ function CreateTokenDialog({
     const expiresAt =
       values.expiry === 'never'
         ? undefined
-        : Math.floor(Date.now() / 1000) +
-          Number(values.expiry) * 24 * 60 * 60
+        : Math.floor(Date.now() / 1000) + Number(values.expiry) * 24 * 60 * 60
 
     createMutation.mutate(
       {
@@ -327,7 +326,7 @@ function CreateTokenDialog({
                     Creating...
                   </>
                 ) : (
-                  'Create Token'
+                  'Create token'
                 )}
               </Button>
             </DialogFooter>
@@ -445,7 +444,7 @@ function ApiTokensPage() {
         description="Create and manage API tokens for programmatic access to your CI instance."
         actions={
           canWrite ? (
-            <Button onClick={() => setCreateOpen(true)}>Create Token</Button>
+            <Button onClick={() => setCreateOpen(true)}>Create token</Button>
           ) : undefined
         }
       />

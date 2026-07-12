@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -34,6 +33,7 @@ import {
 import { PageMeta } from '@/lib/seo'
 import { loadTrustedProxySetupPrefill } from '@/lib/setup-prefill'
 import { useSetupStore } from '@/stores/setup-store'
+import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
 
 const trustedProxyPresetSchema = z.enum(['generic', 'warpgate', 'custom'])
 type TrustedProxyPreset = z.infer<typeof trustedProxyPresetSchema>
@@ -123,16 +123,7 @@ function SetupTrustedProxyStep() {
     setCurrentStep(2)
   })
 
-  const proxyGuardDone = useRef(false)
-  if (status && !proxyGuardDone.current) {
-    proxyGuardDone.current = true
-    if (
-      status.runtime_mode !== 'remote' ||
-      status.remote_auth_mode !== 'trusted_proxy'
-    ) {
-      queueMicrotask(() => void navigate({ to: '/setup/mode' }))
-    }
-  }
+  useSetupModeGuard(status, 'trusted_proxy')
 
   const errorMessage = configureMutation.error
     ? getApiErrorMessage(configureMutation.error, {
@@ -346,7 +337,7 @@ function SetupTrustedProxyStep() {
             className="w-full"
             disabled={configureMutation.isPending}
           >
-            {configureMutation.isPending ? 'Saving...' : 'Continue to Owner'}
+            {configureMutation.isPending ? 'Saving...' : 'Continue to owner'}
           </Button>
         </form>
       </Form>

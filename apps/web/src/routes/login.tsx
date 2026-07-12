@@ -463,7 +463,7 @@ function LoginPage() {
                   'Sign in locally'
                 )
               ) : trustedProxyLoginAvailable ? (
-                'Continue with Trusted Proxy'
+                'Continue with trusted proxy'
               ) : setupStatusQuery.isLoading ? (
                 'Checking sign-in method...'
               ) : (
@@ -529,8 +529,8 @@ function LoginPage() {
               className="w-full"
               onClick={() => setShowAddInstance(true)}
             >
-              <HugeiconsIcon icon={Add01Icon} size={16} />
-              Add Another Instance
+              <HugeiconsIcon icon={Add01Icon} />
+              Add another instance
             </Button>
           </CardContent>
         </Card>

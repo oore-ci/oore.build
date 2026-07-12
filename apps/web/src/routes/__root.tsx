@@ -1,4 +1,4 @@
-import { Suspense, lazy, useRef } from 'react'
+import { Suspense, lazy } from 'react'
 import {
   Link,
   Outlet,
@@ -37,7 +37,6 @@ import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
-import { useSetupStore } from '@/stores/setup-store'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
@@ -187,14 +186,6 @@ function RootLayout() {
     !!authUser
 
   useSessionMonitor()
-
-  // Sync instance context on initial render (store action handles subsequent changes)
-  const instanceContextSynced = useRef(false)
-  if (activeInstanceId && !instanceContextSynced.current) {
-    instanceContextSynced.current = true
-    useSetupStore.getState().setInstanceContext(activeInstanceId)
-    useAuthStore.getState().setInstanceContext(activeInstanceId)
-  }
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

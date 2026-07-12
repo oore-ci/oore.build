@@ -11,6 +11,7 @@ export default [
       'public/mockServiceWorker.js',
       'tools/oore-web.js',
       'tools/oore-web.test.js',
+      'tools/check-bundle-budget.js',
     ],
   },
   {
@@ -41,6 +42,8 @@ export default [
       '**/use-log-stream.ts',
       '**/use-index-auth-guard.ts',
       '**/use-trusted-proxy-auto-login.ts',
+      '**/use-setup-route-transitions.ts',
+      '**/use-window-event.ts',
     ],
     rules: {
       'no-restricted-syntax': 'off',

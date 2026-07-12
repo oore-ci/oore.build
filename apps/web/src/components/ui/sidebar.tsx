@@ -5,7 +5,7 @@ import { cva } from 'class-variance-authority'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { SidebarLeftIcon } from '@hugeicons/core-free-icons'
 import type { VariantProps } from 'class-variance-authority'
-import { useMountEffect } from '@/hooks/use-mount-effect'
+import { useWindowEvent } from '@/hooks/use-window-event'
 
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
@@ -96,24 +96,14 @@ function SidebarProvider({
       : setOpen((prevOpen) => !prevOpen)
   }, [isMobile, setOpen, setOpenMobile])
 
-  // Adds a keyboard shortcut to toggle the sidebar.
-  // Use a ref so the mount-only listener always calls the latest toggleSidebar.
-  const toggleRef = React.useRef(toggleSidebar)
-  toggleRef.current = toggleSidebar
-
-  useMountEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey)
-      ) {
-        event.preventDefault()
-        toggleRef.current()
-      }
+  useWindowEvent('keydown', (event) => {
+    if (
+      event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
+      (event.metaKey || event.ctrlKey)
+    ) {
+      event.preventDefault()
+      toggleSidebar()
     }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
   })
 
   // We add a state so that we can do data-state="expanded" or "collapsed".

@@ -16,3 +16,4 @@ keep project tracking + documentation in one place.
 
 - If you change product behavior (apps/, crates/, tools/, etc.), update `docs/changes.md` in the same PR.
 - Public documentation stays in-repo under `apps/docs-site/docs/`.
+- The canonical execution checklist for the active frontend overhaul is [`FRONTEND_PRODUCT_PLAN.md`](../FRONTEND_PRODUCT_PLAN.md); its product intent is mirrored in Linear.

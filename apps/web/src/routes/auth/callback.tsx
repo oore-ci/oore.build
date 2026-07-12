@@ -219,11 +219,11 @@ function AuthCallbackPage() {
 
   if (error) {
     const actionLabel =
-      errorTarget === '/setup/owner' ? 'Back to Setup Owner' : 'Back to Login'
+      errorTarget === '/setup/owner' ? 'Back to setup owner' : 'Back to login'
     const title =
       errorTarget === '/setup/owner'
-        ? 'Setup Authentication Failed'
-        : 'Authentication Failed'
+        ? 'Setup authentication failed'
+        : 'Authentication failed'
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6">
         <PageMeta title="Signing In" />

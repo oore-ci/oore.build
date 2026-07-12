@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -28,6 +27,7 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
+import { useOwnerStepTransition } from '@/hooks/use-setup-route-transitions'
 
 const localOwnerSchema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -97,6 +97,7 @@ function OwnerStep() {
   const localOwnerMutation = useSetupLocalOwnerCreate()
   const trustedProxyClaimMutation = useSetupTrustedProxyClaimOwner()
   const { data: status } = useSetupStatus()
+  useOwnerStepTransition(status)
 
   const localOwnerForm = useForm<LocalOwnerForm>({
     resolver: zodResolver(localOwnerSchema),
@@ -133,16 +134,6 @@ function OwnerStep() {
       })
     : null
 
-  const ownerStepDone = useRef(false)
-  if (status && !ownerStepDone.current) {
-    ownerStepDone.current = true
-    setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-    if (status.state === 'owner_created') {
-      setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
-      queueMicrotask(() => void navigate({ to: '/setup/complete' }))
-    }
-  }
-
   if (!status) {
     return (
       <div className="flex justify-center py-8">
@@ -156,7 +147,7 @@ function OwnerStep() {
     status.runtime_mode === 'remote' &&
     status.remote_auth_mode === 'trusted_proxy'
 
-  const handleStartOidc = useCallback(() => {
+  function handleStartOidc() {
     if (!sessionToken) return
 
     const redirectUri = `${window.location.origin}/auth/callback`
@@ -175,7 +166,7 @@ function OwnerStep() {
         },
       },
     )
-  }, [sessionToken, startOidcMutation])
+  }
 
   function handleCreateLocalOwner(data: LocalOwnerForm) {
     if (!sessionToken) return
@@ -193,7 +184,7 @@ function OwnerStep() {
     )
   }
 
-  const handleClaimTrustedProxyOwner = useCallback(() => {
+  function handleClaimTrustedProxyOwner() {
     if (!sessionToken) return
     trustedProxyClaimMutation.mutate(
       { sessionToken },
@@ -204,12 +195,12 @@ function OwnerStep() {
         },
       },
     )
-  }, [sessionToken, trustedProxyClaimMutation, setCurrentStep, navigate])
+  }
 
-  const handleRestartFromToken = useCallback(() => {
+  function handleRestartFromToken() {
     useSetupStore.getState().reset()
     void navigate({ to: '/setup' })
-  }, [navigate])
+  }
 
   return (
     <div className="space-y-4">
@@ -263,7 +254,7 @@ function OwnerStep() {
             >
               {localOwnerMutation.isPending
                 ? 'Creating owner...'
-                : 'Create Local Owner'}
+                : 'Create local owner'}
             </Button>
           </form>
         </Form>
@@ -283,7 +274,7 @@ function OwnerStep() {
           >
             {trustedProxyClaimMutation.isPending
               ? 'Claiming owner...'
-              : 'Confirm Owner from Trusted Proxy'}
+              : 'Confirm owner from trusted proxy'}
           </Button>
 
           <Button
@@ -291,7 +282,7 @@ function OwnerStep() {
             onClick={() => void navigate({ to: '/setup/trusted-proxy' })}
             className="w-full"
           >
-            Back to Trusted Proxy Settings
+            Back to trusted proxy settings
           </Button>
         </>
       ) : (
@@ -321,7 +312,7 @@ function OwnerStep() {
           >
             {startOidcMutation.isPending
               ? 'Redirecting...'
-              : 'Authenticate with OIDC Provider'}
+              : 'Authenticate with OIDC provider'}
           </Button>
 
           <Button
@@ -329,7 +320,7 @@ function OwnerStep() {
             onClick={() => void navigate({ to: '/setup/oidc' })}
             className="w-full"
           >
-            Back to OIDC Settings
+            Back to OIDC settings
           </Button>
         </>
       )}
@@ -339,7 +330,7 @@ function OwnerStep() {
         onClick={handleRestartFromToken}
         className="w-full"
       >
-        Restart from Token Step
+        Restart from token step
       </Button>
     </div>
   )

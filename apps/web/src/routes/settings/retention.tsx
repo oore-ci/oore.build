@@ -143,8 +143,6 @@ function RetentionPage() {
     values: policyValues,
   })
 
-
-
   const enabled = form.watch('enabled')
 
   function onSubmit(values: RetentionFormValues) {
@@ -484,7 +482,7 @@ function RetentionPage() {
               <div className="flex justify-end pt-2">
                 <Button type="submit" disabled={updateMutation.isPending}>
                   {updateMutation.isPending && <Spinner className="mr-2" />}
-                  Save Policy
+                  Save policy
                 </Button>
               </div>
             </CardContent>

@@ -2,8 +2,9 @@ import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
+  ArrowRight01Icon,
   InformationCircleIcon,
+  Link04Icon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 
@@ -21,6 +22,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import {
   Select,
   SelectContent,
@@ -129,8 +138,8 @@ function BuildsListPage() {
               disabled={isDemoMode}
               title={isDemoMode ? READ_ONLY_REASON : undefined}
             >
-              <HugeiconsIcon icon={PlayIcon} size={16} />
-              Run Build
+              <HugeiconsIcon icon={PlayIcon} />
+              Run build
             </Button>
           ) : undefined
         }
@@ -243,8 +252,8 @@ function BuildsListPage() {
               <div className="flex flex-wrap items-center gap-2">
                 {canWriteProjects ? (
                   <Button render={<Link to="/projects" />} nativeButton={false}>
-                    <HugeiconsIcon icon={Add01Icon} size={16} />
-                    Go To Projects
+                    Go to projects
+                    <HugeiconsIcon icon={ArrowRight01Icon} />
                   </Button>
                 ) : (
                   <p className="text-xs text-muted-foreground">
@@ -259,7 +268,8 @@ function BuildsListPage() {
                       render={<Link to={integrationConnectTo} />}
                       nativeButton={false}
                     >
-                      Connect Source
+                      <HugeiconsIcon icon={Link04Icon} />
+                      Connect source
                     </Button>
                   ) : (
                     <p className="text-xs text-muted-foreground">
@@ -284,22 +294,31 @@ function BuildsListPage() {
             </CardHeader>
             <CardContent>
               {builds.length === 0 ? (
-                <div className="space-y-2 py-6">
-                  <p className="text-sm text-muted-foreground">
-                    No builds yet.
-                  </p>
+                <Empty className="p-8">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <HugeiconsIcon icon={PlayIcon} />
+                    </EmptyMedia>
+                    <EmptyTitle>No builds yet</EmptyTitle>
+                    <EmptyDescription>
+                      Run a pipeline to see its status, output, and artifacts
+                      here.
+                    </EmptyDescription>
+                  </EmptyHeader>
                   {canTriggerBuild ? (
-                    <Button
-                      size="sm"
-                      onClick={() => setTriggerBuildOpen(true)}
-                      disabled={isDemoMode}
-                      title={isDemoMode ? READ_ONLY_REASON : undefined}
-                    >
-                      <HugeiconsIcon icon={PlayIcon} size={14} />
-                      Trigger first build
-                    </Button>
+                    <EmptyContent>
+                      <Button
+                        size="sm"
+                        onClick={() => setTriggerBuildOpen(true)}
+                        disabled={isDemoMode}
+                        title={isDemoMode ? READ_ONLY_REASON : undefined}
+                      >
+                        <HugeiconsIcon icon={PlayIcon} />
+                        Run first build
+                      </Button>
+                    </EmptyContent>
                   ) : null}
-                </div>
+                </Empty>
               ) : (
                 <Table>
                   <TableHeader>

@@ -43,6 +43,8 @@ export default function ProjectCard({
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
+            aria-label={`Open settings for ${project.name}`}
+            title={`Open settings for ${project.name}`}
             render={
               <Link
                 to="/projects/$projectId"
@@ -51,7 +53,7 @@ export default function ProjectCard({
             }
             nativeButton={false}
           >
-            <HugeiconsIcon icon={Setting07Icon} size={14} />
+            <HugeiconsIcon icon={Setting07Icon} />
           </Button>
         </div>
 
@@ -79,8 +81,8 @@ export default function ProjectCard({
           className="w-full"
           onClick={() => onTriggerBuild(project.id)}
         >
-          <HugeiconsIcon icon={PlayIcon} size={14} />
-          Run
+          <HugeiconsIcon icon={PlayIcon} />
+          Run build
         </Button>
       </CardContent>
     </Card>

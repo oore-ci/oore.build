@@ -797,9 +797,9 @@ function PreferencesPage() {
                     Saving...
                   </>
                 ) : externalAccessEnabled ? (
-                  'Turn Off External Access'
+                  'Turn off External Access'
                 ) : (
-                  'Turn On External Access'
+                  'Turn on External Access'
                 )}
               </Button>
             ) : null}
@@ -1203,7 +1203,7 @@ function PreferencesPage() {
                       Saving...
                     </>
                   ) : (
-                    'Save Network Settings'
+                    'Save network settings'
                   )}
                 </Button>
               </DialogFooter>
@@ -1324,7 +1324,7 @@ function PreferencesPage() {
                       Saving...
                     </>
                   ) : (
-                    'Save Trusted Proxy Settings'
+                    'Save trusted proxy settings'
                   )}
                 </Button>
               </DialogFooter>
@@ -1504,7 +1504,7 @@ function PreferencesPage() {
                       Testing...
                     </>
                   ) : (
-                    'Test Connection'
+                    'Test connection'
                   )}
                 </Button>
                 <Button
@@ -1519,7 +1519,7 @@ function PreferencesPage() {
                       Saving...
                     </>
                   ) : (
-                    'Update OIDC Provider'
+                    'Update OIDC provider'
                   )}
                 </Button>
               </DialogFooter>

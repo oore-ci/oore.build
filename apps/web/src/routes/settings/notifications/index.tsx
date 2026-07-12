@@ -98,8 +98,8 @@ function NotificationsPage() {
             render={<Link to="/settings/notifications/new" />}
             nativeButton={false}
           >
-            <HugeiconsIcon icon={Add01Icon} size={16} />
-            Add Channel
+            <HugeiconsIcon icon={Add01Icon} />
+            Add channel
           </Button>
         }
       />
@@ -175,14 +175,14 @@ function NotificationsPage() {
                         onClick={() => handleTest(channel)}
                         disabled={testMutation.isPending}
                       >
-                        <HugeiconsIcon icon={TestTube01Icon} size={16} />
+                        <HugeiconsIcon icon={TestTube01Icon} />
                         Test
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger
                           render={
                             <Button variant="ghost" size="sm">
-                              <HugeiconsIcon icon={Delete02Icon} size={16} />
+                              <HugeiconsIcon icon={Delete02Icon} />
                               Delete
                             </Button>
                           }

@@ -1,4 +1,3 @@
-import { useRef } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -15,6 +14,7 @@ import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
+import { useSetupCurrentStep } from '@/hooks/use-setup-route-transitions'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -57,12 +57,7 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
   const isLocalMode = status?.runtime_mode === 'local'
 
-  // Set the current step when status becomes available (once)
-  const stepSetRef = useRef(false)
-  if (status && !stepSetRef.current) {
-    stepSetRef.current = true
-    setCurrentStep(isLocalMode ? 3 : 4)
-  }
+  useSetupCurrentStep(status ? (isLocalMode ? 3 : 4) : null)
 
   function handleComplete() {
     if (!sessionToken) return
@@ -170,7 +165,7 @@ function CompleteStep() {
             disabled={completeMutation.isPending}
             className="w-full"
           >
-            {completeMutation.isPending ? 'Completing...' : 'Complete Setup'}
+            {completeMutation.isPending ? 'Completing...' : 'Complete setup'}
           </Button>
         </div>
       )}

@@ -232,6 +232,29 @@ function ProjectDetailPage() {
     string | undefined
   >()
 
+  const builds = useMemo(() => buildsData?.builds ?? [], [buildsData?.builds])
+  const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
+    const byPipeline = new Map<string, { status: string; time: number }>()
+    let latestSucceeded: (typeof builds)[number] | null = null
+
+    for (const build of builds) {
+      if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
+        byPipeline.set(build.pipeline_id, {
+          status: build.status,
+          time: build.queued_at,
+        })
+      }
+      if (latestSucceeded === null && build.status === 'succeeded') {
+        latestSucceeded = build
+      }
+    }
+
+    return {
+      lastBuildByPipeline: byPipeline,
+      latestSucceededBuild: latestSucceeded,
+    }
+  }, [builds])
+
   const activeTab: TabValue = tab ?? 'pipelines'
 
   const label = data?.project.name ?? 'Project Details'
@@ -265,7 +288,6 @@ function ProjectDetailPage() {
 
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
-  const builds = buildsData?.builds ?? []
   const projectHasSource = !!project.repository_id
 
   function setTab(value: TabValue) {
@@ -293,28 +315,6 @@ function ProjectDetailPage() {
     setTriggerPipelineId(pipelineId)
     setTriggerBuildOpen(true)
   }
-
-  const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
-    const byPipeline = new Map<string, { status: string; time: number }>()
-    let latestSucceeded: (typeof builds)[number] | null = null
-
-    for (const build of builds) {
-      if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
-        byPipeline.set(build.pipeline_id, {
-          status: build.status,
-          time: build.queued_at,
-        })
-      }
-      if (latestSucceeded === null && build.status === 'succeeded') {
-        latestSucceeded = build
-      }
-    }
-
-    return {
-      lastBuildByPipeline: byPipeline,
-      latestSucceededBuild: latestSucceeded,
-    }
-  }, [builds])
 
   return (
     <PageLayout width="wide">
@@ -350,8 +350,8 @@ function ProjectDetailPage() {
                     onClick={() => openTriggerBuild()}
                     disabled={pipelines.length === 0 || !projectHasSource}
                   >
-                    <HugeiconsIcon icon={PlayIcon} size={16} />
-                    Run Build
+                    <HugeiconsIcon icon={PlayIcon} />
+                    Run build
                   </Button>
                 </span>
               ) : null}
@@ -360,7 +360,7 @@ function ProjectDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                  <HugeiconsIcon icon={Delete02Icon} />
                   Delete
                 </Button>
               ) : null}
@@ -403,8 +403,8 @@ function ProjectDetailPage() {
                     />
                   }
                 >
-                  <HugeiconsIcon icon={Add01Icon} size={14} />
-                  Add Pipeline
+                  <HugeiconsIcon icon={Add01Icon} />
+                  Add pipeline
                 </Button>
               </div>
             ) : null}
@@ -472,7 +472,7 @@ function ProjectDetailPage() {
                     pipelines.length > 0 &&
                     projectHasSource ? (
                       <Button size="sm" onClick={() => openTriggerBuild()}>
-                        <HugeiconsIcon icon={PlayIcon} size={14} />
+                        <HugeiconsIcon icon={PlayIcon} />
                         Trigger first build
                       </Button>
                     ) : null}
@@ -586,8 +586,8 @@ function ProjectDetailPage() {
                           variant="destructive"
                           onClick={() => setDeleteOpen(true)}
                         >
-                          <HugeiconsIcon icon={Delete02Icon} size={16} />
-                          Delete Project
+                          <HugeiconsIcon icon={Delete02Icon} />
+                          Delete project
                         </Button>
                       </div>
                     </CollapsibleContent>

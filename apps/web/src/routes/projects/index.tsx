@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -8,6 +8,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
+  Folder02Icon,
   InformationCircleIcon,
   Link04Icon,
 } from '@hugeicons/core-free-icons'
@@ -27,6 +28,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import {
   Table,
   TableBody,
@@ -85,20 +94,18 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  const openCreateRef = useRef(false)
-  if (
+  const openCreateFromSearch =
     search.openCreate === '1' &&
     !projectsLoading &&
     !projectsError &&
-    canWriteProjects &&
-    !openCreateRef.current
-  ) {
-    openCreateRef.current = true
-    // Schedule state update for after render completes
-    queueMicrotask(() => {
-      setCreateOpen(true)
+    canWriteProjects
+  const isCreateOpen = createOpen || openCreateFromSearch
+
+  function handleCreateOpenChange(open: boolean) {
+    setCreateOpen(open)
+    if (!open && search.openCreate === '1') {
       void navigate({ to: '/projects', search: {}, replace: true })
-    })
+    }
   }
 
   return (
@@ -114,8 +121,8 @@ function ProjectsListPage() {
               disabled={isDemoMode}
               title={isDemoMode ? READ_ONLY_REASON : undefined}
             >
-              <HugeiconsIcon icon={Add01Icon} size={16} />
-              New Project
+              <HugeiconsIcon icon={Add01Icon} />
+              New project
             </Button>
           ) : undefined
         }
@@ -141,20 +148,21 @@ function ProjectsListPage() {
       ) : null}
 
       {!projectsLoading && !projectsError && projects.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Create Your First Project
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
+        <Empty className="border bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={Folder02Icon} />
+            </EmptyMedia>
+            <EmptyTitle>Create your first project</EmptyTitle>
+            <EmptyDescription>
               {runtimeMode === 'local'
                 ? 'Choose a local Git repository to create your first project.'
                 : noConnectedSources
                   ? 'Connect a source before creating your first remote project.'
                   : 'Create a project from a connected source repository to define pipelines and start builds.'}
-            </p>
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {runtimeMode === 'remote' && noConnectedSources ? (
                 canWriteIntegrations ? (
@@ -162,8 +170,8 @@ function ProjectsListPage() {
                     render={<Link to={integrationConnectTo} />}
                     nativeButton={false}
                   >
-                    <HugeiconsIcon icon={Link04Icon} size={16} />
-                    Connect Source
+                    <HugeiconsIcon icon={Link04Icon} />
+                    Connect source
                   </Button>
                 ) : (
                   <p className="text-xs text-muted-foreground">
@@ -176,8 +184,8 @@ function ProjectsListPage() {
                   disabled={isDemoMode}
                   title={isDemoMode ? READ_ONLY_REASON : undefined}
                 >
-                  <HugeiconsIcon icon={Add01Icon} size={16} />
-                  Create Project
+                  <HugeiconsIcon icon={Add01Icon} />
+                  Create project
                 </Button>
               ) : (
                 <p className="text-xs text-muted-foreground">
@@ -185,8 +193,8 @@ function ProjectsListPage() {
                 </p>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </EmptyContent>
+        </Empty>
       ) : null}
 
       {!projectsLoading && !projectsError && projects.length > 0 ? (
@@ -261,7 +269,10 @@ function ProjectsListPage() {
         </Card>
       ) : null}
 
-      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateProjectDialog
+        open={isCreateOpen}
+        onOpenChange={handleCreateOpenChange}
+      />
     </PageLayout>
   )
 }

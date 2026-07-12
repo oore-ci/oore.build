@@ -3,15 +3,40 @@
 This file is the only required in-repo internal documentation artifact.
 
 Purpose:
+
 - Provide a lightweight, reviewable ledger of behavior/contract changes.
 - Point reviewers to the corresponding Linear doc(s) / ADR(s).
 
 Rules:
+
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
 ## 2026-07-12
 
+- **Frontend build-log correctness foundation**:
+  - Terminal build details now fetch the final log snapshot only after completion and merge it with streamed chunks by sequence, preventing visible output from regressing while persistence catches up.
+  - Completed steps without runner log markers now default to All logs instead of selecting an empty step.
+  - Build logs are now the primary full-width workspace, with a compact summary above and artifacts and event history moved into secondary sections below.
+  - Step filtering now appears only for logs that can be associated truthfully; terminal controls use Base UI-backed shadcn components, semantic colors, and accessible labels.
+  - Added focused regression coverage and removed render-phase routing/store mutations from setup, instance, project, and build flows.
+  - Core build and project actions now distinguish navigation, source connection, settings, and build execution with consistent labels and icons.
+  - Projects and builds now share the registry-backed Empty pattern, with consistent sentence-case actions and task-specific recovery guidance.
+  - GitLab setup now guides admins through host choice, PAT/OAuth authentication, source verification, and webhook delivery readiness equally for GitLab.com and self-managed hosts.
+  - GitLab webhook and OAuth callback instructions use the configured External Access public URL, preserving split AWS frontend and private macOS backend deployments.
+  - GitLab setup schema, host choice, credentials, and webhook-secret controls now live in focused route-local modules while preserving the established setup flow.
+  - Build detail routing, orchestration, summary, artifacts, and event history now live in cohesive single-component modules without changing route behavior.
+  - Terminal log modeling, controls, step navigation, output, and ANSI rendering now live in cohesive modules behind the existing viewer API, with focused grouping and status-truth coverage.
+  - Core routes and settings now use sentence-case action labels, consistent task-specific verbs, Button-owned icon sizing, and accessible names for icon-only user actions.
+  - Verified Button, Select, Card, and Sidebar against the current shadcn registry and refreshed frontend runtime/tooling dependencies within their existing major versions; major upgrades remain isolated for later work.
+  - Corrected vendor chunk boundaries so Base UI is no longer swallowed by the React matcher; route-only controls are deferred and initial JavaScript fell by 15.46 kB gzip (6.3%) after the dependency refresh.
+  - Added a production entry-bundle gate (240 KiB JavaScript and 22 KiB CSS gzip) to `make validate`, measured from the assets actually referenced by the built HTML.
+  - Dashboard build data now uses one query, build lists poll only while work is active, volatile build data keeps a five-second freshness window, and less volatile server state defaults to thirty seconds.
+  - TanStack Query cancellation now reaches build, log, and artifact requests, including abort checks between paginated log pages.
+  - Repository discovery now fetches independent source integrations concurrently and propagates cancellation through both integration and repository requests.
+  - Log-stream polling now shares the stream lifecycle abort signal, preventing stale fallback requests from surviving build or instance changes.
+  - React 19 Effect Events now keep global form and sidebar listeners current without mutating refs during render.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Updater runtime hotfix**:
   - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-product-readiness-consistent-onboarding-and-first-class-gitlab-6e925460f155
@@ -248,7 +273,6 @@ Rules:
   - Hygiene: Added missing trailing newline to `.gitignore`.
 
 ## 2026-03-18
-
 
 - **Doc improvements for early testers** ([#49](https://github.com/devaryakjha/oore.build/issues/49), [#44](https://github.com/devaryakjha/oore.build/issues/44), [#40](https://github.com/devaryakjha/oore.build/issues/40), [#48](https://github.com/devaryakjha/oore.build/issues/48), [#41](https://github.com/devaryakjha/oore.build/issues/41), [#42](https://github.com/devaryakjha/oore.build/issues/42), [#43](https://github.com/devaryakjha/oore.build/issues/43)):
   - Added "Alpha Feedback Playbook" with 10-minute test flow and templates.

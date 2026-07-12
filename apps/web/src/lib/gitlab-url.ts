@@ -17,3 +17,17 @@ export function normalizeGitLabHostUrl(value: string): string | null {
     return null
   }
 }
+
+export function gitLabPublicEndpoints(
+  configuredPublicUrl: string | undefined,
+  currentOrigin: string,
+) {
+  const origin = (configuredPublicUrl?.trim() || currentOrigin).replace(
+    /\/+$/,
+    '',
+  )
+  return {
+    callbackUrl: `${origin}/v1/integrations/gitlab/callback`,
+    webhookUrl: `${origin}/v1/webhooks/gitlab`,
+  }
+}

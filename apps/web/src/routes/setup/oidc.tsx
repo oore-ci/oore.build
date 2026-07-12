@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -25,6 +25,7 @@ import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
+import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
 
 // ── Predefined OIDC providers ──────────────────────────────────
 
@@ -193,16 +194,7 @@ function OidcConfigStep() {
     setCurrentStep(2)
   })
 
-  const oidcGuardDone = useRef(false)
-  if (status && !oidcGuardDone.current) {
-    oidcGuardDone.current = true
-    if (
-      status.runtime_mode !== 'remote' ||
-      status.remote_auth_mode !== 'oidc'
-    ) {
-      queueMicrotask(() => void navigate({ to: '/setup/mode' }))
-    }
-  }
+  useSetupModeGuard(status, 'oidc')
 
   function handleProviderChange(value: ProviderId) {
     setSelectedProvider(value)
