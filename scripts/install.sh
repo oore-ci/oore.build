@@ -769,7 +769,7 @@ normalize_runtime_config() {
 configure_install_mode() {
   normalize_install_mode
 
-  if [[ "$OORE_ADVANCED" -eq 0 && "$RELEASE_OS" == "darwin" ]]; then
+  if [[ "$OORE_ADVANCED" -eq 0 && "$RELEASE_OS" == "darwin" && "$OORE_INSTALL_MODE" == "auto" ]]; then
     OORE_INSTALL_MODE="all"
     return 0
   fi
@@ -1161,7 +1161,7 @@ resolve_release_tag() {
   if [[ "$OORE_VERSION" == "latest" ]]; then
     if [[ "$OORE_CHANNEL" == "stable" ]]; then
       local manifest_file="$TMP_DIR/latest.json"
-      if curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL"; then
+      if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL"; then
         # GitHub API returns "tag_name": "vX.Y.Z"
         tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
         [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
@@ -1169,7 +1169,7 @@ resolve_release_tag() {
         # GitHub returns 404 when there are no releases yet.
         local list_file="$TMP_DIR/releases.json"
         log "No stable release manifest found. Falling back to release list."
-        curl -fsSL --retry 3 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
+        curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
           || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
 
         tag="$(resolve_latest_stable_tag_from_list "$list_file" || true)"
@@ -1177,7 +1177,7 @@ resolve_release_tag() {
       fi
     else
       local list_file="$TMP_DIR/releases.json"
-      curl -fsSL --retry 3 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
+      curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
         || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
 
       tag="$(resolve_latest_channel_tag_from_list "$list_file" "$OORE_CHANNEL" || true)"
@@ -1231,9 +1231,9 @@ download_release_assets() {
   local checksum_url="$base_url/$checksum_name"
 
   log "Downloading release assets for $RELEASE_TAG ($OORE_INSTALL_MODE/$RELEASE_OS/$RELEASE_ARCH)..."
-  curl -fsSL --retry 3 --output "$TMP_DIR/$archive_name" "$archive_url" \
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 600 --output "$TMP_DIR/$archive_name" "$archive_url" \
     || die "Failed to download release archive: $archive_url"
-  curl -fsSL --retry 3 --output "$TMP_DIR/$checksum_name" "$checksum_url" \
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$TMP_DIR/$checksum_name" "$checksum_url" \
     || die "Failed to download checksum file: $checksum_url"
 }
 
