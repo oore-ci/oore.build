@@ -21,6 +21,11 @@ Rules:
   - Step filtering now appears only for logs that can be associated truthfully; terminal controls use Base UI-backed shadcn components, semantic colors, and accessible labels.
   - Added focused regression coverage and removed render-phase routing/store mutations from setup, instance, project, and build flows.
   - Core build and project actions now distinguish navigation, source connection, settings, and build execution with consistent labels and icons.
+  - Verified Button, Select, Card, and Sidebar against the current shadcn registry and refreshed frontend runtime/tooling dependencies within their existing major versions; major upgrades remain isolated for later work.
+  - Corrected vendor chunk boundaries so Base UI is no longer swallowed by the React matcher; route-only controls are deferred and initial JavaScript fell by 15.46 kB gzip (6.3%) after the dependency refresh.
+  - Dashboard build data now uses one query, build lists poll only while work is active, volatile build data keeps a five-second freshness window, and less volatile server state defaults to thirty seconds.
+  - TanStack Query cancellation now reaches build, log, and artifact requests, including abort checks between paginated log pages.
+  - React 19 Effect Events now keep global form and sidebar listeners current without mutating refs during render.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Updater runtime hotfix**:
   - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.

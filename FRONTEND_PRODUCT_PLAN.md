@@ -55,19 +55,19 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 ## Milestone 5 — Data and runtime performance
 
-- [ ] Consolidate duplicate dashboard build queries and poll only while active builds exist.
+- [x] Consolidate duplicate dashboard build queries and poll only while active builds exist.
 - [ ] Propagate TanStack Query abort signals through the API client.
 - [ ] Run independent repository/source discovery requests concurrently.
-- [ ] Set query freshness by data volatility instead of one global five-second policy.
+- [x] Set query freshness by data volatility instead of one global five-second policy.
 - [ ] Bound historical log memory/network use while preserving search and download behavior.
 
 **Gate:** navigation cancels obsolete work, active builds update without focus changes, and source discovery does not scale sequentially with integration count.
 
 ## Milestone 6 — Bundle, packages, and release
 
-- [ ] Remove or narrow the eager Base UI vendor mega-chunk.
+- [x] Narrow the eager Base UI vendor chunk so route-only controls are not preloaded.
 - [ ] Add a production bundle budget and a repeatable reporting command.
-- [ ] Update shadcn and dependencies within current major versions.
+- [x] Verify core shadcn components against the current registry and update frontend dependencies within current major versions.
 - [ ] Handle Vite, Vitest, ESLint, shadcn, Hugeicons, and TypeScript major upgrades separately.
 - [ ] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.
 - [ ] Publish an alpha release and complete signed-in desktop/mobile smoke testing.

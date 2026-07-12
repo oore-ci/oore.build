@@ -108,16 +108,24 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return
 
-          // React core + UI primitives + Router in one chunk to prevent
-          // circular chunk deps (Base UI ↔ React, Router ↔ React share
-          // module boundaries that cause TDZ errors when split)
+          // Keep route-only controls out of the eagerly loaded UI chunk.
           if (
-            id.includes('/react-dom/') ||
-            id.includes('/react/') ||
-            id.includes('/scheduler/') ||
-            id.includes('/@base-ui/') ||
-            id.includes('/@floating-ui/') ||
-            id.includes('/tabbable/') ||
+            id.includes('/@base-ui/react/checkbox/') ||
+            id.includes('/@base-ui/react/scroll-area/') ||
+            id.includes('/@base-ui/react/select/') ||
+            id.includes('/@base-ui/react/tabs/')
+          )
+            return 'deferred-ui-vendor'
+
+          // Framework/runtime chunks are stable across route deployments.
+          if (
+            id.includes('/node_modules/react-dom/') ||
+            id.includes('/node_modules/react/') ||
+            id.includes('/node_modules/scheduler/')
+          )
+            return 'react-vendor'
+
+          if (
             id.includes('/@tanstack/react-router/') ||
             id.includes('/@tanstack/router-') ||
             id.includes('/@tanstack/history') ||
@@ -126,7 +134,14 @@ export default defineConfig({
             id.includes('/tiny-invariant/') ||
             id.includes('/tiny-warning/')
           )
-            return 'react-vendor'
+            return 'router-vendor'
+
+          if (
+            id.includes('/@base-ui/') ||
+            id.includes('/@floating-ui/') ||
+            id.includes('/tabbable/')
+          )
+            return 'ui-vendor'
 
           // TanStack Query (no circular dep with react-vendor)
           if (
