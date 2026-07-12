@@ -24,6 +24,7 @@ Rules:
   - Projects and builds now share the registry-backed Empty pattern, with consistent sentence-case actions and task-specific recovery guidance.
   - GitLab setup now guides admins through host choice, PAT/OAuth authentication, source verification, and webhook delivery readiness equally for GitLab.com and self-managed hosts.
   - GitLab webhook and OAuth callback instructions use the configured External Access public URL, preserving split AWS frontend and private macOS backend deployments.
+  - GitLab setup schema, host choice, credentials, and webhook-secret controls now live in focused route-local modules while preserving the established setup flow.
   - Build detail routing, orchestration, summary, artifacts, and event history now live in cohesive single-component modules without changing route behavior.
   - Terminal log modeling, controls, step navigation, output, and ANSI rendering now live in cohesive modules behind the existing viewer API, with focused grouping and status-truth coverage.
   - Core routes and settings now use sentence-case action labels, consistent task-specific verbs, Button-owned icon sizing, and accessible names for icon-only user actions.
