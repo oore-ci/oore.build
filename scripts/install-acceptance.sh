@@ -16,6 +16,10 @@ RELEASE_OS=darwin
 configure_install_mode
 [[ "$OORE_INSTALL_MODE" == "all" ]]
 
+OORE_INSTALL_MODE=backend
+configure_install_mode
+[[ "$OORE_INSTALL_MODE" == "backend" ]]
+
 OORE_DAEMON_LISTEN=""
 OORE_DAEMON_URL="http://127.0.0.1:8787"
 DAEMON_URL="$OORE_DAEMON_URL"
@@ -31,6 +35,29 @@ OORE_LOCAL_WEB_LISTEN=""
 configure_frontend_install
 [[ "$OORE_LOCAL_WEB_LISTEN" == "127.0.0.1:4173" ]]
 [[ "$OORE_LOCAL_WEB_MODE" == "login" ]]
+
+curl_args="$(mktemp)"
+OORE_CHANNEL=alpha
+OORE_VERSION=latest
+OORE_RELEASES_LIST_URL=https://example.invalid/releases
+TMP_DIR="$(mktemp -d)"
+curl() {
+  printf '%s\n' "$*" > "$curl_args"
+  local previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == "--output" ]]; then
+      printf '[{"tag_name":"v1.0.0-alpha.1","draft":false,"prerelease":true}]\n' > "$argument"
+      break
+    fi
+    previous="$argument"
+  done
+}
+resolve_release_tag
+[[ "$RELEASE_TAG" == "v1.0.0-alpha.1" ]]
+grep -q -- '--connect-timeout 10 --max-time 60' "$curl_args"
+unset -f curl
+rm -rf "$TMP_DIR"
+rm -f "$curl_args"
 
 OORE_NONINTERACTIVE=1
 OORE_OPEN_BROWSER=""

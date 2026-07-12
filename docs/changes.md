@@ -12,6 +12,10 @@ Rules:
 
 ## 2026-07-12
 
+- **Installer explicit-role and timeout fix**:
+  - Explicit macOS `backend` and `frontend` roles are no longer overwritten by the simple all-in-one default.
+  - Release discovery and downloads now have bounded connection and transfer timeouts instead of hanging indefinitely on a broken network path.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 - **Split deployment reliability**:
   - Frontend-only installs now reject occupied listen ports before changing service state and require both the auth-proxy proof and backend proof for Trusted Proxy identity forwarding.
   - `oore-web status` verifies launcher health plus dependency-aware backend readiness through the real frontend proxy path, while the proxy now forwards `/readyz` alongside `/healthz` and `/v1/*`.
