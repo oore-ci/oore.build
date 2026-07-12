@@ -26,6 +26,8 @@ import {
   useSyncInstallations,
 } from '@/hooks/use-integrations'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
+import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
+import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -89,6 +91,7 @@ function IntegrationDetailPage() {
   const navigate = useNavigate()
 
   const { data: detail, isLoading, error } = useIntegration(integrationId)
+  const { data: networkSettings } = useExternalAccessNetworkSettings()
   const { data: installationsData } = useInstallations(integrationId)
   const { data: reposData } = useIntegrationRepos(integrationId)
   const syncMutation = useSyncInstallations()
@@ -197,7 +200,10 @@ function IntegrationDetailPage() {
     integration.provider === 'gitlab'
       ? 'Sync GitLab projects'
       : 'Sync Installations'
-  const gitLabWebhookUrl = `${window.location.origin}/v1/webhooks/gitlab`
+  const { webhookUrl: gitLabWebhookUrl } = gitLabPublicEndpoints(
+    networkSettings?.settings.public_url,
+    window.location.origin,
+  )
   const canSyncInstallations =
     integration.provider === 'github' || integration.provider === 'gitlab'
 
@@ -289,34 +295,48 @@ function IntegrationDetailPage() {
                 <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
               </TableRow>
               {integration.provider === 'gitlab' ? (
-                <TableRow>
-                  <TableCell className="text-muted-foreground">
-                    Webhook URL
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <code className="font-mono text-xs">
-                        {gitLabWebhookUrl}
-                      </code>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Copy GitLab webhook URL"
-                        title="Copy GitLab webhook URL"
-                        onClick={() => {
-                          void navigator.clipboard
-                            .writeText(gitLabWebhookUrl)
-                            .then(
-                              () => toast.success('Webhook URL copied'),
-                              () => toast.error('Could not copy webhook URL'),
-                            )
-                        }}
-                      >
-                        <HugeiconsIcon icon={Copy01Icon} size={14} />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
+                <>
+                  <TableRow>
+                    <TableCell className="text-muted-foreground">
+                      Webhook URL
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <code className="font-mono text-xs">
+                          {gitLabWebhookUrl}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Copy GitLab webhook URL"
+                          title="Copy GitLab webhook URL"
+                          onClick={() => {
+                            void navigator.clipboard
+                              .writeText(gitLabWebhookUrl)
+                              .then(
+                                () => toast.success('Webhook URL copied'),
+                                () => toast.error('Could not copy webhook URL'),
+                              )
+                          }}
+                        >
+                          <HugeiconsIcon icon={Copy01Icon} size={14} />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-muted-foreground">
+                      Last webhook delivery
+                    </TableCell>
+                    <TableCell>
+                      {detail.last_webhook_at
+                        ? new Date(
+                            detail.last_webhook_at * 1000,
+                          ).toLocaleString()
+                        : 'Waiting for a test delivery'}
+                    </TableCell>
+                  </TableRow>
+                </>
               ) : null}
               {integration.app_id ? (
                 <TableRow>
@@ -338,6 +358,19 @@ function IntegrationDetailPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {integration.provider === 'gitlab' && !detail.last_webhook_at ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Webhook readiness is pending. In GitLab, add the copied URL and
+            secret to each project, enable Push events, then send a test
+            delivery. If it fails, confirm the backend URL is reachable from
+            GitLab and that the secret still matches before refreshing this
+            page. Reconnect the source if the saved secret has changed.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader>

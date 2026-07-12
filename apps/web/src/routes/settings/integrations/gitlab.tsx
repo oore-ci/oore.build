@@ -12,9 +12,12 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useInstancePreferences } from '@/hooks/use-artifact-storage'
+import {
+  useExternalAccessNetworkSettings,
+  useInstancePreferences,
+} from '@/hooks/use-artifact-storage'
 import { useGitLabStart } from '@/hooks/use-integrations'
-import { normalizeGitLabHostUrl } from '@/lib/gitlab-url'
+import { gitLabPublicEndpoints, normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
 import SetupHint from '@/components/setup-hint'
 import { Button } from '@/components/ui/button'
@@ -30,6 +33,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import {
@@ -83,6 +87,7 @@ const gitLabSetupSchema = z
   })
 
 type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
+type GitLabHostKind = 'gitlab_com' | 'self_managed'
 
 function generateWebhookSecret(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(24))
@@ -103,8 +108,10 @@ function GitLabSetupPage() {
   const startMutation = useGitLabStart()
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
+  const { data: networkSettings } = useExternalAccessNetworkSettings()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
   const [webhookSecret] = useState(generateWebhookSecret)
+  const [hostKind, setSelectedHostKind] = useState<GitLabHostKind>('gitlab_com')
 
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
@@ -123,9 +130,10 @@ function GitLabSetupPage() {
   const hostUrl = form.watch('host_url')
   const normalizedHostUrl =
     normalizeGitLabHostUrl(hostUrl) ?? 'https://gitlab.com'
-  const proxyOrigin = window.location.origin
-  const webhookUrl = `${proxyOrigin}/v1/webhooks/gitlab`
-  const callbackUrl = `${proxyOrigin}/v1/integrations/gitlab/callback`
+  const { callbackUrl, webhookUrl } = gitLabPublicEndpoints(
+    networkSettings?.settings.public_url,
+    window.location.origin,
+  )
 
   function handleSubmit(data: GitLabSetupForm) {
     if (!remoteEnabled) return
@@ -153,18 +161,17 @@ function GitLabSetupPage() {
         onSuccess: (response) => {
           if (response.integration.status === 'inactive') {
             toast.message(
-              `Saved: ${response.integration.display_name ?? 'GitLab'} - authorize on GitLab to complete setup.`,
+              `Host verified. Authorize ${response.integration.display_name ?? 'GitLab'} to complete setup.`,
             )
-            void navigate({
-              to: '/settings/integrations/$integrationId',
-              params: { integrationId: response.integration.id },
-            })
           } else {
             toast.success(
-              `Connected: ${response.integration.display_name ?? 'GitLab'}`,
+              `Source verified: ${response.integration.display_name ?? 'GitLab'}`,
             )
-            void navigate({ to: '/settings/integrations' })
           }
+          void navigate({
+            to: '/settings/integrations/$integrationId',
+            params: { integrationId: response.integration.id },
+          })
         },
         onError: (err) => {
           toast.error(`Failed to connect GitLab: ${err.message}`)
@@ -177,6 +184,17 @@ function GitLabSetupPage() {
     const normalized = normalizeGitLabHostUrl(form.getValues('host_url'))
     if (normalized) {
       form.setValue('host_url', normalized, { shouldValidate: true })
+    }
+  }
+
+  function selectHostKind(value: GitLabHostKind | null) {
+    if (!value) return
+    setSelectedHostKind(value)
+    if (value === 'gitlab_com') {
+      form.setValue('host_url', 'https://gitlab.com', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
     }
   }
 
@@ -222,79 +240,167 @@ function GitLabSetupPage() {
           <Form {...form}>
             <form
               onSubmit={form.handleSubmit(handleSubmit)}
-              className="space-y-4"
+              className="space-y-6"
             >
-              <FormField
-                control={form.control}
-                name="host_url"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>GitLab host URL</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        placeholder="https://gitlab.example.com"
-                        onBlur={() => {
-                          field.onBlur()
-                          normalizeHostUrl()
+              <section className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                    1. Choose GitLab host
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    GitLab.com and self-managed GitLab use the same connection
+                    flow.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gitlab-host">GitLab host</Label>
+                  <Select
+                    value={hostKind}
+                    onValueChange={selectHostKind}
+                    items={{
+                      gitlab_com: 'GitLab.com',
+                      self_managed: 'Self-managed GitLab',
+                    }}
+                  >
+                    <SelectTrigger id="gitlab-host">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gitlab_com">GitLab.com</SelectItem>
+                      <SelectItem value="self_managed">
+                        Self-managed GitLab
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {hostKind === 'self_managed' ? (
+                  <FormField
+                    control={form.control}
+                    name="host_url"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Self-managed host URL</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder="https://gitlab.example.com"
+                            onBlur={() => {
+                              field.onBlur()
+                              normalizeHostUrl()
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Host origin only. Oore normalizes a trailing slash; do
+                          not include <code>/api/v4</code> or a group path.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : (
+                  <SetupHint
+                    title="GitLab.com selected"
+                    items={[
+                      'Oore will connect to https://gitlab.com. Choose self-managed only when your GitLab has a different host URL.',
+                    ]}
+                  />
+                )}
+              </section>
+
+              <section className="space-y-4 border-t border-border/60 pt-6">
+                <div>
+                  <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                    2. Authenticate
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Choose the credential model that fits this GitLab source.
+                  </p>
+                </div>
+                <FormField
+                  control={form.control}
+                  name="auth_mode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Authentication method</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={{
+                          personal_token: 'Personal Access Token',
+                          oauth_app: 'OAuth Application',
                         }}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      Host origin only. Oore normalizes a trailing slash; do not
-                      include <code>/api/v4</code> or a group path.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="personal_token">
+                            Personal Access Token
+                          </SelectItem>
+                          <SelectItem value="oauth_app">
+                            OAuth Application
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        Personal access tokens are fastest for one account and
+                        are verified before saving. OAuth keeps user
+                        authorization in GitLab and is better for a shared
+                        source; it requires one additional authorization after
+                        saving.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-              <FormField
-                control={form.control}
-                name="auth_mode"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Authentication method</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={{
-                        personal_token: 'Personal Access Token',
-                        oauth_app: 'OAuth Application',
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="personal_token">
-                          Personal Access Token
-                        </SelectItem>
-                        <SelectItem value="oauth_app">
-                          OAuth Application
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                <GitLabCredentialsFields
+                  form={form}
+                  authMode={authMode}
+                  hostUrl={normalizedHostUrl}
+                  callbackUrl={callbackUrl}
+                />
+              </section>
 
-              <GitLabWebhookSecretField
-                form={form}
-                webhookUrl={webhookUrl}
-                onCopy={copyWebhookSecret}
-                onRegenerate={replaceWebhookSecret}
-              />
+              <section className="space-y-3 border-t border-border/60 pt-6">
+                <div>
+                  <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                    3. Verify source connection
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Oore checks the selected GitLab host before it stores this
+                    source.
+                  </p>
+                </div>
+                <Alert>
+                  <AlertDescription>
+                    {authMode === 'personal_token'
+                      ? 'Saving verifies this token against your GitLab account and discovers accessible projects. If it fails, create a new token with the listed read-only scopes.'
+                      : 'Saving checks that this GitLab host is reachable. Then authorize the saved OAuth application on GitLab; the source becomes active only after the callback returns.'}
+                  </AlertDescription>
+                </Alert>
+              </section>
 
-              <GitLabCredentialsFields
-                form={form}
-                authMode={authMode}
-                hostUrl={normalizedHostUrl}
-                callbackUrl={callbackUrl}
-              />
+              <section className="space-y-4 border-t border-border/60 pt-6">
+                <div>
+                  <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                    4. Set up webhooks
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Save the source first, then add this endpoint and secret in
+                    each GitLab project.
+                  </p>
+                </div>
+                <GitLabWebhookSecretField
+                  form={form}
+                  webhookUrl={webhookUrl}
+                  onCopy={copyWebhookSecret}
+                  onRegenerate={replaceWebhookSecret}
+                />
+              </section>
 
               <Button
                 type="submit"
@@ -310,7 +416,9 @@ function GitLabSetupPage() {
                     ? 'External Access Required'
                     : startMutation.isPending
                       ? 'Connecting...'
-                      : 'Connect GitLab'}
+                      : authMode === 'personal_token'
+                        ? 'Verify and save GitLab source'
+                        : 'Save and authorize on GitLab'}
               </Button>
             </form>
           </Form>
@@ -470,6 +578,11 @@ function GitLabCredentialsFields({
                 <span>
                   Register this redirect URI in GitLab:{' '}
                   <code>{callbackUrl}</code>
+                </span>,
+                <span>
+                  Request only <code>read_api</code> and{' '}
+                  <code>read_repository</code>; Oore does not request write
+                  scopes for this source.
                 </span>,
                 'Save this source, then choose Authorize on GitLab from its source details page.',
               ]}

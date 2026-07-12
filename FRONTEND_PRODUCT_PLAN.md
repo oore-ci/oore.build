@@ -41,15 +41,19 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [ ] Standardize page headers, primary-action placement, empty states, loading states, and persistent errors.
 - [ ] Update current shadcn components selectively, starting with Button, Select, Card, Sidebar, Empty, Field, and Button Group.
 - [ ] Break up only the high-churn giant components: pipeline form, preferences, build detail, and terminal viewer.
+  - [ ] Pipeline form
+  - [ ] Preferences
+  - [x] Build detail
+  - [ ] Terminal viewer
 
 **Gate:** core routes use the same action hierarchy and component patterns with no hard-coded application colors.
 
 ## Milestone 4 — GitLab product flow
 
-- [ ] Separate host selection, authentication, connection verification, and webhook setup.
-- [ ] Keep GitLab.com and self-managed GitLab equally supported.
-- [ ] Explain PAT and OAuth trade-offs and minimum permissions without exposing secrets.
-- [ ] Verify source connection and webhook readiness with clear recovery actions.
+- [x] Separate host selection, authentication, connection verification, and webhook setup.
+- [x] Keep GitLab.com and self-managed GitLab equally supported.
+- [x] Explain PAT and OAuth trade-offs and minimum permissions without exposing secrets.
+- [x] Verify source connection and webhook readiness with clear recovery actions.
 
 **Gate:** a first-time admin can connect a self-managed GitLab source without external instructions.
 
