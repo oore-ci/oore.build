@@ -12,6 +12,10 @@ Rules:
 
 ## 2026-07-12
 
+- **Frontend Trusted Proxy pairing**:
+  - `oore frontend invite` now creates a short-lived, single-use pairing code for a ready Trusted Proxy backend. A frontend-only installer can exchange `OORE_FRONTEND_PAIRING_CODE` through the private, CIDR-restricted `/v1/frontend/pair` capability, save the backend proof, and generate a separate local HAProxy-to-`oore-web` proof.
+  - The split-role, installer, Mac Studio + NetBird + Warpgate, CLI, and OpenAPI documentation now describe pairing as the normal path while keeping manual proof files as an advanced fallback.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 - **Headless macOS backend service**:
   - Backend-only installs now use a boot-time system LaunchDaemon running as the installing account, so SSH-only Mac build hosts do not require an active GUI login session.
   - Reinstall and uninstall remove any legacy user LaunchAgent left by an earlier backend installation attempt.

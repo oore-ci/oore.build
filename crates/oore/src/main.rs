@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 use chrono::{Local, TimeZone};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use oore_contract::{
@@ -75,6 +75,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Setup(SetupArgs),
+    Frontend(FrontendArgs),
     Login(LoginArgs),
     Status(StatusArgs),
     Runner(RunnerArgs),
@@ -87,6 +88,33 @@ enum Commands {
     Update(UpdateArgs),
     /// Create, verify, or restore an encrypted-state backup
     Backup(BackupArgs),
+}
+
+#[derive(Debug, Args)]
+struct FrontendArgs {
+    #[command(subcommand)]
+    command: FrontendSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum FrontendSubcommand {
+    /// Create a short-lived, single-use frontend pairing code.
+    Invite(FrontendInviteArgs),
+}
+
+#[derive(Debug, Args)]
+struct FrontendInviteArgs {
+    /// How long the pairing code remains valid.
+    #[arg(long, default_value = "10m")]
+    ttl: String,
+
+    /// Path to the setup database file.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+
+    /// Print machine-readable output.
+    #[arg(long, default_value = "false")]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1290,6 +1318,86 @@ async fn handle_setup_init(args: SetupInitArgs) -> anyhow::Result<()> {
         }
     }
 
+    Ok(())
+}
+
+async fn handle_frontend_invite(args: FrontendInviteArgs) -> anyhow::Result<()> {
+    let ttl = parse_ttl(&args.ttl)?;
+    if ttl.is_zero() || ttl > Duration::from_secs(60 * 60) {
+        anyhow::bail!("frontend pairing ttl must be between 1 second and 1 hour");
+    }
+
+    let db_path = resolve_db_path(args.state_file.as_deref())?;
+    let pool = connect_db(&db_path).await?;
+    let configured: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM trusted_proxy_settings \
+         WHERE id = 1 AND encrypted_shared_secret IS NOT NULL LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .context("trusted-proxy setup is not migrated; update and start oored before pairing")?;
+    if configured.is_none() {
+        anyhow::bail!("frontend pairing requires a configured Trusted Proxy backend");
+    }
+
+    let mut token_bytes = [0u8; 24];
+    rand::rngs::OsRng.fill_bytes(&mut token_bytes);
+    let code = format!("fp_{}", URL_SAFE_NO_PAD.encode(token_bytes));
+    let token_hash = hex::encode(Sha256::digest(code.as_bytes()));
+    let now = now_epoch_secs();
+    let expires_at = now + ttl.as_secs() as i64;
+    let invite_id = uuid::Uuid::new_v4().to_string();
+
+    let mut transaction = pool.begin().await?;
+    sqlx::query("UPDATE frontend_pairing_invites SET consumed_at = ?1 WHERE consumed_at IS NULL")
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .context("failed to revoke previous frontend pairing invites")?;
+    sqlx::query(
+        "INSERT INTO frontend_pairing_invites (id, token_hash, expires_at, consumed_at, created_at) \
+         VALUES (?1, ?2, ?3, NULL, ?4)",
+    )
+    .bind(&invite_id)
+    .bind(token_hash)
+    .bind(expires_at)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .context("failed to create frontend pairing invite; update and start oored first")?;
+    let audit_details = serde_json::json!({
+        "source": "local_cli",
+        "expires_at": expires_at,
+    })
+    .to_string();
+    sqlx::query(
+        "INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, details, created_at) \
+         VALUES (NULL, 'frontend_pairing_invite_created', 'frontend_pairing_invite', ?1, ?2, ?3)",
+    )
+    .bind(&invite_id)
+    .bind(audit_details)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .context("failed to audit frontend pairing invite")?;
+    transaction.commit().await?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "code": code,
+                "expires_at": expires_at,
+                "single_use": true,
+            })
+        );
+    } else {
+        println!(
+            "Frontend pairing code (single-use, expires in {}):",
+            args.ttl
+        );
+        println!("{code}");
+    }
     Ok(())
 }
 
@@ -4106,6 +4214,13 @@ fn main() -> anyhow::Result<()> {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_setup_interactive(&daemon_url))?;
+            }
+        },
+        Commands::Frontend(frontend) => match frontend.command {
+            FrontendSubcommand::Invite(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(handle_frontend_invite(args))?;
             }
         },
         Commands::Login(args) => {
