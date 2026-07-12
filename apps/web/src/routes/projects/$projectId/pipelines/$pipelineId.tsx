@@ -242,7 +242,7 @@ function PipelineDetailPage() {
                   onClick={() => setTriggerBuildOpen(true)}
                   disabled={!projectHasSource}
                 >
-                  <HugeiconsIcon icon={PlayIcon} size={16} />
+                  <HugeiconsIcon icon={PlayIcon} />
                   Run build
                 </Button>
               ) : null}
@@ -267,7 +267,7 @@ function PipelineDetailPage() {
                   }
                   nativeButton={false}
                 >
-                  <HugeiconsIcon icon={Edit02Icon} size={16} />
+                  <HugeiconsIcon icon={Edit02Icon} />
                   Edit
                 </Button>
               ) : null}
@@ -276,7 +276,7 @@ function PipelineDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                  <HugeiconsIcon icon={Delete02Icon} />
                   Delete
                 </Button>
               ) : null}
@@ -566,7 +566,7 @@ function PipelineDetailPage() {
               <p className="text-sm text-muted-foreground">No builds yet.</p>
               {canTriggerBuild && projectHasSource ? (
                 <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
-                  <HugeiconsIcon icon={PlayIcon} size={14} />
+                  <HugeiconsIcon icon={PlayIcon} />
                   Trigger first build
                 </Button>
               ) : null}

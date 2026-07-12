@@ -517,7 +517,7 @@ function UsersSettingsPage() {
         title={confirmTitle}
         description={confirmDescription}
         confirmLabel={
-          confirmAction?.type === 'role_change' ? 'Change Role' : 'Disable'
+          confirmAction?.type === 'role_change' ? 'Change role' : 'Disable'
         }
         confirmVariant={
           confirmAction?.type === 'role_change' ? 'default' : 'destructive'

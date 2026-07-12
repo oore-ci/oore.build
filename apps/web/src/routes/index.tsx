@@ -186,8 +186,8 @@ function IndexPage() {
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
-                <HugeiconsIcon icon={Add01Icon} size={16} />
-                Add Instance
+                <HugeiconsIcon icon={Add01Icon} />
+                Add instance
               </Button>
             </CardContent>
           </Card>
@@ -362,7 +362,7 @@ function ConfiguredDashboard({
         actions={
           canShowRunBuild ? (
             <Button onClick={handleGlobalTrigger}>
-              <HugeiconsIcon icon={PlayIcon} size={16} />
+              <HugeiconsIcon icon={PlayIcon} />
               Run build
             </Button>
           ) : undefined
@@ -440,7 +440,7 @@ function ConfiguredDashboard({
             nativeButton={false}
           >
             View all
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+            <HugeiconsIcon icon={ArrowRight01Icon} />
           </Button>
         </div>
 
@@ -477,7 +477,7 @@ function ConfiguredDashboard({
                             render={<Link to={integrationConnectTo} />}
                             nativeButton={false}
                           >
-                            Connect Source
+                            Connect source
                           </Button>
                         ) : (
                           <p className="text-xs text-muted-foreground">
@@ -508,8 +508,8 @@ function ConfiguredDashboard({
                           }
                           nativeButton={false}
                         >
-                          <HugeiconsIcon icon={Add01Icon} size={14} />
-                          Create Project
+                          <HugeiconsIcon icon={Add01Icon} />
+                          Create project
                         </Button>
                       ) : (
                         <p className="text-xs text-muted-foreground">
@@ -577,7 +577,7 @@ function ConfiguredDashboard({
             nativeButton={false}
           >
             View all
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+            <HugeiconsIcon icon={ArrowRight01Icon} />
           </Button>
         </div>
 

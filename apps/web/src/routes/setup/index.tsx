@@ -134,7 +134,7 @@ function BootstrapTokenStep() {
           disabled={verifyMutation.isPending}
           className="w-full"
         >
-          {verifyMutation.isPending ? 'Verifying...' : 'Verify Token'}
+          {verifyMutation.isPending ? 'Verifying...' : 'Verify token'}
         </Button>
       </form>
     </Form>

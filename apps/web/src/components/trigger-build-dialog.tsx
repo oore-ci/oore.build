@@ -432,7 +432,7 @@ export default function TriggerBuildDialog({
                     Running...
                   </>
                 ) : (
-                  'Run Build'
+                  'Run build'
                 )}
               </Button>
             </DialogFooter>

@@ -199,7 +199,7 @@ function IntegrationDetailPage() {
   const syncLabel =
     integration.provider === 'gitlab'
       ? 'Sync GitLab projects'
-      : 'Sync Installations'
+      : 'Sync installations'
   const { webhookUrl: gitLabWebhookUrl } = gitLabPublicEndpoints(
     networkSettings?.settings.public_url,
     window.location.origin,
@@ -319,7 +319,7 @@ function IntegrationDetailPage() {
                               )
                           }}
                         >
-                          <HugeiconsIcon icon={Copy01Icon} size={14} />
+                          <HugeiconsIcon icon={Copy01Icon} />
                         </Button>
                       </div>
                     </TableCell>
@@ -422,7 +422,7 @@ function IntegrationDetailPage() {
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Setting07Icon} size={16} />
+              <HugeiconsIcon icon={Setting07Icon} />
               {installations.length > 0
                 ? 'Manage on GitHub'
                 : 'Install on GitHub'}
@@ -442,7 +442,7 @@ function IntegrationDetailPage() {
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Setting07Icon} size={16} />
+              <HugeiconsIcon icon={Setting07Icon} />
               Open GitLab
             </Button>
           ) : null}
@@ -453,7 +453,7 @@ function IntegrationDetailPage() {
               onClick={handleSync}
               disabled={syncMutation.isPending}
             >
-              <HugeiconsIcon icon={Refresh01Icon} size={16} />
+              <HugeiconsIcon icon={Refresh01Icon} />
               {syncMutation.isPending ? 'Syncing...' : syncLabel}
             </Button>
           ) : null}
@@ -462,7 +462,7 @@ function IntegrationDetailPage() {
             <AlertDialogTrigger
               render={
                 <Button variant="destructive">
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                  <HugeiconsIcon icon={Delete02Icon} />
                   Disconnect
                 </Button>
               }

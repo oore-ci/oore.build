@@ -131,7 +131,7 @@ function IntegrationsPage() {
                 render={<Link to="/settings/preferences" />}
                 nativeButton={false}
               >
-                Open Preferences
+                Open preferences
               </Button>
               <Button render={<Link to="/projects" />} nativeButton={false}>
                 Go to projects
@@ -164,7 +164,7 @@ function IntegrationsPage() {
                 render={<Link to="/settings/integrations/github" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+                <HugeiconsIcon icon={LinkSquare02Icon} />
                 Connect GitHub
               </Button>
             </CardContent>
@@ -198,7 +198,7 @@ function IntegrationsPage() {
                 render={<Link to="/settings/integrations/gitlab" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+                <HugeiconsIcon icon={LinkSquare02Icon} />
                 Connect GitLab
               </Button>
             </CardContent>
@@ -304,7 +304,7 @@ function IntegrationsPage() {
                         <AlertDialogTrigger
                           render={
                             <Button variant="ghost" size="sm">
-                              <HugeiconsIcon icon={Delete02Icon} size={16} />
+                              <HugeiconsIcon icon={Delete02Icon} />
                               Disconnect
                             </Button>
                           }

@@ -337,7 +337,7 @@ function SetupTrustedProxyStep() {
             className="w-full"
             disabled={configureMutation.isPending}
           >
-            {configureMutation.isPending ? 'Saving...' : 'Continue to Owner'}
+            {configureMutation.isPending ? 'Saving...' : 'Continue to owner'}
           </Button>
         </form>
       </Form>

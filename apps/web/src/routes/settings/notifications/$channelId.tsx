@@ -278,14 +278,14 @@ function NotificationChannelDetailPage() {
               onClick={handleTest}
               disabled={testMutation.isPending}
             >
-              <HugeiconsIcon icon={TestTube01Icon} size={16} />
+              <HugeiconsIcon icon={TestTube01Icon} />
               {testMutation.isPending ? 'Sending...' : 'Test'}
             </Button>
             <AlertDialog>
               <AlertDialogTrigger
                 render={
                   <Button variant="outline">
-                    <HugeiconsIcon icon={Delete02Icon} size={16} />
+                    <HugeiconsIcon icon={Delete02Icon} />
                     Delete
                   </Button>
                 }
@@ -413,8 +413,14 @@ function NotificationChannelDetailPage() {
               {isEmail ? (
                 <>
                   <div className="flex items-center gap-2 text-sm">
-                    <Badge variant={channel.has_smtp_config ? 'default' : 'secondary'}>
-                      {channel.has_smtp_config ? 'SMTP configured' : 'No SMTP config'}
+                    <Badge
+                      variant={
+                        channel.has_smtp_config ? 'default' : 'secondary'
+                      }
+                    >
+                      {channel.has_smtp_config
+                        ? 'SMTP configured'
+                        : 'No SMTP config'}
                     </Badge>
                   </div>
 
@@ -561,8 +567,8 @@ function NotificationChannelDetailPage() {
                           />
                         </FormControl>
                         <FormDescription>
-                          Comma-separated list of email addresses. Leave blank to
-                          keep existing recipients.
+                          Comma-separated list of email addresses. Leave blank
+                          to keep existing recipients.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -619,7 +625,7 @@ function NotificationChannelDetailPage() {
               />
 
               <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+                {updateMutation.isPending ? 'Saving...' : 'Save changes'}
               </Button>
             </form>
           </Form>

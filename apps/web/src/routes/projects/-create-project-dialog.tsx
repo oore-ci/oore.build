@@ -323,7 +323,7 @@ export default function CreateProjectDialog({
                                 title="Browse"
                                 onClick={handleOpenPicker}
                               >
-                                <HugeiconsIcon icon={Folder02Icon} size={16} />
+                                <HugeiconsIcon icon={Folder02Icon} />
                               </Button>
                             </div>
                           ) : null}
@@ -383,7 +383,7 @@ export default function CreateProjectDialog({
                         render={<Link to="/settings/integrations" />}
                         nativeButton={false}
                       >
-                        Connect Source
+                        Connect source
                       </Button>
                     </div>
                   )}

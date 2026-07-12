@@ -165,7 +165,7 @@ function CompleteStep() {
             disabled={completeMutation.isPending}
             className="w-full"
           >
-            {completeMutation.isPending ? 'Completing...' : 'Complete Setup'}
+            {completeMutation.isPending ? 'Completing...' : 'Complete setup'}
           </Button>
         </div>
       )}

@@ -203,7 +203,7 @@ export default function AddInstanceDialog({
                   onClick={() => setValue('icon', entry.key)}
                   title={entry.label}
                 >
-                  <HugeiconsIcon icon={entry.icon} size={16} />
+                  <HugeiconsIcon icon={entry.icon} />
                 </Button>
               ))}
             </div>

@@ -254,7 +254,7 @@ function OwnerStep() {
             >
               {localOwnerMutation.isPending
                 ? 'Creating owner...'
-                : 'Create Local Owner'}
+                : 'Create local owner'}
             </Button>
           </form>
         </Form>
@@ -274,7 +274,7 @@ function OwnerStep() {
           >
             {trustedProxyClaimMutation.isPending
               ? 'Claiming owner...'
-              : 'Confirm Owner from Trusted Proxy'}
+              : 'Confirm owner from trusted proxy'}
           </Button>
 
           <Button
@@ -282,7 +282,7 @@ function OwnerStep() {
             onClick={() => void navigate({ to: '/setup/trusted-proxy' })}
             className="w-full"
           >
-            Back to Trusted Proxy Settings
+            Back to trusted proxy settings
           </Button>
         </>
       ) : (
@@ -312,7 +312,7 @@ function OwnerStep() {
           >
             {startOidcMutation.isPending
               ? 'Redirecting...'
-              : 'Authenticate with OIDC Provider'}
+              : 'Authenticate with OIDC provider'}
           </Button>
 
           <Button
@@ -320,7 +320,7 @@ function OwnerStep() {
             onClick={() => void navigate({ to: '/setup/oidc' })}
             className="w-full"
           >
-            Back to OIDC Settings
+            Back to OIDC settings
           </Button>
         </>
       )}
@@ -330,7 +330,7 @@ function OwnerStep() {
         onClick={handleRestartFromToken}
         className="w-full"
       >
-        Restart from Token Step
+        Restart from token step
       </Button>
     </div>
   )

@@ -121,7 +121,7 @@ function ProjectsListPage() {
               disabled={isDemoMode}
               title={isDemoMode ? READ_ONLY_REASON : undefined}
             >
-              <HugeiconsIcon icon={Add01Icon} size={16} />
+              <HugeiconsIcon icon={Add01Icon} />
               New project
             </Button>
           ) : undefined

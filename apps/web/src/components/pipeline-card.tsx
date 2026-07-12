@@ -122,8 +122,8 @@ export default function PipelineCard({
                 disabled={isDemoMode}
                 title={isDemoMode ? READ_ONLY_REASON : undefined}
               >
-                <HugeiconsIcon icon={PlayIcon} size={14} />
-                Run
+                <HugeiconsIcon icon={PlayIcon} />
+                Run build
               </Button>
             ) : null}
             {canWrite ? (
@@ -139,7 +139,7 @@ export default function PipelineCard({
                 }
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={Edit02Icon} size={14} />
+                <HugeiconsIcon icon={Edit02Icon} />
                 Edit
               </Button>
             ) : null}
@@ -165,7 +165,7 @@ export default function PipelineCard({
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Link01Icon} size={14} />
+              <HugeiconsIcon icon={Link01Icon} />
               Permalink
             </Button>
 
@@ -177,7 +177,6 @@ export default function PipelineCard({
             >
               <HugeiconsIcon
                 icon={detailsOpen ? ArrowDown01Icon : ArrowRight01Icon}
-                size={14}
               />
               Details
             </Button>

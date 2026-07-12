@@ -413,7 +413,7 @@ function GitLabSetupPage() {
                 {preferencesLoading
                   ? 'Checking access...'
                   : !remoteEnabled
-                    ? 'External Access Required'
+                    ? 'External access required'
                     : startMutation.isPending
                       ? 'Connecting...'
                       : authMode === 'personal_token'
@@ -458,7 +458,7 @@ function GitLabWebhookSecretField({
               aria-label="Copy webhook secret"
               title="Copy webhook secret"
             >
-              <HugeiconsIcon icon={Copy01Icon} size={16} />
+              <HugeiconsIcon icon={Copy01Icon} />
             </Button>
             <Button
               type="button"
@@ -468,7 +468,7 @@ function GitLabWebhookSecretField({
               aria-label="Generate a new webhook secret"
               title="Generate a new webhook secret"
             >
-              <HugeiconsIcon icon={Refresh01Icon} size={16} />
+              <HugeiconsIcon icon={Refresh01Icon} />
             </Button>
           </div>
           <FormDescription>

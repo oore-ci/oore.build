@@ -57,7 +57,7 @@ function LocalGitPage() {
             render={<Link to="/projects" search={{ openCreate: '1' }} />}
             nativeButton={false}
           >
-            Create Project
+            Create project
           </Button>
         </CardContent>
       </Card>

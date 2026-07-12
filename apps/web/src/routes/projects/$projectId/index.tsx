@@ -350,7 +350,7 @@ function ProjectDetailPage() {
                     onClick={() => openTriggerBuild()}
                     disabled={pipelines.length === 0 || !projectHasSource}
                   >
-                    <HugeiconsIcon icon={PlayIcon} size={16} />
+                    <HugeiconsIcon icon={PlayIcon} />
                     Run build
                   </Button>
                 </span>
@@ -360,7 +360,7 @@ function ProjectDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                  <HugeiconsIcon icon={Delete02Icon} />
                   Delete
                 </Button>
               ) : null}
@@ -403,8 +403,8 @@ function ProjectDetailPage() {
                     />
                   }
                 >
-                  <HugeiconsIcon icon={Add01Icon} size={14} />
-                  Add Pipeline
+                  <HugeiconsIcon icon={Add01Icon} />
+                  Add pipeline
                 </Button>
               </div>
             ) : null}
@@ -472,7 +472,7 @@ function ProjectDetailPage() {
                     pipelines.length > 0 &&
                     projectHasSource ? (
                       <Button size="sm" onClick={() => openTriggerBuild()}>
-                        <HugeiconsIcon icon={PlayIcon} size={14} />
+                        <HugeiconsIcon icon={PlayIcon} />
                         Trigger first build
                       </Button>
                     ) : null}
@@ -586,8 +586,8 @@ function ProjectDetailPage() {
                           variant="destructive"
                           onClick={() => setDeleteOpen(true)}
                         >
-                          <HugeiconsIcon icon={Delete02Icon} size={16} />
-                          Delete Project
+                          <HugeiconsIcon icon={Delete02Icon} />
+                          Delete project
                         </Button>
                       </div>
                     </CollapsibleContent>
