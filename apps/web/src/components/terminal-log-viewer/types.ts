@@ -5,6 +5,7 @@ export interface TerminalLogViewerProps {
   stepResults: Array<StepResult>
   isStreaming: boolean
   streamError?: string
+  isLoading?: boolean
   logsUnavailable?: boolean
   isTerminal?: boolean
 }
