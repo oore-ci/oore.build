@@ -1,4 +1,4 @@
-.PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
+.PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
 		       test-web lint-web fix-web \
 		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
@@ -44,6 +44,9 @@ dev-web:
 
 build-web:
 	bun run build:web
+
+bundle-check: build-web
+	bun run bundle:check
 
 deploy-web: build-web
 	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
@@ -201,7 +204,7 @@ lint: lint-web lint-docs fmt-rust-check
 
 test: test-web test-docs test-rust-workspace
 
-validate: docs-check lint test clippy-rust build-web build-docs build-site cargo-check
+validate: docs-check lint test clippy-rust bundle-check build-docs build-site cargo-check
 
 validate-ci:
 	bash tools/validate-ci.sh

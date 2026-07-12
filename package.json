@@ -12,6 +12,7 @@
     "dev:docs": "cd apps/docs-site && bun run docs:dev",
     "dev:site": "cd apps/site && bun run dev",
     "build:web": "cd apps/web && bun run build",
+    "bundle:check": "cd apps/web && bun run bundle:check",
     "build:docs": "cd apps/docs-site && bun run docs:build",
     "build:site": "cd apps/site && bun run build",
     "docs:check": "bash tools/docs-check.sh",

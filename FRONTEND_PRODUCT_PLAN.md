@@ -66,7 +66,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 ## Milestone 6 — Bundle, packages, and release
 
 - [x] Narrow the eager Base UI vendor chunk so route-only controls are not preloaded.
-- [ ] Add a production bundle budget and a repeatable reporting command.
+- [x] Add a production bundle budget and a repeatable reporting command.
 - [x] Verify core shadcn components against the current registry and update frontend dependencies within current major versions.
 - [ ] Handle Vite, Vitest, ESLint, shadcn, Hugeicons, and TypeScript major upgrades separately.
 - [ ] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.

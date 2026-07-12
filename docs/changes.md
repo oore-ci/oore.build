@@ -23,6 +23,7 @@ Rules:
   - Core build and project actions now distinguish navigation, source connection, settings, and build execution with consistent labels and icons.
   - Verified Button, Select, Card, and Sidebar against the current shadcn registry and refreshed frontend runtime/tooling dependencies within their existing major versions; major upgrades remain isolated for later work.
   - Corrected vendor chunk boundaries so Base UI is no longer swallowed by the React matcher; route-only controls are deferred and initial JavaScript fell by 15.46 kB gzip (6.3%) after the dependency refresh.
+  - Added a production entry-bundle gate (240 KiB JavaScript and 22 KiB CSS gzip) to `make validate`, measured from the assets actually referenced by the built HTML.
   - Dashboard build data now uses one query, build lists poll only while work is active, volatile build data keeps a five-second freshness window, and less volatile server state defaults to thirty seconds.
   - TanStack Query cancellation now reaches build, log, and artifact requests, including abort checks between paginated log pages.
   - Log-stream polling now shares the stream lifecycle abort signal, preventing stale fallback requests from surviving build or instance changes.
