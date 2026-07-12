@@ -41,4 +41,74 @@ should_open_browser
 OORE_NO_OPEN=1
 ! should_open_browser
 
+OORE_LOCAL_WEB_LISTEN="127.0.0.1:4173"
+is_local_web_healthy() { return 1; }
+lsof() { printf '4242\n'; }
+if port_error="$(preflight_local_web_listen 2>&1)"; then
+  echo "[install-acceptance] expected occupied listen preflight to fail" >&2
+  exit 1
+fi
+[[ "$port_error" == *"127.0.0.1:4173 is already in use"* ]]
+
+service_calls="$(mktemp)"
+trap 'rm -f "$INSTALLER_LIB" "$service_calls"' EXIT
+has_local_web_bundle() { return 0; }
+systemctl() { printf '%s\n' "$*" >> "$service_calls"; }
+if service_error="$(install_local_web_systemd_user_service 2>&1)"; then
+  echo "[install-acceptance] expected occupied listen service install to fail" >&2
+  exit 1
+fi
+[[ "$service_error" == *"127.0.0.1:4173 is already in use"* ]]
+[[ ! -s "$service_calls" ]]
+
+proof_dir="$(mktemp -d)"
+trap 'rm -f "$INSTALLER_LIB" "$service_calls"; rm -rf "$proof_dir"' EXIT
+printf 'backend-proof\n' > "$proof_dir/backend"
+OORE_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/backend"
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE=""
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected one-proof frontend setup to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"require a separate auth-proxy proof"* ]]
+
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/backend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected same proof path to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"must contain different values"* ]]
+
+printf 'frontend-proof\n' > "$proof_dir/frontend"
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/frontend"
+ensure_frontend_secret_files
+
+printf 'backend-proof\n' > "$proof_dir/frontend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected matching proof values to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"must contain different values"* ]]
+
+printf ' \tbackend-proof \n\n' > "$proof_dir/frontend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected proofs equal after trimming to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"must contain different values"* ]]
+
+printf ' \t\n' > "$proof_dir/frontend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected whitespace-only proof to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"empty after trimming whitespace"* ]]
+
+printf 'frontend-proof\n' > "$proof_dir/frontend"
+ensure_frontend_secret_files
+
+bash "$ROOT_DIR/scripts/uninstall-acceptance.sh"
+
 echo "[install-acceptance] passed"

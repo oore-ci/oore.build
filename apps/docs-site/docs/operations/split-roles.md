@@ -76,7 +76,9 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
 
 Put your HTTPS reverse proxy in front of `http://127.0.0.1:4173`. In the web UI, add the instance with **Backend URL** empty so browser API calls stay on the same HTTPS origin and flow through the frontend proxy.
 
-`oore-web` proxies `/v1/*` and `/healthz` to `OORE_WEB_BACKEND_URL`. If you use trusted-proxy authentication, configure the frontend host with the backend shared secret file and configure your HTTPS auth proxy to send an upstream proof header to `oore-web`. Browser-supplied identity headers are stripped unless that proof is present.
+The installer checks the selected listen port before changing service state. If your reverse proxy already owns `4173`, choose another loopback port such as `127.0.0.1:4174` and point the proxy backend at that address.
+
+`oore-web` proxies `/v1/*`, `/healthz`, and `/readyz` to `OORE_WEB_BACKEND_URL`. Trusted Proxy mode uses two distinct proofs: the authenticated reverse proxy sends an upstream proof to `oore-web`, then `oore-web` injects a separate backend proof for `oored`. Configure both restrictive secret files on the frontend service. Browser-supplied identity and proof headers are stripped, and the identity header is forwarded only when the upstream proof matches.
 
 During first-run setup, choose `Remote (Trusted Proxy)`, enter the initial owner email, and select a proxy preset. `Generic proxy` uses `x-oore-user-email`, `Warpgate` uses `x-warpgate-username`, and `Custom header` lets you enter the exact header your proxy forwards. The first owner claim must come from that same proxy-authenticated email, avoiding manual database edits.
 
@@ -87,6 +89,12 @@ oore-web update
 ```
 
 `oore-web update --check` reports whether the installed channel has a newer release without changing files. Restart the `oore-web` service after an update if you want the running launcher process to pick up binary changes immediately.
+
+Verify both frontend and backend readiness through the installed proxy path:
+
+```bash
+oore-web status --url http://127.0.0.1:4173
+```
 
 ## Provider-Specific Examples
 
