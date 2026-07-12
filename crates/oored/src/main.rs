@@ -367,10 +367,24 @@ fn launchctl(args: &[&str]) -> anyhow::Result<std::process::Output> {
         .with_context(|| format!("failed to run launchctl {}", args.join(" ")))
 }
 
-fn launchctl_success(args: &[&str]) -> bool {
-    launchctl(args)
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+fn launchctl_checked(args: &[&str]) -> anyhow::Result<()> {
+    let output = launchctl(args)?;
+    check_launchctl_output(args, &output)
+}
+
+fn check_launchctl_output(args: &[&str], output: &std::process::Output) -> anyhow::Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    anyhow::bail!("launchctl {} failed: {detail}", args.join(" "))
 }
 
 fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
@@ -450,14 +464,12 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
 
     let _ = launchctl(&["bootout", &service]);
     let plist_str = plist_path.display().to_string();
-    let bootstrapped = launchctl_success(&["bootstrap", &domain, &plist_str]);
-    if !bootstrapped && !launchctl_success(&["load", "-w", &plist_str]) {
-        anyhow::bail!(
-            "failed to bootstrap launchd service. Try: launchctl bootstrap {domain} {}",
-            plist_path.display()
-        );
+    if launchctl_checked(&["bootstrap", &domain, &plist_str]).is_err() {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        launchctl_checked(&["bootstrap", &domain, &plist_str])?;
     }
-    let _ = launchctl(&["kickstart", "-k", &service]);
+    launchctl_checked(&["kickstart", "-k", &service])?;
+    launchctl_checked(&["print", &service])?;
 
     println!("Installed and started launchd service: {}", args.label);
     println!("Plist: {}", plist_path.display());
@@ -529,6 +541,22 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn launchctl_failure_reports_command_and_stderr() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"Bootstrap failed: 5: Input/output error\n".to_vec(),
+        };
+
+        let error = check_launchctl_output(&["bootstrap", "system", "/tmp/oored.plist"], &output)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("launchctl bootstrap system /tmp/oored.plist failed"));
+        assert!(error.contains("Bootstrap failed: 5: Input/output error"));
+    }
 
     #[test]
     fn launchd_plist_escapes_program_args_and_env() {
