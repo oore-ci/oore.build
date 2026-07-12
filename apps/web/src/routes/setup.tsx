@@ -7,7 +7,6 @@ import {
 } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Tick02Icon } from '@hugeicons/core-free-icons'
-import { useRef } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
+import { useExpiredSetupSessionRedirect } from '@/hooks/use-setup-route-transitions'
 import { getSetupStatus } from '@/lib/api'
 import {
   getConnectivityIssue,
@@ -163,7 +163,6 @@ function SetupLayout() {
   const currentStep = useSetupStore((s) => s.currentStep)
   const { data: status } = useSetupStatus()
   const { formatted, isWarning, isExpired } = useSessionCountdown()
-  const navigate = useNavigate()
   const steps =
     status?.runtime_mode === 'local'
       ? ['Token', 'Mode', 'Owner', 'Complete']
@@ -171,13 +170,7 @@ function SetupLayout() {
         ? ['Token', 'Mode', 'Proxy', 'Owner', 'Complete']
         : ['Token', 'Mode', 'OIDC', 'Owner', 'Complete']
 
-  // Redirect when session expires — runs once when isExpired flips
-  const expiredHandled = useRef(false)
-  if (isExpired && !expiredHandled.current) {
-    expiredHandled.current = true
-    useSetupStore.getState().reset()
-    queueMicrotask(() => void navigate({ to: '/setup' }))
-  }
+  useExpiredSetupSessionRedirect(isExpired)
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">

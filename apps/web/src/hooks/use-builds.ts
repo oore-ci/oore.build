@@ -4,8 +4,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import type { UseQueryOptions } from '@tanstack/react-query'
 import type {
   Build,
+  BuildDetailResponse,
   BuildLogChunk,
   BuildStatus,
   CreateBuildRequest,
@@ -80,7 +82,7 @@ export function isTerminalStatus(status: BuildStatus | string): boolean {
 
 export function useBuild(
   buildId: string,
-  options?: { refetchInterval?: number | false },
+  options?: Pick<UseQueryOptions<BuildDetailResponse>, 'refetchInterval'>,
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -210,10 +212,7 @@ export function useRerunBuild() {
   })
 }
 
-export function useBuildLogs(
-  buildId: string,
-  options?: { enabled?: boolean },
-) {
+export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()

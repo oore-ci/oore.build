@@ -27,7 +27,7 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
-import { useOwnerStepTransition } from '@/hooks/use-owner-step-transition'
+import { useOwnerStepTransition } from '@/hooks/use-setup-route-transitions'
 
 const localOwnerSchema = z.object({
   email: z.string().email('Enter a valid email address'),

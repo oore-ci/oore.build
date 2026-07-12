@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Copy01Icon,
@@ -103,22 +103,21 @@ function BuildDetailPageWrapper() {
 function BuildDetailPage() {
   const { buildId } = Route.useParams()
   const navigate = useNavigate()
-  const knownTerminalRef = useRef(false)
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
-    refetchInterval: knownTerminalRef.current ? false : 3000,
+    refetchInterval: (query) =>
+      query.state.data && isTerminalStatus(query.state.data.build.status)
+        ? false
+        : 3000,
   })
   const { data, isLoading, error, refetch: refetchBuild } = buildQuery
+  const buildStatus = data?.build.status
+  const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
   const artifactsQuery = useArtifacts(buildId, {
-    refetchInterval: knownTerminalRef.current ? false : 3000,
+    refetchInterval: isTerminal ? false : 3000,
   })
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
-
-  const buildStatus = data?.build.status
-  const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
-
-  if (isTerminal) knownTerminalRef.current = true
 
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
 

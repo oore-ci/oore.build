@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -18,6 +17,7 @@ import { useSetupStatus, useVerifyBootstrapToken } from '@/hooks/use-setup'
 import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
+import { useBootstrapStepTransition } from '@/hooks/use-setup-route-transitions'
 
 const bootstrapTokenSchema = z.object({
   token: z.string().min(1, 'Bootstrap token is required'),
@@ -45,35 +45,6 @@ function BootstrapTokenError({ error }: { error: Error }) {
   )
 }
 
-/** Map backend state to the wizard step index. */
-function stateToStep(
-  state: string,
-  runtimeMode: 'local' | 'remote' | undefined,
-): number {
-  if (state === 'bootstrap_pending' || state === 'uninitialized') {
-    return 1 // Mode selection
-  }
-
-  if (runtimeMode === 'local') {
-    switch (state) {
-      case 'idp_configured':
-        return 2
-      case 'owner_created':
-        return 3
-      default:
-        return 0
-    }
-  }
-
-  if (state === 'idp_configured') {
-    return 3
-  }
-  if (state === 'owner_created') {
-    return 4
-  }
-  return 0
-}
-
 function BootstrapTokenStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
@@ -89,31 +60,7 @@ function BootstrapTokenStep() {
     mode: 'onBlur',
   })
 
-  // Set step based on backend state — runs once when status resolves
-  const setupStepDone = useRef(false)
-  if (!status || !sessionToken) {
-    if (!setupStepDone.current) {
-      setCurrentStep(0)
-    }
-  } else if (!setupStepDone.current) {
-    setupStepDone.current = true
-    const backendStep = stateToStep(status.state, status.runtime_mode)
-    if (backendStep >= 1) {
-      setCurrentStep(backendStep)
-      if (
-        status.state === 'bootstrap_pending' ||
-        status.state === 'uninitialized'
-      ) {
-        queueMicrotask(() => void navigate({ to: '/setup/mode' }))
-      } else if (status.state === 'idp_configured') {
-        queueMicrotask(() => void navigate({ to: '/setup/owner' }))
-      } else if (status.state === 'owner_created') {
-        queueMicrotask(() => void navigate({ to: '/setup/complete' }))
-      }
-    } else {
-      setCurrentStep(0)
-    }
-  }
+  useBootstrapStepTransition(status, sessionToken)
 
   const errorMessage = verifyMutation.error
     ? getApiErrorMessage(verifyMutation.error, {

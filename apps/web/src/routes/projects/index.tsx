@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -85,20 +85,18 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  const openCreateRef = useRef(false)
-  if (
+  const openCreateFromSearch =
     search.openCreate === '1' &&
     !projectsLoading &&
     !projectsError &&
-    canWriteProjects &&
-    !openCreateRef.current
-  ) {
-    openCreateRef.current = true
-    // Schedule state update for after render completes
-    queueMicrotask(() => {
-      setCreateOpen(true)
+    canWriteProjects
+  const isCreateOpen = createOpen || openCreateFromSearch
+
+  function handleCreateOpenChange(open: boolean) {
+    setCreateOpen(open)
+    if (!open && search.openCreate === '1') {
       void navigate({ to: '/projects', search: {}, replace: true })
-    })
+    }
   }
 
   return (
@@ -261,7 +259,10 @@ function ProjectsListPage() {
         </Card>
       ) : null}
 
-      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateProjectDialog
+        open={isCreateOpen}
+        onOpenChange={handleCreateOpenChange}
+      />
     </PageLayout>
   )
 }
