@@ -37,19 +37,25 @@ configure_frontend_install
 [[ "$OORE_LOCAL_WEB_MODE" == "login" ]]
 
 service_call="$(mktemp)"
+service_bin_dir="$(mktemp -d)"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SERVICE_CALL"\n' > "$service_bin_dir/oored"
+chmod +x "$service_bin_dir/oored"
+export SERVICE_CALL="$service_call"
 OORE_INSTALL_MODE=backend
 OORE_DAEMON_LISTEN=100.64.0.10:8787
 OORE_PUBLIC_URL=""
 OORE_CORS_ORIGINS=""
 DAEMON_URL=http://100.64.0.10:8787
 DAEMON_LOG=/tmp/oored.log
-BIN_DIR=/Users/appbuilder/.oore/bin
-sudo() { printf '%s\n' "$*" > "$service_call"; }
+BIN_DIR="$service_bin_dir"
+sudo() { printf '%s\n' "$*" >> "$service_call"; }
 id() { [[ "${1:-}" == "-un" ]] && printf 'appbuilder\n' || command id "$@"; }
 curl_quick() { return 0; }
 install_daemon_service
+grep -q -- '^uninstall-service$' "$service_call"
 grep -q -- '/oored install-service --system --user appbuilder --listen 100.64.0.10:8787 --env HOME=' "$service_call"
 unset -f sudo id curl_quick
+rm -rf "$service_bin_dir"
 rm -f "$service_call"
 
 curl_args="$(mktemp)"

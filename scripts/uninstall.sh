@@ -242,9 +242,8 @@ remove_daemon_launch_agent() {
   if [[ -x "$BIN_DIR/oored" ]]; then
     if [[ "$install_mode" == "backend" ]]; then
       sudo "$BIN_DIR/oored" uninstall-service --system >/dev/null 2>&1 || true
-    else
-      "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
     fi
+    "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
   fi
 
   if command -v launchctl >/dev/null 2>&1; then

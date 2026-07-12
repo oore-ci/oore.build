@@ -1477,6 +1477,7 @@ install_daemon_service() {
     ensure_dependency sudo
     local service_user
     service_user="$(id -un)"
+    "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
     cmd=(sudo "$BIN_DIR/oored" "install-service" "--system" "--user" "$service_user" "--listen" "$OORE_DAEMON_LISTEN")
     cmd+=("--env" "HOME=$HOME")
     retry_cmd="sudo $BIN_DIR/oored install-service --system --user $service_user --listen $OORE_DAEMON_LISTEN --env HOME=$HOME"
