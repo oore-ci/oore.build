@@ -3500,6 +3500,14 @@ fn launch_agent_plist(label: &str) -> anyhow::Result<PathBuf> {
         .join(format!("{label}.plist")))
 }
 
+fn managed_service_plist(label: &str) -> anyhow::Result<(PathBuf, bool)> {
+    let system_plist = PathBuf::from("/Library/LaunchDaemons").join(format!("{label}.plist"));
+    if system_plist.is_file() {
+        return Ok((system_plist, true));
+    }
+    Ok((launch_agent_plist(label)?, false))
+}
+
 fn url_from_socket_address(address: SocketAddr) -> String {
     let ip = match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -3600,7 +3608,7 @@ fn listen_address_from_program_arguments(program_args: &[String]) -> anyhow::Res
 }
 
 fn managed_service_listen_address(label: &str) -> anyhow::Result<String> {
-    let plist = launch_agent_plist(label)?;
+    let (plist, _) = managed_service_plist(label)?;
     if !plist.is_file() {
         anyhow::bail!("managed service plist is missing: {}", plist.display());
     }
@@ -3613,12 +3621,20 @@ fn launchd_service_loaded(label: &str) -> bool {
     if !cfg!(target_os = "macos") {
         return false;
     }
-    let Ok(uid) = std::process::Command::new("id").arg("-u").output() else {
+    let Ok((_, system)) = managed_service_plist(label) else {
         return false;
     };
-    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+    let service = if system {
+        format!("system/{label}")
+    } else {
+        let Ok(uid) = std::process::Command::new("id").arg("-u").output() else {
+            return false;
+        };
+        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        format!("gui/{uid}/{label}")
+    };
     std::process::Command::new("launchctl")
-        .args(["print", &format!("gui/{uid}/{label}")])
+        .args(["print", &service])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
@@ -3628,28 +3644,36 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
     if !cfg!(target_os = "macos") {
         anyhow::bail!("managed service restart is supported on macOS only");
     }
-    let plist = launch_agent_plist(label)?;
+    let (plist, system) = managed_service_plist(label)?;
     if !plist.is_file() {
         anyhow::bail!("managed service plist is missing: {}", plist.display());
     }
-    let uid = std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .context("failed to determine current user id")?;
-    let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
-    let service = format!("gui/{uid}/{label}");
-    let domain = format!("gui/{uid}");
-    let _ = std::process::Command::new("launchctl")
+    let (service, domain) = if system {
+        (format!("system/{label}"), "system".to_string())
+    } else {
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .context("failed to determine current user id")?;
+        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        (format!("gui/{uid}/{label}"), format!("gui/{uid}"))
+    };
+    let command = if system { "sudo" } else { "launchctl" };
+    let prefix: &[&str] = if system { &["launchctl"] } else { &[] };
+    let _ = std::process::Command::new(command)
+        .args(prefix)
         .args(["bootout", &service])
         .status();
-    let status = std::process::Command::new("launchctl")
+    let status = std::process::Command::new(command)
+        .args(prefix)
         .args(["bootstrap", &domain, &plist.display().to_string()])
         .status()
         .context("failed to bootstrap launchd service")?;
     if !status.success() {
         anyhow::bail!("failed to bootstrap managed service {label}");
     }
-    let _ = std::process::Command::new("launchctl")
+    let _ = std::process::Command::new(command)
+        .args(prefix)
         .args(["kickstart", "-k", &service])
         .status();
     Ok(())

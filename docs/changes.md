@@ -12,6 +12,9 @@ Rules:
 
 ## 2026-07-12
 
+- **Headless macOS backend service**:
+  - Backend-only installs now use a boot-time system LaunchDaemon running as the installing account, so SSH-only Mac build hosts do not require an active GUI login session.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
 - **CI and release latency**:
   - Rust validation reuses dependency artifacts, release-branch path filtering compares only the current push, Pages deployment runs independently from binary packaging, and macOS ARM64/x86_64 release binaries build in parallel.
   - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a

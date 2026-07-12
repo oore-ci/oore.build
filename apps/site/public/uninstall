@@ -236,8 +236,15 @@ stop_daemon() {
 }
 
 remove_daemon_launch_agent() {
+  local install_mode=""
+  [[ -f "$OORE_INSTALL_ROOT/INSTALL_MODE" ]] && install_mode="$(cat "$OORE_INSTALL_ROOT/INSTALL_MODE")"
+
   if [[ -x "$BIN_DIR/oored" ]]; then
-    "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
+    if [[ "$install_mode" == "backend" ]]; then
+      sudo "$BIN_DIR/oored" uninstall-service --system >/dev/null 2>&1 || true
+    else
+      "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
+    fi
   fi
 
   if command -v launchctl >/dev/null 2>&1; then
