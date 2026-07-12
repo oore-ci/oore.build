@@ -113,16 +113,18 @@ fi
 proof_dir="$(mktemp -d)"
 trap 'rm -f "$INSTALLER_LIB" "$service_calls"; rm -rf "$proof_dir"' EXIT
 printf 'backend-proof\n' > "$proof_dir/backend"
+OORE_INSTALL_ROOT="$proof_dir/install"
 OORE_TRUSTED_PROXY_SHARED_SECRET=""
 OORE_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/backend"
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE=""
-if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
-  echo "[install-acceptance] expected one-proof frontend setup to fail" >&2
-  exit 1
-fi
-[[ "$proof_error" == *"require a separate auth-proxy proof"* ]]
+ensure_frontend_secret_files
+[[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]
+[[ "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" != "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]
+[[ -s "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]
+[[ "$(tr -d '[:space:]' < "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE")" != "backend-proof" ]]
 
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/backend"
 if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
   echo "[install-acceptance] expected same proof path to fail" >&2
@@ -157,6 +159,34 @@ fi
 
 printf 'frontend-proof\n' > "$proof_dir/frontend"
 ensure_frontend_secret_files
+
+pair_curl_args="$(mktemp)"
+curl() {
+  local payload=""
+  payload="$(cat)"
+  [[ "$payload" == '{"code":"fp_test-code"}' ]] || return 1
+  printf '%s\n' "$*" > "$pair_curl_args"
+  printf '%s\n' '{"backend_proof":"paired-backend-proof","user_email_header":"x-forwarded-email"}'
+}
+OORE_WEB_BACKEND_URL="https://backend.example/"
+OORE_FRONTEND_PAIRING_CODE="fp_test-code"
+OORE_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE=""
+pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
+[[ "$OORE_TRUSTED_PROXY_SHARED_SECRET" == "paired-backend-proof" ]]
+[[ "$OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER" == "x-forwarded-email" ]]
+[[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" ]]
+[[ "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" != "$OORE_TRUSTED_PROXY_SHARED_SECRET" ]]
+[[ -z "$OORE_FRONTEND_PAIRING_CODE" ]]
+grep -q -- 'https://backend.example/v1/frontend/pair' "$pair_curl_args"
+if grep -q -- 'fp_test-code' "$pair_curl_args"; then
+  echo '[install-acceptance] pairing code leaked into curl arguments' >&2
+  exit 1
+fi
+rm -f "$pair_curl_args"
+unset -f curl
 
 bash "$ROOT_DIR/scripts/uninstall-acceptance.sh"
 

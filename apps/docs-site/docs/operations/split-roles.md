@@ -60,6 +60,14 @@ For frontend-proxy topologies, keep External Access/CORS unset on the backend in
 
 ## Frontend Host
 
+For a Trusted Proxy deployment, create a short-lived, single-use pairing code on the ready backend first:
+
+```bash
+oore frontend invite
+```
+
+Run this as the backend operator on the Mac. The exchange is accepted only from the configured trusted-proxy CIDRs, so ensure the frontend host's private address is allowlisted before continuing. Use HTTPS or an encrypted private overlay for the backend path; pairing transfers the durable backend proof.
+
 Install only the frontend role:
 
 ```bash
@@ -70,6 +78,7 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_LOCAL_WEB_LISTEN=127.0.0.1:4173 \
   OORE_LOCAL_WEB_MODE=login \
   OORE_ENABLE_LINGER=true \
+  OORE_FRONTEND_PAIRING_CODE=fp_replace_with_the_code \
   OORE_NONINTERACTIVE=1 \
   bash
 ```
@@ -78,7 +87,9 @@ Put your HTTPS reverse proxy in front of `http://127.0.0.1:4173`. In the web UI,
 
 The installer checks the selected listen port before changing service state. If your reverse proxy already owns `4173`, choose another loopback port such as `127.0.0.1:4174` and point the proxy backend at that address.
 
-`oore-web` proxies `/v1/*`, `/healthz`, and `/readyz` to `OORE_WEB_BACKEND_URL`. Trusted Proxy mode uses two distinct proofs: the authenticated reverse proxy sends an upstream proof to `oore-web`, then `oore-web` injects a separate backend proof for `oored`. Configure both restrictive secret files on the frontend service. Browser-supplied identity and proof headers are stripped, and the identity header is forwarded only when the upstream proof matches.
+`OORE_FRONTEND_PAIRING_CODE` exchanges the code with the backend over the private path, writes the returned backend proof into the frontend service's restrictive secret file, and generates a separate local proof for the authenticated reverse proxy -> `oore-web` hop. The pairing code is consumed once and is not saved. `oore-web` proxies `/v1/*`, `/healthz`, and `/readyz` to `OORE_WEB_BACKEND_URL`; browser-supplied identity and proof headers are stripped, and the identity header is forwarded only when the upstream proof matches.
+
+Manual `OORE_TRUSTED_PROXY_SHARED_SECRET_FILE` plus `OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE` configuration remains available for advanced Trusted Proxy secret-management workflows. Do not set a pairing code and manually reuse either proof value.
 
 During first-run setup, choose `Remote (Trusted Proxy)`, enter the initial owner email, and select a proxy preset. `Generic proxy` uses `x-oore-user-email`, `Warpgate` uses `x-warpgate-username`, and `Custom header` lets you enter the exact header your proxy forwards. The first owner claim must come from that same proxy-authenticated email, avoiding manual database edits.
 

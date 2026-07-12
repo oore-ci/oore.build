@@ -68,6 +68,17 @@ pub struct SetupStatus {
     pub is_configured: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct FrontendPairRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct FrontendPairResponse {
+    pub backend_proof: String,
+    pub user_email_header: String,
+}
+
 impl SetupStatus {
     pub fn from_state(
         instance_id: impl Into<String>,

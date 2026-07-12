@@ -1232,6 +1232,78 @@
         ]
       }
     },
+    "/v1/frontend/pair": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Exchange a frontend pairing code",
+        "description": "Exchanges a short-lived, single-use code created by `oore frontend invite`\nfor the backend trusted-proxy proof and configured identity header. This\nendpoint accepts requests only from configured trusted-proxy peer CIDRs.",
+        "operationId": "frontend_pair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrontendPairRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Frontend paired with backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPairResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired, or consumed pairing code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request peer is not allowlisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Backend setup or trusted proxy configuration is incomplete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/integrations": {
       "get": {
         "tags": [
@@ -7391,6 +7463,32 @@
           },
           "ready": {
             "type": "boolean"
+          }
+        }
+      },
+      "FrontendPairRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "FrontendPairResponse": {
+        "type": "object",
+        "required": [
+          "backend_proof",
+          "user_email_header"
+        ],
+        "properties": {
+          "backend_proof": {
+            "type": "string"
+          },
+          "user_email_header": {
+            "type": "string"
           }
         }
       },

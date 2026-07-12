@@ -34,6 +34,7 @@ OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER="${OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HE
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET="${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET:-}"
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE:-}"
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER="${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER:-x-oore-web-trusted-proxy-secret}"
+OORE_FRONTEND_PAIRING_CODE="${OORE_FRONTEND_PAIRING_CODE:-}"
 OORE_DAEMON_URL="${OORE_DAEMON_URL:-http://127.0.0.1:8787}"
 OORE_WEB_BACKEND_URL="${OORE_WEB_BACKEND_URL:-$OORE_DAEMON_URL}"
 OORE_LOCAL_WEB_MODE="${OORE_LOCAL_WEB_MODE:-}"
@@ -100,6 +101,7 @@ Environment overrides:
   OORE_CORS_ORIGINS          Comma-separated allowed browser origins (default: OORE_PUBLIC_URL when set)
   OORE_DAEMON_URL            Daemon URL used by all/backend setup helpers (default: http://127.0.0.1:8787)
   OORE_WEB_BACKEND_URL       Backend URL proxied by oore-web (default: OORE_DAEMON_URL)
+  OORE_FRONTEND_PAIRING_CODE Short-lived code from `oore frontend invite`
   OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
   OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
   OORE_ENABLE_LINGER         Enable systemd lingering for Linux frontend login service (true/false)
@@ -355,8 +357,12 @@ ensure_frontend_secret_files() {
   if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
     [[ -s "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
       || die "Backend Trusted Proxy proof file is missing or empty: $OORE_TRUSTED_PROXY_SHARED_SECRET_FILE"
-    [[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
-      || die 'Trusted Proxy frontend installs require a separate auth-proxy proof. Set OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET or OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE.'
+    if [[ -z "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+      OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET="$(generate_shared_secret)"
+      OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$(upstream_trusted_proxy_secret_file_path)"
+      write_secret_file "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET"
+      log "Generated auth-proxy proof: $OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
+    fi
     [[ -s "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
       || die "Auth-proxy proof file is missing or empty: $OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
     local backend_proof upstream_proof
@@ -375,6 +381,34 @@ ensure_frontend_secret_files() {
   elif [[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
     die 'Auth-proxy proof requires a backend Trusted Proxy proof. Set OORE_TRUSTED_PROXY_SHARED_SECRET or OORE_TRUSTED_PROXY_SHARED_SECRET_FILE.'
   fi
+}
+
+pair_frontend_with_backend() {
+  local code="$1"
+  local response=""
+  local backend_proof=""
+  local email_header=""
+
+  [[ "$code" == fp_* ]] || die 'Frontend pairing code must start with fp_.'
+  response="$(printf '{\"code\":\"%s\"}' "$code" | \
+    curl -fsS --connect-timeout 10 --max-time 30 \
+      -H 'content-type: application/json' \
+      --data-binary @- \
+      "${OORE_WEB_BACKEND_URL%/}/v1/frontend/pair")" \
+    || die 'Frontend pairing failed. Create a new code on the Mac with: oore frontend invite'
+
+  backend_proof="$(printf '%s' "$response" | sed -n 's/.*"backend_proof"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  email_header="$(printf '%s' "$response" | sed -n 's/.*"user_email_header"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  [[ -n "$backend_proof" && -n "$email_header" ]] \
+    || die 'Frontend pairing returned an invalid response.'
+
+  OORE_TRUSTED_PROXY_SHARED_SECRET="$backend_proof"
+  OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER="$email_header"
+  if [[ -z "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" && -z "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+    OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET="$(generate_shared_secret)"
+  fi
+  OORE_FRONTEND_PAIRING_CODE=""
+  log 'Frontend paired with backend.'
 }
 
 launchd_env_entry() {
@@ -959,12 +993,24 @@ configure_frontend_install() {
     fi
 
     if [[ -z "$OORE_TRUSTED_PROXY_SHARED_SECRET" && -z "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
-      OORE_TRUSTED_PROXY_SHARED_SECRET="$(
-        prompt_text \
-          "Backend Trusted Proxy shared secret. Use the value from the backend host; leave blank to disable trusted-proxy identity forwarding here." \
-          "$OORE_TRUSTED_PROXY_SHARED_SECRET" \
-          "optional"
-      )"
+      if [[ -z "$OORE_FRONTEND_PAIRING_CODE" ]]; then
+        OORE_FRONTEND_PAIRING_CODE="$(
+          prompt_text \
+            "Frontend pairing code from 'oore frontend invite' on the backend Mac. Leave blank only for OIDC or manual proof setup." \
+            "" \
+            "optional"
+        )"
+      fi
+      if [[ -n "$OORE_FRONTEND_PAIRING_CODE" ]]; then
+        pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
+      else
+        OORE_TRUSTED_PROXY_SHARED_SECRET="$(
+          prompt_text \
+            "Backend Trusted Proxy shared secret. Use the value from the backend host; leave blank to disable trusted-proxy identity forwarding here." \
+            "$OORE_TRUSTED_PROXY_SHARED_SECRET" \
+            "optional"
+        )"
+      fi
     fi
 
     if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET" || -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
@@ -989,6 +1035,9 @@ configure_frontend_install() {
   elif [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
       die 'Frontend-only non-interactive install requires OORE_WEB_BACKEND_URL, for example http://<backend-host>:8787.'
+    fi
+    if [[ -n "$OORE_FRONTEND_PAIRING_CODE" ]]; then
+      pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
     fi
   fi
 
@@ -2077,6 +2126,8 @@ print_next_steps() {
     printf 'In the UI, add an instance with Backend URL empty so browser API calls use this frontend proxy.\n'
     if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
       printf 'Trusted Proxy identity headers are forwarded only when your auth proxy also sends %s.\n' "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER"
+      printf 'Auth proxy proof file: %s\n' "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
+      printf 'Keep the proof private; configure HAProxy to read it through your service-secret mechanism.\n'
     fi
     printf '\nDocs: https://docs.oore.build\n'
     return 0

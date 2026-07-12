@@ -156,6 +156,20 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
   bash
 ```
 
+For a Trusted Proxy frontend, prefer pairing instead of copying the backend proof manually. On the ready backend host, run `oore frontend invite`, then provide the emitted code to the frontend installer:
+
+```bash
+curl -fsSL https://alpha.oore.pages.dev/install | \
+  OORE_CHANNEL=alpha \
+  OORE_INSTALL_MODE=frontend \
+  OORE_WEB_BACKEND_URL=http://10.0.0.20:8787 \
+  OORE_FRONTEND_PAIRING_CODE=fp_replace_with_the_code \
+  OORE_NONINTERACTIVE=1 \
+  bash
+```
+
+Pairing requires a ready backend with Trusted Proxy configured and permits the exchange only from its trusted frontend/proxy CIDRs. Use HTTPS or an encrypted private overlay such as NetBird for that path; the exchange returns the durable backend proof and must not cross an untrusted plaintext network. The frontend installer saves it and creates a separate local upstream proof for the reverse proxy -> `oore-web` hop.
+
 Frontend-only mode:
 
 - Downloads `oore-web` and the prebuilt `web-dist` assets only.
@@ -183,6 +197,8 @@ If the frontend origin is behind an identity-aware proxy, `oore-web` uses two se
 - upstream proof: `OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE` lets `oore-web` know the identity header came from your authenticated reverse proxy, not from browser JavaScript.
 
 Your reverse proxy must strip any browser-supplied identity headers, set the configured user email header, and send `OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER` (default `x-oore-web-trusted-proxy-secret`) with the upstream proof secret. Without that upstream proof, `oore-web` strips identity headers before proxying API requests.
+
+`OORE_FRONTEND_PAIRING_CODE` is the preferred way to provision those proofs for a Trusted Proxy split deployment. Supplying the two proof-file variables manually is an advanced fallback; their values must differ.
 
 ## Verify installation
 
@@ -269,6 +285,7 @@ Continue with [Set Up Your Instance](/getting-started/first-instance). If you pl
 | `OORE_CORS_ORIGINS` | `OORE_PUBLIC_URL` when set | Comma-separated allowed browser origins passed to the daemon service |
 | `OORE_DAEMON_URL` | `http://127.0.0.1:8787` | Daemon URL used by backend setup helpers |
 | `OORE_WEB_BACKEND_URL` | `OORE_DAEMON_URL` | Backend URL proxied by `oore-web`, useful for frontend-only hosts |
+| `OORE_FRONTEND_PAIRING_CODE` | unset | Short-lived, single-use code from `oore frontend invite`; exchanges over the private backend path for the backend proof and generates a separate local upstream proof |
 | `OORE_SETUP_OWNER_EMAIL` | unset | Initial owner email to prefill in Trusted Proxy setup |
 | `OORE_SETUP_PROXY_PRESET` | `generic` | Trusted Proxy setup prefill: `generic`, `warpgate`, or `custom` |
 | `OORE_SETUP_USER_EMAIL_HEADER` | unset | Custom Trusted Proxy email header when `OORE_SETUP_PROXY_PRESET=custom` |

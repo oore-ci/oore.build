@@ -154,6 +154,26 @@ If the daemon is already past certain steps (e.g., OIDC was configured in a prev
 
 ---
 
+## Frontend pairing {#frontend-pairing}
+
+```bash
+oore frontend invite [--ttl <duration>] [--json] [--state-file <path>]
+```
+
+Creates a short-lived, single-use code for a frontend-only host in a Remote Trusted Proxy deployment. Run it on the ready Mac backend, then pass the value as `OORE_FRONTEND_PAIRING_CODE` to the frontend installer. The installer exchanges it with the code-authenticated `POST /v1/frontend/pair` capability over an HTTPS or encrypted private backend path; the backend accepts only configured trusted-proxy peer CIDRs.
+
+The exchange returns the backend proof and configured identity-header name only to the frontend installer. The installer saves that backend proof and generates a separate local reverse-proxy -> `oore-web` proof. It does not print or retain the pairing code after use.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ttl` | `10m` | Expiry duration; must be from one second to one hour |
+| `--json` | `false` | Print the code, expiry epoch, and `single_use` in JSON |
+| `--state-file` | platform default | Backend setup database path; also available as `OORE_SETUP_STATE_FILE` |
+
+Creating a new code revokes any unconsumed earlier code. Use manual proof files only when an advanced secret-distribution workflow requires them; never use one value for both proxy hops.
+
+---
+
 ## Setup Token {#setup-token}
 
 ```bash

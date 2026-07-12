@@ -30,6 +30,7 @@ use utoipa::OpenApi;
         paths::healthz,
         // ── Setup ──
         paths::get_setup_status,
+        paths::frontend_pair,
         paths::verify_bootstrap_token,
         paths::setup_preferences,
         paths::configure_oidc,
@@ -168,6 +169,8 @@ use utoipa::OpenApi;
         // Setup
         oore_contract::SetupState,
         oore_contract::SetupStatus,
+        oore_contract::FrontendPairRequest,
+        oore_contract::FrontendPairResponse,
         oore_contract::BootstrapTokenVerifyRequest,
         oore_contract::BootstrapTokenVerifyResponse,
         oore_contract::SetupPreferencesRequest,
@@ -452,6 +455,23 @@ mod paths {
         )
     )]
     pub(super) async fn get_setup_status() {}
+
+    /// Exchange a frontend pairing code
+    ///
+    /// Exchanges a short-lived, single-use code created by `oore frontend invite`
+    /// for the backend trusted-proxy proof and configured identity header. This
+    /// endpoint accepts requests only from configured trusted-proxy peer CIDRs.
+    #[utoipa::path(post, path = "/v1/frontend/pair", tag = "Setup",
+        request_body = FrontendPairRequest,
+        responses(
+            (status = 200, description = "Frontend paired with backend", body = FrontendPairResponse),
+            (status = 401, description = "Invalid, expired, or consumed pairing code", body = ApiError),
+            (status = 403, description = "Request peer is not allowlisted", body = ApiError),
+            (status = 409, description = "Backend setup or trusted proxy configuration is incomplete", body = ApiError),
+            (status = 500, description = "Internal error", body = ApiError),
+        )
+    )]
+    pub(super) async fn frontend_pair() {}
 
     /// Verify bootstrap token
     ///

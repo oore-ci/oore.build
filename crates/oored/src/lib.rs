@@ -9,6 +9,7 @@ pub mod builds;
 pub mod crypto;
 pub mod embedded_runner;
 pub mod extractors;
+pub mod frontend_pairing;
 pub mod instance_settings;
 pub mod integrations;
 pub mod logs;
@@ -2140,6 +2141,7 @@ async fn build_router_inner(
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/v1/public/setup-status", get(setup_status))
+        .route("/v1/frontend/pair", post(frontend_pairing::pair))
         .route(
             "/v1/setup/bootstrap-token/verify",
             post(verify_bootstrap_token),
