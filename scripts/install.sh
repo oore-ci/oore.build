@@ -1471,6 +1471,16 @@ start_daemon() {
 
 install_daemon_service() {
   local cmd=("$BIN_DIR/oored" "install-service" "--listen" "$OORE_DAEMON_LISTEN")
+  local retry_cmd="$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN"
+
+  if [[ "$OORE_INSTALL_MODE" == "backend" ]]; then
+    ensure_dependency sudo
+    local service_user
+    service_user="$(id -un)"
+    cmd=(sudo "$BIN_DIR/oored" "install-service" "--system" "--user" "$service_user" "--listen" "$OORE_DAEMON_LISTEN")
+    cmd+=("--env" "HOME=$HOME")
+    retry_cmd="sudo $BIN_DIR/oored install-service --system --user $service_user --listen $OORE_DAEMON_LISTEN --env HOME=$HOME"
+  fi
 
   if [[ -n "$OORE_PUBLIC_URL" ]]; then
     cmd+=("--env" "OORE_PUBLIC_URL=$OORE_PUBLIC_URL")
@@ -1484,7 +1494,7 @@ install_daemon_service() {
     report_component_failure \
       "oored launchd service" \
       "$DAEMON_LOG" \
-      "$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN" \
+      "$retry_cmd" \
       "$DAEMON_URL/healthz"
     return 1
   fi
@@ -1504,7 +1514,7 @@ install_daemon_service() {
     report_component_failure \
       "oored launchd service" \
       "$DAEMON_LOG" \
-      "$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN" \
+      "$retry_cmd" \
       "$DAEMON_URL/healthz"
     return 1
   fi

@@ -47,7 +47,7 @@ In default mode, `oored` starts an embedded local runner automatically. Set `OOR
 ### `oored install-service`
 
 ```bash
-oored install-service [--listen <addr>] [--state-file <path>] [--label <label>] [--env KEY=VALUE] [--no-start]
+oored install-service [--listen <addr>] [--state-file <path>] [--label <label>] [--env KEY=VALUE] [--no-start] [--system --user <name>]
 ```
 
 Installs `oored` as a macOS launchd user service. The default service label is
@@ -61,6 +61,8 @@ Installs `oored` as a macOS launchd user service. The default service label is
 | `--label` | `build.oore.oored` | none | Override the launchd service label and plist name |
 | `--env KEY=VALUE` | none | none | Add or override an environment variable in the launchd plist. Repeat for multiple variables |
 | `--no-start` | `false` | none | Write the plist without bootstrapping the service |
+| `--system` | `false` | none | Install a boot-time LaunchDaemon; requires root |
+| `--user` | none | none | Account that runs the LaunchDaemon; required with `--system` |
 
 The service uses the currently running `oored` executable, keeps the daemon alive
 with launchd, writes logs to `~/.oore/logs/oored.log`, and preserves the same
@@ -87,13 +89,14 @@ Useful launchd checks:
 
 ```bash
 launchctl print gui/$(id -u)/build.oore.oored
+sudo launchctl print system/build.oore.oored
 tail -f ~/.oore/logs/oored.log
 ```
 
 ### `oored uninstall-service`
 
 ```bash
-oored uninstall-service [--label <label>]
+oored uninstall-service [--label <label>] [--system]
 ```
 
 Stops and removes the launchd user service. This deletes the plist but leaves

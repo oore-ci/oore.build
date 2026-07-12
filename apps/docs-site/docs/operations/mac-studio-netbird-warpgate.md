@@ -76,6 +76,8 @@ The installer creates the backend proof at:
 ~/.oore/trusted-proxy-shared-secret
 ```
 
+Backend-only macOS installs use a system LaunchDaemon running as the installing account. The installer asks for `sudo` so the daemon starts at boot without a GUI login session.
+
 Transfer that file to the Ubuntu service account through your approved secret-delivery path. Do not paste it into shell history or store it in the repository.
 
 ### 2. Prepare the Ubuntu proof files

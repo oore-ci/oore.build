@@ -62,6 +62,14 @@ struct InstallServiceArgs {
     /// Write the launchd plist without starting the service.
     #[arg(long)]
     no_start: bool,
+
+    /// Install a boot-time LaunchDaemon instead of a GUI-session LaunchAgent.
+    #[arg(long)]
+    system: bool,
+
+    /// User account that runs a system LaunchDaemon.
+    #[arg(long, requires = "system")]
+    user: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -69,6 +77,10 @@ struct UninstallServiceArgs {
     /// launchd label to remove.
     #[arg(long, default_value = "build.oore.oored")]
     label: String,
+
+    /// Remove the boot-time LaunchDaemon instead of the user LaunchAgent.
+    #[arg(long)]
+    system: bool,
 }
 
 // ── Server bootstrap ─────────────────────────────────────────────
@@ -203,6 +215,11 @@ fn launch_agent_plist_path(label: &str) -> anyhow::Result<PathBuf> {
     Ok(launch_agent_dir()?.join(format!("{label}.plist")))
 }
 
+fn launch_daemon_plist_path(label: &str) -> anyhow::Result<PathBuf> {
+    validate_launchd_label(label)?;
+    Ok(PathBuf::from("/Library/LaunchDaemons").join(format!("{label}.plist")))
+}
+
 fn xml_escape(raw: &str) -> String {
     let mut escaped = String::with_capacity(raw.len());
     for ch in raw.chars() {
@@ -281,6 +298,7 @@ fn render_launchd_plist(
     env: &BTreeMap<String, String>,
     log_path: &Path,
     working_dir: &Path,
+    user: Option<&str>,
 ) -> String {
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -293,6 +311,12 @@ fn render_launchd_plist(
         "    <key>Label</key>\n    <string>{}</string>\n",
         xml_escape(label)
     ));
+    if let Some(user) = user {
+        out.push_str(&format!(
+            "    <key>UserName</key>\n    <string>{}</string>\n",
+            xml_escape(user)
+        ));
+    }
     out.push_str("    <key>ProgramArguments</key>\n    <array>\n");
     for arg in program_args {
         out.push_str(&format!("      <string>{}</string>\n", xml_escape(arg)));
@@ -355,14 +379,31 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
     }
 
     validate_launchd_label(&args.label)?;
-    let install_root = resolve_install_root()?;
     let bin = std::env::current_exe().context("failed to resolve current executable")?;
+    let install_root = if args.system {
+        if current_uid()? != "0" {
+            anyhow::bail!("system service installation requires root; rerun with sudo");
+        }
+        bin.parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .context("failed to derive install root from oored binary")?
+    } else {
+        resolve_install_root()?
+    };
     let log_dir = install_root.join("logs");
     let log_path = log_dir.join("oored.log");
-    let plist_path = launch_agent_plist_path(&args.label)?;
+    let plist_path = if args.system {
+        launch_daemon_plist_path(&args.label)?
+    } else {
+        launch_agent_plist_path(&args.label)?
+    };
 
     fs::create_dir_all(&log_dir).context("failed to create oored log directory")?;
-    fs::create_dir_all(launch_agent_dir()?).context("failed to create LaunchAgents directory")?;
+    if !args.system {
+        fs::create_dir_all(launch_agent_dir()?)
+            .context("failed to create LaunchAgents directory")?;
+    }
 
     let mut program_args = vec![
         bin.display().to_string(),
@@ -376,13 +417,27 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
     }
 
     let env = service_environment(&args.env)?;
-    let plist = render_launchd_plist(&args.label, &program_args, &env, &log_path, &install_root);
+    let service_user = args.user.as_deref();
+    if args.system && service_user.is_none() {
+        anyhow::bail!("--user is required with --system");
+    }
+    let plist = render_launchd_plist(
+        &args.label,
+        &program_args,
+        &env,
+        &log_path,
+        &install_root,
+        service_user,
+    );
     fs::write(&plist_path, plist)
         .with_context(|| format!("failed to write {}", plist_path.display()))?;
 
-    let uid = current_uid()?;
-    let service = format!("gui/{uid}/{}", args.label);
-    let domain = format!("gui/{uid}");
+    let (service, domain) = if args.system {
+        (format!("system/{}", args.label), "system".to_string())
+    } else {
+        let uid = current_uid()?;
+        (format!("gui/{uid}/{}", args.label), format!("gui/{uid}"))
+    };
 
     if args.no_start {
         println!("Installed launchd service plist: {}", plist_path.display());
@@ -417,9 +472,20 @@ fn uninstall_service(args: UninstallServiceArgs) -> anyhow::Result<()> {
     }
 
     validate_launchd_label(&args.label)?;
-    let plist_path = launch_agent_plist_path(&args.label)?;
-    let uid = current_uid()?;
-    let service = format!("gui/{uid}/{}", args.label);
+    if args.system && current_uid()? != "0" {
+        anyhow::bail!("system service removal requires root; rerun with sudo");
+    }
+    let plist_path = if args.system {
+        launch_daemon_plist_path(&args.label)?
+    } else {
+        launch_agent_plist_path(&args.label)?
+    };
+    let service = if args.system {
+        format!("system/{}", args.label)
+    } else {
+        let uid = current_uid()?;
+        format!("gui/{uid}/{}", args.label)
+    };
 
     let _ = launchctl(&["bootout", &service]);
     let _ = launchctl(&["remove", &args.label]);
@@ -482,6 +548,7 @@ mod tests {
             &env,
             Path::new("/tmp/oore<log>.log"),
             Path::new("/tmp/oore&root"),
+            None,
         );
 
         assert!(plist.contains("<string>build.oore.oored</string>"));
@@ -489,6 +556,17 @@ mod tests {
         assert!(plist.contains("https://ci.example.com?a=1&amp;b=2"));
         assert!(plist.contains("/tmp/oore&lt;log&gt;.log"));
         assert!(plist.contains("/tmp/oore&amp;root"));
+        assert!(!plist.contains("<key>UserName</key>"));
+
+        let system_plist = render_launchd_plist(
+            "build.oore.oored",
+            &args,
+            &env,
+            Path::new("/tmp/oore.log"),
+            Path::new("/Users/appbuilder/.oore"),
+            Some("appbuilder"),
+        );
+        assert!(system_plist.contains("<key>UserName</key>\n    <string>appbuilder</string>"));
     }
 
     #[test]

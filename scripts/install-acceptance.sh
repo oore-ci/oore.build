@@ -36,6 +36,22 @@ configure_frontend_install
 [[ "$OORE_LOCAL_WEB_LISTEN" == "127.0.0.1:4173" ]]
 [[ "$OORE_LOCAL_WEB_MODE" == "login" ]]
 
+service_call="$(mktemp)"
+OORE_INSTALL_MODE=backend
+OORE_DAEMON_LISTEN=100.64.0.10:8787
+OORE_PUBLIC_URL=""
+OORE_CORS_ORIGINS=""
+DAEMON_URL=http://100.64.0.10:8787
+DAEMON_LOG=/tmp/oored.log
+BIN_DIR=/Users/appbuilder/.oore/bin
+sudo() { printf '%s\n' "$*" > "$service_call"; }
+id() { [[ "${1:-}" == "-un" ]] && printf 'appbuilder\n' || command id "$@"; }
+curl_quick() { return 0; }
+install_daemon_service
+grep -q -- '/oored install-service --system --user appbuilder --listen 100.64.0.10:8787 --env HOME=' "$service_call"
+unset -f sudo id curl_quick
+rm -f "$service_call"
+
 curl_args="$(mktemp)"
 OORE_CHANNEL=alpha
 OORE_VERSION=latest
