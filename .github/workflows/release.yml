@@ -50,17 +50,40 @@ jobs:
 
           make build-web build-site build-docs
 
-          status=0
-          make deploy-site-only & pid_site=$!
-          make deploy-docs-only & pid_docs=$!
-          make deploy-web-only & pid_web=$!
-          wait "$pid_site" || status=$?
-          wait "$pid_docs" || status=$?
-          wait "$pid_web" || status=$?
-          [ "$status" -eq 0 ] || exit "$status"
+          deploy_pages() {
+            local target="$1"
+            local attempt log_file delay
+            log_file="$(mktemp)"
+            trap 'rm -f "$log_file"' RETURN
+
+            for attempt in 1 2 3 4; do
+              if make "$target" 2>&1 | tee "$log_file"; then
+                return 0
+              fi
+
+              if ! grep -Eq '(HTTP status|status code:)[[:space:]]*5[0-9]{2}' "$log_file"; then
+                echo "${target} failed with a non-transient error; not retrying."
+                return 1
+              fi
+
+              if [ "$attempt" -eq 4 ]; then
+                echo "${target} still failed after ${attempt} attempts."
+                return 1
+              fi
+
+              delay=$((attempt * 15))
+              echo "${target} hit a transient Cloudflare API error; retrying in ${delay}s (${attempt}/4)."
+              sleep "$delay"
+            done
+          }
+
+          # Deploy serially so one release does not burst Cloudflare's Pages API.
+          deploy_pages deploy-site-only
+          deploy_pages deploy-docs-only
+          deploy_pages deploy-web-only
 
           make build-demo
-          make deploy-demo-only
+          deploy_pages deploy-demo-only
 
   rust:
     name: Build Rust (${{ matrix.arch }})
