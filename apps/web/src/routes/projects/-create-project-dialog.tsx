@@ -7,8 +7,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Folder02Icon } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import { useQuery } from '@tanstack/react-query'
-import type { IntegrationRepository, ScmProvider } from '@/lib/types'
+import type { ScmProvider } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
@@ -40,9 +39,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useCreateProject } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
-import { listIntegrationRepos, listIntegrations } from '@/lib/api'
+import { useSourceRepositories } from '@/hooks/use-source-repositories'
 import { useActiveInstance } from '@/stores/instance-store'
-import { useAuthStore } from '@/stores/auth-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 const createProjectSchema = z.object({
@@ -57,12 +55,6 @@ type CreateProjectForm = z.infer<typeof createProjectSchema>
 interface CreateProjectDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-}
-
-type SourceRepository = IntegrationRepository & {
-  integration_id: string
-  provider: ScmProvider
-  host_url: string
 }
 
 function sourceProviderLabel(provider: ScmProvider): string {
@@ -90,42 +82,6 @@ function resolveHostname(rawUrl: string | null | undefined): string {
   }
 }
 
-function useAvailableRepos(enabled: boolean) {
-  const instance = useActiveInstance()
-  const token = useAuthStore((s) => s.token)
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
-    queryFn: async () => {
-      if (!baseUrl || !token) return []
-      const intResp = await listIntegrations(baseUrl, token)
-      const repos: Array<SourceRepository> = []
-      for (const integration of intResp.integrations) {
-        try {
-          const repoResp = await listIntegrationRepos(
-            baseUrl,
-            token,
-            integration.id,
-          )
-          repos.push(
-            ...repoResp.repositories.map((repository) => ({
-              ...repository,
-              integration_id: integration.id,
-              provider: integration.provider,
-              host_url: integration.host_url,
-            })),
-          )
-        } catch {
-          // skip failed sources
-        }
-      }
-      return repos
-    },
-    enabled: enabled && !!baseUrl && !!token,
-  })
-}
-
 export default function CreateProjectDialog({
   open,
   onOpenChange,
@@ -145,7 +101,7 @@ export default function CreateProjectDialog({
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 
   const [sourceKind, setSourceKind] = useState<'local' | 'repo'>('local')
-  const { data: repos, isLoading: reposLoading } = useAvailableRepos(
+  const { data: repos, isLoading: reposLoading } = useSourceRepositories(
     open && isRemoteMode && sourceKind === 'repo',
   )
   const [selectedRepoId, setSelectedRepoId] = useState<string>('')

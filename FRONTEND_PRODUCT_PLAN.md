@@ -57,7 +57,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 - [x] Consolidate duplicate dashboard build queries and poll only while active builds exist.
 - [ ] Propagate TanStack Query abort signals through the API client.
-- [ ] Run independent repository/source discovery requests concurrently.
+- [x] Run independent repository/source discovery requests concurrently.
 - [x] Set query freshness by data volatility instead of one global five-second policy.
 - [ ] Bound historical log memory/network use while preserving search and download behavior.
 

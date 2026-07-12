@@ -27,6 +27,7 @@ Rules:
   - Added a production entry-bundle gate (240 KiB JavaScript and 22 KiB CSS gzip) to `make validate`, measured from the assets actually referenced by the built HTML.
   - Dashboard build data now uses one query, build lists poll only while work is active, volatile build data keeps a five-second freshness window, and less volatile server state defaults to thirty seconds.
   - TanStack Query cancellation now reaches build, log, and artifact requests, including abort checks between paginated log pages.
+  - Repository discovery now fetches independent source integrations concurrently and propagates cancellation through both integration and repository requests.
   - Log-stream polling now shares the stream lifecycle abort signal, preventing stale fallback requests from surviving build or instance changes.
   - React 19 Effect Events now keep global form and sidebar listeners current without mutating refs during render.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5

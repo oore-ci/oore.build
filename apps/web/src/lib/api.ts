@@ -433,6 +433,7 @@ export function listIntegrations(
   baseUrl: string,
   token: string,
   params?: { provider?: string; limit?: number; offset?: number },
+  options?: RequestOptions,
 ): Promise<ListIntegrationsResponse> {
   const query = new URLSearchParams()
   if (params?.provider) query.set('provider', params.provider)
@@ -442,7 +443,7 @@ export function listIntegrations(
   return request<ListIntegrationsResponse>(
     baseUrl,
     `/v1/integrations${qs ? `?${qs}` : ''}`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -471,11 +472,12 @@ export function listIntegrationRepos(
   baseUrl: string,
   token: string,
   integrationId: string,
+  options?: RequestOptions,
 ): Promise<ListRepositoriesResponse> {
   return request<ListRepositoriesResponse>(
     baseUrl,
     `/v1/integrations/${integrationId}/repositories`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
