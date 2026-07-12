@@ -227,6 +227,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           logs={mergedLogs}
           stepResults={build.step_results ?? []}
           isStreaming={isStreaming && !isTerminal}
+          isLoading={isTerminal && fullLogsQuery.isLoading}
           streamError={isTerminal ? undefined : (streamError ?? undefined)}
           logsUnavailable={fullLogsQuery.isError}
           isTerminal={isTerminal}

@@ -20,6 +20,9 @@ Rules:
   - Pipeline forms preserve platform arguments, environment variables, and artifacts independently from custom command toggles. Built-in artifact patterns and the runner now share the same valid workspace-relative glob contract.
   - Terminal build logs no longer present stale or duplicate live state, and the no-op client-only Validate action was removed in favor of validation on save.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Terminal log loading truth**:
+  - A completed build now shows an explicit loading state while persisted logs are being fetched instead of briefly claiming the build recorded no logs.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 
 - **Reliable release tagging and Pages deployment**:
   - Release tags are again cut from pushes to protected release-channel branches, avoiding a `workflow_run` trigger that GitHub only evaluates from the default branch.

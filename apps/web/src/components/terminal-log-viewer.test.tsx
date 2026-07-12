@@ -74,4 +74,21 @@ describe('TerminalLogViewer', () => {
       screen.getByRole('button', { name: 'Download raw logs' }),
     ).toBeTruthy()
   })
+
+  it('does not claim terminal logs are absent while they are loading', () => {
+    render(
+      <TerminalLogViewer
+        logs={[]}
+        stepResults={[]}
+        isStreaming={false}
+        isLoading
+        isTerminal
+      />,
+    )
+
+    expect(screen.getByText('Loading build logs...')).toBeTruthy()
+    expect(
+      screen.queryByText('This build completed without recorded logs.'),
+    ).toBeNull()
+  })
 })

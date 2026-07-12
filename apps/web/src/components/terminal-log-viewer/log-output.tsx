@@ -13,6 +13,7 @@ interface LogOutputProps {
   selectedStep: string
   selectedStepMeta: SelectedStepMeta | null
   searchQuery: string
+  isLoading: boolean
   logsUnavailable: boolean
   isTerminal: boolean
   wrapLines: boolean
@@ -25,6 +26,7 @@ export function LogOutput({
   selectedStep,
   selectedStepMeta,
   searchQuery,
+  isLoading,
   logsUnavailable,
   isTerminal,
   wrapLines,
@@ -60,11 +62,13 @@ export function LogOutput({
           <span className="text-xs text-muted-foreground">
             {searchQuery
               ? 'No matching lines'
-              : logsUnavailable
-                ? 'Logs are unavailable for this build.'
-                : isTerminal
-                  ? 'This build completed without recorded logs.'
-                  : 'No logs yet'}
+              : isLoading
+                ? 'Loading build logs...'
+                : logsUnavailable
+                  ? 'Logs are unavailable for this build.'
+                  : isTerminal
+                    ? 'This build completed without recorded logs.'
+                    : 'No logs yet'}
           </span>
         </div>
       ) : (

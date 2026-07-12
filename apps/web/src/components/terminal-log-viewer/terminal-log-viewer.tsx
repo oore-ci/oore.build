@@ -22,6 +22,7 @@ export default function TerminalLogViewer({
   stepResults,
   isStreaming,
   streamError,
+  isLoading = false,
   logsUnavailable = false,
   isTerminal = false,
 }: TerminalLogViewerProps) {
@@ -203,6 +204,7 @@ export default function TerminalLogViewer({
           selectedStep={selectedStep}
           selectedStepMeta={selectedStepMeta}
           searchQuery={searchQuery}
+          isLoading={isLoading}
           logsUnavailable={logsUnavailable}
           isTerminal={isTerminal}
           wrapLines={wrapLines}
