@@ -36,6 +36,17 @@ configure_frontend_install
 [[ "$OORE_LOCAL_WEB_LISTEN" == "127.0.0.1:4173" ]]
 [[ "$OORE_LOCAL_WEB_MODE" == "login" ]]
 
+atomic_dir="$(mktemp -d)"
+printf 'old' > "$atomic_dir/oored"
+printf 'new' > "$atomic_dir/source"
+old_inode="$(ls -di "$atomic_dir/oored" | awk '{print $1}')"
+install_executable "$atomic_dir/source" "$atomic_dir/oored"
+new_inode="$(ls -di "$atomic_dir/oored" | awk '{print $1}')"
+[[ "$new_inode" != "$old_inode" ]]
+[[ -x "$atomic_dir/oored" ]]
+[[ "$(< "$atomic_dir/oored")" == "new" ]]
+rm -rf "$atomic_dir"
+
 service_call="$(mktemp)"
 service_bin_dir="$(mktemp -d)"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SERVICE_CALL"\n' > "$service_bin_dir/oored"

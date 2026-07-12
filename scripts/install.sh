@@ -1392,6 +1392,14 @@ verify_archive_checksum() {
   log "Checksum verified for $archive_name."
 }
 
+install_executable() {
+  local source="$1"
+  local destination="$2"
+  local staged="${destination}.install.$$"
+  install -m 0755 "$source" "$staged"
+  mv -f "$staged" "$destination"
+}
+
 install_binaries() {
   local archive_name
   local extract_dir="$TMP_DIR/extract"
@@ -1412,13 +1420,11 @@ install_binaries() {
 
   mkdir -p "$BIN_DIR" "$LOG_DIR"
   if is_daemon_install; then
-    cp "$extract_dir/bin/oored" "$BIN_DIR/oored"
-    cp "$extract_dir/bin/oore" "$BIN_DIR/oore"
-    chmod +x "$BIN_DIR/oored" "$BIN_DIR/oore"
+    install_executable "$extract_dir/bin/oored" "$BIN_DIR/oored"
+    install_executable "$extract_dir/bin/oore" "$BIN_DIR/oore"
   fi
   if is_web_install; then
-    cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
-    chmod +x "$WEB_BINARY"
+    install_executable "$extract_dir/bin/oore-web" "$WEB_BINARY"
     rm -rf "$WEB_DIST_DIR"
     cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
   else
