@@ -36,15 +36,15 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 ## Milestone 3 — Consistent product language
 
-- [ ] Adopt one action grammar: create/add, connect/pair, navigate, retry, and destructive actions.
-- [ ] Make Button own icon sizing instead of per-call numeric sizes.
+- [x] Adopt one action grammar: create/add, connect/pair, navigate, retry, and destructive actions.
+- [x] Make Button own icon sizing instead of per-call numeric sizes.
 - [ ] Standardize page headers, primary-action placement, empty states, loading states, and persistent errors.
 - [ ] Update current shadcn components selectively, starting with Button, Select, Card, Sidebar, Empty, Field, and Button Group.
 - [ ] Break up only the high-churn giant components: pipeline form, preferences, build detail, and terminal viewer.
   - [ ] Pipeline form
   - [ ] Preferences
   - [x] Build detail
-  - [ ] Terminal viewer
+  - [x] Terminal viewer
 
 **Gate:** core routes use the same action hierarchy and component patterns with no hard-coded application colors.
 
@@ -61,6 +61,9 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 - [x] Consolidate duplicate dashboard build queries and poll only while active builds exist.
 - [ ] Propagate TanStack Query abort signals through the API client.
+  - [x] Build, final-log, artifact, and live-log fallback requests
+  - [x] Source integration and repository discovery requests
+  - [ ] Remaining query-backed API reads
 - [x] Run independent repository/source discovery requests concurrently.
 - [x] Set query freshness by data volatility instead of one global five-second policy.
 - [ ] Bound historical log memory/network use while preserving search and download behavior.
