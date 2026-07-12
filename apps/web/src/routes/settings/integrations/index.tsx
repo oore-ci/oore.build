@@ -178,8 +178,8 @@ function IntegrationsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Connect gitlab.com or self-managed GitLab through OAuth or
-                personal access token.
+                Connect GitLab.com or a self-managed GitLab host through a
+                personal access token or OAuth application.
               </p>
               <SetupHint
                 title="Personal access token scopes"
@@ -195,7 +195,6 @@ function IntegrationsPage() {
                 ]}
               />
               <Button
-                variant="outline"
                 render={<Link to="/settings/integrations/gitlab" />}
                 nativeButton={false}
               >

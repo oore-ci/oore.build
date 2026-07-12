@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{ffi::OsStr, fs};
@@ -10,7 +10,7 @@ use oored::build_router;
 use oored::crypto;
 use oored::observability;
 use oored::store::SetupStore;
-use tracing::info;
+use tracing::{error, info};
 
 // ── CLI ──────────────────────────────────────────────────────────
 
@@ -136,19 +136,40 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         "encryption key ready"
     );
 
-    // Start embedded local runner in default mode so single-host installations
-    // can execute queued builds without a separate `oore runner start` process.
-    let daemon_url = format!("http://127.0.0.1:{}", addr.port());
-    let _embedded_runner =
-        oored::embedded_runner::start_if_enabled(store.pool().clone(), daemon_url)
-            .await
-            .context("failed to initialize embedded runner")?;
-
+    let runner_pool = store.pool().clone();
     let app = build_router(store, runtime_key.key, metrics_handle).await;
 
     info!(listen = %addr, "starting oored daemon");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    if let Some(loopback_addr) = loopback_companion_addr(addr) {
+        let loopback_listener = tokio::net::TcpListener::bind(loopback_addr)
+            .await
+            .with_context(|| {
+                format!("failed to bind loopback companion address: {loopback_addr}")
+            })?;
+        let loopback_app = app.clone();
+
+        info!(listen = %loopback_addr, "also listening on loopback for local runner and CLI access");
+        tokio::spawn(async move {
+            if let Err(error) = axum::serve(
+                loopback_listener,
+                loopback_app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            {
+                error!(%error, "loopback oored listener stopped");
+            }
+        });
+    }
+
+    // The embedded runner always reaches the daemon through loopback. Keep a
+    // loopback listener alongside a private (for example, NetBird) bind.
+    let daemon_url = embedded_runner_url(addr);
+    let _embedded_runner = oored::embedded_runner::start_if_enabled(runner_pool, daemon_url)
+        .await
+        .context("failed to initialize embedded runner")?;
+
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -160,6 +181,22 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
     observability::shutdown_tracing();
 
     Ok(())
+}
+
+fn loopback_companion_addr(addr: SocketAddr) -> Option<SocketAddr> {
+    match addr.ip() {
+        ip if ip.is_loopback() || ip.is_unspecified() => None,
+        IpAddr::V4(_) => Some(SocketAddr::from(([127, 0, 0, 1], addr.port()))),
+        IpAddr::V6(_) => Some(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], addr.port()))),
+    }
+}
+
+fn embedded_runner_url(addr: SocketAddr) -> String {
+    let loopback = match addr.ip() {
+        IpAddr::V4(_) => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(_) => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+    };
+    format!("http://{}", SocketAddr::new(loopback, addr.port()))
 }
 
 fn read_trimmed_file(path: &std::path::Path) -> Option<String> {
@@ -616,5 +653,24 @@ mod tests {
         );
         assert!(parse_env_assignment("1BAD=value").is_err());
         assert!(parse_env_assignment("MISSING_VALUE").is_err());
+    }
+
+    #[test]
+    fn adds_loopback_companion_only_for_specific_non_loopback_binds() {
+        let netbird: SocketAddr = "100.107.193.1:8787".parse().unwrap();
+        let loopback: SocketAddr = "127.0.0.1:8787".parse().unwrap();
+        let wildcard: SocketAddr = "0.0.0.0:8787".parse().unwrap();
+
+        assert_eq!(
+            loopback_companion_addr(netbird),
+            Some("127.0.0.1:8787".parse().unwrap())
+        );
+        assert_eq!(loopback_companion_addr(loopback), None);
+        assert_eq!(loopback_companion_addr(wildcard), None);
+        assert_eq!(embedded_runner_url(netbird), "http://127.0.0.1:8787");
+        assert_eq!(
+            embedded_runner_url("[fd00::1]:8787".parse().unwrap()),
+            "http://[::1]:8787"
+        );
     }
 }

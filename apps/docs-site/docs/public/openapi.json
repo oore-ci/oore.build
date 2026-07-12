@@ -3744,6 +3744,130 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{git_path}": {
+      "get": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Discover a private GitLab repository for checkout",
+        "description": "Internal Git smart-HTTP endpoint. The runner token is accepted only for\nthe repository assigned to this job; GitLab credentials remain server-side.",
+        "operationId": "gitlab_checkout_discovery",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_path",
+            "in": "path",
+            "description": "Assigned repository info/refs path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "description": "Must be git-upload-pack",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Git upload-pack discovery response"
+          },
+          "403": {
+            "description": "Repository path does not match the assigned job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Stream a private GitLab upload-pack request",
+        "operationId": "gitlab_checkout_upload_pack",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_path",
+            "in": "path",
+            "description": "Assigned repository git-upload-pack path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Git upload-pack response"
+          },
+          "403": {
+            "description": "Repository path does not match the assigned job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/logs": {
       "post": {
         "tags": [

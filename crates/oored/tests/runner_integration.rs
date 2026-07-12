@@ -7,8 +7,8 @@ mod common;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
-    body_json, connect_pool, create_test_app, seed_github_integration, seed_project_chain,
-    seed_test_user,
+    body_json, connect_pool, create_test_app, seed_github_integration, seed_gitlab_integration,
+    seed_project_chain, seed_test_user,
 };
 use sqlx::Row;
 use tower::ServiceExt;
@@ -363,6 +363,44 @@ async fn test_runner_claim_and_execute() {
 
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["build"]["status"].as_str().unwrap(), "succeeded");
+}
+
+#[tokio::test]
+async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let session_token = create_session_token(&pool, &user_id).await;
+    let integration_id = seed_gitlab_integration(&pool, &user_id, "webhook-secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "internal/mobile/app").await;
+    let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let (runner_id, runner_token) = register_runner(&app, &session_token, "gitlab-runner").await;
+
+    let request = Request::post(format!("/v1/runners/{runner_id}/claim"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"protocol_version":2}"#))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response.into_body()).await;
+    let snapshot = &json["job"]["config_snapshot"];
+
+    assert_eq!(
+        snapshot["checkout_proxy_path"],
+        format!("/v1/runners/{runner_id}/jobs/{build_id}/gitlab/internal/mobile/app.git")
+    );
+    assert!(snapshot.get("checkout_rewrite_from").is_none());
+    assert!(
+        !json.to_string().contains(&runner_token),
+        "runner token must not be embedded in the claimed job"
+    );
 }
 
 #[tokio::test]

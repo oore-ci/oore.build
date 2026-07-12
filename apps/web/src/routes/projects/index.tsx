@@ -152,11 +152,25 @@ function ProjectsListPage() {
               {runtimeMode === 'local'
                 ? 'Choose a local Git repository to create your first project.'
                 : noConnectedSources
-                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
+                  ? 'Connect a source before creating your first remote project.'
                   : 'Create a project from a connected source repository to define pipelines and start builds.'}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              {canWriteProjects ? (
+              {runtimeMode === 'remote' && noConnectedSources ? (
+                canWriteIntegrations ? (
+                  <Button
+                    render={<Link to={integrationConnectTo} />}
+                    nativeButton={false}
+                  >
+                    <HugeiconsIcon icon={Link04Icon} size={16} />
+                    Connect Source
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Ask an owner/admin to connect a source.
+                  </p>
+                )
+              ) : canWriteProjects ? (
                 <Button
                   onClick={() => setCreateOpen(true)}
                   disabled={isDemoMode}
@@ -170,23 +184,6 @@ function ProjectsListPage() {
                   Ask an owner/admin/developer to create the first project.
                 </p>
               )}
-
-              {runtimeMode === 'remote' && noConnectedSources ? (
-                canWriteIntegrations ? (
-                  <Button
-                    variant="outline"
-                    render={<Link to={integrationConnectTo} />}
-                    nativeButton={false}
-                  >
-                    <HugeiconsIcon icon={Link04Icon} size={16} />
-                    Connect Source
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Ask an owner/admin to connect a source.
-                  </p>
-                )
-              ) : null}
             </div>
           </CardContent>
         </Card>

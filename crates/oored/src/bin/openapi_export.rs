@@ -135,6 +135,8 @@ use utoipa::OpenApi;
         paths::update_runner,
         paths::runner_heartbeat,
         paths::claim_job,
+        paths::gitlab_checkout_discovery,
+        paths::gitlab_checkout_upload_pack,
         paths::update_job_status,
         paths::get_job_status,
         // ── Build Logs ──
@@ -1605,6 +1607,40 @@ mod paths {
         )
     )]
     pub(super) async fn claim_job() {}
+
+    /// Discover a private GitLab repository for checkout
+    ///
+    /// Internal Git smart-HTTP endpoint. The runner token is accepted only for
+    /// the repository assigned to this job; GitLab credentials remain server-side.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{git_path}", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("git_path" = String, Path, description = "Assigned repository info/refs path"),
+            ("service" = String, Query, description = "Must be git-upload-pack"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Git upload-pack discovery response"),
+            (status = 403, description = "Repository path does not match the assigned job", body = ApiError),
+        )
+    )]
+    pub(super) async fn gitlab_checkout_discovery() {}
+
+    /// Stream a private GitLab upload-pack request
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{git_path}", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("git_path" = String, Path, description = "Assigned repository git-upload-pack path"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Git upload-pack response"),
+            (status = 403, description = "Repository path does not match the assigned job", body = ApiError),
+        )
+    )]
+    pub(super) async fn gitlab_checkout_upload_pack() {}
 
     /// Update job status
     ///

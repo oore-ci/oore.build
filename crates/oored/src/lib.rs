@@ -2376,6 +2376,11 @@ async fn build_router_inner(
         )
         .route("/v1/runners/{runner_id}/claim", post(runners::claim_job))
         .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{*git_path}",
+            get(integrations::gitlab::proxy_git_checkout)
+                .post(integrations::gitlab::proxy_git_checkout),
+        )
+        .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/status",
             post(runners::update_job_status),
         )
