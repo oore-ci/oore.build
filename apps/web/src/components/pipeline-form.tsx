@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -10,6 +10,7 @@ import {
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { useMountEffect } from '@/hooks/use-mount-effect'
+import { useWindowEvent } from '@/hooks/use-window-event'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -258,14 +259,8 @@ export default function PipelineForm({
     return () => subscription.unsubscribe()
   })
 
-  const isDirtyRef = useRef(isDirty)
-  isDirtyRef.current = isDirty
-  useMountEffect(() => {
-    function handleBeforeUnload(e: BeforeUnloadEvent) {
-      if (isDirtyRef.current) e.preventDefault()
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  useWindowEvent('beforeunload', (event) => {
+    if (isDirty) event.preventDefault()
   })
 
   function toggleEvent(event: string) {

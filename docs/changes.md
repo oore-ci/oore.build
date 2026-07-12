@@ -25,6 +25,7 @@ Rules:
   - Corrected vendor chunk boundaries so Base UI is no longer swallowed by the React matcher; route-only controls are deferred and initial JavaScript fell by 15.46 kB gzip (6.3%) after the dependency refresh.
   - Dashboard build data now uses one query, build lists poll only while work is active, volatile build data keeps a five-second freshness window, and less volatile server state defaults to thirty seconds.
   - TanStack Query cancellation now reaches build, log, and artifact requests, including abort checks between paginated log pages.
+  - Log-stream polling now shares the stream lifecycle abort signal, preventing stale fallback requests from surviving build or instance changes.
   - React 19 Effect Events now keep global form and sidebar listeners current without mutating refs during render.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Updater runtime hotfix**:

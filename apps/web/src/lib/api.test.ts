@@ -11,6 +11,7 @@ import {
   getInstancePreferences,
   getPipeline,
   getSetupStatus,
+  listBuilds,
   listPipelines,
   listRunners,
   testOidcConnection,
@@ -138,6 +139,25 @@ describe('getSetupStatus', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'https://ci.example.com/v1/public/setup-status',
       { headers: {} },
+    )
+  })
+})
+
+describe('query cancellation', () => {
+  it('passes the TanStack signal through build requests', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, { builds: [], total: 0 }))
+
+    await listBuilds('https://ci.example.com', 'token', undefined, {
+      signal: controller.signal,
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/builds',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer token' },
+        signal: controller.signal,
+      }),
     )
   })
 })

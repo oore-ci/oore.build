@@ -18,7 +18,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Fix conditional Hooks and render-time side effects in affected routes.
 - [x] Fetch final logs only when a build becomes terminal and preserve streamed lines during the transition.
 - [x] Default to All logs when step results cannot be associated with log markers.
-- [ ] Keep polling and SSE cleanup deterministic across build and instance changes.
+- [x] Keep polling and SSE cleanup deterministic across build and instance changes.
 - [x] Add focused regression coverage for terminal log transition and unattributed logs.
 
 **Gate:** no Rules of Hooks errors; build completion cannot remove visible logs; focused tests, lint, and build pass.

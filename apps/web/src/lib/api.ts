@@ -125,6 +125,8 @@ export class ApiClientError extends Error {
   }
 }
 
+type RequestOptions = Pick<RequestInit, 'signal'>
+
 // ── Fetch wrapper ───────────────────────────────────────────────
 
 async function request<T>(
@@ -866,6 +868,7 @@ export function listBuilds(
     limit?: number
     offset?: number
   },
+  options?: RequestOptions,
 ): Promise<ListBuildsResponse> {
   const query = new URLSearchParams()
   if (params?.project_id) query.set('project_id', params.project_id)
@@ -878,7 +881,7 @@ export function listBuilds(
   return request<ListBuildsResponse>(
     baseUrl,
     `/v1/builds${qs ? `?${qs}` : ''}`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -886,9 +889,11 @@ export function getBuild(
   baseUrl: string,
   token: string,
   buildId: string,
+  options?: RequestOptions,
 ): Promise<BuildDetailResponse> {
   return request<BuildDetailResponse>(baseUrl, `/v1/builds/${buildId}`, {
     headers: authHeaders(token),
+    signal: options?.signal,
   })
 }
 
@@ -935,6 +940,7 @@ export function getBuildLogs(
   token: string,
   buildId: string,
   params?: { after_sequence?: number; limit?: number },
+  options?: RequestOptions,
 ): Promise<BuildLogsResponse> {
   const query = new URLSearchParams()
   if (params?.after_sequence != null)
@@ -944,7 +950,7 @@ export function getBuildLogs(
   return request<BuildLogsResponse>(
     baseUrl,
     `/v1/builds/${buildId}/logs${qs ? `?${qs}` : ''}`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -954,11 +960,12 @@ export function listArtifacts(
   baseUrl: string,
   token: string,
   buildId: string,
+  options?: RequestOptions,
 ): Promise<ListArtifactsResponse> {
   return request<ListArtifactsResponse>(
     baseUrl,
     `/v1/builds/${buildId}/artifacts`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 

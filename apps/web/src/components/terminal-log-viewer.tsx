@@ -15,6 +15,7 @@ import {
 import type { BuildLogChunk, StepResult } from '@/lib/types'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
+import { useWindowEvent } from '@/hooks/use-window-event'
 import { parseAnsi } from '@/lib/ansi-to-html'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -214,9 +215,11 @@ export default function TerminalLogViewer({
         group.durationMs = result.duration_ms
       }
 
-      const orderedGroups = order
-        .map((name) => groups.get(name))
-        .filter(Boolean) as Array<StepGroup>
+      const orderedGroups: Array<StepGroup> = []
+      for (const name of order) {
+        const group = groups.get(name)
+        if (group) orderedGroups.push(group)
+      }
 
       return {
         stepGroups: orderedGroups,
@@ -301,31 +304,24 @@ export default function TerminalLogViewer({
 
   // ── Keyboard shortcuts ─────────────────────────────────────
 
-  const searchOpenRef = useRef(searchOpen)
-  searchOpenRef.current = searchOpen
-
-  useMountEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        const target = e.target as HTMLElement | null
-        if (target?.closest('input, textarea, [contenteditable="true"]')) return
-        const el = scrollContainerRef.current
-        if (!el) return
-        // Only intercept when the log viewer is likely in view
-        const rect = el.getBoundingClientRect()
-        if (rect.top < window.innerHeight && rect.bottom > 0) {
-          e.preventDefault()
-          setSearchOpen(true)
-          setTimeout(() => searchInputRef.current?.focus(), 0)
-        }
-      }
-      if (e.key === 'Escape' && searchOpenRef.current) {
-        setSearchOpen(false)
-        setSearchQuery('')
+  useWindowEvent('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return
+      const el = scrollContainerRef.current
+      if (!el) return
+      // Only intercept when the log viewer is likely in view
+      const rect = el.getBoundingClientRect()
+      if (rect.top < window.innerHeight && rect.bottom > 0) {
+        event.preventDefault()
+        setSearchOpen(true)
+        setTimeout(() => searchInputRef.current?.focus(), 0)
       }
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    if (event.key === 'Escape' && searchOpen) {
+      setSearchOpen(false)
+      setSearchQuery('')
+    }
   })
 
   // ── Jump to first error ────────────────────────────────────

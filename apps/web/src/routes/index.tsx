@@ -306,16 +306,17 @@ function ConfiguredDashboard({
     [integrations],
   )
 
-  const activeBuildsQuery = useBuilds({ limit: 10 })
-  const activeBuilds = useMemo(() => {
-    const all = activeBuildsQuery.data?.builds ?? []
-    return all.filter((b) => b.status === 'queued' || b.status === 'running')
-  }, [activeBuildsQuery.data?.builds])
-
   const recentBuildsQuery = useBuilds({ limit: 50 })
   const recentBuilds = useMemo(
     () => recentBuildsQuery.data?.builds ?? [],
     [recentBuildsQuery.data?.builds],
+  )
+  const activeBuilds = useMemo(
+    () =>
+      recentBuilds.filter(
+        (build) => build.status === 'queued' || build.status === 'running',
+      ),
+    [recentBuilds],
   )
   const hasProjects = projects.length > 0
   const integrationsResolved =
@@ -362,7 +363,7 @@ function ConfiguredDashboard({
           canShowRunBuild ? (
             <Button onClick={handleGlobalTrigger}>
               <HugeiconsIcon icon={PlayIcon} size={16} />
-              Run Build
+              Run build
             </Button>
           ) : undefined
         }

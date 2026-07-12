@@ -63,9 +63,13 @@ export function useLogStream(
     if (!baseUrl || !token) return
     const after = Math.max(-1, lastSequenceRef.current - POLL_BACKFILL_WINDOW)
     try {
-      const response = await getBuildLogs(baseUrl, token, buildId, {
-        after_sequence: after >= 0 ? after : undefined,
-      })
+      const response = await getBuildLogs(
+        baseUrl,
+        token,
+        buildId,
+        { after_sequence: after >= 0 ? after : undefined },
+        { signal: abortRef.current?.signal },
+      )
       appendLogs(response.logs)
     } catch {
       // Retry on next interval.

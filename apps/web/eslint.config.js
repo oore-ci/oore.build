@@ -42,6 +42,7 @@ export default [
       '**/use-index-auth-guard.ts',
       '**/use-trusted-proxy-auto-login.ts',
       '**/use-setup-route-transitions.ts',
+      '**/use-window-event.ts',
     ],
     rules: {
       'no-restricted-syntax': 'off',
