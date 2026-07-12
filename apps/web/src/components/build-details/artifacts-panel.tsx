@@ -324,7 +324,7 @@ export function ArtifactsPanel({
                     size={14}
                     className="mr-1.5"
                   />
-                  Copy Link
+                  Copy link
                 </Button>
               </DialogFooter>
             </div>

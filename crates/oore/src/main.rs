@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use base64::Engine;
@@ -3767,23 +3767,64 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
         (format!("gui/{uid}/{label}"), format!("gui/{uid}"))
     };
     let command = if system { "sudo" } else { "launchctl" };
-    let prefix: &[&str] = if system { &["launchctl"] } else { &[] };
-    let _ = std::process::Command::new(command)
+    let prefix: &[&str] = if system { &["-n", "launchctl"] } else { &[] };
+    let mut bootout = std::process::Command::new(command);
+    bootout.args(prefix).args(["bootout", &service]);
+    let _ = run_command_with_timeout(&mut bootout, "launchd bootout", Duration::from_secs(15))?;
+
+    let mut bootstrap = std::process::Command::new(command);
+    bootstrap
         .args(prefix)
-        .args(["bootout", &service])
-        .status();
-    let status = std::process::Command::new(command)
-        .args(prefix)
-        .args(["bootstrap", &domain, &plist.display().to_string()])
-        .status()
-        .context("failed to bootstrap launchd service")?;
+        .args(["bootstrap", &domain, &plist.display().to_string()]);
+    let status =
+        run_command_with_timeout(&mut bootstrap, "launchd bootstrap", Duration::from_secs(15))?;
     if !status.success() {
         anyhow::bail!("failed to bootstrap managed service {label}");
     }
-    let _ = std::process::Command::new(command)
-        .args(prefix)
-        .args(["kickstart", "-k", &service])
-        .status();
+    let mut kickstart = std::process::Command::new(command);
+    kickstart.args(prefix).args(["kickstart", "-k", &service]);
+    let _ = run_command_with_timeout(&mut kickstart, "launchd kickstart", Duration::from_secs(15))?;
+    Ok(())
+}
+
+fn run_command_with_timeout(
+    command: &mut std::process::Command,
+    description: &str,
+    timeout: Duration,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to start {description}"))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("failed to wait for {description}"))?
+        {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!(
+                "{description} timed out after {} seconds",
+                timeout.as_secs()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn authorize_system_service_restart() -> anyhow::Result<()> {
+    println!("\nAdministrator access is required to restart Oore's macOS system service.");
+    println!("Your password is requested by sudo and is not stored by Oore.");
+    let status = std::process::Command::new("sudo")
+        .arg("-v")
+        .status()
+        .context("failed to request administrator access")?;
+    if !status.success() {
+        anyhow::bail!("administrator access was not granted; installed files were not changed");
+    }
     Ok(())
 }
 
@@ -3954,6 +3995,9 @@ where
 
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
+    // Web-triggered backend updates replace the release atomically, then let
+    // launchd KeepAlive restart this daemon after the API process exits.
+    let defer_daemon_restart = std::env::var_os("OORE_UPDATE_DEFER_DAEMON_RESTART").is_some();
 
     let current_str = read_trimmed_file(&install_root.join("VERSION"))
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
@@ -4140,6 +4184,14 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         None => false,
     };
 
+    let system_service_restart_required = (!defer_daemon_restart
+        && daemon_is_managed
+        && managed_service_plist(DAEMON_SERVICE_LABEL)?.1)
+        || (web_is_managed && managed_service_plist(WEB_SERVICE_LABEL)?.1);
+    if system_service_restart_required {
+        authorize_system_service_restart()?;
+    }
+
     if let Some(listen) = &unmanaged_daemon_listen {
         println!("oored daemon is running. Stopping before update...");
         stop_daemon(&install_root, listen)?;
@@ -4149,12 +4201,12 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     // readiness check succeeds. On any failure, restore the prior release.
     let update_result = async {
         install_staged_release(&staged_release, &install_root, channel, &repo)?;
-        if daemon_is_managed {
+        if daemon_is_managed && !defer_daemon_restart {
             restart_launchd_service(DAEMON_SERVICE_LABEL)?;
         } else if let Some(listen) = &unmanaged_daemon_listen {
             restart_daemon(&install_root, listen, &daemon_url, &client).await?;
         }
-        if daemon_should_be_running {
+        if daemon_should_be_running && !defer_daemon_restart {
             wait_for_endpoint(&client, &daemon_ready_url, "oored").await?;
         }
         if web_is_managed {
@@ -4172,12 +4224,12 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         eprintln!("Update failed; restoring the previous release...");
         let rollback = async {
             restore_release_snapshot(&install_root, &previous_release)?;
-            if daemon_is_managed {
+            if daemon_is_managed && !defer_daemon_restart {
                 restart_launchd_service(DAEMON_SERVICE_LABEL)?;
             } else if let Some(listen) = &unmanaged_daemon_listen {
                 restart_daemon(&install_root, listen, &daemon_url, &client).await?;
             }
-            if daemon_should_be_running {
+            if daemon_should_be_running && !defer_daemon_restart {
                 wait_for_endpoint(&client, &daemon_ready_url, "rollback oored").await?;
             }
             if web_is_managed {
@@ -4313,6 +4365,21 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_timeout_stops_stalled_service_commands() {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 1"]);
+
+        let error = run_command_with_timeout(
+            &mut command,
+            "test service command",
+            Duration::from_millis(20),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"));
+    }
 
     #[test]
     fn blocking_update_step_can_run_runtime_backed_backup_work() {

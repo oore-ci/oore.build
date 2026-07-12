@@ -364,6 +364,23 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdatePhase {
+    Idle,
+    Updating,
+    Restarting,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeUpdateStatus {
+    pub phase: RuntimeUpdatePhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub managed_service: bool,
+}
+
 // ── User management types ───────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]

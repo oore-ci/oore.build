@@ -131,7 +131,7 @@ function NotificationsPage() {
           </CardHeader>
           <CardContent>
             {channels.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 No notification channels configured yet.
               </p>
             ) : (
@@ -139,7 +139,7 @@ function NotificationsPage() {
                 {channels.map((channel) => (
                   <div
                     key={channel.id}
-                    className="group flex items-start justify-between gap-3 border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
+                    className="group flex flex-col border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
                   >
                     <Link
                       to="/settings/notifications/$channelId"
@@ -168,7 +168,7 @@ function NotificationsPage() {
                       </div>
                     </Link>
 
-                    <div className="flex items-center gap-1 p-4 pl-0">
+                    <div className="flex items-center gap-1 p-4 pt-0 sm:pl-0 sm:pt-4">
                       <Button
                         variant="ghost"
                         size="sm"

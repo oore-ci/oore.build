@@ -76,7 +76,9 @@ function formatRelativeTime(epochSeconds?: number): string {
   return `${days}d ago`
 }
 
-function getHeartbeatStaleness(epochSeconds?: number): 'fresh' | 'stale' | 'none' {
+function getHeartbeatStaleness(
+  epochSeconds?: number,
+): 'fresh' | 'stale' | 'none' {
   if (!epochSeconds) return 'none'
   const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
   if (diffSecs > 60) return 'stale'
@@ -93,7 +95,9 @@ function StatusDot({ status }: { status: string }) {
     )
   }
   if (status === 'offline') {
-    return <span className="bg-destructive mr-2 inline-flex size-2 rounded-full" />
+    return (
+      <span className="bg-destructive mr-2 inline-flex size-2 rounded-full" />
+    )
   }
   // draining
   return <span className="bg-warning mr-2 inline-flex size-2 rounded-full" />
@@ -139,7 +143,6 @@ function RenameRunnerDialog({
 
   const initialName = runner?.name ?? ''
   const isEmbedded = !runner?.registered_by
-
 
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) {
@@ -340,7 +343,7 @@ function RunnersSettingsPage() {
           </CardHeader>
           <CardContent>
             {runners.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 No runners registered yet.
               </p>
             ) : (
@@ -349,6 +352,7 @@ function RunnersSettingsPage() {
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Version</TableHead>
                     <TableHead>Last heartbeat</TableHead>
                     <TableHead>Capabilities</TableHead>
                     <TableHead>Registered by</TableHead>
@@ -376,6 +380,11 @@ function RunnersSettingsPage() {
                               {runner.status}
                             </Badge>
                           </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {typeof runner.capabilities.version === 'string'
+                            ? runner.capabilities.version
+                            : 'Unknown'}
                         </TableCell>
                         <TableCell
                           className={

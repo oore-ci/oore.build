@@ -3,7 +3,11 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 
-import { applyTrustedProxyHeaders, isApiPath } from './oore-web.js'
+import {
+  applyTrustedProxyHeaders,
+  authorizeOwner,
+  isApiPath,
+} from './oore-web.js'
 
 const ooreWebPath = path.resolve(process.cwd(), 'tools/oore-web.js')
 
@@ -87,6 +91,30 @@ describe('oore-web trusted proxy contract', () => {
     expect(provedHeaders.get('x-oore-trusted-proxy-secret')).toBe(
       'backend-proof',
     )
+  })
+
+  it('allows runtime updates only for a backend-confirmed owner', async () => {
+    const { server, url } = await startServer((_request, response) => {
+      sendJson(response, { user: { role: 'owner' } })
+    })
+    try {
+      const allowed = await authorizeOwner(
+        new Request('https://ci.example.com/__oore_web_update', {
+          headers: { authorization: 'Bearer session' },
+        }),
+        new URL(url),
+        {
+          trustedProxySecret: '',
+          upstreamTrustedProxySecret: '',
+          trustedProxyUserEmailHeader: 'x-oore-user-email',
+          upstreamTrustedProxySecretHeader: 'x-oore-web-trusted-proxy-secret',
+        },
+        null,
+      )
+      expect(allowed).toBe(true)
+    } finally {
+      await stopServer(server)
+    }
   })
 })
 

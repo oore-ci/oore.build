@@ -49,6 +49,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -562,15 +570,26 @@ function PipelineDetailPage() {
         <CardContent>
           <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
           {builds.length === 0 ? (
-            <div className="space-y-2 py-3">
-              <p className="text-sm text-muted-foreground">No builds yet.</p>
-              {canTriggerBuild && projectHasSource ? (
-                <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+            <Empty className="p-8">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
                   <HugeiconsIcon icon={PlayIcon} />
-                  Trigger first build
-                </Button>
+                </EmptyMedia>
+                <EmptyTitle>No builds yet</EmptyTitle>
+                <EmptyDescription>
+                  Run this pipeline to see its status, output, and artifacts
+                  here.
+                </EmptyDescription>
+              </EmptyHeader>
+              {canTriggerBuild && projectHasSource ? (
+                <EmptyContent>
+                  <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                    <HugeiconsIcon icon={PlayIcon} />
+                    Run first build
+                  </Button>
+                </EmptyContent>
               ) : null}
-            </div>
+            </Empty>
           ) : (
             <Table>
               <TableHeader>
@@ -651,10 +670,7 @@ function PipelineDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={handleDelete}>
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>

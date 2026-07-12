@@ -26,6 +26,7 @@ pub mod projects;
 pub mod rbac;
 pub mod retention;
 pub mod runners;
+pub mod runtime_updates;
 pub mod scheduler;
 pub mod session;
 pub mod storage;
@@ -102,6 +103,8 @@ pub struct AppState {
     pub allowed_origins: Arc<RwLock<Vec<String>>>,
     /// Effective public base URL for externally reachable callbacks/download links.
     pub public_url: Arc<RwLock<Option<String>>>,
+    /// Owner-triggered backend update state.
+    pub runtime_update: runtime_updates::RuntimeUpdateState,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -474,6 +477,7 @@ fn installed_runtime_metadata() -> serde_json::Value {
     json!({
         "version": read_trimmed("VERSION").unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
         "channel": read_trimmed("CHANNEL"),
+        "github_repo": read_trimmed("GITHUB_REPO"),
         "package_version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -2061,6 +2065,7 @@ async fn build_router_inner(
         stream_tokens: logs::StreamTokenStore::new(),
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
+        runtime_update: runtime_updates::new_state(),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2175,6 +2180,10 @@ async fn build_router_inner(
         .route("/v1/auth/logout", post(auth::logout))
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
+        .route(
+            "/v1/system/update",
+            get(runtime_updates::get_status).post(runtime_updates::start_update),
+        )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
         .route(

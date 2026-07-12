@@ -4,6 +4,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Add01Icon, Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 
 import type { ApiTokenSummary, CreateApiTokenResponse } from '@/lib/types'
 import {
@@ -378,6 +380,7 @@ function TokenCreatedDialog({
               {response?.token}
             </code>
             <Button variant="outline" size="sm" onClick={handleCopy}>
+              <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} />
               {copied ? 'Copied' : 'Copy'}
             </Button>
           </div>
@@ -444,7 +447,10 @@ function ApiTokensPage() {
         description="Create and manage API tokens for programmatic access to your CI instance."
         actions={
           canWrite ? (
-            <Button onClick={() => setCreateOpen(true)}>Create token</Button>
+            <Button onClick={() => setCreateOpen(true)}>
+              <HugeiconsIcon icon={Add01Icon} />
+              Create token
+            </Button>
           ) : undefined
         }
       />
@@ -523,7 +529,7 @@ function ApiTokensPage() {
           </CardHeader>
           <CardContent>
             {tokens.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 No API tokens yet. Create one to get started.
               </p>
             ) : (

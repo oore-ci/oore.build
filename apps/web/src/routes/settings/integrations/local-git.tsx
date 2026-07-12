@@ -1,4 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Add01Icon } from '@hugeicons/core-free-icons'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -57,6 +59,7 @@ function LocalGitPage() {
             render={<Link to="/projects" search={{ openCreate: '1' }} />}
             nativeButton={false}
           >
+            <HugeiconsIcon icon={Add01Icon} />
             Create project
           </Button>
         </CardContent>

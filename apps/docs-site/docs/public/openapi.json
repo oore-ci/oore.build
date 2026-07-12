@@ -5654,6 +5654,108 @@
         ]
       }
     },
+    "/v1/system/update": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get backend update state",
+        "description": "Reports whether the backend is managed by the supported macOS launchd\nservice and whether an update is currently running. Requires owner role.",
+        "operationId": "get_runtime_update_status",
+        "responses": {
+          "200": {
+            "description": "Backend update state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeUpdateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Start a backend update",
+        "description": "Runs the installed updater and hands restart control to the managed\nmacOS launchd service. Requires owner role.",
+        "operationId": "start_runtime_update",
+        "responses": {
+          "202": {
+            "description": "Backend update started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeUpdateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Managed updater unavailable or already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users": {
       "get": {
         "tags": [
@@ -9611,6 +9713,36 @@
           "local",
           "remote"
         ]
+      },
+      "RuntimeUpdatePhase": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "updating",
+          "restarting",
+          "failed"
+        ]
+      },
+      "RuntimeUpdateStatus": {
+        "type": "object",
+        "required": [
+          "phase",
+          "managed_service"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "managed_service": {
+            "type": "boolean"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/RuntimeUpdatePhase"
+          }
+        }
       },
       "ScmProvider": {
         "type": "string",

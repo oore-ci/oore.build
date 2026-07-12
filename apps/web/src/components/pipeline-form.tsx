@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useReducer, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -9,7 +9,6 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useWindowEvent } from '@/hooks/use-window-event'
 import { Button } from '@/components/ui/button'
 import {
@@ -144,6 +143,67 @@ const CONFIG_SOURCES: Record<string, string> = {
   explicit: 'Use a specific config file path',
 }
 
+interface PipelineSections {
+  config: boolean
+  triggers: boolean
+  commands: boolean
+  platformArgs: boolean
+  env: boolean
+  artifacts: boolean
+  iosSigning: boolean
+  signing: boolean
+}
+
+type PipelineSectionsAction =
+  | {
+      type: 'set'
+      section: keyof PipelineSections
+      open: boolean
+    }
+  | {
+      type: 'reveal'
+      sections: Partial<Record<keyof PipelineSections, boolean>>
+    }
+
+function pipelineSectionsReducer(
+  state: PipelineSections,
+  action: PipelineSectionsAction,
+): PipelineSections {
+  if (action.type === 'set') {
+    return { ...state, [action.section]: action.open }
+  }
+
+  const next = { ...state }
+  for (const [section, shouldOpen] of Object.entries(action.sections)) {
+    if (shouldOpen) next[section as keyof PipelineSections] = true
+  }
+  return next
+}
+
+function initialPipelineSections({
+  initialValues,
+  retrySigning,
+}: Pick<
+  PipelineFormProps,
+  'initialValues' | 'retrySigning'
+>): PipelineSections {
+  return {
+    config: true,
+    triggers: true,
+    commands: false,
+    platformArgs: false,
+    env: false,
+    artifacts: false,
+    iosSigning: !!initialValues.ios_signing_enabled || retrySigning === 'ios',
+    signing:
+      retrySigning === 'android' ||
+      !!(
+        initialValues.android_signing_release_enabled ||
+        initialValues.android_signing_debug_enabled
+      ),
+  }
+}
+
 const ANDROID_GRADLE_SIGNING_SNIPPET = `android {
     signingConfigs {
         release {
@@ -234,30 +294,15 @@ export default function PipelineForm({
   const [iosProfileFiles, setIosProfileFiles] = useState<
     Record<string, File | null>
   >({})
-  const [isDirty, setIsDirty] = useState(false)
-
-  const [configOpen, setConfigOpen] = useState(true)
-  const [triggersOpen, setTriggersOpen] = useState(true)
-  const [commandsOpen, setCommandsOpen] = useState(false)
-  const [platformArgsOpen, setPlatformArgsOpen] = useState(false)
-  const [envOpen, setEnvOpen] = useState(false)
-  const [artifactsOpen, setArtifactsOpen] = useState(false)
-  const [iosSigningOpen, setIosSigningOpen] = useState(
-    () => !!initialValues.ios_signing_enabled || retrySigning === 'ios',
+  const [isAuxiliaryDirty, setIsAuxiliaryDirty] = useState(false)
+  const [sections, dispatchSections] = useReducer(
+    pipelineSectionsReducer,
+    { initialValues, retrySigning },
+    initialPipelineSections,
   )
-  const [signingOpen, setSigningOpen] = useState(
-    () =>
-      retrySigning === 'android' ||
-      !!(
-        initialValues.android_signing_release_enabled ||
-        initialValues.android_signing_debug_enabled
-      ),
-  )
-
-  useMountEffect(() => {
-    const subscription = form.watch(() => setIsDirty(true))
-    return () => subscription.unsubscribe()
-  })
+  const isDirty = form.formState.isDirty || isAuxiliaryDirty
+  const setSectionOpen = (section: keyof typeof sections) => (open: boolean) =>
+    dispatchSections({ type: 'set', section, open })
 
   useWindowEvent('beforeunload', (event) => {
     if (isDirty) event.preventDefault()
@@ -269,7 +314,7 @@ export default function PipelineForm({
         ? prev.filter((entry) => entry !== event)
         : [...prev, event],
     )
-    setIsDirty(true)
+    setIsAuxiliaryDirty(true)
   }
 
   async function handleFormSubmit(data: PipelineFormValues) {
@@ -291,31 +336,28 @@ export default function PipelineForm({
     const valid = await form.trigger()
     if (!valid) {
       const errors = form.formState.errors
-      if (
-        errors.name ||
-        errors.config_mode ||
-        errors.config_path ||
-        errors.flutter_version
-      ) {
-        setConfigOpen(true)
-      }
-      if (errors.max_concurrent || errors.branches) {
-        setTriggersOpen(true)
-      }
-      if (
-        errors.pre_build_commands ||
-        errors.build_commands ||
-        errors.post_build_commands
-      ) {
-        setCommandsOpen(true)
-      }
-      if (
-        errors.ios_signing_enabled ||
-        errors.ios_signing_team_id ||
-        errors.ios_signing_bundle_ids
-      ) {
-        setIosSigningOpen(true)
-      }
+      dispatchSections({
+        type: 'reveal',
+        sections: {
+          config: !!(
+            errors.name ||
+            errors.config_mode ||
+            errors.config_path ||
+            errors.flutter_version
+          ),
+          triggers: !!(errors.max_concurrent || errors.branches),
+          commands: !!(
+            errors.pre_build_commands ||
+            errors.build_commands ||
+            errors.post_build_commands
+          ),
+          iosSigning: !!(
+            errors.ios_signing_enabled ||
+            errors.ios_signing_team_id ||
+            errors.ios_signing_bundle_ids
+          ),
+        },
+      })
     }
   }
 
@@ -365,14 +407,17 @@ export default function PipelineForm({
         </Card>
 
         {/* Configuration section */}
-        <Collapsible open={configOpen} onOpenChange={setConfigOpen}>
+        <Collapsible
+          open={sections.config}
+          onOpenChange={setSectionOpen('config')}
+        >
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
                 <SectionHeader
                   title="Configuration"
                   summary={`${platforms.length} platform${platforms.length !== 1 ? 's' : ''}, ${configMode === 'explicit' ? 'explicit config' : 'auto-detect'}`}
-                  open={configOpen}
+                  open={sections.config}
                 />
               </CardHeader>
             </CollapsibleTrigger>
@@ -527,7 +572,10 @@ export default function PipelineForm({
         </Collapsible>
 
         {/* Triggers section */}
-        <Collapsible open={triggersOpen} onOpenChange={setTriggersOpen}>
+        <Collapsible
+          open={sections.triggers}
+          onOpenChange={setSectionOpen('triggers')}
+        >
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
@@ -538,7 +586,7 @@ export default function PipelineForm({
                       ? `manual only, cancel previous: ${cancelPrevious ? 'on' : 'off'}`
                       : `${selectedEvents.length} event${selectedEvents.length !== 1 ? 's' : ''}, cancel previous: ${cancelPrevious ? 'on' : 'off'}`
                   }
-                  open={triggersOpen}
+                  open={sections.triggers}
                 />
               </CardHeader>
             </CollapsibleTrigger>
@@ -598,7 +646,7 @@ export default function PipelineForm({
                       checked={cancelPrevious}
                       onCheckedChange={(checked) => {
                         setCancelPrevious(!!checked)
-                        setIsDirty(true)
+                        setIsAuxiliaryDirty(true)
                       }}
                     />
                     Cancel previous builds on same branch
@@ -624,7 +672,10 @@ export default function PipelineForm({
         </Collapsible>
 
         {/* Build Commands section */}
-        <Collapsible open={commandsOpen} onOpenChange={setCommandsOpen}>
+        <Collapsible
+          open={sections.commands}
+          onOpenChange={setSectionOpen('commands')}
+        >
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
@@ -635,7 +686,7 @@ export default function PipelineForm({
                       ? `${totalCmdCount} custom command${totalCmdCount !== 1 ? 's' : ''}`
                       : 'Using defaults'
                   }
-                  open={commandsOpen}
+                  open={sections.commands}
                 />
               </CardHeader>
             </CollapsibleTrigger>
@@ -736,14 +787,17 @@ export default function PipelineForm({
         </Collapsible>
 
         {/* Platform Build Args section */}
-        <Collapsible open={platformArgsOpen} onOpenChange={setPlatformArgsOpen}>
+        <Collapsible
+          open={sections.platformArgs}
+          onOpenChange={setSectionOpen('platformArgs')}
+        >
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
                 <SectionHeader
                   title="Platform Build Args"
                   summary="Per-platform args + command overrides"
-                  open={platformArgsOpen}
+                  open={sections.platformArgs}
                 />
               </CardHeader>
             </CollapsibleTrigger>
@@ -880,7 +934,7 @@ export default function PipelineForm({
         </Collapsible>
 
         {/* Environment Variables section */}
-        <Collapsible open={envOpen} onOpenChange={setEnvOpen}>
+        <Collapsible open={sections.env} onOpenChange={setSectionOpen('env')}>
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
@@ -891,7 +945,7 @@ export default function PipelineForm({
                       ? `${envVarCount} env var${envVarCount !== 1 ? 's' : ''} configured`
                       : 'None configured'
                   }
-                  open={envOpen}
+                  open={sections.env}
                 />
               </CardHeader>
             </CollapsibleTrigger>
@@ -939,7 +993,10 @@ export default function PipelineForm({
         </Collapsible>
 
         {/* Artifacts section */}
-        <Collapsible open={artifactsOpen} onOpenChange={setArtifactsOpen}>
+        <Collapsible
+          open={sections.artifacts}
+          onOpenChange={setSectionOpen('artifacts')}
+        >
           <Card>
             <CollapsibleTrigger className="w-full cursor-pointer">
               <CardHeader>
@@ -950,7 +1007,7 @@ export default function PipelineForm({
                       ? artifactPatterns.join(', ')
                       : 'Using platform defaults'
                   }
-                  open={artifactsOpen}
+                  open={sections.artifacts}
                 />
               </CardHeader>
             </CollapsibleTrigger>
@@ -981,7 +1038,10 @@ export default function PipelineForm({
 
         {/* Android Signing section */}
         {values.platform_android ? (
-          <Collapsible open={signingOpen} onOpenChange={setSigningOpen}>
+          <Collapsible
+            open={sections.signing}
+            onOpenChange={setSectionOpen('signing')}
+          >
             <Card>
               <CollapsibleTrigger className="w-full cursor-pointer">
                 <CardHeader>
@@ -1000,7 +1060,7 @@ export default function PipelineForm({
                             .join(' + ') + ' enabled'
                         : 'Not configured'
                     }
-                    open={signingOpen}
+                    open={sections.signing}
                   />
                 </CardHeader>
               </CollapsibleTrigger>
@@ -1259,7 +1319,10 @@ export default function PipelineForm({
 
         {/* iOS Signing section */}
         {values.platform_ios ? (
-          <Collapsible open={iosSigningOpen} onOpenChange={setIosSigningOpen}>
+          <Collapsible
+            open={sections.iosSigning}
+            onOpenChange={setSectionOpen('iosSigning')}
+          >
             <Card>
               <CollapsibleTrigger className="w-full cursor-pointer">
                 <CardHeader>
@@ -1270,7 +1333,7 @@ export default function PipelineForm({
                         ? `${iosSigningMode} mode`
                         : 'Not configured'
                     }
-                    open={iosSigningOpen}
+                    open={sections.iosSigning}
                   />
                 </CardHeader>
               </CollapsibleTrigger>

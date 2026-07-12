@@ -4,6 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
   ArrowRight01Icon,
+  Link04Icon,
   Loading03Icon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
@@ -453,7 +454,7 @@ function ConfiguredDashboard({
         ) : projects.length === 0 ? (
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 Getting Started
               </CardTitle>
             </CardHeader>
@@ -477,6 +478,7 @@ function ConfiguredDashboard({
                             render={<Link to={integrationConnectTo} />}
                             nativeButton={false}
                           >
+                            <HugeiconsIcon icon={Link04Icon} />
                             Connect source
                           </Button>
                         ) : (

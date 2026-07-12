@@ -234,7 +234,7 @@ function SetupError({ error }: { error: Error }) {
             <AlertDescription>{error.message}</AlertDescription>
           </Alert>
           <Button onClick={() => void navigate({ to: '/setup' })}>
-            Retry Setup
+            Retry setup
           </Button>
         </div>
       </div>
@@ -290,13 +290,13 @@ function SetupError({ error }: { error: Error }) {
 
         <div className="flex gap-2">
           <Button onClick={() => void navigate({ to: '/setup' })}>
-            Retry Setup
+            Retry setup
           </Button>
           <Button
             variant="outline"
             onClick={() => window.open('https://docs.oore.build', '_blank')}
           >
-            Open Docs
+            Open docs
           </Button>
         </div>
       </div>

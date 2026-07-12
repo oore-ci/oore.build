@@ -253,7 +253,8 @@ function parseServeArgs(argv) {
 
     if (arg === '--trusted-proxy-secret-file') {
       const value = argv[i + 1]
-      if (!value) throw new Error('--trusted-proxy-secret-file requires a value')
+      if (!value)
+        throw new Error('--trusted-proxy-secret-file requires a value')
       config.trustedProxySecretFile = value
       i += 1
       continue
@@ -289,7 +290,9 @@ function parseServeArgs(argv) {
     if (arg === '--upstream-trusted-proxy-secret-header') {
       const value = argv[i + 1]
       if (!value)
-        throw new Error('--upstream-trusted-proxy-secret-header requires a value')
+        throw new Error(
+          '--upstream-trusted-proxy-secret-header requires a value',
+        )
       config.upstreamTrustedProxySecretHeader = value
       i += 1
       continue
@@ -492,7 +495,10 @@ function githubHeaders() {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: githubHeaders() })
+  const response = await fetch(url, {
+    headers: githubHeaders(),
+    signal: AbortSignal.timeout(10_000),
+  })
   if (!response.ok) {
     throw new Error(`request failed (${response.status}) for ${url}`)
   }
@@ -500,7 +506,10 @@ async function fetchJson(url) {
 }
 
 async function fetchBytes(url) {
-  const response = await fetch(url, { headers: githubHeaders() })
+  const response = await fetch(url, {
+    headers: githubHeaders(),
+    signal: AbortSignal.timeout(120_000),
+  })
   if (!response.ok) {
     throw new Error(`download failed (${response.status}) for ${url}`)
   }
@@ -811,7 +820,7 @@ async function runUpdate(config) {
 
   if (compareVersions(current, latest) >= 0 && !config.force) {
     console.log('Already up to date.')
-    return
+    return { current: current.raw, latest: latest.raw, updated: false }
   }
 
   if (compareVersions(current, latest) < 0) {
@@ -883,6 +892,65 @@ async function runUpdate(config) {
   console.log(
     'If oore-web is running as a service, restart the service to use the updated launcher binary.',
   )
+  return { current: current.raw, latest: latest.raw, updated: true }
+}
+
+function hasManagedWebService() {
+  return (
+    fileExists(
+      path.join(os.homedir(), '.config', 'systemd', 'user', 'oore-web.service'),
+    ) ||
+    fileExists(
+      path.join(
+        os.homedir(),
+        'Library',
+        'LaunchAgents',
+        'build.oore.oore-web.plist',
+      ),
+    )
+  )
+}
+
+export async function authorizeOwner(
+  request,
+  backendUrl,
+  config,
+  signal = AbortSignal.timeout(5000),
+) {
+  const headers = new Headers(request.headers)
+  headers.delete('host')
+  headers.delete('content-length')
+  applyTrustedProxyHeaders(request, headers, config)
+  const response = await fetch(new URL('/v1/users/me', backendUrl), {
+    headers,
+    ...(signal ? { signal } : {}),
+  })
+  if (!response.ok) return false
+  const profile = await response.json()
+  return profile?.user?.role === 'owner'
+}
+
+async function getWebUpdateStatus(updateState, searchParams) {
+  const metadata = readInstalledMetadata()
+  const current = parseVersion(searchParams.get('current') || metadata.version)
+  const channel = parseChannel(
+    searchParams.get('channel') ||
+      metadata.channel ||
+      inferChannelFromVersion(current),
+  )
+  const repo = searchParams.get('repo') || metadata.github_repo
+  const release = await fetchLatestRelease(repo, channel)
+  const latest = parseVersion(release.tag_name)
+  return {
+    ...metadata,
+    version: current.raw,
+    channel,
+    github_repo: repo,
+    latest_version: latest.raw,
+    update_available: compareVersions(current, latest) < 0,
+    managed_service: hasManagedWebService(),
+    ...updateState,
+  }
 }
 
 export function isApiPath(pathname) {
@@ -1084,10 +1152,11 @@ async function main() {
     process.exit(2)
   }
 
+  const updateState = { phase: 'idle', error: null }
   const server = Bun.serve({
     hostname: listen.hostname,
     port: listen.port,
-    fetch: (request) => {
+    fetch: async (request) => {
       const url = new URL(request.url)
 
       if (url.pathname === '/__oore_web_healthz') {
@@ -1104,6 +1173,80 @@ async function main() {
             },
           },
         )
+      }
+
+      if (url.pathname === '/__oore_web_update') {
+        let owner = false
+        try {
+          owner = await authorizeOwner(request, backendUrl, config)
+        } catch {
+          return Response.json(
+            { error: 'Could not verify the current owner session' },
+            { status: 502 },
+          )
+        }
+        if (!owner) {
+          return Response.json(
+            { error: 'Only the instance owner can manage runtime updates' },
+            { status: 403 },
+          )
+        }
+
+        if (request.method === 'GET') {
+          try {
+            return Response.json(
+              await getWebUpdateStatus(updateState, url.searchParams),
+              {
+                headers: { 'Cache-Control': 'no-store' },
+              },
+            )
+          } catch (error) {
+            return Response.json(
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Failed to check for frontend updates',
+              },
+              { status: 502 },
+            )
+          }
+        }
+
+        if (request.method !== 'POST') {
+          return new Response('Method not allowed', { status: 405 })
+        }
+        if (!hasManagedWebService()) {
+          return Response.json(
+            { error: 'Frontend updates require a managed service' },
+            { status: 409 },
+          )
+        }
+        if (updateState.phase === 'updating') {
+          return Response.json(
+            { error: 'A frontend update is already in progress' },
+            { status: 409 },
+          )
+        }
+
+        updateState.phase = 'updating'
+        updateState.error = null
+        void runUpdate({ check: false, force: false }).then(
+          (result) => {
+            if (!result.updated) {
+              updateState.phase = 'idle'
+              return
+            }
+            updateState.phase = 'restarting'
+            setTimeout(() => process.exit(75), 1000)
+          },
+          (error) => {
+            updateState.phase = 'failed'
+            updateState.error =
+              error instanceof Error ? error.message : 'Frontend update failed'
+          },
+        )
+        return Response.json(updateState, { status: 202 })
       }
 
       if (isApiPath(url.pathname)) {

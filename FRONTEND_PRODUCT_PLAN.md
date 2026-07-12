@@ -86,3 +86,16 @@ Release evidence: `v0.1.29-alpha.30` passed the release workflow and was verifie
 ## Separate security track
 
 Remote-mode HttpOnly cookie sessions require frontend/backend architecture work and are not part of the UI overhaul. Track and design this separately rather than mixing an authentication migration into visual and performance changes.
+
+## Milestone 7 — State boundaries and runtime administration
+
+- [x] Keep server state in TanStack Query and form state in React Hook Form instead of duplicating either in Zustand.
+- [x] Move cross-component command-palette state into the shared Zustand UI store.
+- [x] Collapse coupled build-log stream flags into one reducer with deterministic cleanup.
+- [x] Remove mirrored pipeline-form dirty state and group related disclosure state.
+- [x] Show frontend and backend release versions independently.
+- [x] Let owners update managed frontend and backend services from the web UI.
+- [x] Report the installed version for embedded and detached runners.
+- [ ] Add detached-runner remote updates after runner-only packaging and a managed runner service/supervisor contract exist.
+
+**Gate:** shared, server, form, and lifecycle state each have one clear owner; runtime updates remain owner-only and unavailable for unmanaged processes; frontend/backend restart through their existing service managers.
