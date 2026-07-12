@@ -76,7 +76,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Add a production bundle budget and a repeatable reporting command.
 - [x] Verify core shadcn components against the current registry and update frontend dependencies within current major versions.
 - [ ] Handle Vite, Vitest, ESLint, shadcn, Hugeicons, and TypeScript major upgrades separately.
-- [ ] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.
+- [x] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.
 - [ ] Publish an alpha release and complete signed-in desktop/mobile smoke testing.
 
 **Gate:** initial payload is smaller than the baseline, validation is green, and the alpha build is testable through the real AWS frontend.
