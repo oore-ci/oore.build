@@ -104,12 +104,13 @@ export default function InstanceSwitcher() {
                   <span className="truncate flex-1">{inst.label}</span>
                   <button
                     type="button"
-                    className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                    className="ml-auto text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
                     onClick={(e) => {
                       e.stopPropagation()
                       requestAnimationFrame(() => setEditingInstance(inst))
                     }}
                     title={`Edit ${inst.label}`}
+                    aria-label={`Edit ${inst.label}`}
                   >
                     <HugeiconsIcon icon={PencilEdit02Icon} size={14} />
                   </button>

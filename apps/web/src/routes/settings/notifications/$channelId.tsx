@@ -284,7 +284,7 @@ function NotificationChannelDetailPage() {
             <AlertDialog>
               <AlertDialogTrigger
                 render={
-                  <Button variant="outline">
+                  <Button variant="destructive">
                     <HugeiconsIcon icon={Delete02Icon} />
                     Delete
                   </Button>
@@ -640,9 +640,7 @@ function NotificationChannelDetailPage() {
         </CardHeader>
         <CardContent>
           {deliveries.length === 0 ? (
-            <p className="py-6 text-sm text-muted-foreground">
-              No deliveries yet.
-            </p>
+            <p className="text-sm text-muted-foreground">No deliveries yet.</p>
           ) : (
             <div className="space-y-2">
               {deliveries.map((delivery) => (

@@ -71,6 +71,7 @@ import type {
   RetentionCleanupSummaryResponse,
   RetentionPolicyResponse,
   RevokeApiTokenResponse,
+  RuntimeUpdateStatus,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
@@ -339,6 +340,25 @@ export function getMe(
   token: string,
 ): Promise<UserProfileResponse> {
   return request<UserProfileResponse>(baseUrl, '/v1/users/me', {
+    headers: authHeaders(token),
+  })
+}
+
+export function getBackendUpdateStatus(
+  baseUrl: string,
+  token: string,
+): Promise<RuntimeUpdateStatus> {
+  return request<RuntimeUpdateStatus>(baseUrl, '/v1/system/update', {
+    headers: authHeaders(token),
+  })
+}
+
+export function startBackendUpdate(
+  baseUrl: string,
+  token: string,
+): Promise<RuntimeUpdateStatus> {
+  return request<RuntimeUpdateStatus>(baseUrl, '/v1/system/update', {
+    method: 'POST',
     headers: authHeaders(token),
   })
 }

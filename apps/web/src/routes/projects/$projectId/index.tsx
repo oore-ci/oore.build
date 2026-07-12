@@ -42,6 +42,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -462,21 +470,29 @@ function ProjectDetailPage() {
                   )
                 })()}
                 {builds.length === 0 ? (
-                  <div className="space-y-2 py-6 text-center">
-                    <p className="text-sm text-muted-foreground">
-                      {canTriggerBuild
-                        ? 'No builds yet.'
-                        : 'No builds yet. Builds will appear here once triggered by a developer.'}
-                    </p>
+                  <Empty className="p-8">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <HugeiconsIcon icon={PlayIcon} />
+                      </EmptyMedia>
+                      <EmptyTitle>No builds yet</EmptyTitle>
+                      <EmptyDescription>
+                        {canTriggerBuild
+                          ? 'Run this project’s first pipeline to see its status, output, and artifacts here.'
+                          : 'Builds will appear here once triggered by a developer.'}
+                      </EmptyDescription>
+                    </EmptyHeader>
                     {canTriggerBuild &&
                     pipelines.length > 0 &&
                     projectHasSource ? (
-                      <Button size="sm" onClick={() => openTriggerBuild()}>
-                        <HugeiconsIcon icon={PlayIcon} />
-                        Trigger first build
-                      </Button>
+                      <EmptyContent>
+                        <Button size="sm" onClick={() => openTriggerBuild()}>
+                          <HugeiconsIcon icon={PlayIcon} />
+                          Run first build
+                        </Button>
+                      </EmptyContent>
                     ) : null}
-                  </div>
+                  </Empty>
                 ) : (
                   <Table>
                     <TableHeader>
@@ -626,10 +642,7 @@ function ProjectDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={handleDelete}>
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>

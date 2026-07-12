@@ -60,9 +60,7 @@ const RESOURCE_TYPE_OPTIONS: Record<string, string> = {
 
 export const Route = createFileRoute('/settings/audit-log')({
   staticData: { breadcrumbLabel: 'Audit Log' },
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { page?: number } => ({
+  validateSearch: (search: Record<string, unknown>): { page?: number } => ({
     page: Number(search.page) > 1 ? Number(search.page) : undefined,
   }),
   beforeLoad: () => {
@@ -123,7 +121,7 @@ function AuditLogPage() {
         description="Activity trail of user and system actions for compliance and security auditing."
       />
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <Select
           value={resourceTypeFilter}
           onValueChange={(v) => {
@@ -132,7 +130,7 @@ function AuditLogPage() {
           }}
           items={RESOURCE_TYPE_OPTIONS}
         >
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-full sm:w-40">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -150,7 +148,7 @@ function AuditLogPage() {
             setActionFilter(e.target.value)
             void navigate({ search: { page: 1 } })
           }}
-          className="max-w-xs"
+          className="w-full sm:max-w-xs"
         />
         <Input
           type="date"
@@ -159,7 +157,7 @@ function AuditLogPage() {
             setFromDate(e.target.value)
             void navigate({ search: { page: 1 } })
           }}
-          className="w-36"
+          className="w-full sm:w-36"
           aria-label="From date"
         />
         <Input
@@ -169,7 +167,7 @@ function AuditLogPage() {
             setToDate(e.target.value)
             void navigate({ search: { page: 1 } })
           }}
-          className="w-36"
+          className="w-full sm:w-36"
           aria-label="To date"
         />
         {hasFilters ? (
@@ -222,7 +220,7 @@ function AuditLogPage() {
           </CardHeader>
           <CardContent>
             {entries.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 No audit log entries found.
               </p>
             ) : (
@@ -252,9 +250,7 @@ function AuditLogPage() {
                         <Badge variant="outline">{entry.action}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">
-                          {entry.resource_type}
-                        </Badge>
+                        <Badge variant="secondary">{entry.resource_type}</Badge>
                       </TableCell>
                       <TableCell className="font-mono text-[11px] text-muted-foreground">
                         {entry.resource_id

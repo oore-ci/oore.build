@@ -141,11 +141,13 @@ function AlertDialogDescription({
 
 function AlertDialogAction({
   className,
+  variant = 'destructive',
   ...props
 }: React.ComponentProps<typeof Button>) {
   return (
     <Button
       data-slot="alert-dialog-action"
+      variant={variant}
       className={cn(className)}
       {...props}
     />

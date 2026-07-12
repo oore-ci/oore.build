@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Folder02Icon } from '@hugeicons/core-free-icons'
+import { Folder02Icon, Link04Icon } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
 import type { ScmProvider } from '@/lib/types'
@@ -383,6 +383,7 @@ export default function CreateProjectDialog({
                         render={<Link to="/settings/integrations" />}
                         nativeButton={false}
                       >
+                        <HugeiconsIcon icon={Link04Icon} />
                         Connect source
                       </Button>
                     </div>

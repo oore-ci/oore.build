@@ -36,6 +36,7 @@ import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
+import { useUiStore } from '@/stores/ui-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -176,6 +177,7 @@ function RootLayout() {
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const authToken = useAuthStore((s) => s.token)
   const authUser = useAuthStore((s) => s.user)
+  const openCommandPalette = useUiStore((s) => s.setCommandPaletteOpen)
 
   // Show sidebar+header only when: not on setup/login AND instance+auth exist
   const showAppChrome =
@@ -215,14 +217,8 @@ function RootLayout() {
                 <div className="ml-auto">
                   <button
                     type="button"
-                    onClick={() =>
-                      window.dispatchEvent(
-                        new KeyboardEvent('keydown', {
-                          key: 'k',
-                          metaKey: true,
-                        }),
-                      )
-                    }
+                    aria-label="Search"
+                    onClick={() => openCommandPalette(true)}
                     className="inline-flex h-8 items-center gap-2 rounded-sm border bg-muted/50 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                   >
                     <HugeiconsIcon icon={Search01Icon} size={14} />

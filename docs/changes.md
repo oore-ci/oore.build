@@ -14,8 +14,20 @@ Rules:
 
 ## 2026-07-13
 
+- **Runtime versions, owner-managed updates, and frontend state boundaries**:
+  - Preferences now reports frontend and backend versions independently, checks the installed release channel for updates, and lets the owner update managed `oore-web` and `oored` services through their existing systemd/launchd supervisors.
+  - Runner inventory now reports embedded and detached runner versions. Remote runner updates stay disabled until a runner-only package and managed service contract exist.
+  - Shared command-palette state now lives in Zustand, server update state remains in TanStack Query, build-log lifecycle state uses a reducer, and pipeline-form state no longer mirrors React Hook Form dirtiness through an effect.
+  - Linear feature docs: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5 and https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+- **Updater system-service authorization fix**:
+  - `oore update` now obtains and explains macOS administrator authorization before replacing installed files, then restarts system launchd services non-interactively with bounded launchctl commands so a stalled password or service command cannot leave an apparently updated but unverified release.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
 - **Frontend release smoke follow-up**:
   - Signed-in AWS smoke testing passed at desktop and 390 px widths for dashboard, projects, builds, sources, and GitLab setup; long setup URLs now wrap within narrow hint cards.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Frontend layout and action consistency follow-up**:
+  - Source connection actions now align across providers, connected-source and other inventory empty states use compact spacing, and equivalent navigation/create/copy/destructive actions share icons, wording, and visual treatment.
+  - Shared page headers no longer double their section spacing; project cards align their actions; narrow settings layouts reflow instead of overflowing; and icon-only controls expose accessible names and selected state.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 
 ## 2026-07-12

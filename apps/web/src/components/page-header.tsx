@@ -18,7 +18,7 @@ export default function PageHeader({
   meta,
 }: PageHeaderProps) {
   return (
-    <header className="space-y-3 pb-6">
+    <header className="space-y-3">
       {back && (
         <Link
           to={back.to}

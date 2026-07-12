@@ -11,6 +11,7 @@ import {
   ArrowDown01Icon,
   ArrowRight01Icon,
   CheckmarkCircle02Icon,
+  Download04Icon,
   Folder02Icon,
 } from '@hugeicons/core-free-icons'
 import type { RemoteAuthMode } from '@/lib/types'
@@ -25,6 +26,7 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
+import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import {
   useArtifactStorageSettings,
   useConfigureExternalAccessOidc,
@@ -252,6 +254,10 @@ function healthVersionLabel(
   return health?.version?.trim() || 'Unknown'
 }
 
+function runtimeUpdateActive(phase?: string): boolean {
+  return phase === 'updating' || phase === 'restarting'
+}
+
 function parseAllowedOriginsInput(value: string): Array<string> {
   return value
     .split(/[\n,]/g)
@@ -315,6 +321,13 @@ function PreferencesPage() {
     retry: false,
     staleTime: 30_000,
   })
+  const runtimeUpdates = useRuntimeUpdates(backendHealthQuery.data ?? {})
+  const frontendUpdatePhase =
+    runtimeUpdates.startFrontendUpdate.data?.phase ??
+    runtimeUpdates.frontendRelease.data?.phase
+  const backendUpdatePhase =
+    runtimeUpdates.startBackendUpdate.data?.phase ??
+    runtimeUpdates.backendUpdate.data?.phase
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
   const oidcConfigQuery = useExternalAccessOidc()
@@ -1556,7 +1569,7 @@ function PreferencesPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardContent>
+          <CardContent className="flex h-full flex-col">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Frontend version
             </p>
@@ -1568,10 +1581,51 @@ function PreferencesPage() {
                 ? `${webHealthQuery.data.channel} channel`
                 : 'Loaded oore-web bundle'}
             </p>
+            {runtimeUpdates.frontendRelease.data?.update_available ? (
+              <>
+                <p className="mt-2 text-xs text-primary">
+                  {runtimeUpdates.frontendRelease.data.latest_version} is
+                  available
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-3 self-start"
+                  disabled={
+                    !isOwner ||
+                    !runtimeUpdates.frontendRelease.data.managed_service ||
+                    runtimeUpdateActive(frontendUpdatePhase) ||
+                    runtimeUpdates.startFrontendUpdate.isPending
+                  }
+                  onClick={() =>
+                    runtimeUpdates.startFrontendUpdate.mutate(undefined, {
+                      onSuccess: () =>
+                        toast.success(
+                          'Frontend update started. The UI will reconnect after restart.',
+                        ),
+                      onError: (error) => toast.error(error.message),
+                    })
+                  }
+                >
+                  <HugeiconsIcon icon={Download04Icon} />
+                  {runtimeUpdates.startFrontendUpdate.isPending
+                    ? 'Starting...'
+                    : frontendUpdatePhase === 'restarting'
+                      ? 'Restarting...'
+                      : frontendUpdatePhase === 'updating'
+                        ? 'Updating...'
+                        : 'Update frontend'}
+                </Button>
+                {!runtimeUpdates.frontendRelease.data.managed_service ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Install oore-web as a managed service to update it here.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
           </CardContent>
         </Card>
         <Card>
-          <CardContent>
+          <CardContent className="flex h-full flex-col">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Backend version
             </p>
@@ -1583,6 +1637,49 @@ function PreferencesPage() {
                 ? `${backendHealthQuery.data.channel} channel`
                 : 'Loaded oored daemon'}
             </p>
+            {runtimeUpdates.backendRelease.data?.update_available ? (
+              <>
+                <p className="mt-2 text-xs text-primary">
+                  {runtimeUpdates.backendRelease.data.latest_version} is
+                  available
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-3 self-start"
+                  disabled={
+                    !isOwner ||
+                    !runtimeUpdates.backendUpdate.data?.managed_service ||
+                    runtimeUpdateActive(backendUpdatePhase) ||
+                    runtimeUpdates.startBackendUpdate.isPending
+                  }
+                  onClick={() =>
+                    runtimeUpdates.startBackendUpdate.mutate(undefined, {
+                      onSuccess: () =>
+                        toast.success(
+                          'Backend update started. Readiness will recover after launchd restarts it.',
+                        ),
+                      onError: (error) => toast.error(error.message),
+                    })
+                  }
+                >
+                  <HugeiconsIcon icon={Download04Icon} />
+                  {runtimeUpdates.startBackendUpdate.isPending
+                    ? 'Starting...'
+                    : backendUpdatePhase === 'restarting'
+                      ? 'Restarting...'
+                      : backendUpdatePhase === 'updating'
+                        ? 'Updating...'
+                        : 'Update backend'}
+                </Button>
+                {runtimeUpdates.backendUpdate.data &&
+                !runtimeUpdates.backendUpdate.data.managed_service ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Install oored as the managed macOS service to update it
+                    here.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
           </CardContent>
         </Card>
       </section>

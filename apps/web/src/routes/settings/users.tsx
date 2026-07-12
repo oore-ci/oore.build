@@ -402,7 +402,7 @@ function UsersSettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <div className="flex flex-1 flex-col gap-1">
               <Input
                 type="email"
@@ -430,7 +430,7 @@ function UsersSettingsPage() {
               onValueChange={(v) => setInviteRole(v as UserRole)}
               items={ROLE_OPTIONS}
             >
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-full sm:w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -442,6 +442,7 @@ function UsersSettingsPage() {
               </SelectContent>
             </Select>
             <Button
+              className="w-full sm:w-auto"
               onClick={handleInvite}
               disabled={
                 !inviteEmail || !!emailError || inviteMutation.isPending

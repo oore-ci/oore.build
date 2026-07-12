@@ -75,12 +75,20 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .unwrap_or_default();
 
     let arch = std::env::consts::ARCH.to_string();
+    let version = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent()?.parent().map(|root| root.join("VERSION")))
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
     serde_json::json!({
         "os": "macos",
         "os_version": os_version,
         "arch": arch,
         "xcode_version": xcode_version,
+        "version": version,
     })
 }
 
@@ -3036,6 +3044,17 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[tokio::test]
+    async fn reported_capabilities_include_runner_version() {
+        let capabilities = detect_capabilities().await;
+        assert!(
+            capabilities
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|version| !version.is_empty())
+        );
     }
 
     fn cleanup_workspace(path: &Path) {

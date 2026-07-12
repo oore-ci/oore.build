@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Delete02Icon,
   InformationCircleIcon,
-  LinkSquare02Icon,
+  Link04Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 import { useMountEffect } from '@/hooks/use-mount-effect'
@@ -141,13 +141,13 @@ function IntegrationsPage() {
         </Card>
       ) : (
         <section className="grid gap-4 md:grid-cols-2">
-          <Card>
+          <Card className="h-full">
             <CardHeader>
               <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 GitHub Source
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="flex flex-1 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
                 Create and install a GitHub App to enable repository discovery
                 and webhook events.
@@ -161,22 +161,23 @@ function IntegrationsPage() {
                 ]}
               />
               <Button
+                className="mt-auto self-start"
                 render={<Link to="/settings/integrations/github" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={LinkSquare02Icon} />
+                <HugeiconsIcon icon={Link04Icon} />
                 Connect GitHub
               </Button>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="h-full">
             <CardHeader>
               <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 GitLab Source
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="flex flex-1 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
                 Connect GitLab.com or a self-managed GitLab host through a
                 personal access token or OAuth application.
@@ -195,10 +196,11 @@ function IntegrationsPage() {
                 ]}
               />
               <Button
+                className="mt-auto self-start"
                 render={<Link to="/settings/integrations/gitlab" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={LinkSquare02Icon} />
+                <HugeiconsIcon icon={Link04Icon} />
                 Connect GitLab
               </Button>
             </CardContent>
@@ -218,7 +220,7 @@ function IntegrationsPage() {
       ) : null}
 
       {isLoading ? (
-        <Card>
+        <Card size="sm">
           <CardContent className="space-y-3">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -236,7 +238,7 @@ function IntegrationsPage() {
       ) : null}
 
       {!isLoading && !error && remoteEnabled ? (
-        <Card>
+        <Card size="sm">
           <CardHeader>
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
               Connected Sources
@@ -244,8 +246,8 @@ function IntegrationsPage() {
           </CardHeader>
           <CardContent>
             {integrations.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
-                No sources connected yet.
+              <p className="text-sm text-muted-foreground">
+                No connected sources yet. Connect GitHub or GitLab above.
               </p>
             ) : (
               <div className="space-y-3">
@@ -255,7 +257,7 @@ function IntegrationsPage() {
                 {integrations.map((integration) => (
                   <div
                     key={integration.id}
-                    className="group flex items-start justify-between gap-3 border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
+                    className="group flex flex-col border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
                   >
                     <Link
                       to="/settings/integrations/$integrationId"
@@ -299,7 +301,7 @@ function IntegrationsPage() {
                       </div>
                     </Link>
 
-                    <div className="p-4 pl-0">
+                    <div className="p-4 pt-0 sm:pl-0 sm:pt-4">
                       <AlertDialog>
                         <AlertDialogTrigger
                           render={

@@ -221,7 +221,7 @@ function RetentionPage() {
           {/* Enable/Disable */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center justify-between">
+              <CardTitle className="flex items-center justify-between text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 <span>Global Retention Policy</span>
                 <Badge variant={enabled ? 'default' : 'outline'}>
                   {enabled ? 'Active' : 'Disabled'}
@@ -493,7 +493,9 @@ function RetentionPage() {
       {/* Last Cleanup Summary */}
       <Card>
         <CardHeader>
-          <CardTitle>Last Cleanup</CardTitle>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Last Cleanup
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {cleanupLoading ? (

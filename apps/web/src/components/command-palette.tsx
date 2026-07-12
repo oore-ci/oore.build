@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/command'
 import { useProjects } from '@/hooks/use-projects'
 import { useAuthStore } from '@/stores/auth-store'
+import { useUiStore } from '@/stores/ui-store'
 import { useHasPermission } from '@/hooks/use-permissions'
 
 interface PaletteItem {
@@ -34,7 +35,9 @@ interface PaletteItem {
 }
 
 export default function CommandPalette() {
-  const [open, setOpen] = useState(false)
+  const open = useUiStore((state) => state.commandPaletteOpen)
+  const setOpen = useUiStore((state) => state.setCommandPaletteOpen)
+  const toggleOpen = useUiStore((state) => state.toggleCommandPalette)
   const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
 
@@ -49,7 +52,7 @@ export default function CommandPalette() {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
-        setOpen((prev) => !prev)
+        toggleOpen()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -61,7 +64,7 @@ export default function CommandPalette() {
       setOpen(false)
       void navigate({ to })
     },
-    [navigate],
+    [navigate, setOpen],
   )
 
   const navItems = useMemo<Array<PaletteItem>>(

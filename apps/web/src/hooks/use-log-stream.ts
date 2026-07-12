@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
 
 import type { BuildLogChunk } from '@/lib/types'
 import { createStreamToken, getBuildLogs } from '@/lib/api'
@@ -21,16 +21,27 @@ interface UseLogStreamOptions {
 const POLL_INTERVAL_MS = 2500
 const POLL_BACKFILL_WINDOW = 500
 
+type StreamState = UseLogStreamResult
+type StreamAction = Partial<StreamState> | 'reset'
+
+const initialStreamState: StreamState = {
+  logs: [],
+  isStreaming: false,
+  isDone: false,
+  error: null,
+}
+
+function streamReducer(state: StreamState, action: StreamAction): StreamState {
+  return action === 'reset' ? initialStreamState : { ...state, ...action }
+}
+
 export function useLogStream(
   buildId: string,
   enabled: boolean,
   options?: UseLogStreamOptions,
 ): UseLogStreamResult {
   const onDone = options?.onDone
-  const [logs, setLogs] = useState<Array<BuildLogChunk>>([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [isDone, setIsDone] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [stream, updateStream] = useReducer(streamReducer, initialStreamState)
 
   const instance = useActiveInstance()
   const baseUrl = resolveInstanceApiBaseUrl(instance)
@@ -56,7 +67,7 @@ export function useLogStream(
 
     orderedLogsRef.current = merged.logs
     lastSequenceRef.current = merged.lastSequence
-    setLogs(merged.logs)
+    updateStream({ logs: merged.logs })
   }, [])
 
   const pollOnce = useCallback(async () => {
@@ -104,15 +115,10 @@ export function useLogStream(
   }, [stopPolling])
 
   useEffect(() => {
-    if (!enabled || !baseUrl || !token) {
-      cleanup()
-      return
-    }
+    cleanup()
+    if (!enabled || !baseUrl || !token) return cleanup
 
-    setLogs([])
-    setIsStreaming(false)
-    setIsDone(false)
-    setError(null)
+    updateStream('reset')
     logsBySequenceRef.current = new Map()
     orderedLogsRef.current = []
     lastSequenceRef.current = -1
@@ -129,7 +135,9 @@ export function useLogStream(
         streamToken = response.token
       } catch {
         if (!abort.signal.aborted) {
-          setError('Live stream unavailable. Using polling fallback.')
+          updateStream({
+            error: 'Live stream unavailable. Using polling fallback.',
+          })
         }
         return
       }
@@ -147,8 +155,7 @@ export function useLogStream(
         es.addEventListener('open', () => {
           // SSE is healthy, so suspend polling reconciliation until disconnect.
           stopPolling()
-          setIsStreaming(true)
-          setError(null)
+          updateStream({ isStreaming: true, error: null })
         })
 
         es.addEventListener('log', (event: MessageEvent) => {
@@ -161,8 +168,7 @@ export function useLogStream(
         })
 
         es.addEventListener('done', () => {
-          setIsStreaming(false)
-          setIsDone(true)
+          updateStream({ isStreaming: false, isDone: true })
           es.close()
           eventSourceRef.current = null
           void pollOnce()
@@ -173,14 +179,18 @@ export function useLogStream(
         es.addEventListener('error', () => {
           es.close()
           eventSourceRef.current = null
-          setIsStreaming(false)
-          setError('Live stream disconnected. Continuing with polling.')
+          updateStream({
+            isStreaming: false,
+            error: 'Live stream disconnected. Continuing with polling.',
+          })
           startPolling()
         })
       } catch {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- abort may happen concurrently
         if (!abort.signal.aborted) {
-          setError('Failed to connect live stream. Using polling fallback.')
+          updateStream({
+            error: 'Failed to connect live stream. Using polling fallback.',
+          })
         }
       }
     })()
@@ -199,5 +209,5 @@ export function useLogStream(
     onDone,
   ])
 
-  return { logs, isStreaming, isDone, error }
+  return stream
 }

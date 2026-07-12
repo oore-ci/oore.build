@@ -47,6 +47,9 @@ use utoipa::OpenApi;
         paths::local_login,
         paths::trusted_proxy_login,
         paths::logout,
+        // ── Runtime updates ──
+        paths::get_runtime_update_status,
+        paths::start_runtime_update,
         // ── Users ──
         paths::get_me,
         paths::list_users,
@@ -198,6 +201,9 @@ use utoipa::OpenApi;
         oore_contract::LocalLoginResponse,
         oore_contract::AuthenticatedUser,
         oore_contract::LogoutResponse,
+        // Runtime updates
+        oore_contract::RuntimeUpdatePhase,
+        oore_contract::RuntimeUpdateStatus,
         // Users
         oore_contract::UserRole,
         oore_contract::UserStatus,
@@ -707,6 +713,37 @@ mod paths {
         )
     )]
     pub(super) async fn logout() {}
+
+    // ── Runtime updates ──
+
+    /// Get backend update state
+    ///
+    /// Reports whether the backend is managed by the supported macOS launchd
+    /// service and whether an update is currently running. Requires owner role.
+    #[utoipa::path(get, path = "/v1/system/update", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Backend update state", body = RuntimeUpdateStatus),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_runtime_update_status() {}
+
+    /// Start a backend update
+    ///
+    /// Runs the installed updater and hands restart control to the managed
+    /// macOS launchd service. Requires owner role.
+    #[utoipa::path(post, path = "/v1/system/update", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 202, description = "Backend update started", body = RuntimeUpdateStatus),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+            (status = 409, description = "Managed updater unavailable or already running", body = ApiError),
+        )
+    )]
+    pub(super) async fn start_runtime_update() {}
 
     // ── Users ──
 

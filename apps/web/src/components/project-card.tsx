@@ -22,8 +22,8 @@ export default function ProjectCard({
   onTriggerBuild,
 }: ProjectCardProps) {
   return (
-    <Card className="group relative">
-      <CardContent className="space-y-3">
+    <Card className="group relative h-full">
+      <CardContent className="flex h-full flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <Link
@@ -78,7 +78,7 @@ export default function ProjectCard({
         <Button
           size="sm"
           variant="outline"
-          className="w-full"
+          className="mt-auto w-full"
           onClick={() => onTriggerBuild(project.id)}
         >
           <HugeiconsIcon icon={PlayIcon} />

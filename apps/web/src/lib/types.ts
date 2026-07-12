@@ -198,6 +198,20 @@ export interface LogoutResponse {
   ok: boolean
 }
 
+export interface RuntimeUpdateStatus {
+  phase: 'idle' | 'updating' | 'restarting' | 'failed'
+  error?: string | null
+  managed_service: boolean
+}
+
+export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
+  version: string
+  latest_version: string
+  channel: string
+  github_repo: string
+  update_available: boolean
+}
+
 // ── Structured API error ────────────────────────────────────────
 
 export interface ApiError {
@@ -211,10 +225,7 @@ export interface ApiError {
 export type ScmProvider = 'github' | 'gitlab' | 'local_git'
 
 export type IntegrationAuthMode =
-  | 'github_app'
-  | 'oauth_app'
-  | 'personal_token'
-  | 'local_path'
+  'github_app' | 'oauth_app' | 'personal_token' | 'local_path'
 
 export type IntegrationStatus = 'active' | 'inactive' | 'error'
 
