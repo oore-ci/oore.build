@@ -12,6 +12,12 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-13
+
+- **Frontend release smoke follow-up**:
+  - Signed-in AWS smoke testing passed at desktop and 390 px widths for dashboard, projects, builds, sources, and GitLab setup; long setup URLs now wrap within narrow hint cards.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 ## 2026-07-12
 
 - **Frontend build-log correctness foundation**:

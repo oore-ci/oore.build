@@ -22,7 +22,7 @@ export default function SetupHint({
   return (
     <div
       className={cn(
-        'border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground',
+        'border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground [&_code]:break-all',
         className,
       )}
     >
