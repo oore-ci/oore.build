@@ -58,7 +58,13 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/settings/notifications/$channelId')({
-  staticData: { breadcrumbLabel: 'Channel' },
+  staticData: {
+    breadcrumbLabel: 'Channel',
+    breadcrumbParent: {
+      label: 'Notifications',
+      to: '/settings/notifications',
+    },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -253,10 +259,7 @@ function NotificationChannelDetailPage() {
   if (!channel) {
     return (
       <PageLayout width="wide">
-        <PageHeader
-          title="Channel Not Found"
-          back={{ to: '/settings/notifications', label: 'Notifications' }}
-        />
+        <PageHeader title="Channel Not Found" />
         <p className="text-sm text-muted-foreground">
           This notification channel does not exist or has been deleted.
         </p>
@@ -270,7 +273,6 @@ function NotificationChannelDetailPage() {
       <PageHeader
         title={channel.name}
         description={`${channelTypeLabel(channel.channel_type)} notification channel`}
-        back={{ to: '/settings/notifications', label: 'Notifications' }}
         actions={
           <div className="flex gap-2">
             <Button

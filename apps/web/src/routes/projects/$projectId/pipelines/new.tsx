@@ -53,7 +53,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
-  staticData: { breadcrumbLabel: 'New Pipeline' },
+  staticData: {
+    breadcrumbLabel: 'New Pipeline',
+    breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -662,7 +665,6 @@ function NewPipelinePage() {
       <PageMeta title="New Pipeline" />
       <PageHeader
         title="Set up a build"
-        back={{ to: `/projects/${projectId}`, label: 'Project' }}
         description="Use the workflow already in your repository, or start with a guided template."
       />
       <div className="mx-auto mb-6 max-w-4xl">

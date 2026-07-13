@@ -58,7 +58,10 @@ import {
 } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
-  staticData: { breadcrumbLabel: 'Details' },
+  staticData: {
+    breadcrumbLabel: 'Details',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   validateSearch: (
     search: Record<string, unknown>,
   ): { installed?: string; gitlab?: string } => ({
@@ -213,7 +216,6 @@ function IntegrationDetailPage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={integration.display_name ?? integration.provider}
-        back={{ to: '/settings/integrations', label: 'Sources' }}
         description={sourceDescription}
         meta={
           <>

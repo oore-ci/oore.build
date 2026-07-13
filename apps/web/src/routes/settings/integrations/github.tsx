@@ -25,7 +25,10 @@ import SetupHint from '@/components/setup-hint'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/github')({
-  staticData: { breadcrumbLabel: 'GitHub' },
+  staticData: {
+    breadcrumbLabel: 'GitHub',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -65,7 +68,6 @@ function GitHubSetupPage() {
       <PageHeader
         title="Connect GitHub Source"
         description="Generate and install a GitHub App source for repository access and webhook delivery."
-        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <section className="grid gap-4 lg:grid-cols-2">

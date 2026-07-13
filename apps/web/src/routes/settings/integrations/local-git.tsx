@@ -13,7 +13,10 @@ import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 
 export const Route = createFileRoute('/settings/integrations/local-git')({
-  staticData: { breadcrumbLabel: 'Local Repositories' },
+  staticData: {
+    breadcrumbLabel: 'Local Repositories',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -31,7 +34,6 @@ function LocalGitPage() {
       <PageHeader
         title="Local Repositories"
         description="Local repository selection now happens directly during project creation."
-        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <Card>

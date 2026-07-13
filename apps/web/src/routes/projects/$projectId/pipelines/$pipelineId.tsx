@@ -77,7 +77,10 @@ import TriggerBuildDialog from '@/components/trigger-build-dialog'
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId',
 )({
-  staticData: { breadcrumbLabel: 'Pipeline' },
+  staticData: {
+    breadcrumbLabel: 'Pipeline',
+    breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -227,7 +230,6 @@ function PipelineDetailPage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={pipeline.name}
-        back={{ to: `/projects/${projectId}`, label: 'Project' }}
         description="Pipeline overview and configuration."
         meta={
           <>

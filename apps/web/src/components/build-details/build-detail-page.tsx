@@ -160,7 +160,6 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
             .filter(Boolean)
             .join(' · ') || undefined
         }
-        back={{ to: '/builds', label: 'Builds' }}
         meta={
           <>
             <Badge variant={getStatusVariant(build.status)}>

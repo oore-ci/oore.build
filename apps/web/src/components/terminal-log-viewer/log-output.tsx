@@ -111,11 +111,12 @@ export function LogOutput({
                     {chunk.sequence}
                   </span>
                   <span
-                    className={
+                    className={cn(
+                      'pl-3 pr-4',
                       wrapLines
-                        ? 'whitespace-pre-wrap break-all pr-4'
-                        : 'whitespace-pre pr-4'
-                    }
+                        ? 'whitespace-pre-wrap break-all'
+                        : 'whitespace-pre',
+                    )}
                   >
                     <AnsiLine content={chunk.content} />
                   </span>

@@ -59,7 +59,13 @@ import PipelineForm from '@/components/pipeline-form'
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId_/edit',
 )({
-  staticData: { breadcrumbLabel: 'Edit Pipeline' },
+  staticData: {
+    breadcrumbLabel: 'Edit Pipeline',
+    breadcrumbParent: {
+      label: 'Pipeline',
+      to: '/projects/$projectId/pipelines/$pipelineId',
+    },
+  },
   validateSearch: (
     search: Record<string, unknown>,
   ): {
@@ -588,10 +594,6 @@ function EditPipelinePage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Edit: ${pipeline.name}`}
-        back={{
-          to: `/projects/${projectId}/pipelines/${pipelineId}`,
-          label: 'Pipeline',
-        }}
         description={
           retrySigning
             ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`

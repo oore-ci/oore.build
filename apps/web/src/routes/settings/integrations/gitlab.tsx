@@ -29,7 +29,10 @@ import { gitLabPublicEndpoints, normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/integrations/gitlab')({
-  staticData: { breadcrumbLabel: 'GitLab' },
+  staticData: {
+    breadcrumbLabel: 'GitLab',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -149,7 +152,6 @@ function GitLabSetupPage() {
       <PageHeader
         title="Connect GitLab Source"
         description="Connect GitLab.com or a self-managed GitLab host for repository discovery and webhook-triggered builds."
-        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
       <Card>
         <CardHeader>

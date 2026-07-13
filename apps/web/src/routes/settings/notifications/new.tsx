@@ -41,7 +41,13 @@ import {
 import { getApiErrorMessage } from '@/lib/api'
 
 export const Route = createFileRoute('/settings/notifications/new')({
-  staticData: { breadcrumbLabel: 'New Channel' },
+  staticData: {
+    breadcrumbLabel: 'New Channel',
+    breadcrumbParent: {
+      label: 'Notifications',
+      to: '/settings/notifications',
+    },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -207,7 +213,6 @@ function NewNotificationChannelPage() {
       <PageHeader
         title="New Notification Channel"
         description="Configure a notification channel to receive build and runner status updates."
-        back={{ to: '/settings/notifications', label: 'Notifications' }}
       />
 
       <Card>

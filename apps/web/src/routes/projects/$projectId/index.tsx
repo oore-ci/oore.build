@@ -88,7 +88,10 @@ const tabSearch = z.object({
 })
 
 export const Route = createFileRoute('/projects/$projectId/')({
-  staticData: { breadcrumbLabel: 'Details' },
+  staticData: {
+    breadcrumbLabel: 'Details',
+    breadcrumbParent: { label: 'Projects', to: '/projects' },
+  },
   validateSearch: tabSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -339,7 +342,6 @@ function ProjectDetailPage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={project.name}
-        back={{ to: '/projects', label: 'Projects' }}
         description={project.description}
         meta={
           <>
