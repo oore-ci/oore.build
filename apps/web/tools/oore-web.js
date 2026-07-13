@@ -565,6 +565,18 @@ function findAssetUrl(release, name) {
   return asset.browser_download_url
 }
 
+function releaseChangelogUrl(release, repo) {
+  const fallback =
+    release.html_url ||
+    `https://github.com/${repo}/releases/tag/${release.tag_name}`
+  const candidate = release.body?.match(
+    /\*\*Full Changelog\*\*:\s*(https:\/\/github\.com\/\S+)/,
+  )?.[1]
+  return candidate?.startsWith(`https://github.com/${repo}/compare/`)
+    ? candidate
+    : fallback
+}
+
 function releasePlatform() {
   if (process.platform === 'darwin') return 'darwin'
   if (process.platform === 'linux') return 'linux'
@@ -930,7 +942,7 @@ export async function authorizeOwner(
   return profile?.user?.role === 'owner'
 }
 
-async function getWebUpdateStatus(updateState, searchParams) {
+export async function getWebUpdateStatus(updateState, searchParams) {
   const metadata = readInstalledMetadata()
   const current = parseVersion(searchParams.get('current') || metadata.version)
   const channel = parseChannel(
@@ -948,6 +960,12 @@ async function getWebUpdateStatus(updateState, searchParams) {
     github_repo: repo,
     latest_version: latest.raw,
     update_available: compareVersions(current, latest) < 0,
+    release_name: release.name || release.tag_name,
+    release_notes: release.body || '',
+    release_url:
+      release.html_url ||
+      `https://github.com/${repo}/releases/tag/${release.tag_name}`,
+    changelog_url: releaseChangelogUrl(release, repo),
     managed_service: hasManagedWebService(),
     ...updateState,
   }

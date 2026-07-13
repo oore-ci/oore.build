@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -227,24 +226,8 @@ type ExternalAccessNetworkFormValues = z.infer<
   typeof externalAccessNetworkSchema
 >
 
-interface RuntimeHealth {
-  ok?: boolean
-  version?: string
-  channel?: string | null
-  github_repo?: string | null
-  package_version?: string
-}
-
-async function fetchRuntimeHealth(path: string): Promise<RuntimeHealth> {
-  const response = await fetch(path, { cache: 'no-store' })
-  if (!response.ok) {
-    throw new Error(`Health check failed (${response.status})`)
-  }
-  return (await response.json()) as RuntimeHealth
-}
-
 function healthVersionLabel(
-  health: RuntimeHealth | undefined,
+  health: { version?: string } | undefined,
   isLoading: boolean,
   isError: boolean,
 ): string {
@@ -303,24 +286,9 @@ function PreferencesPage() {
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
   const settingsQuery = useArtifactStorageSettings()
   const preferencesQuery = useInstancePreferences()
-  const webHealthQuery = useQuery({
-    queryKey: ['runtime-health', 'oore-web'],
-    queryFn: () => fetchRuntimeHealth('/__oore_web_healthz'),
-    retry: false,
-    staleTime: 30_000,
-  })
-  const backendHealthQuery = useQuery({
-    queryKey: [instance?.id ?? '__none__', 'runtime-health', 'oored'],
-    queryFn: () => {
-      const baseUrl = instanceApiBaseUrl
-      if (!baseUrl) throw new Error('No active instance URL')
-      return fetchRuntimeHealth(new URL('/healthz', baseUrl).toString())
-    },
-    enabled: !!instanceApiBaseUrl,
-    retry: false,
-    staleTime: 30_000,
-  })
-  const runtimeUpdates = useRuntimeUpdates(backendHealthQuery.data ?? {})
+  const runtimeUpdates = useRuntimeUpdates()
+  const webHealthQuery = runtimeUpdates.frontendHealth
+  const backendHealthQuery = runtimeUpdates.backendHealth
   const frontendUpdatePhase =
     runtimeUpdates.startFrontendUpdate.data?.phase ??
     runtimeUpdates.frontendRelease.data?.phase

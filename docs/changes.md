@@ -14,6 +14,11 @@ Rules:
 
 ## 2026-07-13
 
+- **Persistent runtime update notice**:
+  - Instance owners now see available frontend and backend updates directly above the sidebar user menu instead of needing to discover them in Preferences.
+  - The update dialog shows each runtime's current and target versions, managed-service readiness, generated release notes, and the GitHub comparison changelog before starting an update.
+  - Runtime health and release checks now share one TanStack Query path across the sidebar and Preferences, with lightweight periodic refreshes so newly published updates appear without navigating away.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
 - **Faster release builds**:
   - macOS release jobs now restore target-specific Cargo caches, including unchanged workspace crates, instead of compiling the complete Rust dependency graph twice for every release.
   - The daemon no longer pulls the unused AWS configuration, SSO, SSO-OIDC, and STS dependency chain merely to access the S3 behavior-version type.

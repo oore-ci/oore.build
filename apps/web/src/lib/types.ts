@@ -210,6 +210,10 @@ export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
   channel: string
   github_repo: string
   update_available: boolean
+  release_name: string
+  release_notes: string
+  release_url: string
+  changelog_url: string
 }
 
 // ── Structured API error ────────────────────────────────────────

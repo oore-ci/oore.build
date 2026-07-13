@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -6,6 +6,7 @@ import { createServer } from 'node:http'
 import {
   applyTrustedProxyHeaders,
   authorizeOwner,
+  getWebUpdateStatus,
   isApiPath,
 } from './oore-web.js'
 
@@ -47,6 +48,51 @@ function sendJson(response, data, proxied = false) {
   if (proxied) response.setHeader('x-oore-web-proxy', '1')
   response.end(JSON.stringify(data))
 }
+
+afterEach(() => vi.unstubAllGlobals())
+
+describe('oore-web runtime release metadata', () => {
+  it('returns the changelog and release URL with update availability', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json([
+          {
+            tag_name: 'v1.2.3-alpha.2',
+            name: 'Alpha 2',
+            body: '- Faster builds\n\n**Full Changelog**: https://github.com/example/oore/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+            html_url:
+              'https://github.com/example/oore/releases/tag/v1.2.3-alpha.2',
+            draft: false,
+            prerelease: true,
+          },
+        ]),
+      ),
+    )
+
+    const status = await getWebUpdateStatus(
+      { phase: 'idle', error: null },
+      new URLSearchParams({
+        current: '1.2.3-alpha.1',
+        channel: 'alpha',
+        repo: 'example/oore',
+      }),
+    )
+
+    expect(status).toMatchObject({
+      version: '1.2.3-alpha.1',
+      latest_version: '1.2.3-alpha.2',
+      update_available: true,
+      release_name: 'Alpha 2',
+      release_notes:
+        '- Faster builds\n\n**Full Changelog**: https://github.com/example/oore/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+      release_url:
+        'https://github.com/example/oore/releases/tag/v1.2.3-alpha.2',
+      changelog_url:
+        'https://github.com/example/oore/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+    })
+  })
+})
 
 describe('oore-web trusted proxy contract', () => {
   it('proxies the backend readiness endpoint', () => {
