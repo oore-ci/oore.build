@@ -47,7 +47,6 @@ base64 = "0.22"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 zeroize = { version = "1", features = ["derive"] }
 aws-sdk-s3 = "1"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
 
 # Observability: OpenTelemetry + Prometheus
 opentelemetry = "0.28"

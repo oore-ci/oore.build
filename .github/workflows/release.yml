@@ -111,9 +111,18 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      - name: Setup Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ matrix.target }}
+
       - name: Build Rust
         run: |
-          rustup target add "${{ matrix.target }}"
           cargo build --release -p oored -p oore --target "${{ matrix.target }}"
           mkdir -p dist/rust
           cp "target/${{ matrix.target }}/release/oored" dist/rust/oored

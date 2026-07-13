@@ -14,6 +14,9 @@ grep -q 'gh workflow run release.yml' .github/workflows/autotag.yml
 grep -q -- '--ref "${GITHUB_REF_NAME}"' .github/workflows/autotag.yml
 grep -q '^  workflow_dispatch:' .github/workflows/release.yml
 grep -q 'RELEASE_TAG:' .github/workflows/release.yml
+grep -q 'uses: Swatinem/rust-cache@v2' .github/workflows/release.yml
+grep -q 'cache-workspace-crates: true' .github/workflows/release.yml
+grep -Fq 'key: ${{ matrix.target }}' .github/workflows/release.yml
 if grep -q 'RELEASE_PAT' .github/workflows/autotag.yml; then
   echo "[release-smoke] Autotag must not depend on a personal access token." >&2
   exit 1

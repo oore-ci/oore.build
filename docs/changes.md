@@ -14,6 +14,11 @@ Rules:
 
 ## 2026-07-13
 
+- **Faster release builds**:
+  - macOS release jobs now restore target-specific Cargo caches, including unchanged workspace crates, instead of compiling the complete Rust dependency graph twice for every release.
+  - The daemon no longer pulls the unused AWS configuration, SSO, SSO-OIDC, and STS dependency chain merely to access the S3 behavior-version type.
+  - Release operations documentation now reflects the PAT-free GitHub Actions flow and hosted-runner defaults.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
 - **Release dispatch branch propagation fix**:
   - Autotag now dispatches the Release workflow from GitHub's built-in branch ref instead of a step-local variable that was unavailable during dispatch, preventing alpha tags from accidentally starting the default-branch release definition.
   - Release smoke coverage locks the dispatch ref to `GITHUB_REF_NAME`.
