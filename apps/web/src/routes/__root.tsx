@@ -176,6 +176,8 @@ function RootLayout() {
   const authToken = useAuthStore((s) => s.token)
   const authUser = useAuthStore((s) => s.user)
   const openCommandPalette = useUiStore((s) => s.setCommandPaletteOpen)
+  const sidebarOpen = useUiStore((s) => s.sidebarOpen)
+  const setSidebarOpen = useUiStore((s) => s.setSidebarOpen)
 
   // Show sidebar+header only when: not on setup/login AND instance+auth exist
   const showAppChrome =
@@ -192,7 +194,7 @@ function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <RouteTransitionBar />
         {showAppChrome ? (
-          <SidebarProvider>
+          <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
             <SidebarInset>
               <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
