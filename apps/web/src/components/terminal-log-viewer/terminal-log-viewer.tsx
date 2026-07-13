@@ -14,11 +14,13 @@ import type { SelectedStepMeta, TerminalLogViewerProps } from './types'
 import { useWindowEvent } from '@/hooks/use-window-event'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
+import { cn } from '@/lib/utils'
 
 export default function TerminalLogViewer({
   logs,
   stepResults,
   isStreaming,
+  fillAvailableHeight = false,
   isLoading = false,
   logsUnavailable = false,
   isTerminal = false,
@@ -145,7 +147,12 @@ export default function TerminalLogViewer({
   return (
     <section
       aria-labelledby="build-logs-heading"
-      className="flex h-[clamp(28rem,62dvh,50rem)] flex-col overflow-hidden border bg-card"
+      className={cn(
+        'flex flex-col overflow-hidden border bg-card',
+        fillAvailableHeight
+          ? 'h-full min-h-80'
+          : 'h-[clamp(28rem,62dvh,50rem)]',
+      )}
     >
       <div className="flex shrink-0 flex-col gap-2 border-b bg-muted/20 px-3 py-2 sm:flex-row sm:items-center">
         <div className="flex shrink-0 items-baseline gap-2">

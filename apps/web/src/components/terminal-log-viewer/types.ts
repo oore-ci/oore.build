@@ -4,6 +4,7 @@ export interface TerminalLogViewerProps {
   logs: Array<BuildLogChunk>
   stepResults: Array<StepResult>
   isStreaming: boolean
+  fillAvailableHeight?: boolean
   isLoading?: boolean
   logsUnavailable?: boolean
   isTerminal?: boolean

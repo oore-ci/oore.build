@@ -25,9 +25,9 @@ Rules:
   - The connectivity banner now reflects the browser's actual offline state instead of interpreting unrelated API errors or background-tab wakeups as proof that `oored` is unreachable.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Outcome-first build details and immersive logs**:
-  - Build artifacts now stay above the fold beside the execution workspace on desktop and before logs on narrow screens; each file uses a compact direct-download action and one share-options action for copying temporary links or creating scoped links.
+  - Build artifacts now stay above the fold beside the execution workspace on desktop and move into a peer tab beside Logs and Timeline on narrower screens; each file uses a compact direct-download action and one share-options action for copying temporary links or creating scoped links.
   - Build source, duration, and timing now sit in the title metadata instead of occupying a separate summary card.
-  - Logs now use one bounded, internally scrollable GitHub-inspired workspace with a compact single-row toolbar, persistent search, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab.
+  - Logs now use one internally scrollable GitHub-inspired workspace with a compact single-row toolbar, persistent search, pinned line numbers, comfortable vertical padding, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab. The workspace fills the remaining viewport with a deliberate bottom gutter on narrower screens and stays bounded on desktop.
   - Ordinary `stderr` output is no longer treated as failure severity. Only explicit error lines receive destructive styling or power the jump-to-error action, avoiding false alarms from Git progress and flags such as `--no-fatal-infos`.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Persistent runtime update notice**:

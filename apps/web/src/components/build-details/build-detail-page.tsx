@@ -13,6 +13,7 @@ import { EventTimeline } from './event-timeline'
 import type { BuildLogChunk } from '@/lib/types'
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuildNotification } from '@/hooks/use-build-notification'
+import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
 import {
   isTerminalStatus,
   useArtifacts,
@@ -26,6 +27,7 @@ import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
+import { cn } from '@/lib/utils'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -38,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export function BuildDetailPage({ buildId }: { buildId: string }) {
   const navigate = useNavigate()
+  const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
@@ -142,7 +145,13 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           : undefined
 
   return (
-    <PageLayout width="full">
+    <PageLayout
+      width="full"
+      className={cn(
+        usesTabbedArtifacts &&
+          'flex h-[calc(100dvh-3rem)] min-h-0 flex-none flex-col gap-6 space-y-0 pb-6',
+      )}
+    >
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
@@ -213,20 +222,43 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         </Alert>
       ) : null}
 
-      <Tabs defaultValue="logs" className="gap-3">
+      <Tabs
+        key={usesTabbedArtifacts ? 'compact' : 'desktop'}
+        defaultValue="logs"
+        className={cn('gap-3', usesTabbedArtifacts && 'min-h-0 flex-1')}
+      >
         <TabsList variant="line">
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="timeline">
             Timeline{events.length > 0 ? ` (${events.length})` : ''}
           </TabsTrigger>
+          {usesTabbedArtifacts ? (
+            <TabsTrigger value="artifacts">
+              Artifacts
+              {artifactsQuery.data?.artifacts.length
+                ? ` (${artifactsQuery.data.artifacts.length})`
+                : ''}
+            </TabsTrigger>
+          ) : null}
         </TabsList>
-        <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="order-2 min-w-0 xl:order-1">
-            <TabsContent value="logs">
+        <div
+          className={cn(
+            'grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]',
+            usesTabbedArtifacts && 'min-h-0 flex-1',
+          )}
+        >
+          <div
+            className={cn('min-w-0', usesTabbedArtifacts && 'h-full min-h-0')}
+          >
+            <TabsContent
+              value="logs"
+              className={cn(usesTabbedArtifacts && 'h-full min-h-0')}
+            >
               <TerminalLogViewer
                 logs={mergedLogs}
                 stepResults={build.step_results ?? []}
                 isStreaming={isStreaming && !isTerminal}
+                fillAvailableHeight={usesTabbedArtifacts}
                 isLoading={isTerminal && fullLogsQuery.isLoading}
                 logsUnavailable={fullLogsQuery.isError}
                 isTerminal={isTerminal}
@@ -235,17 +267,25 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
             <TabsContent value="timeline">
               <EventTimeline events={events} />
             </TabsContent>
+            {usesTabbedArtifacts ? (
+              <TabsContent value="artifacts">
+                <ArtifactsPanel
+                  artifacts={artifactsQuery.data?.artifacts ?? []}
+                  isLoading={artifactsQuery.isLoading}
+                  buildStatus={build.status}
+                />
+              </TabsContent>
+            ) : null}
           </div>
-          <aside
-            aria-label="Build output"
-            className="order-1 xl:order-2 xl:sticky xl:top-6"
-          >
-            <ArtifactsPanel
-              artifacts={artifactsQuery.data?.artifacts ?? []}
-              isLoading={artifactsQuery.isLoading}
-              buildStatus={build.status}
-            />
-          </aside>
+          {!usesTabbedArtifacts ? (
+            <aside aria-label="Build output" className="sticky top-6">
+              <ArtifactsPanel
+                artifacts={artifactsQuery.data?.artifacts ?? []}
+                isLoading={artifactsQuery.isLoading}
+                buildStatus={build.status}
+              />
+            </aside>
+          ) : null}
         </div>
       </Tabs>
     </PageLayout>

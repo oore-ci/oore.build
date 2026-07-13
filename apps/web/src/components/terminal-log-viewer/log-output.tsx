@@ -33,6 +33,7 @@ export function LogOutput({
   scrollContainerRef,
   virtualizer,
 }: LogOutputProps) {
+  const verticalPadding = 8
   const maxSeq = logs.length > 0 ? logs[logs.length - 1].sequence : 0
   const lineNumWidth = Math.max(String(maxSeq).length, 3)
 
@@ -75,7 +76,7 @@ export function LogOutput({
         >
           <div
             style={{
-              height: `${virtualizer.getTotalSize()}px`,
+              height: `${virtualizer.getTotalSize() + verticalPadding * 2}px`,
               width: '100%',
               position: 'relative',
             }}
@@ -93,7 +94,7 @@ export function LogOutput({
                     top: 0,
                     left: 0,
                     width: '100%',
-                    transform: `translateY(${virtualRow.start}px)`,
+                    transform: `translateY(${virtualRow.start + verticalPadding}px)`,
                   }}
                   className={cn(
                     'flex font-mono text-[13px] leading-[20px] text-card-foreground',
@@ -101,7 +102,10 @@ export function LogOutput({
                   )}
                 >
                   <span
-                    className="shrink-0 select-none px-3 text-right text-muted-foreground"
+                    className={cn(
+                      'sticky left-0 z-10 shrink-0 select-none border-r px-3 text-right text-muted-foreground',
+                      isError ? 'bg-destructive/10' : 'bg-card',
+                    )}
                     style={{ width: `${lineNumWidth + 4}ch` }}
                   >
                     {chunk.sequence}
