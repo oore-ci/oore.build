@@ -24,6 +24,7 @@ pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
 pub mod runtime_updates;
@@ -2303,6 +2304,10 @@ async fn build_router_inner(
             get(projects::get_project)
                 .patch(projects::update_project)
                 .delete(projects::delete_project),
+        )
+        .route(
+            "/v1/projects/{project_id}/repository-workflows",
+            get(repository_workflows::discover_repository_workflows),
         )
         // Project member endpoints
         .route(

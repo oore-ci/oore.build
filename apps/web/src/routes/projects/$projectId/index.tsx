@@ -18,7 +18,7 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { usePipelines } from '@/hooks/use-pipelines'
+import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import {
   useDeleteProject,
   useProject,
@@ -232,6 +232,15 @@ function ProjectDetailPage() {
   const canDeleteProjects = useHasPermission('projects', 'delete')
   const canWritePipelines = useHasPermission('pipelines', 'write')
   const canTriggerBuild = useHasPermission('builds', 'write')
+  const shouldDiscoverWorkflows =
+    canWritePipelines &&
+    !!data?.project.repository_id &&
+    (pipelinesData?.pipelines.length ?? 0) === 0
+  const repositoryWorkflowsQuery = useRepositoryWorkflows(
+    projectId,
+    undefined,
+    { enabled: shouldDiscoverWorkflows },
+  )
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [dangerOpen, setDangerOpen] = useState(false)
@@ -400,7 +409,7 @@ function ProjectDetailPage() {
         {/* ---- Pipelines tab ---- */}
         <TabsContent value="pipelines">
           <div className="space-y-4 pt-2">
-            {canWritePipelines ? (
+            {canWritePipelines && pipelines.length > 0 ? (
               <div className="flex justify-end">
                 <Button
                   size="sm"
@@ -418,11 +427,58 @@ function ProjectDetailPage() {
             ) : null}
 
             {pipelines.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                {canWritePipelines
-                  ? 'No pipelines yet. Add one to start building.'
-                  : 'No pipelines yet. Ask a developer or admin to add one.'}
-              </p>
+              <Empty className="border p-8">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    {repositoryWorkflowsQuery.isLoading ? (
+                      <Spinner className="size-5" />
+                    ) : (
+                      <HugeiconsIcon icon={Add01Icon} />
+                    )}
+                  </EmptyMedia>
+                  <EmptyTitle>
+                    {repositoryWorkflowsQuery.isLoading
+                      ? 'Checking your repository'
+                      : repositoryWorkflowsQuery.data?.workflows.some(
+                            (workflow) => workflow.valid,
+                          )
+                        ? 'Your repository is ready'
+                        : 'Set up your first build'}
+                  </EmptyTitle>
+                  <EmptyDescription>
+                    {!canWritePipelines
+                      ? 'Ask a developer or admin to set up the first build.'
+                      : repositoryWorkflowsQuery.isLoading
+                        ? `Looking for Oore workflows on ${project.default_branch ?? 'the default branch'}...`
+                        : repositoryWorkflowsQuery.error
+                          ? 'Oore could not inspect the repository. Open setup to retry or continue manually.'
+                          : repositoryWorkflowsQuery.data?.workflows.some(
+                                (workflow) => workflow.valid,
+                              )
+                            ? 'Oore found a checked-in workflow. Review it, name the pipeline, and run your first build.'
+                            : 'Choose a clear starter for your app. Advanced build details stay out of the way until you need them.'}
+                  </EmptyDescription>
+                </EmptyHeader>
+                {canWritePipelines ? (
+                  <EmptyContent>
+                    <Button
+                      render={
+                        <Link
+                          to="/projects/$projectId/pipelines/new"
+                          params={{ projectId }}
+                        />
+                      }
+                    >
+                      <HugeiconsIcon icon={Add01Icon} />
+                      {repositoryWorkflowsQuery.data?.workflows.some(
+                        (workflow) => workflow.valid,
+                      )
+                        ? 'Use repository workflow'
+                        : 'Set up a build'}
+                    </Button>
+                  </EmptyContent>
+                ) : null}
+              </Empty>
             ) : (
               pipelines.map((pipeline) => {
                 const lb = lastBuildByPipeline.get(pipeline.id)

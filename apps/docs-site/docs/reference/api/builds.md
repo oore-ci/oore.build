@@ -31,11 +31,13 @@ POST /v1/projects/{project_id}/builds
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `pipeline_id` | `string` | Yes | ID of the pipeline to build |
-| `branch` | `string` | No | Branch to build |
+| `branch` | `string` | No | Branch to resolve before queueing; defaults to the project's default branch |
 | `commit_sha` | `string` | No | Specific commit to build |
 | `trigger_ref` | `string` | No | Reference string (e.g., PR number) |
 
 ### Response `200 OK`
+
+When `commit_sha` is omitted, Oore resolves `branch` to its current commit before queueing and returns that SHA. Reruns retain the original SHA.
 
 ```json
 {

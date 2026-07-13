@@ -10,6 +10,7 @@ import type {
 import {
   createPipeline,
   deletePipeline,
+  discoverRepositoryWorkflows,
   getPipeline,
   getPipelineAndroidSigning,
   getPipelineIosSigning,
@@ -58,6 +59,30 @@ export function usePipelines(
     ],
     queryFn: () => listPipelines(baseUrl!, token!, projectId, params),
     enabled: enabled && !!baseUrl && !!token && !!projectId,
+  })
+}
+
+export function useRepositoryWorkflows(
+  projectId: string,
+  params?: { reference?: string; path?: string },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'repository-workflows',
+      projectId,
+      params ?? {},
+    ],
+    queryFn: () =>
+      discoverRepositoryWorkflows(baseUrl!, token!, projectId, params),
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+    staleTime: 30_000,
   })
 }
 

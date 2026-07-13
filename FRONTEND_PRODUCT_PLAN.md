@@ -118,10 +118,10 @@ Remote-mode HttpOnly cookie sessions require frontend/backend architecture work 
 - [ ] Start project setup with an outcome-focused choice (for example, test an Android build or prepare a release) instead of presenting the full pipeline schema.
 - [ ] Derive project name, default branch, Flutter/FVM metadata, available platforms, flavors, and likely artifacts from the selected repository where the source provider permits read access.
 - [ ] Keep the common path short and progressively disclose triggers, command overrides, environment, artifacts, concurrency, and signing only when relevant.
-- [ ] Detect `.oore.yaml` and `.oore.yml` on the project's default branch before pipeline creation, including an explicitly configured path.
-- [ ] Preview every detected repository-owned workflow with its source path, resolved commands, triggers, platforms, artifacts, and validation state before it is imported or run.
+- [x] Detect `.oore.yaml` and `.oore.yml` on the project's default branch before pipeline creation, including an explicitly configured path.
+- [x] Preview every detected repository-owned workflow with its source path, resolved commands, platforms, artifacts, environment key names, and validation state before it is imported or run. Repository-owned triggers remain a later schema decision.
 - [ ] Explain invalid config, unsupported keys, multiple-config conflicts, missing secrets, and runner/toolchain prerequisites with a concrete recovery action.
-- [ ] Keep repository config read-only unless a user explicitly asks Oore to prepare a change; never silently write or push workflow files.
+- [x] Keep repository config read-only unless a user explicitly asks Oore to prepare a change; never silently write or push workflow files.
 - [ ] Test auto-detection, explicit paths, multiple workflows, config changes between commits, malformed YAML, missing config, and UI-fallback behavior across GitHub, GitLab.com, and self-managed GitLab.
 - [ ] Use Kite read-only as the mature multi-workflow benchmark without copying its legacy pipeline defects or exposing repository secrets.
 

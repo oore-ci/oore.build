@@ -783,6 +783,31 @@ export interface PipelineExecutionConfig {
   artifact_patterns: Array<string>
 }
 
+export interface RepositoryWorkflowExecutionPreview {
+  platforms: Array<BuildPlatform>
+  flutter_version?: string
+  commands: PipelineCommandStages
+  platform_build_args: PlatformBuildArgs
+  platform_commands: PlatformBuildCommands
+  env_keys: Array<string>
+  artifact_patterns: Array<string>
+}
+
+export interface RepositoryWorkflowPreview {
+  path: string
+  valid: boolean
+  errors: Array<string>
+  execution?: RepositoryWorkflowExecutionPreview
+}
+
+export interface DiscoverRepositoryWorkflowsResponse {
+  project_id: string
+  provider: 'github' | 'gitlab' | 'local_git'
+  reference: string
+  workflows: Array<RepositoryWorkflowPreview>
+  truncated: boolean
+}
+
 export interface Pipeline {
   id: string
   project_id: string

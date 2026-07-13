@@ -102,6 +102,60 @@ fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+pub(crate) async fn resolve_branch_commit(
+    repo_path: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let repo_path = repo_path.to_string();
+    let branch = branch.to_string();
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                repo_path.as_str(),
+                "rev-parse",
+                "--verify",
+                &format!("refs/heads/{branch}^{{commit}}"),
+            ])
+            .output()
+            .map_err(|e| {
+                error!(error = %e, "failed to resolve local git branch");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Failed to inspect the local repository",
+                )
+            })?;
+        if !output.status.success() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_ref",
+                format!("Branch '{branch}' was not found in the linked repository"),
+            ));
+        }
+        String::from_utf8(output.stdout)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Git returned an invalid commit identifier",
+                )
+            })
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local git branch resolution task failed");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git_error",
+            "Failed to inspect the local repository",
+        )
+    })?
+}
+
 struct LocalGitRepoInspection {
     canonical_str: String,
     default_branch: Option<String>,

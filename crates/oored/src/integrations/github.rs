@@ -940,6 +940,190 @@ fn generate_github_jwt(
     })
 }
 
+async fn installation_access_token(
+    client: &reqwest::Client,
+    app_id: &str,
+    private_key: &str,
+    installation_id: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let jwt = generate_github_jwt(app_id, private_key)?;
+    let response = client
+        .post(format!(
+            "https://api.github.com/app/installations/{installation_id}/access_tokens"
+        ))
+        .header("Authorization", format!("Bearer {jwt}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "oore-ci")
+        .send()
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to get GitHub installation access token");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_api_error",
+                "Failed to authenticate with GitHub",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "github_api_error",
+            format!("GitHub returned {} for access token", response.status()),
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct TokenResponse {
+        token: String,
+    }
+
+    response
+        .json::<TokenResponse>()
+        .await
+        .map(|response| response.token)
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitHub access token response");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_parse_error",
+                "Failed to parse GitHub response",
+            )
+        })
+}
+
+pub(crate) async fn load_installation_access_token(
+    client: &reqwest::Client,
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    installation_id: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT i.app_id, c.encrypted_value FROM integrations i \
+         JOIN integration_credentials c ON c.integration_id = i.id \
+         WHERE i.id = ?1 AND c.credential_type = 'app_private_key'",
+    )
+    .bind(integration_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to load GitHub credentials");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load source credentials",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "missing_credentials",
+            "GitHub credentials are missing; reconnect the source",
+        )
+    })?;
+    let app_id: Option<String> = row.get("app_id");
+    let encrypted_key: String = row.get("encrypted_value");
+    let private_key = crypto::decrypt(&encrypted_key, encryption_key).map_err(|e| {
+        error!(error = %e, "failed to decrypt GitHub credentials");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to decrypt source credentials",
+        )
+    })?;
+    installation_access_token(
+        client,
+        app_id.as_deref().ok_or_else(|| {
+            api_err(
+                StatusCode::CONFLICT,
+                "missing_credentials",
+                "GitHub App ID is missing; reconnect the source",
+            )
+        })?,
+        &private_key,
+        installation_id,
+    )
+    .await
+}
+
+pub(crate) async fn resolve_branch_commit(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    installation_id: &str,
+    full_name: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitHub client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitHub client",
+        )
+    })?;
+    let token = load_installation_access_token(
+        &client,
+        pool,
+        encryption_key,
+        integration_id,
+        installation_id,
+    )
+    .await?;
+    let response = client
+        .get(format!(
+            "https://api.github.com/repos/{full_name}/commits/{}",
+            urlencoding::encode(branch)
+        ))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "oore-ci")
+        .send()
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to resolve GitHub branch");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_api_error",
+                "Failed to resolve the GitHub branch",
+            )
+        })?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_ref",
+            format!("Branch '{branch}' was not found in the linked repository"),
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "github_api_error",
+            format!(
+                "GitHub returned {} while resolving the branch",
+                response.status()
+            ),
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct CommitResponse {
+        sha: String,
+    }
+    response
+        .json::<CommitResponse>()
+        .await
+        .map(|response| response.sha)
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitHub commit response");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_parse_error",
+                "Failed to parse GitHub commit response",
+            )
+        })
+}
+
 /// Core sync logic — fetches installations and repos from GitHub, upserts them,
 /// and removes stale records that are no longer present on GitHub.
 ///
@@ -1146,52 +1330,17 @@ async fn sync_installation_repos(
     installation_id_internal: &str,
     now: i64,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let jwt = generate_github_jwt(app_id, private_key)?;
-
-    let token_resp = client
-        .post(format!(
-            "https://api.github.com/app/installations/{installation_id_external}/access_tokens"
-        ))
-        .header("Authorization", format!("Bearer {jwt}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "oore-ci")
-        .send()
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to get installation access token");
-            api_err(
-                StatusCode::BAD_GATEWAY,
-                "github_api_error",
-                "Failed to get access token",
-            )
-        })?;
-
-    if !token_resp.status().is_success() {
-        let status = token_resp.status();
-        return Err(api_err(
-            StatusCode::BAD_GATEWAY,
-            "github_api_error",
-            format!("GitHub returned {status} for access token"),
-        ));
-    }
-
-    #[derive(Deserialize)]
-    struct TokenResponse {
-        token: String,
-    }
-
-    let token: TokenResponse = token_resp.json().await.map_err(|e| {
-        error!(error = %e, "failed to parse access token response");
-        api_err(
-            StatusCode::BAD_GATEWAY,
-            "github_parse_error",
-            "Failed to parse token response",
-        )
-    })?;
+    let token = installation_access_token(
+        client,
+        app_id,
+        private_key,
+        &installation_id_external.to_string(),
+    )
+    .await?;
 
     let repos_resp = client
         .get("https://api.github.com/installation/repositories?per_page=100")
-        .header("Authorization", format!("token {}", token.token))
+        .header("Authorization", format!("token {token}"))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "oore-ci")
         .send()

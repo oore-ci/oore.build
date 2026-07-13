@@ -37,6 +37,118 @@ fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
+async fn access_token(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let encrypted: Option<String> = sqlx::query_scalar(
+        "SELECT encrypted_value FROM integration_credentials \
+         WHERE integration_id = ?1 AND credential_type = 'access_token'",
+    )
+    .bind(integration_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch GitLab access token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch source credentials",
+        )
+    })?;
+    let encrypted = encrypted.ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "missing_credentials",
+            "GitLab access token is missing; reconnect or re-authorize the source",
+        )
+    })?;
+    crypto::decrypt(&encrypted, encryption_key).map_err(|e| {
+        error!(error = %e, "failed to decrypt GitLab access token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to decrypt source credentials",
+        )
+    })
+}
+
+pub(crate) async fn resolve_branch_commit(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    host_url: &str,
+    auth_mode: &str,
+    repository_external_id: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let token = access_token(pool, encryption_key, integration_id).await?;
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitLab client",
+        )
+    })?;
+    let mut request = client
+        .get(format!(
+            "{}/api/v4/projects/{}/repository/commits/{}",
+            host_url.trim_end_matches('/'),
+            urlencoding::encode(repository_external_id),
+            urlencoding::encode(branch)
+        ))
+        .header("User-Agent", "oore-ci");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request.send().await.map_err(|e| {
+        error!(error = %e, "failed to resolve GitLab branch");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            "Failed to resolve the GitLab branch",
+        )
+    })?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_ref",
+            format!("Branch '{branch}' was not found in the linked repository"),
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            format!(
+                "GitLab returned {} while resolving the branch",
+                response.status()
+            ),
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct CommitResponse {
+        id: String,
+    }
+    response
+        .json::<CommitResponse>()
+        .await
+        .map(|response| response.id)
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitLab commit response");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_parse_error",
+                "Failed to parse GitLab commit response",
+            )
+        })
+}
+
 fn normalize_gitlab_host_url(raw: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
     let parsed = url::Url::parse(raw.trim()).map_err(|_| {
         api_err(
@@ -143,38 +255,7 @@ pub(crate) async fn perform_sync_installations(
     let auth_mode: String = row.get("auth_mode");
     let use_bearer_auth = auth_mode == "oauth_app";
 
-    let encrypted_access_token: Option<String> = sqlx::query_scalar(
-        "SELECT encrypted_value FROM integration_credentials \
-         WHERE integration_id = ?1 AND credential_type = 'access_token'",
-    )
-    .bind(integration_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch GitLab access token");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to fetch credentials",
-        )
-    })?;
-
-    let encrypted_access_token = encrypted_access_token.ok_or_else(|| {
-        api_err(
-            StatusCode::CONFLICT,
-            "missing_credentials",
-            "GitLab access token is missing; re-connect or re-authorize the integration",
-        )
-    })?;
-
-    let token = crypto::decrypt(&encrypted_access_token, encryption_key).map_err(|e| {
-        error!(error = %e, "failed to decrypt GitLab access token");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "encryption_error",
-            "Failed to decrypt credentials",
-        )
-    })?;
+    let token = access_token(pool, encryption_key, integration_id).await?;
 
     let installation_rows = sqlx::query(
         "SELECT * FROM integration_installations WHERE integration_id = ?1 ORDER BY created_at DESC",
