@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-13
 
+- **Release dispatch branch propagation fix**:
+  - Autotag now dispatches the Release workflow from GitHub's built-in branch ref instead of a step-local variable that was unavailable during dispatch, preventing alpha tags from accidentally starting the default-branch release definition.
+  - Release smoke coverage locks the dispatch ref to `GITHUB_REF_NAME`.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
 - **Retention settings authorization fix**:
   - Global retention reads and writes now use the registered `instance_settings` RBAC resource, so owners and admins can load and manage retention instead of receiving a false `permission_denied` response.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
