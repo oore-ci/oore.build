@@ -35,6 +35,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -361,10 +362,11 @@ export function ArtifactsPanel({
               </DialogFooter>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
                 <Label htmlFor="ttl-select">Expires after</Label>
                 <Select
+                  items={TTL_OPTIONS}
                   value={ttlSecs}
                   onValueChange={(value) => {
                     if (value != null) setTtlSecs(value)
@@ -374,11 +376,13 @@ export function ArtifactsPanel({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {TTL_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      {TTL_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>

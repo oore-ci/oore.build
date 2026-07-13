@@ -27,9 +27,11 @@ Rules:
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Outcome-first build details and immersive logs**:
   - Build artifacts now stay above the fold beside the execution workspace on desktop and move into a peer tab beside Logs and Timeline on narrower screens; each file uses a compact direct-download action and one share-options action for copying temporary links or creating scoped links.
+  - Artifact share-link expiry choices now show human-readable durations in the trigger instead of raw second values.
   - Build source, duration, and timing now sit in the title metadata instead of occupying a separate summary card.
   - Logs now use one internally scrollable GitHub-inspired workspace with a compact single-row toolbar, persistent search, pinned line numbers, comfortable content padding, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab. The workspace fills the remaining viewport with a deliberate bottom gutter on narrower screens and stays bounded on desktop.
   - Ordinary `stderr` output is no longer treated as failure severity. Only explicit error lines receive destructive styling or power the jump-to-error action, avoiding false alarms from Git progress and flags such as `--no-fatal-infos`.
+  - The shared app inset now consumes only the space left beside the sidebar, preventing the header and page content from drifting one sidebar-width beyond the viewport; wide data tables keep their overflow within their own scroll region.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Persistent runtime update notice**:
   - Instance owners now see available frontend and backend updates directly above the sidebar user menu instead of needing to discover them in Preferences.

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { SidebarMenuButton, SidebarProvider } from './sidebar'
+import { SidebarInset, SidebarMenuButton, SidebarProvider } from './sidebar'
 
 vi.stubGlobal(
   'matchMedia',
@@ -25,5 +25,15 @@ describe('SidebarMenuButton', () => {
     expect(
       screen.getByRole('link', { name: 'Builds' }).getAttribute('href'),
     ).toBe('/builds')
+  })
+})
+
+describe('SidebarInset', () => {
+  it('shrinks beside the sidebar instead of widening the document', () => {
+    render(<SidebarInset>Content</SidebarInset>)
+
+    const inset = screen.getByRole('main')
+    expect(inset.className).toContain('min-w-0')
+    expect(inset.className).not.toContain('w-full')
   })
 })
