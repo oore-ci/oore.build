@@ -68,16 +68,16 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   useBuildNotification(data?.build, isTerminal)
 
   const streamEnabled = !isTerminal
-  const {
-    logs: streamLogs,
-    isStreaming,
-    error: streamError,
-  } = useLogStream(buildId, streamEnabled, {
-    onDone: useCallback(() => {
-      void refetchBuild()
-      void refetchArtifacts()
-    }, [refetchBuild, refetchArtifacts]),
-  })
+  const { logs: streamLogs, isStreaming } = useLogStream(
+    buildId,
+    streamEnabled,
+    {
+      onDone: useCallback(() => {
+        void refetchBuild()
+        void refetchArtifacts()
+      }, [refetchBuild, refetchArtifacts]),
+    },
+  )
   const fullLogsQuery = useBuildLogs(buildId, { enabled: isTerminal })
   const { data: fullLogsData } = fullLogsQuery
 
@@ -228,7 +228,6 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           stepResults={build.step_results ?? []}
           isStreaming={isStreaming && !isTerminal}
           isLoading={isTerminal && fullLogsQuery.isLoading}
-          streamError={isTerminal ? undefined : (streamError ?? undefined)}
           logsUnavailable={fullLogsQuery.isError}
           isTerminal={isTerminal}
         />

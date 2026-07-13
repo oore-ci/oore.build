@@ -14,6 +14,15 @@ Rules:
 
 ## 2026-07-13
 
+- **PAT-free alpha release dispatch**:
+  - Autotag now uses the repository-scoped GitHub Actions token to push release tags and explicitly dispatches the tag-aware Release workflow, removing the expired `RELEASE_PAT` bottleneck without losing downstream release execution to GitHub's recursion guard.
+  - Release smoke coverage enforces the required token permissions, dispatch path, and absence of personal access-token coupling.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+- **Graceful build-log transport fallback and explicit Android signing guidance**:
+  - Build logs now treat SSE-to-polling fallback as a normal transport change instead of showing a persistent error while polling continues successfully.
+  - Generated Android signing credentials use owner-only file permissions, and the signing guide now documents both zero-configuration temporary files and an explicit `CI=true` / `OORE_ANDROID_*` Gradle path.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 - **Repository-first build setup**:
   - Empty projects now inspect the linked repository before asking users to configure a pipeline. Valid checked-in workflows are recommended with a secret-free preview; missing, invalid, loading, and provider-error states lead to an explicit next action instead of a dense blank form.
   - Repository execution fields stay read-only in the setup form so the checked-in file remains the single source of truth. Manual templates remain available as a deliberate fallback.

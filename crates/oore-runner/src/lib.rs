@@ -278,7 +278,12 @@ fn materialize_android_signing_files(
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = fs::Permissions::from_mode(0o600);
-        let _ = fs::set_permissions(&keystore_path, perms);
+        fs::set_permissions(&keystore_path, perms).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to secure Android keystore {}: {e}",
+                keystore_path.display()
+            )
+        })?;
     }
 
     let key_properties_path = android_dir.join("key.properties");
@@ -293,6 +298,18 @@ fn materialize_android_signing_files(
             key_properties_path.display()
         )
     })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&key_properties_path, perms).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to secure Android key.properties {}: {e}",
+                key_properties_path.display()
+            )
+        })?;
+    }
 
     Ok(AndroidSigningMaterialization {
         keystore_path,
@@ -3435,6 +3452,27 @@ mod tests {
         assert!(key_properties.contains("keyPassword=key-pass"));
         assert!(key_properties.contains("keyAlias=upload"));
         assert!(key_properties.contains("storeFile=oore-upload-keystore.jks"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&keystore_path)
+                    .expect("keystore metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&key_properties_path)
+                    .expect("key.properties metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
 
         cleanup_workspace(&workspace);
     }

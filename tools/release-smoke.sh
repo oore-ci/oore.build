@@ -8,6 +8,15 @@ echo "[release-smoke] Running local-first regression smoke checks..."
 
 # Release automation must remain taggable and resilient to transient Pages outages.
 grep -q '^  push:' .github/workflows/autotag.yml
+grep -q '^  actions: write' .github/workflows/autotag.yml
+grep -q '^  contents: write' .github/workflows/autotag.yml
+grep -q 'gh workflow run release.yml' .github/workflows/autotag.yml
+grep -q '^  workflow_dispatch:' .github/workflows/release.yml
+grep -q 'RELEASE_TAG:' .github/workflows/release.yml
+if grep -q 'RELEASE_PAT' .github/workflows/autotag.yml; then
+  echo "[release-smoke] Autotag must not depend on a personal access token." >&2
+  exit 1
+fi
 grep -q 'deploy_pages deploy-site-only' .github/workflows/release.yml
 grep -q 'deploy_pages deploy-docs-only' .github/workflows/release.yml
 grep -q 'deploy_pages deploy-web-only' .github/workflows/release.yml

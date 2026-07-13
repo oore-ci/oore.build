@@ -11,7 +11,6 @@ interface UseLogStreamResult {
   logs: Array<BuildLogChunk>
   isStreaming: boolean
   isDone: boolean
-  error: string | null
 }
 
 interface UseLogStreamOptions {
@@ -28,7 +27,6 @@ const initialStreamState: StreamState = {
   logs: [],
   isStreaming: false,
   isDone: false,
-  error: null,
 }
 
 function streamReducer(state: StreamState, action: StreamAction): StreamState {
@@ -137,11 +135,7 @@ export function useLogStream(
         const response = await createStreamToken(baseUrl, token, buildId)
         streamToken = response.token
       } catch {
-        if (!abort.signal.aborted) {
-          updateStream({
-            error: 'Live stream unavailable. Using polling fallback.',
-          })
-        }
+        // Polling is already active and is a supported transport fallback.
         return
       }
 
@@ -158,7 +152,7 @@ export function useLogStream(
         es.addEventListener('open', () => {
           // SSE is healthy, so suspend polling reconciliation until disconnect.
           stopPolling()
-          updateStream({ isStreaming: true, error: null })
+          updateStream({ isStreaming: true })
         })
 
         es.addEventListener('log', (event: MessageEvent) => {
@@ -182,19 +176,11 @@ export function useLogStream(
         es.addEventListener('error', () => {
           es.close()
           eventSourceRef.current = null
-          updateStream({
-            isStreaming: false,
-            error: 'Live stream disconnected. Continuing with polling.',
-          })
+          updateStream({ isStreaming: false })
           startPolling()
         })
       } catch {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- abort may happen concurrently
-        if (!abort.signal.aborted) {
-          updateStream({
-            error: 'Failed to connect live stream. Using polling fallback.',
-          })
-        }
+        // Polling remains active if EventSource cannot be constructed.
       }
     })()
 

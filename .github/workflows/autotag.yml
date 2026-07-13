@@ -8,6 +8,10 @@ concurrency:
   group: autotag-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  actions: write
+  contents: write
+
 jobs:
   autotag:
     name: Cut release tag
@@ -18,11 +22,18 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Autotag
+        id: autotag
         env:
           AUTOTAG_CHANNEL: ${{ github.ref_name }}
           AUTOTAG_BRANCH: ${{ github.ref_name }}
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash tools/autotag.sh
+
+      - name: Start release
+        if: steps.autotag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.autotag.outputs.tag }}
+        run: gh workflow run release.yml --ref "${AUTOTAG_BRANCH}" --field tag="${TAG}"
