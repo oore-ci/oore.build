@@ -14,7 +14,6 @@ import {
   AlertCircleIcon,
   ArrowLeft02Icon,
   Home01Icon,
-  InformationCircleIcon,
   RotateClockwiseIcon,
   Search01Icon,
 } from '@hugeicons/core-free-icons'
@@ -38,8 +37,7 @@ import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useUiStore } from '@/stores/ui-store'
 import { useInstanceStore } from '@/stores/instance-store'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { isDemoMode } from '@/lib/demo-mode'
 
 const CommandPalette = lazy(() => import('@/components/command-palette'))
 
@@ -203,23 +201,13 @@ function RootLayout() {
                   orientation="vertical"
                   className="mr-2 h-4! self-auto!"
                 />
-                <Link to="/" className="flex items-center gap-2 pr-1">
-                  <img src="/logo.svg" alt="Oore CI logo" className="size-5" />
-                  <span className="hidden text-sm font-semibold tracking-tight sm:inline">
-                    Oore CI
-                  </span>
-                </Link>
-                <Separator
-                  orientation="vertical"
-                  className="mr-2 h-4! self-auto!"
-                />
                 <PageBreadcrumb />
                 <div className="ml-auto">
                   <button
                     type="button"
                     aria-label="Search"
                     onClick={() => openCommandPalette(true)}
-                    className="inline-flex h-8 items-center gap-2 rounded-sm border bg-muted/50 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                    className="inline-flex h-8 w-8 items-center justify-center gap-2 rounded-sm border bg-muted/50 px-0 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:w-48 sm:justify-between sm:px-3"
                   >
                     <HugeiconsIcon icon={Search01Icon} size={14} />
                     <span className="hidden sm:inline">Search</span>
@@ -227,15 +215,6 @@ function RootLayout() {
                   </button>
                 </div>
               </header>
-              {isDemoMode ? (
-                <div className="border-b bg-background px-4 py-2">
-                  <Alert>
-                    <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-                    <AlertTitle>Sample demo</AlertTitle>
-                    <AlertDescription>{READ_ONLY_REASON}</AlertDescription>
-                  </Alert>
-                </div>
-              ) : null}
               <ConnectivityBanner />
               <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />

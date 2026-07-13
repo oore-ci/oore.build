@@ -106,8 +106,7 @@ export default function NavMain() {
   const location = useLocation()
   const authUser = useAuthStore((s) => s.user)
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
-  const isDeveloperOrAbove =
-    isAdmin || authUser?.role === 'developer'
+  const isDeveloperOrAbove = isAdmin || authUser?.role === 'developer'
   const recentProjects = useRecentProjectsStore((s) => s.projects)
 
   function isActive(item: NavItem) {
@@ -131,6 +130,7 @@ export default function NavMain() {
               <SidebarMenuItem key={item.to}>
                 <SidebarMenuButton
                   isActive={isActive(item)}
+                  tooltip={item.title}
                   render={<Link to={item.to} />}
                 >
                   <HugeiconsIcon icon={item.icon} size={18} />
@@ -175,6 +175,7 @@ export default function NavMain() {
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton
                       isActive={isActive(item)}
+                      tooltip={item.title}
                       render={<Link to={item.to} />}
                     >
                       <HugeiconsIcon icon={item.icon} size={18} />

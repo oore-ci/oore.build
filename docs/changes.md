@@ -14,6 +14,14 @@ Rules:
 
 ## 2026-07-13
 
+- **Repository source avatars**:
+  - Repository sync now persists GitHub owner avatars and GitLab project avatars, falling back to a GitLab namespace avatar when a project has none. Project, source, and repository-picker views display that identity with a visible initials fallback for local or image-less repositories.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Compact demo-mode treatment**:
+  - Demo builds now rely on the persistent compact Demo Mode indicator instead of repeating the same read-only notice in a full-width banner above every page.
+  - The app header now reserves its navigation space for breadcrumbs, with duplicate Oore branding removed and a wider desktop search target.
+  - Collapsed primary and admin sidebar navigation exposes the built-in item tooltips instead of leaving icon-only destinations unexplained.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Outcome-first build details and immersive logs**:
   - Build artifacts now stay above the fold beside the execution workspace on desktop and before logs on narrow screens; download is the visible primary action while copy and scoped sharing remain available from a compact menu.
   - Logs now use one cohesive GitHub-inspired workspace with persistent search, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab.
