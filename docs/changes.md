@@ -20,7 +20,8 @@ Rules:
 - **Compact demo-mode treatment**:
   - Demo builds now rely on the persistent compact Demo Mode indicator instead of repeating the same read-only notice in a full-width banner above every page.
   - The app header now reserves its navigation space for breadcrumbs, with duplicate Oore branding removed and a wider desktop search target.
-  - Collapsed primary and admin sidebar navigation exposes the built-in item tooltips instead of leaving icon-only destinations unexplained.
+  - Collapsed primary and admin sidebar navigation exposes the built-in item tooltips without replacing links with inert buttons.
+  - The connectivity banner now reflects the browser's actual offline state instead of interpreting unrelated API errors or background-tab wakeups as proof that `oored` is unreachable.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Outcome-first build details and immersive logs**:
   - Build artifacts now stay above the fold beside the execution workspace on desktop and before logs on narrow screens; download is the visible primary action while copy and scoped sharing remain available from a compact menu.
