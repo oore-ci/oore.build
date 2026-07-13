@@ -1,6 +1,4 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { AlertCircleIcon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 import { LogOutput } from './log-output'
@@ -15,13 +13,11 @@ import type { SelectedStepMeta, TerminalLogViewerProps } from './types'
 import { useWindowEvent } from '@/hooks/use-window-event'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export default function TerminalLogViewer({
   logs,
   stepResults,
   isStreaming,
-  streamError,
   isLoading = false,
   logsUnavailable = false,
   isTerminal = false,
@@ -167,13 +163,6 @@ export default function TerminalLogViewer({
         onDownload={downloadRawLogs}
         onScrollLatest={scrollToLatest}
       />
-
-      {streamError ? (
-        <Alert variant="destructive" className="rounded-none border-b-0 py-2">
-          <HugeiconsIcon icon={AlertCircleIcon} />
-          <AlertDescription>{streamError}</AlertDescription>
-        </Alert>
-      ) : null}
 
       {hasSteps ? (
         <MobileStepSelector
