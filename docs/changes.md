@@ -14,6 +14,11 @@ Rules:
 
 ## 2026-07-13
 
+- **Outcome-first build details and immersive logs**:
+  - Build artifacts now stay above the fold beside the execution workspace on desktop and before logs on narrow screens; download is the visible primary action while copy and scoped sharing remain available from a compact menu.
+  - Logs now use one cohesive GitHub-inspired workspace with persistent search, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab.
+  - Ordinary `stderr` output is no longer treated as failure severity. Only explicit error lines receive destructive styling or power the jump-to-error action, avoiding false alarms from Git progress and flags such as `--no-fatal-infos`.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Persistent runtime update notice**:
   - Instance owners now see available frontend and backend updates directly above the sidebar user menu instead of needing to discover them in Preferences.
   - The update dialog shows each runtime's current and target versions, managed-service readiness, generated release notes, and the GitHub comparison changelog before starting an update.

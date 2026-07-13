@@ -2,7 +2,12 @@ import { act, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import TerminalLogViewer from '@/components/terminal-log-viewer'
-import { groupLogs } from '@/components/terminal-log-viewer/log-model'
+import {
+  defaultSelectedStep,
+  findFirstErrorIndex,
+  groupLogs,
+  isErrorLine,
+} from '@/components/terminal-log-viewer/log-model'
 
 describe('TerminalLogViewer', () => {
   it('groups marker-delimited logs while step results remain status truth', () => {
@@ -73,6 +78,51 @@ describe('TerminalLogViewer', () => {
     expect(
       screen.getByRole('button', { name: 'Download raw logs' }),
     ).toBeTruthy()
+  })
+
+  it('opens the complete log for a finished successful build', () => {
+    expect(
+      defaultSelectedStep(
+        [
+          {
+            name: 'Checkout',
+            status: 'succeeded',
+            logs: [{ sequence: 1, content: 'Cloning', stream: 'stderr' }],
+          },
+          {
+            name: 'Build Android',
+            status: 'succeeded',
+            logs: [{ sequence: 2, content: 'Assembling', stream: 'stdout' }],
+          },
+        ],
+        null,
+      ),
+    ).toBe('all')
+  })
+
+  it('does not treat stderr transport as error severity', () => {
+    expect(
+      findFirstErrorIndex([
+        {
+          sequence: 1,
+          content: 'Receiving objects: 100% (25/25)',
+          stream: 'stderr',
+        },
+      ]),
+    ).toBe(-1)
+
+    expect(
+      findFirstErrorIndex([
+        { sequence: 1, content: 'Build started', stream: 'stdout' },
+        {
+          sequence: 2,
+          content: 'fatal: repository could not be cloned',
+          stream: 'stderr',
+        },
+      ]),
+    ).toBe(1)
+
+    expect(isErrorLine('$ flutter analyze --no-fatal-infos')).toBe(false)
   })
 
   it('does not claim terminal logs are absent while they are loading', () => {

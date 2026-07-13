@@ -34,6 +34,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export function BuildDetailPage({ buildId }: { buildId: string }) {
   const navigate = useNavigate()
@@ -145,6 +146,11 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
+        description={
+          [build.context?.project_name, build.context?.pipeline_name]
+            .filter(Boolean)
+            .join(' · ') || undefined
+        }
         back={{ to: '/builds', label: 'Builds' }}
         meta={
           <>
@@ -207,40 +213,41 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         </Alert>
       ) : null}
 
-      <section
-        aria-labelledby="build-logs-heading"
-        className="min-w-0 space-y-2"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 id="build-logs-heading" className="text-sm font-medium">
-              Build logs
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {isTerminal
-                ? 'Output, errors, and step-level context.'
-                : 'Live output, errors, and step-level context.'}
-            </p>
+      <Tabs defaultValue="logs" className="gap-3">
+        <TabsList variant="line">
+          <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="timeline">
+            Timeline{events.length > 0 ? ` (${events.length})` : ''}
+          </TabsTrigger>
+        </TabsList>
+        <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="order-2 min-w-0 xl:order-1">
+            <TabsContent value="logs">
+              <TerminalLogViewer
+                logs={mergedLogs}
+                stepResults={build.step_results ?? []}
+                isStreaming={isStreaming && !isTerminal}
+                isLoading={isTerminal && fullLogsQuery.isLoading}
+                logsUnavailable={fullLogsQuery.isError}
+                isTerminal={isTerminal}
+              />
+            </TabsContent>
+            <TabsContent value="timeline">
+              <EventTimeline events={events} />
+            </TabsContent>
           </div>
+          <aside
+            aria-label="Build output"
+            className="order-1 xl:order-2 xl:sticky xl:top-6"
+          >
+            <ArtifactsPanel
+              artifacts={artifactsQuery.data?.artifacts ?? []}
+              isLoading={artifactsQuery.isLoading}
+              buildStatus={build.status}
+            />
+          </aside>
         </div>
-        <TerminalLogViewer
-          logs={mergedLogs}
-          stepResults={build.step_results ?? []}
-          isStreaming={isStreaming && !isTerminal}
-          isLoading={isTerminal && fullLogsQuery.isLoading}
-          logsUnavailable={fullLogsQuery.isError}
-          isTerminal={isTerminal}
-        />
-      </section>
-
-      <div className="grid items-start gap-6 xl:grid-cols-2">
-        <ArtifactsPanel
-          artifacts={artifactsQuery.data?.artifacts ?? []}
-          isLoading={artifactsQuery.isLoading}
-          buildStatus={build.status}
-        />
-        <EventTimeline events={events} />
-      </div>
+      </Tabs>
     </PageLayout>
   )
 }

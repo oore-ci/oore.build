@@ -61,7 +61,7 @@ export function BuildSummary({
 
           <div className="space-y-1">
             <dt className="text-xs font-medium text-muted-foreground">
-              Timeline
+              Timing
             </dt>
             <dd className="text-xs leading-5">
               <span>Queued {relativeTime(build.queued_at)}</span>

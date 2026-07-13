@@ -19,6 +19,4 @@ export interface StepGroup {
 
 export interface SelectedStepMeta {
   command?: string
-  status: string
-  durationMs?: number
 }

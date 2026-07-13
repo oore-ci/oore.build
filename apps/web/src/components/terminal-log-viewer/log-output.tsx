@@ -1,12 +1,12 @@
 import { AnsiLine } from './ansi-line'
-import { ERROR_PATTERN, formatDuration, stepStatusVariant } from './log-model'
+import { isErrorLine } from './log-model'
 import type { RefObject } from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 
 import type { BuildLogChunk } from '@/lib/types'
 import type { SelectedStepMeta } from './types'
-import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 
 interface LogOutputProps {
   logs: Array<BuildLogChunk>
@@ -39,20 +39,14 @@ export function LogOutput({
   return (
     <div className="flex min-h-0 flex-col overflow-hidden bg-card">
       {selectedStepMeta ? (
-        <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-2">
-          <Badge variant={stepStatusVariant(selectedStepMeta.status)}>
-            {selectedStepMeta.status}
-          </Badge>
-          <span className="text-xs font-medium">{selectedStep}</span>
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/20 px-4 py-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            {selectedStep}
+          </span>
           {selectedStepMeta.command ? (
-            <code className="font-mono text-[11px] text-muted-foreground">
+            <code className="min-w-0 truncate font-mono text-[11px] text-foreground">
               $ {selectedStepMeta.command}
             </code>
-          ) : null}
-          {selectedStepMeta.durationMs != null ? (
-            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-              {formatDuration(selectedStepMeta.durationMs / 1000)}
-            </span>
           ) : null}
         </div>
       ) : null}
@@ -87,8 +81,7 @@ export function LogOutput({
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const chunk = logs[virtualRow.index]
-              const isStderr = chunk.stream === 'stderr'
-              const isError = ERROR_PATTERN.test(chunk.content)
+              const isError = isErrorLine(chunk.content)
               return (
                 <div
                   key={virtualRow.key}
@@ -101,13 +94,10 @@ export function LogOutput({
                     width: '100%',
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
-                  className={`flex font-mono text-[13px] leading-[20px] ${
-                    isStderr
-                      ? 'text-destructive'
-                      : isError
-                        ? 'bg-destructive/10 text-destructive'
-                        : 'text-card-foreground'
-                  }`}
+                  className={cn(
+                    'flex font-mono text-[13px] leading-[20px] text-card-foreground',
+                    isError && 'bg-destructive/10 text-destructive',
+                  )}
                 >
                   <span
                     className="shrink-0 select-none px-3 text-right text-muted-foreground"

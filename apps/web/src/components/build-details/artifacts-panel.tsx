@@ -4,6 +4,7 @@ import {
   Copy01Icon,
   Download04Icon,
   File01Icon,
+  MoreHorizontalCircle01Icon,
   Share08Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
@@ -41,6 +42,13 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
   switch (type) {
@@ -89,6 +97,96 @@ const TTL_OPTIONS = [
   { value: '86400', label: '24 hours' },
   { value: '604800', label: '7 days' },
 ] as const
+
+function ArtifactRow({
+  artifact,
+  isDownloadPending,
+  onDownload,
+  onCopyLink,
+  onShare,
+}: {
+  artifact: Artifact
+  isDownloadPending: boolean
+  onDownload: (artifactId: string, name: string) => void
+  onCopyLink: (artifactId: string, name: string) => void
+  onShare: (artifact: Artifact) => void
+}) {
+  const expired = isArtifactExpired(artifact)
+  const expiryLabel = artifactExpiryLabel(artifact)
+
+  return (
+    <div
+      className={`flex items-center gap-2 border p-2 ${expired ? 'opacity-50' : ''}`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">{artifact.name}</p>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <Badge
+            variant={artifactTypeBadgeVariant(artifact.artifact_type)}
+            className="text-[10px]"
+          >
+            {artifact.artifact_type}
+          </Badge>
+          <span className="text-[10px] text-muted-foreground">
+            {artifact.file_size != null
+              ? formatFileSize(artifact.file_size)
+              : '—'}
+          </span>
+          {expiryLabel ? (
+            <span
+              className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}
+            >
+              {expiryLabel}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          variant="outline"
+          size="xs"
+          title="Download"
+          aria-label={`Download ${artifact.name}`}
+          onClick={() => onDownload(artifact.id, artifact.name)}
+          disabled={isDownloadPending || expired}
+        >
+          <HugeiconsIcon icon={Download04Icon} data-icon="inline-start" />
+          Download
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`More actions for ${artifact.name}`}
+                title="More artifact actions"
+                disabled={expired}
+              />
+            }
+          >
+            <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-auto">
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                onClick={() => onCopyLink(artifact.id, artifact.name)}
+                disabled={isDownloadPending}
+              >
+                <HugeiconsIcon icon={Copy01Icon} />
+                Copy download link
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onShare(artifact)}>
+                <HugeiconsIcon icon={Share08Icon} />
+                Create share link
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  )
+}
 
 export function ArtifactsPanel({
   artifacts,
@@ -195,84 +293,16 @@ export function ArtifactsPanel({
             </p>
           ) : (
             <div className="space-y-2">
-              {artifacts.map((artifact) => {
-                const expired = isArtifactExpired(artifact)
-                const expiryLabel = artifactExpiryLabel(artifact)
-
-                return (
-                  <div
-                    key={artifact.id}
-                    className={`flex items-center gap-2 border p-2 ${expired ? 'opacity-50' : ''}`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">
-                        {artifact.name}
-                      </p>
-                      <div className="mt-0.5 flex items-center gap-1.5">
-                        <Badge
-                          variant={artifactTypeBadgeVariant(
-                            artifact.artifact_type,
-                          )}
-                          className="text-[10px]"
-                        >
-                          {artifact.artifact_type}
-                        </Badge>
-                        <span className="text-[10px] text-muted-foreground">
-                          {artifact.file_size != null
-                            ? formatFileSize(artifact.file_size)
-                            : '—'}
-                        </span>
-                        {expiryLabel ? (
-                          <span
-                            className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}
-                          >
-                            {expiryLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-0.5">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        title="Share link"
-                        aria-label={`Share link for ${artifact.name}`}
-                        onClick={() => handleShareLink(artifact)}
-                        disabled={expired}
-                      >
-                        <HugeiconsIcon icon={Share08Icon} size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        title="Copy download link"
-                        aria-label={`Copy link for ${artifact.name}`}
-                        onClick={() =>
-                          handleCopyLink(artifact.id, artifact.name)
-                        }
-                        disabled={downloadMutation.isPending || expired}
-                      >
-                        <HugeiconsIcon icon={Copy01Icon} size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        title="Download"
-                        aria-label={`Download ${artifact.name}`}
-                        onClick={() =>
-                          handleDownload(artifact.id, artifact.name)
-                        }
-                        disabled={downloadMutation.isPending || expired}
-                      >
-                        <HugeiconsIcon icon={Download04Icon} size={14} />
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })}
+              {artifacts.map((artifact) => (
+                <ArtifactRow
+                  key={artifact.id}
+                  artifact={artifact}
+                  isDownloadPending={downloadMutation.isPending}
+                  onDownload={handleDownload}
+                  onCopyLink={handleCopyLink}
+                  onShare={handleShareLink}
+                />
+              ))}
             </div>
           )}
         </CardContent>
