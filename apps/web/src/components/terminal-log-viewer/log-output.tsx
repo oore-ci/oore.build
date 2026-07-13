@@ -37,7 +37,7 @@ export function LogOutput({
   const lineNumWidth = Math.max(String(maxSeq).length, 3)
 
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden bg-card">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
       {selectedStepMeta ? (
         <div className="flex shrink-0 items-center gap-2 border-b bg-muted/20 px-4 py-2">
           <span className="text-xs font-medium text-muted-foreground">
@@ -67,7 +67,8 @@ export function LogOutput({
         </div>
       ) : (
         <ScrollArea
-          className="min-h-0 flex-1"
+          className="h-full min-h-0 flex-1"
+          horizontal={!wrapLines}
           viewportRef={scrollContainerRef}
           role="region"
           aria-label="Build log output"

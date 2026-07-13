@@ -18,9 +18,6 @@ import {
 } from '@/components/ui/input-group'
 
 interface LogToolbarProps {
-  isStreaming: boolean
-  logCount: number
-  totalLogCount: number
   searchQuery: string
   searchInputRef: RefObject<HTMLInputElement | null>
   wrapLines: boolean
@@ -35,9 +32,6 @@ interface LogToolbarProps {
 }
 
 export function LogToolbar({
-  isStreaming,
-  logCount,
-  totalLogCount,
   searchQuery,
   searchInputRef,
   wrapLines,
@@ -50,27 +44,9 @@ export function LogToolbar({
   onDownload,
   onScrollLatest,
 }: LogToolbarProps) {
-  const lineCountLabel = searchQuery
-    ? `${logCount} of ${totalLogCount} lines`
-    : `${totalLogCount} lines`
-
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2">
-      {isStreaming ? (
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full bg-success opacity-75 motion-safe:animate-ping" />
-            <span className="relative inline-flex size-2 bg-success" />
-          </span>
-          Live
-        </span>
-      ) : (
-        <span className="text-xs text-muted-foreground">{lineCountLabel}</span>
-      )}
-
-      <div className="flex-1" />
-
-      <InputGroup className="order-first w-full flex-none bg-background sm:order-none sm:w-auto sm:min-w-48 sm:flex-1 sm:max-w-64">
+    <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
+      <InputGroup className="order-first w-full flex-none bg-background sm:order-none sm:w-56">
         <InputGroupInput
           ref={searchInputRef}
           value={searchQuery}

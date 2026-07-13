@@ -4,7 +4,6 @@ import {
   Copy01Icon,
   Download04Icon,
   File01Icon,
-  MoreHorizontalCircle01Icon,
   Share08Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
@@ -144,14 +143,17 @@ function ArtifactRow({
       <div className="flex shrink-0 items-center gap-1">
         <Button
           variant="outline"
-          size="xs"
+          size="icon-xs"
           title="Download"
           aria-label={`Download ${artifact.name}`}
           onClick={() => onDownload(artifact.id, artifact.name)}
           disabled={isDownloadPending || expired}
         >
-          <HugeiconsIcon icon={Download04Icon} data-icon="inline-start" />
-          Download
+          {isDownloadPending ? (
+            <Spinner />
+          ) : (
+            <HugeiconsIcon icon={Download04Icon} />
+          )}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -159,13 +161,13 @@ function ArtifactRow({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label={`More actions for ${artifact.name}`}
-                title="More artifact actions"
+                aria-label={`Share options for ${artifact.name}`}
+                title="Share options"
                 disabled={expired}
               />
             }
           >
-            <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+            <HugeiconsIcon icon={Share08Icon} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto">
             <DropdownMenuGroup>

@@ -138,27 +138,36 @@ export default function TerminalLogViewer({
     virtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' })
   }
 
+  const lineCountLabel = searchQuery
+    ? `${filteredLogs.length} of ${selectedLogs.length} lines`
+    : `${selectedLogs.length} lines`
+
   return (
     <section
       aria-labelledby="build-logs-heading"
-      className="flex h-[68dvh] min-h-[32rem] max-h-[56rem] flex-col overflow-hidden border bg-card"
+      className="flex h-[clamp(28rem,62dvh,50rem)] flex-col overflow-hidden border bg-card"
     >
-      <div className="flex shrink-0 flex-col gap-3 border-b bg-muted/20 px-4 py-3 lg:flex-row lg:items-center">
-        <div className="min-w-0">
+      <div className="flex shrink-0 flex-col gap-2 border-b bg-muted/20 px-3 py-2 sm:flex-row sm:items-center">
+        <div className="flex shrink-0 items-baseline gap-2">
           <h2 id="build-logs-heading" className="text-sm font-medium">
             Build logs
           </h2>
-          <p className="text-xs text-muted-foreground">
-            {isTerminal
-              ? 'Complete output with step-level context.'
-              : 'Live output with step-level context.'}
-          </p>
+          {isStreaming ? (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full bg-success opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex size-2 bg-success" />
+              </span>
+              Live
+            </span>
+          ) : (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {lineCountLabel}
+            </span>
+          )}
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 sm:ml-auto">
           <LogToolbar
-            isStreaming={isStreaming}
-            logCount={filteredLogs.length}
-            totalLogCount={selectedLogs.length}
             searchQuery={searchQuery}
             searchInputRef={searchInputRef}
             wrapLines={wrapLines}

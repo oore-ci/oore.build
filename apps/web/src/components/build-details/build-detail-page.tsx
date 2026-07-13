@@ -158,6 +158,8 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
               {build.status}
             </Badge>
             <Badge variant="outline">{build.trigger_type}</Badge>
+            <span aria-hidden className="h-3 w-px bg-border" />
+            <BuildSummary build={build} duration={duration} />
           </>
         }
         actions={
@@ -203,8 +205,6 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           </div>
         }
       />
-
-      <BuildSummary build={build} duration={duration} />
 
       {failureReason ? (
         <Alert variant="destructive">
