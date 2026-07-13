@@ -5,8 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use aws_config::BehaviorVersion;
-use aws_sdk_s3::config::{Credentials, Region};
+use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::presigning::PresigningConfig;
 use oore_contract::{ArtifactStorageProvider, ArtifactStorageSettings, ArtifactStorageSource};
 use sqlx::Row;
