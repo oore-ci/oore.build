@@ -1375,6 +1375,12 @@ async fn sync_installation_repos(
         default_branch: Option<String>,
         private: bool,
         html_url: Option<String>,
+        owner: Option<GitHubRepositoryOwner>,
+    }
+
+    #[derive(Deserialize)]
+    struct GitHubRepositoryOwner {
+        avatar_url: Option<String>,
     }
 
     let repos: ReposResponse = repos_resp.json().await.map_err(|e| {
@@ -1394,11 +1400,11 @@ async fn sync_installation_repos(
         synced_repo_ids.push(external_id.clone());
 
         sqlx::query(
-            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, avatar_url, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9) \
              ON CONFLICT(installation_id, external_id) DO UPDATE SET \
              full_name = excluded.full_name, default_branch = excluded.default_branch, \
-             is_private = excluded.is_private, html_url = excluded.html_url, updated_at = excluded.updated_at",
+             is_private = excluded.is_private, html_url = excluded.html_url, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at",
         )
         .bind(&repo_id)
         .bind(installation_id_internal)
@@ -1407,6 +1413,7 @@ async fn sync_installation_repos(
         .bind(&repo.default_branch)
         .bind(repo.private as i32)
         .bind(&repo.html_url)
+        .bind(repo.owner.as_ref().and_then(|owner| owner.avatar_url.as_ref()))
         .bind(now)
         .execute(pool)
         .await

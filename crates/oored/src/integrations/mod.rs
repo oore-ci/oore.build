@@ -227,6 +227,7 @@ pub fn row_to_repository(row: &sqlx::sqlite::SqliteRow) -> IntegrationRepository
         full_name: row.get("full_name"),
         default_branch: row.get("default_branch"),
         is_private: row.get::<i32, _>("is_private") != 0,
+        avatar_url: row.get("avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }

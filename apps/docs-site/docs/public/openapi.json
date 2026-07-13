@@ -8195,6 +8195,12 @@
           "updated_at"
         ],
         "properties": {
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -9301,6 +9307,18 @@
           },
           "name": {
             "type": "string"
+          },
+          "repository_avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_full_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "repository_id": {
             "type": [

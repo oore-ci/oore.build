@@ -65,6 +65,7 @@ import {
 import { Input } from '@/components/ui/input'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -346,6 +347,15 @@ function ProjectDetailPage() {
               <Badge variant="outline" className="font-mono text-[11px]">
                 {project.default_branch}
               </Badge>
+            ) : null}
+            {project.repository_full_name ? (
+              <span className="flex items-center gap-1.5">
+                <RepositoryAvatar
+                  fullName={project.repository_full_name}
+                  avatarUrl={project.repository_avatar_url}
+                />
+                {project.repository_full_name}
+              </span>
             ) : null}
             <span>Updated {relativeTime(project.updated_at)}</span>
           </>

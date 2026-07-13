@@ -42,6 +42,7 @@ import { useSourceRepositories } from '@/hooks/use-source-repositories'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { repositoryProjectDefaults } from '@/lib/project-form-utils'
+import RepositoryAvatar from '@/components/repository-avatar'
 
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -286,7 +287,11 @@ export default function CreateProjectDialog({
                           <SelectContent>
                             {(repos ?? []).map((repo) => (
                               <SelectItem key={repo.id} value={repo.id}>
-                                {repo.full_name}
+                                <RepositoryAvatar
+                                  fullName={repo.full_name}
+                                  avatarUrl={repo.avatar_url}
+                                />
+                                <span>{repo.full_name}</span>
                               </SelectItem>
                             ))}
                           </SelectContent>

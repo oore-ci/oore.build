@@ -29,6 +29,7 @@ import { getIntegrationStatusVariant } from '@/lib/status-variants'
 import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
 import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
+import RepositoryAvatar from '@/components/repository-avatar'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -556,7 +557,15 @@ function IntegrationDetailPage() {
               <TableBody>
                 {repositories.map((repo) => (
                   <TableRow key={repo.id}>
-                    <TableCell>{repo.full_name}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <RepositoryAvatar
+                          fullName={repo.full_name}
+                          avatarUrl={repo.avatar_url}
+                        />
+                        <span>{repo.full_name}</span>
+                      </div>
+                    </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {repo.default_branch ?? '—'}
                     </TableCell>
