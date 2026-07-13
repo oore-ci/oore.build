@@ -36,4 +36,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.autotag.outputs.tag }}
-        run: gh workflow run release.yml --ref "${AUTOTAG_BRANCH}" --field tag="${TAG}"
+        run: gh workflow run release.yml --ref "${GITHUB_REF_NAME}" --field tag="${TAG}"
