@@ -14,6 +14,9 @@ Rules:
 
 ## 2026-07-13
 
+- **Retention settings authorization fix**:
+  - Global retention reads and writes now use the registered `instance_settings` RBAC resource, so owners and admins can load and manage retention instead of receiving a false `permission_denied` response.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
 - **PAT-free alpha release dispatch**:
   - Autotag now uses the repository-scoped GitHub Actions token to push release tags and explicitly dispatches the tag-aware Release workflow, removing the expired `RELEASE_PAT` bottleneck without losing downstream release execution to GitHub's recursion guard.
   - Release smoke coverage enforces the required token permissions, dispatch path, and absence of personal access-token coupling.
