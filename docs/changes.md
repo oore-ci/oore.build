@@ -10,6 +10,12 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-13
+
+- **Default-branch release dispatch compatibility**:
+  - The default branch now declares the tag input used by channel Autotag workflows, allowing GitHub to accept release dispatches whose executable workflow revision lives on `alpha`, `beta`, or `stable`.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+
 ## 2026-05-22
 
 - **Frontend guided setup hints**:
