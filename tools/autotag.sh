@@ -75,6 +75,12 @@ maybe_configure_github_token_remote() {
   fi
 }
 
+emit_tag() {
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf 'tag=%s\n' "$1" >>"$GITHUB_OUTPUT"
+  fi
+}
+
 latest_prod_version() {
   local latest_prod_tag latest_prod_ver
   latest_prod_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n1 || true)"
@@ -132,6 +138,7 @@ if [[ "$CHANNEL" == "stable" ]]; then
   echo "[autotag:stable] cutting $tag"
   git tag -a "$tag" -m "Release $tag"
   git push origin "$tag"
+  emit_tag "$tag"
   exit 0
 fi
 
@@ -163,3 +170,4 @@ fi
 echo "[autotag:$CHANNEL] cutting $tag"
 git tag -a "$tag" -m "$label $tag"
 git push origin "$tag"
+emit_tag "$tag"

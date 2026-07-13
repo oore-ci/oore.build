@@ -3,10 +3,19 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and publish
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   deploy:
@@ -16,6 +25,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -29,7 +39,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
 
           pages_branch="stable"
           if echo "$tag" | grep -q -- '-alpha\.'; then
@@ -98,6 +108,8 @@ jobs:
             target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Build Rust
         run: |
@@ -123,6 +135,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -154,7 +167,7 @@ jobs:
       - name: Package release tarballs
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           ver="${tag#v}"
           mkdir -p "dist/releases/$tag"
 
@@ -222,7 +235,7 @@ jobs:
       - name: Generate release notes
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
 
           channel="prod"
           if echo "$tag" | grep -q -- '-alpha\.'; then
@@ -269,7 +282,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
 
           prerelease_flag=""
           if echo "$tag" | grep -q -- '-alpha\.'; then
