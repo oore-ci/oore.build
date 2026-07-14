@@ -4,7 +4,7 @@ use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path as FsPath, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 
 use axum::Json;
@@ -398,6 +398,32 @@ fn parse_openssl_time(value: &str) -> Option<i64> {
         })
 }
 
+/// Reads PKCS#12 data across both macOS LibreSSL and OpenSSL 3.
+///
+/// OpenSSL 3 needs `-legacy` for older 3DES/SHA1 bundles, while LibreSSL does
+/// not recognize that option. Try the portable command first and only retry
+/// with OpenSSL 3's compatibility provider when the bundle requires it.
+fn run_openssl_pkcs12(args: &[&str]) -> std::io::Result<Output> {
+    let primary = Command::new("openssl").arg("pkcs12").args(args).output()?;
+    if primary.status.success() {
+        return Ok(primary);
+    }
+
+    let legacy = Command::new("openssl")
+        .args(["pkcs12", "-legacy"])
+        .args(args)
+        .output()?;
+
+    let legacy_stderr = String::from_utf8_lossy(&legacy.stderr);
+    if legacy.status.success()
+        || !(legacy_stderr.contains("unknown option") && legacy_stderr.contains("-legacy"))
+    {
+        Ok(legacy)
+    } else {
+        Ok(primary)
+    }
+}
+
 async fn parse_p12_metadata(
     p12_bytes: Vec<u8>,
     p12_password: String,
@@ -424,20 +450,15 @@ async fn parse_p12_metadata(
         set_strict_permissions(&password_path);
 
         let passin = format!("file:{}", password_path.display());
-        let cert_output = Command::new("openssl")
-            .args([
-                "pkcs12",
-                "-in",
-                p12_path.to_string_lossy().as_ref(),
-                "-clcerts",
-                "-nokeys",
-                // Required for reading legacy-encoded (3DES/SHA1) p12 files on OpenSSL 3.x.
-                "-legacy",
-                "-passin",
-                &passin,
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute openssl pkcs12: {e}"))?;
+        let cert_output = run_openssl_pkcs12(&[
+            "-in",
+            p12_path.to_string_lossy().as_ref(),
+            "-clcerts",
+            "-nokeys",
+            "-passin",
+            &passin,
+        ])
+        .map_err(|e| anyhow::anyhow!("failed to execute openssl pkcs12: {e}"))?;
         if !cert_output.status.success() {
             let stderr = String::from_utf8_lossy(&cert_output.stderr);
             cleanup_temp_paths(&[p12_path, password_path, cert_path]);
@@ -629,19 +650,15 @@ fn reexport_p12_legacy_blocking(
     let passin = format!("file:{}", old_pass_path.display());
 
     // Extract private key
-    let key_out = Command::new("openssl")
-        .args([
-            "pkcs12",
-            "-in",
-            old_p12_path.to_string_lossy().as_ref(),
-            "-nocerts",
-            "-nodes",
-            "-legacy",
-            "-passin",
-            &passin,
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("failed to run openssl pkcs12 key extraction: {e}"))?;
+    let key_out = run_openssl_pkcs12(&[
+        "-in",
+        old_p12_path.to_string_lossy().as_ref(),
+        "-nocerts",
+        "-nodes",
+        "-passin",
+        &passin,
+    ])
+    .map_err(|e| anyhow::anyhow!("failed to run openssl pkcs12 key extraction: {e}"))?;
     if !key_out.status.success() {
         let stderr = String::from_utf8_lossy(&key_out.stderr);
         cleanup_temp_paths(&all_paths);
@@ -652,19 +669,15 @@ fn reexport_p12_legacy_blocking(
     set_strict_permissions(&key_path);
 
     // Extract certificate
-    let cert_out = Command::new("openssl")
-        .args([
-            "pkcs12",
-            "-in",
-            old_p12_path.to_string_lossy().as_ref(),
-            "-clcerts",
-            "-nokeys",
-            "-legacy",
-            "-passin",
-            &passin,
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("failed to run openssl pkcs12 cert extraction: {e}"))?;
+    let cert_out = run_openssl_pkcs12(&[
+        "-in",
+        old_p12_path.to_string_lossy().as_ref(),
+        "-clcerts",
+        "-nokeys",
+        "-passin",
+        &passin,
+    ])
+    .map_err(|e| anyhow::anyhow!("failed to run openssl pkcs12 cert extraction: {e}"))?;
     if !cert_out.status.success() {
         let stderr = String::from_utf8_lossy(&cert_out.stderr);
         cleanup_temp_paths(&all_paths);

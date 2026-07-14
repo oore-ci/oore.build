@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-14
 
+- **Portable iOS certificate inspection**:
+  - PKCS#12 inspection and re-export now try the portable command first, then use OpenSSL 3's legacy provider only when an older bundle requires it. Valid Apple certificates can therefore be saved on the supported macOS backend, whose system LibreSSL does not recognize the `-legacy` option.
+  - When LibreSSL rejects that compatibility option, Oore preserves the original certificate or password error instead of showing an unrelated OpenSSL flag failure.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Reliable command palette**:
   - The Cmd/Ctrl+K search dialog now restores the required command context around its input, groups, and items, preventing the palette from crashing the entire web app when opened.
   - A browser-style component regression test opens the real dialog through its keyboard shortcut and verifies that searchable navigation commands render.
