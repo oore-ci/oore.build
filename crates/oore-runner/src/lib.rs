@@ -1018,10 +1018,10 @@ fn adapt_ios_command_for_signing(
     }
 
     // Flutter forwards FLUTTER_XCODE_* environment variables as command-line
-    // xcodebuild settings. Those settings make the archive use Oore's imported
-    // distribution identity while Xcode selects the installed profile for each
-    // target. ExportOptions.plist then preserves the exact per-bundle mapping for
-    // the IPA export. An unsigned archive cannot be repaired reliably at export.
+    // xcodebuild settings. Oore supplies the imported distribution identity and
+    // resolves each app target's exact installed profile from its bundle ID.
+    // ExportOptions.plist then preserves that mapping for the IPA export. An
+    // unsigned archive cannot be repaired reliably at export.
     args.push(format!(
         "--export-options-plist={}",
         export_options_plist.display()
@@ -1041,7 +1041,7 @@ fn ios_signing_xcode_environment(
         ),
         (
             "FLUTTER_XCODE_CODE_SIGN_STYLE".to_string(),
-            "Automatic".to_string(),
+            "Manual".to_string(),
         ),
         (
             "FLUTTER_XCODE_PROVISIONING_PROFILE".to_string(),
@@ -1049,17 +1049,43 @@ fn ios_signing_xcode_environment(
         ),
         (
             "FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER".to_string(),
-            String::new(),
+            "$(OORE_PROFILE_$(OORE_PROFILE_KEY))".to_string(),
+        ),
+        (
+            "FLUTTER_XCODE_OORE_PROFILE_KEY".to_string(),
+            "$(PRODUCT_BUNDLE_IDENTIFIER:identifier)".to_string(),
         ),
         (
             "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
             format!("--keychain {}", materialization.keychain_path.display()),
         ),
     ];
+    for (bundle_id, profile_ref) in &materialization.bundle_profile_mapping {
+        env.push((
+            format!(
+                "FLUTTER_XCODE_OORE_PROFILE_{}",
+                xcode_build_setting_identifier(bundle_id)
+            ),
+            profile_ref.clone(),
+        ));
+    }
     if let Some(ref sha1) = materialization.signing_identity_sha1 {
         env.push(("FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(), sha1.clone()));
     }
     env
+}
+
+fn xcode_build_setting_identifier(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn normalize_stage_command_for_execution(
@@ -4256,7 +4282,13 @@ mod tests {
             p12_path: PathBuf::from("/tmp/signing/distribution.p12"),
             keychain_path: PathBuf::from("/tmp/signing/oore-ci-build.keychain-db"),
             export_options_plist_path: PathBuf::from("/tmp/signing/ExportOptions.plist"),
-            bundle_profile_mapping: vec![],
+            bundle_profile_mapping: vec![
+                ("com.zerodha.kite3".to_string(), "Kite Ad Hoc".to_string()),
+                (
+                    "com.zerodha.kite3.HoldingsSummary".to_string(),
+                    "Kite Holdings Ad Hoc".to_string(),
+                ),
+            ],
             effective_export_method: "release-testing".to_string(),
             signing_identity_sha1: Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string()),
         };
@@ -4268,7 +4300,7 @@ mod tests {
         )));
         assert!(env.contains(&(
             "FLUTTER_XCODE_CODE_SIGN_STYLE".to_string(),
-            "Automatic".to_string(),
+            "Manual".to_string(),
         )));
         assert!(env.contains(&(
             "FLUTTER_XCODE_PROVISIONING_PROFILE".to_string(),
@@ -4276,7 +4308,19 @@ mod tests {
         )));
         assert!(env.contains(&(
             "FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER".to_string(),
-            String::new(),
+            "$(OORE_PROFILE_$(OORE_PROFILE_KEY))".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_OORE_PROFILE_KEY".to_string(),
+            "$(PRODUCT_BUNDLE_IDENTIFIER:identifier)".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_OORE_PROFILE_com_zerodha_kite3".to_string(),
+            "Kite Ad Hoc".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_OORE_PROFILE_com_zerodha_kite3_HoldingsSummary".to_string(),
+            "Kite Holdings Ad Hoc".to_string(),
         )));
         assert!(env.contains(&(
             "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
@@ -4287,6 +4331,14 @@ mod tests {
             "--keychain /tmp/signing/oore-ci-build.keychain-db".to_string(),
         )));
         assert!(!env.iter().any(|(key, _)| key == "CODE_SIGN_IDENTITY"));
+    }
+
+    #[test]
+    fn converts_bundle_ids_to_xcode_build_setting_identifiers() {
+        assert_eq!(
+            xcode_build_setting_identifier("com.example.app-share"),
+            "com_example_app_share"
+        );
     }
 
     #[test]
