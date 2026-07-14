@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Trigger builds manually, via webhook, or through the Oore CI API."
+description: 'Trigger builds manually, via webhook, or through the Oore CI API.'
 ---
 
 # Trigger Builds
@@ -61,12 +61,12 @@ curl -X POST http://127.0.0.1:8787/v1/projects/{project_id}/builds \
 
 ### Request body
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `pipeline_id` | `string` | Yes | ID of the pipeline to build |
-| `branch` | `string` | No | Branch to resolve and build (defaults to repository default) |
-| `commit_sha` | `string` | No | Specific commit to build |
-| `trigger_ref` | `string` | No | Reference string (e.g., PR number) |
+| Field         | Type     | Required | Description                                                  |
+| ------------- | -------- | -------- | ------------------------------------------------------------ |
+| `pipeline_id` | `string` | Yes      | ID of the pipeline to build                                  |
+| `branch`      | `string` | No       | Branch to resolve and build (defaults to repository default) |
+| `commit_sha`  | `string` | No       | Specific commit to build                                     |
+| `trigger_ref` | `string` | No       | Reference string (e.g., PR number)                           |
 
 ### Response `200 OK`
 

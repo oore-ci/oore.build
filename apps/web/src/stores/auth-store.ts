@@ -144,17 +144,10 @@ export function getLastAuthMetaForInstance(
       return null
     const at = Number(atRaw)
     if (!Number.isFinite(at) || at <= 0) return null
-    return { method: method as LastAuthMethod, at }
+    return { method: method, at }
   } catch {
     return null
   }
-}
-
-/** Returns true only when we have a non-expired token. */
-export function isAuthenticated(): boolean {
-  const { token, expiresAt } = useAuthStore.getState()
-  if (!token || expiresAt == null) return false
-  return expiresAt > Math.floor(Date.now() / 1000)
 }
 
 export const useAuthStore = create<AuthStoreState>((set, get) => ({

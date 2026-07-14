@@ -1,12 +1,13 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
+import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Delete02Icon, TestTube01Icon } from '@hugeicons/core-free-icons'
 
-import type { SmtpTlsMode, UpdateSmtpConfig } from '@/lib/types'
+import type { NotificationChannel, UpdateSmtpConfig } from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -112,7 +113,210 @@ function channelTypeLabel(type: string): string {
   }
 }
 
-function NotificationChannelDetailPage() {
+function NotificationChannelSettingsFields({
+  channel,
+  form,
+}: {
+  channel: NotificationChannel
+  form: UseFormReturn<FormValues>
+}) {
+  if (channel.channel_type !== 'email') {
+    return (
+      <>
+        <FormField
+          control={form.control}
+          name="url"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>New URL (leave blank to keep existing)</FormLabel>
+              <FormControl>
+                <Input type="url" placeholder="https://..." {...field} />
+              </FormControl>
+              <FormDescription>
+                {channel.has_url
+                  ? 'A URL is currently configured. Enter a new one to replace it.'
+                  : 'No URL configured.'}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {channel.channel_type === 'webhook' ? (
+          <FormField
+            control={form.control}
+            name="secret"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>
+                  New HMAC Secret (leave blank to keep existing)
+                </FormLabel>
+                <FormControl>
+                  <Input type="password" {...field} />
+                </FormControl>
+                <FormDescription>
+                  {channel.has_secret
+                    ? 'A secret is configured. Enter a new one to replace it.'
+                    : 'No HMAC secret configured.'}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ) : null}
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 text-sm">
+        <Badge variant={channel.has_smtp_config ? 'default' : 'secondary'}>
+          {channel.has_smtp_config ? 'SMTP configured' : 'No SMTP config'}
+        </Badge>
+      </div>
+
+      <FormDescription>
+        Leave fields blank to keep existing values. Only fill in fields you want
+        to change.
+      </FormDescription>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="smtp_host"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>SMTP Host</FormLabel>
+              <FormControl>
+                <Input placeholder="Leave blank to keep existing" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="smtp_port"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Port</FormLabel>
+              <FormControl>
+                <Input
+                  type="number"
+                  placeholder="Leave blank to keep existing"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="smtp_username"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Username</FormLabel>
+              <FormControl>
+                <Input placeholder="Leave blank to keep existing" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="smtp_password"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <Input
+                  type="password"
+                  placeholder="Leave blank to keep existing"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <FormField
+        control={form.control}
+        name="smtp_tls_mode"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>TLS Mode</FormLabel>
+            <Select
+              value={field.value}
+              onValueChange={(value) => field.onChange(value)}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="Leave unchanged" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value="start_tls">STARTTLS (port 587)</SelectItem>
+                <SelectItem value="tls">Implicit TLS (port 465)</SelectItem>
+                <SelectItem value="none">None (unencrypted)</SelectItem>
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="smtp_from_address"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>From Address</FormLabel>
+            <FormControl>
+              <Input
+                type="email"
+                placeholder="Leave blank to keep existing"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="smtp_recipients"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Recipients</FormLabel>
+            <FormControl>
+              <Textarea
+                placeholder="Leave blank to keep existing (comma-separated)"
+                rows={3}
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Comma-separated list of email addresses. Leave blank to keep
+              existing recipients.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </>
+  )
+}
+
+function useNotificationChannelDetailPageState() {
   const { channelId } = Route.useParams()
   const navigate = useNavigate()
 
@@ -172,7 +376,7 @@ function NotificationChannelDetailPage() {
       if (values.smtp_username) smtp_config.username = values.smtp_username
       if (values.smtp_password) smtp_config.password = values.smtp_password
       if (values.smtp_tls_mode)
-        smtp_config.tls_mode = values.smtp_tls_mode as SmtpTlsMode
+        smtp_config.tls_mode = values.smtp_tls_mode
       if (values.smtp_from_address)
         smtp_config.from_address = values.smtp_from_address
       if (values.smtp_recipients?.trim()) {
@@ -243,6 +447,32 @@ function NotificationChannelDetailPage() {
   }
 
   if (isLoading) {
+    return { status: 'loading' as const }
+  }
+
+  if (!channel) {
+    return { status: 'missing' as const }
+  }
+
+  return {
+    status: 'ready' as const,
+    channel,
+    deleteMutation,
+    deliveries,
+    form,
+    handleDelete,
+    handleTest,
+    isEmail,
+    onSubmit,
+    testMutation,
+    updateMutation,
+  }
+}
+
+function NotificationChannelDetailPage() {
+  const pageState = useNotificationChannelDetailPageState()
+
+  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
@@ -256,7 +486,7 @@ function NotificationChannelDetailPage() {
     )
   }
 
-  if (!channel) {
+  if (pageState.status === 'missing') {
     return (
       <PageLayout width="wide">
         <PageHeader title="Channel Not Found" />
@@ -266,6 +496,18 @@ function NotificationChannelDetailPage() {
       </PageLayout>
     )
   }
+
+  const {
+    channel,
+    deleteMutation,
+    deliveries,
+    form,
+    handleDelete,
+    handleTest,
+    onSubmit,
+    testMutation,
+    updateMutation,
+  } = pageState
 
   return (
     <PageLayout width="wide">
@@ -358,226 +600,10 @@ function NotificationChannelDetailPage() {
                 )}
               />
 
-              {/* Webhook / Mattermost fields */}
-              {!isEmail ? (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="url"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          New URL (leave blank to keep existing)
-                        </FormLabel>
-                        <FormControl>
-                          <Input
-                            type="url"
-                            placeholder="https://..."
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          {channel.has_url
-                            ? 'A URL is currently configured. Enter a new one to replace it.'
-                            : 'No URL configured.'}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {channel.channel_type === 'webhook' ? (
-                    <FormField
-                      control={form.control}
-                      name="secret"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            New HMAC Secret (leave blank to keep existing)
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" {...field} />
-                          </FormControl>
-                          <FormDescription>
-                            {channel.has_secret
-                              ? 'A secret is configured. Enter a new one to replace it.'
-                              : 'No HMAC secret configured.'}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : null}
-                </>
-              ) : null}
-
-              {/* Email (SMTP) fields */}
-              {isEmail ? (
-                <>
-                  <div className="flex items-center gap-2 text-sm">
-                    <Badge
-                      variant={
-                        channel.has_smtp_config ? 'default' : 'secondary'
-                      }
-                    >
-                      {channel.has_smtp_config
-                        ? 'SMTP configured'
-                        : 'No SMTP config'}
-                    </Badge>
-                  </div>
-
-                  <FormDescription>
-                    Leave fields blank to keep existing values. Only fill in
-                    fields you want to change.
-                  </FormDescription>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="smtp_host"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>SMTP Host</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Leave blank to keep existing"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="smtp_port"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Port</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="Leave blank to keep existing"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="smtp_username"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Username</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Leave blank to keep existing"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="smtp_password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Password</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="password"
-                              placeholder="Leave blank to keep existing"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <FormField
-                    control={form.control}
-                    name="smtp_tls_mode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>TLS Mode</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={(value) => field.onChange(value)}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Leave unchanged" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="start_tls">
-                              STARTTLS (port 587)
-                            </SelectItem>
-                            <SelectItem value="tls">
-                              Implicit TLS (port 465)
-                            </SelectItem>
-                            <SelectItem value="none">
-                              None (unencrypted)
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="smtp_from_address"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>From Address</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="Leave blank to keep existing"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="smtp_recipients"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Recipients</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder="Leave blank to keep existing (comma-separated)"
-                            rows={3}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Comma-separated list of email addresses. Leave blank
-                          to keep existing recipients.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              ) : null}
+              <NotificationChannelSettingsFields
+                channel={channel}
+                form={form}
+              />
 
               <FormField
                 control={form.control}

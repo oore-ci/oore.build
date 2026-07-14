@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Register and manage external build runners for Oore CI."
+description: 'Register and manage external build runners for Oore CI.'
 ---
 
 # Register an External Runner
@@ -25,11 +25,11 @@ oore runner register \
   --name "mac-mini-builder"
 ```
 
-| Flag | Default | Env var | Description |
-|---|---|---|---|
-| `--daemon-url` | `http://127.0.0.1:8787` | `OORE_DAEMON_URL` | Daemon URL |
-| `--token` | — | `OORE_SESSION_TOKEN` | User session token for authentication |
-| `--name` | — | — | Display name for the runner |
+| Flag           | Default                 | Env var              | Description                           |
+| -------------- | ----------------------- | -------------------- | ------------------------------------- |
+| `--daemon-url` | `http://127.0.0.1:8787` | `OORE_DAEMON_URL`    | Daemon URL                            |
+| `--token`      | —                       | `OORE_SESSION_TOKEN` | User session token for authentication |
+| `--name`       | —                       | —                    | Display name for the runner           |
 
 This creates a runner record on the daemon and writes a config file at `~/.oore/runner.json` with the runner's token.
 
@@ -39,10 +39,10 @@ This creates a runner record on the daemon and writes a config file at `~/.oore/
 oore runner start
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--daemon-url` | From config | Daemon URL (overrides config) |
-| `--config` | `~/.oore/runner.json` | Runner config file path |
+| Flag           | Default               | Description                   |
+| -------------- | --------------------- | ----------------------------- |
+| `--daemon-url` | From config           | Daemon URL (overrides config) |
+| `--config`     | `~/.oore/runner.json` | Runner config file path       |
 
 The runner process:
 
@@ -59,11 +59,11 @@ The runner process:
 
 ## Runner lifecycle
 
-| State | Meaning |
-|---|---|
-| `online` | Runner is healthy, sending heartbeats, ready for jobs |
-| `busy` | Runner is executing a build |
-| `offline` | Runner hasn't sent a heartbeat recently |
+| State      | Meaning                                                    |
+| ---------- | ---------------------------------------------------------- |
+| `online`   | Runner is healthy, sending heartbeats, ready for jobs      |
+| `busy`     | Runner is executing a build                                |
+| `offline`  | Runner hasn't sent a heartbeat recently                    |
 | `draining` | Runner is finishing current work and won't accept new jobs |
 
 ## Stopping the runner
@@ -72,9 +72,9 @@ Stop the `oore runner start` process (Ctrl+C or kill the process). The daemon ma
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runners/register` | Register a new runner |
-| `GET` | `/v1/runners` | List all runners |
-| `POST` | `/v1/runners/{runner_id}/heartbeat` | Send heartbeat |
-| `POST` | `/v1/runners/{runner_id}/claim` | Claim next available job |
+| Method | Path                                | Description              |
+| ------ | ----------------------------------- | ------------------------ |
+| `POST` | `/v1/runners/register`              | Register a new runner    |
+| `GET`  | `/v1/runners`                       | List all runners         |
+| `POST` | `/v1/runners/{runner_id}/heartbeat` | Send heartbeat           |
+| `POST` | `/v1/runners/{runner_id}/claim`     | Claim next available job |

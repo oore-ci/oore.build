@@ -3,7 +3,6 @@ import { useRouter } from '@tanstack/react-router'
 import type { InviteUserRequest, UpdateUserRoleRequest } from '@/lib/types'
 import {
   deleteUser,
-  getMe,
   inviteUser,
   listUsers,
   logout,
@@ -25,18 +24,6 @@ function useAuthToken(): string | null {
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
   return resolveInstanceApiBaseUrl(instance)
-}
-
-export function useCurrentUser() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'me'],
-    queryFn: () => getMe(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
-  })
 }
 
 export function useUsers() {

@@ -1,10 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,6 +24,10 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
+import {
+  CopyableOidcRedirectUri,
+  OidcConfigError,
+} from '@/components/setup-oidc-components'
 
 // ── Predefined OIDC providers ──────────────────────────────────
 
@@ -103,48 +105,6 @@ export const Route = createFileRoute('/setup/oidc')({
   errorComponent: OidcConfigError,
 })
 
-function OidcConfigError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
-
-// ── CopyableUri ────────────────────────────────────────────────
-
-function CopyableUri({ uri }: { uri: string }) {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(uri).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
-  }, [uri])
-
-  return (
-    <div className="flex items-center gap-2 bg-muted px-3 py-2">
-      <code className="flex-1 text-xs font-mono break-all">{uri}</code>
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-        aria-label="Copy redirect URI"
-      >
-        {copied ? (
-          <HugeiconsIcon icon={Tick02Icon} size={14} className="text-primary" />
-        ) : (
-          <HugeiconsIcon icon={Copy01Icon} size={14} />
-        )}
-      </button>
-    </div>
-  )
-}
-
 // ── Component ──────────────────────────────────────────────────
 
 function OidcConfigStep() {
@@ -197,7 +157,7 @@ function OidcConfigStep() {
   useSetupModeGuard(status, 'oidc')
 
   function handleProviderChange(value: ProviderId) {
-    setSelectedProvider(value)
+    setSelectedProvider(() => value)
     const nextProvider = PROVIDERS.find((pr) => pr.id === value) ?? PROVIDERS[0]
     if (nextProvider.locked) {
       setValue('issuerUrl', nextProvider.issuerUrl, { shouldValidate: true })
@@ -254,7 +214,9 @@ function OidcConfigStep() {
           <p className="text-sm text-muted-foreground mb-2">
             Add this as an authorized redirect URI when creating your OAuth app:
           </p>
-          <CopyableUri uri={`${window.location.origin}/auth/callback`} />
+          <CopyableOidcRedirectUri
+            uri={`${window.location.origin}/auth/callback`}
+          />
         </AlertDescription>
       </Alert>
 

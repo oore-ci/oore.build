@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Overview of code signing in Oore CI for Android and iOS builds."
+description: 'Overview of code signing in Oore CI for Android and iOS builds.'
 ---
 
 # Code Signing in Oore CI
@@ -31,8 +31,8 @@ Signing credentials never leave your infrastructure — they're stored on the da
 
 Android signing is straightforward: upload a keystore (`.jks` / `.keystore`), provide the passwords, and Oore CI handles the rest.
 
-| What you provide | What Oore CI does |
-|---|---|
+| What you provide          | What Oore CI does                       |
+| ------------------------- | --------------------------------------- |
 | Keystore file + passwords | Stores encrypted, injects at build time |
 
 See [Generate an Android Keystore](/guides/signing/android-keystore) and [Configure Gradle Signing](/guides/signing/android-gradle).
@@ -45,21 +45,21 @@ iOS signing is more complex because Apple requires both a certificate and a prov
 
 You obtain the certificate and profile yourself and upload them to Oore CI.
 
-| Pros | Cons |
-|---|---|
-| Full control over signing assets | Manual certificate/profile renewal |
+| Pros                               | Cons                                |
+| ---------------------------------- | ----------------------------------- |
+| Full control over signing assets   | Manual certificate/profile renewal  |
 | No App Store Connect access needed | Must manually register test devices |
-| Works with enterprise certificates | |
+| Works with enterprise certificates |                                     |
 
 ### API mode
 
 You provide an App Store Connect API key, and Oore CI manages certificates and profiles automatically.
 
-| Pros | Cons |
-|---|---|
-| Automatic certificate/profile management | Requires App Store Connect API access |
-| Register test devices through Oore CI | Limited to Apple's API capabilities |
-| Automatic profile regeneration on device changes | |
+| Pros                                             | Cons                                  |
+| ------------------------------------------------ | ------------------------------------- |
+| Automatic certificate/profile management         | Requires App Store Connect API access |
+| Register test devices through Oore CI            | Limited to Apple's API capabilities   |
+| Automatic profile regeneration on device changes |                                       |
 
 See [iOS Manual Signing](/guides/signing/ios-manual-signing) and [iOS API Signing](/guides/signing/ios-api-signing).
 

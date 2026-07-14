@@ -20,6 +20,25 @@ interface UseLogStreamOptions {
 const POLL_INTERVAL_MS = 2500
 const POLL_BACKFILL_WINDOW = 500
 
+interface LogEventSourceHandlers {
+  open: EventListener
+  log: EventListener
+  done: EventListener
+  error: EventListener
+}
+
+function openEventSource(
+  url: string,
+  handlers: LogEventSourceHandlers,
+): EventSource {
+  const eventSource = new EventSource(url)
+  eventSource.addEventListener('open', handlers.open)
+  eventSource.addEventListener('log', handlers.log)
+  eventSource.addEventListener('done', handlers.done)
+  eventSource.addEventListener('error', handlers.error)
+  return eventSource
+}
+
 type StreamState = UseLogStreamResult
 type StreamAction = Partial<StreamState> | 'reset'
 
@@ -113,10 +132,12 @@ export function useLogStream(
   }, [stopPolling])
 
   useEffect(() => {
+    let eventSource: EventSource | null = null
+
     cleanup()
     if (!enabled || !baseUrl || !token) {
       updateStream({ isStreaming: false })
-      return cleanup
+      return
     }
 
     updateStream('reset')
@@ -128,6 +149,37 @@ export function useLogStream(
     abortRef.current = abort
 
     startPolling()
+
+    const handleOpen = () => {
+      // SSE is healthy, so suspend polling reconciliation until disconnect.
+      stopPolling()
+      updateStream({ isStreaming: true })
+    }
+
+    const handleLog = (event: Event) => {
+      try {
+        const chunk = JSON.parse((event as MessageEvent).data as string) as BuildLogChunk
+        appendLogs([chunk])
+      } catch {
+        // Ignore malformed chunks.
+      }
+    }
+
+    const handleDone = () => {
+      updateStream({ isStreaming: false, isDone: true })
+      eventSource?.close()
+      eventSourceRef.current = null
+      void pollOnce()
+      stopPolling()
+      onDone?.()
+    }
+
+    const handleError = () => {
+      eventSource?.close()
+      eventSourceRef.current = null
+      updateStream({ isStreaming: false })
+      startPolling()
+    }
 
     void (async () => {
       let streamToken: string
@@ -146,45 +198,33 @@ export function useLogStream(
         encodeURIComponent(streamToken)
 
       try {
-        const es = new EventSource(streamUrl)
+        eventSource = openEventSource(streamUrl, {
+          open: handleOpen,
+          log: handleLog,
+          done: handleDone,
+          error: handleError,
+        })
+        const es = eventSource
         eventSourceRef.current = es
-
-        es.addEventListener('open', () => {
-          // SSE is healthy, so suspend polling reconciliation until disconnect.
-          stopPolling()
-          updateStream({ isStreaming: true })
-        })
-
-        es.addEventListener('log', (event: MessageEvent) => {
-          try {
-            const chunk = JSON.parse(event.data as string) as BuildLogChunk
-            appendLogs([chunk])
-          } catch {
-            // Ignore malformed chunks.
-          }
-        })
-
-        es.addEventListener('done', () => {
-          updateStream({ isStreaming: false, isDone: true })
-          es.close()
-          eventSourceRef.current = null
-          void pollOnce()
-          stopPolling()
-          onDone?.()
-        })
-
-        es.addEventListener('error', () => {
-          es.close()
-          eventSourceRef.current = null
-          updateStream({ isStreaming: false })
-          startPolling()
-        })
       } catch {
         // Polling remains active if EventSource cannot be constructed.
       }
     })()
 
-    return cleanup
+    return () => {
+      abortRef.current?.abort()
+      abortRef.current = null
+      eventSource?.removeEventListener('open', handleOpen)
+      eventSource?.removeEventListener('log', handleLog)
+      eventSource?.removeEventListener('done', handleDone)
+      eventSource?.removeEventListener('error', handleError)
+      eventSource?.close()
+      eventSourceRef.current = null
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
+      }
+    }
   }, [
     enabled,
     baseUrl,

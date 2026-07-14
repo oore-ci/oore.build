@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Install and configure a GitHub App integration for Oore CI repository access and webhooks."
+description: 'Install and configure a GitHub App integration for Oore CI repository access and webhooks.'
 ---
 
 # Connect a GitHub App
@@ -66,14 +66,14 @@ This removes the integration from Oore CI. To also uninstall the GitHub App, go 
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/integrations/github/start` | Begin GitHub App creation |
-| `POST` | `/v1/integrations/github/complete` | Complete the OAuth flow |
-| `GET` | `/v1/integrations/{id}/repositories` | List accessible repositories |
-| `GET` | `/v1/integrations/{id}/installations` | List installations |
-| `POST` | `/v1/integrations/{id}/installations` | Sync installations |
-| `DELETE` | `/v1/integrations/{id}` | Remove integration |
+| Method   | Path                                  | Description                  |
+| -------- | ------------------------------------- | ---------------------------- |
+| `POST`   | `/v1/integrations/github/start`       | Begin GitHub App creation    |
+| `POST`   | `/v1/integrations/github/complete`    | Complete the OAuth flow      |
+| `GET`    | `/v1/integrations/{id}/repositories`  | List accessible repositories |
+| `GET`    | `/v1/integrations/{id}/installations` | List installations           |
+| `POST`   | `/v1/integrations/{id}/installations` | Sync installations           |
+| `DELETE` | `/v1/integrations/{id}`               | Remove integration           |
 
 ## Reference
 

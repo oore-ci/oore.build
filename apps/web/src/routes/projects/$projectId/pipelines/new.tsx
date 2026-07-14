@@ -271,7 +271,7 @@ function RepositoryWorkflowSummary({
   )
 }
 
-function NewPipelinePage() {
+function useNewPipelinePageState() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
@@ -380,8 +380,12 @@ function NewPipelinePage() {
     setValidationErrors([])
 
     const [signingPayload, iosSigningPayload] = await Promise.all([
-      buildAndroidSigningPayload(data, releaseKeystoreFile, debugKeystoreFile),
-      buildIosSigningPayload(data, iosSigningFiles),
+      buildAndroidSigningPayload(
+        { ...data },
+        releaseKeystoreFile,
+        debugKeystoreFile,
+      ),
+      buildIosSigningPayload({ ...data }, iosSigningFiles),
     ])
     if (
       (data.android_signing_release_enabled ||
@@ -659,6 +663,55 @@ function NewPipelinePage() {
           : undefined,
     }
   }
+
+  return {
+    activeTemplate,
+    createMutation,
+    handleSubmit,
+    invalidWorkflows,
+    manualOnlyTriggers,
+    manualSetup,
+    navigate,
+    projectData,
+    projectId,
+    selectedTemplate,
+    selectedWorkflow,
+    selectedWorkflowPath,
+    setManualSetup,
+    setSelectedTemplate,
+    setSelectedWorkflowPath,
+    updateIosSigningMutation,
+    updateSigningMutation,
+    validationErrors,
+    validWorkflows,
+    workflowsQuery,
+  }
+}
+
+function NewPipelinePage() {
+  const pageState = useNewPipelinePageState()
+  const {
+    activeTemplate,
+    createMutation,
+    handleSubmit,
+    invalidWorkflows,
+    manualOnlyTriggers,
+    manualSetup,
+    navigate,
+    projectData,
+    projectId,
+    selectedTemplate,
+    selectedWorkflow,
+    selectedWorkflowPath,
+    setManualSetup,
+    setSelectedTemplate,
+    setSelectedWorkflowPath,
+    updateIosSigningMutation,
+    updateSigningMutation,
+    validationErrors,
+    validWorkflows,
+    workflowsQuery,
+  } = pageState
 
   return (
     <PageLayout width="wide">

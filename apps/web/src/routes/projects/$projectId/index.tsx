@@ -1,11 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
   Delete02Icon,
   InformationCircleIcon,
   PlayIcon,
@@ -19,12 +16,7 @@ import {
 import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
-import {
-  useDeleteProject,
-  useProject,
-  useUpdateProject,
-} from '@/hooks/use-projects'
-import { getStatusVariant } from '@/lib/status-variants'
+import { useDeleteProject, useProject } from '@/hooks/use-projects'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -42,43 +34,21 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import PipelineCard from '@/components/pipeline-card'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import { ProjectSettingsForm } from './project-settings-form'
+import {
+  ProjectBuildsTab,
+  ProjectPipelinesTab,
+} from './project-detail-tabs'
 
 const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
@@ -100,128 +70,8 @@ export const Route = createFileRoute('/projects/$projectId/')({
   component: ProjectDetailPage,
 })
 
-/* ------------------------------------------------------------------ */
-/*  Settings tab: inline project edit form                             */
-/* ------------------------------------------------------------------ */
 
-const editProjectSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  description: z.string().optional(),
-  default_branch: z.string().optional(),
-})
-
-type EditProjectForm = z.infer<typeof editProjectSchema>
-
-function ProjectSettingsForm({
-  projectId,
-  currentValues,
-}: {
-  projectId: string
-  currentValues: { name: string; description?: string; default_branch?: string }
-}) {
-  const updateMutation = useUpdateProject()
-
-  const form = useForm<EditProjectForm>({
-    resolver: zodResolver(editProjectSchema),
-    defaultValues: {
-      name: currentValues.name,
-      description: currentValues.description ?? '',
-      default_branch: currentValues.default_branch ?? '',
-    },
-    values: {
-      name: currentValues.name,
-      description: currentValues.description ?? '',
-      default_branch: currentValues.default_branch ?? '',
-    },
-    mode: 'onBlur',
-  })
-
-  function onSubmit(data: EditProjectForm) {
-    updateMutation.mutate(
-      {
-        projectId,
-        data: {
-          name: data.name.trim(),
-          description: data.description?.trim() || undefined,
-          default_branch: data.default_branch?.trim() || undefined,
-        },
-      },
-      {
-        onSuccess: () => toast.success('Project updated'),
-        onError: (err) =>
-          toast.error(`Failed to update project: ${err.message}`),
-      },
-    )
-  }
-
-  return (
-    <Card>
-      <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Name</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="default_branch"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default Branch</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="flex justify-end">
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? (
-                  <>
-                    <Spinner className="size-4" />
-                    Saving...
-                  </>
-                ) : (
-                  'Save'
-                )}
-              </Button>
-            </div>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Main page                                                          */
-/* ------------------------------------------------------------------ */
-
-function ProjectDetailPage() {
+function useProjectDetailPageState() {
   const { projectId } = Route.useParams()
   const { tab } = Route.useSearch()
   const navigate = useNavigate()
@@ -281,31 +131,14 @@ function ProjectDetailPage() {
   const label = data?.project.name ?? 'Project Details'
 
   if (isLoading) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-56 w-full" />
-      </PageLayout>
-    )
+    return { status: 'loading' as const, label }
   }
 
   if (error) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load project: {error.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
+    return { status: 'error' as const, label, message: error.message }
   }
 
-  if (!data) return null
+  if (!data) return { status: 'missing' as const }
 
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
@@ -333,8 +166,104 @@ function ProjectDetailPage() {
   }
 
   function openTriggerBuild(pipelineId?: string) {
-    setTriggerPipelineId(pipelineId)
+    setTriggerPipelineId(() => pipelineId)
     setTriggerBuildOpen(true)
+  }
+
+  return {
+    status: 'ready' as const,
+    activeTab,
+    builds,
+    canDeleteProjects,
+    canTriggerBuild,
+    canWritePipelines,
+    canWriteProjects,
+    dangerOpen,
+    deleteMutation,
+    deleteOpen,
+    handleDelete,
+    label,
+    lastBuildByPipeline,
+    latestSucceededBuild,
+    navigate,
+    openTriggerBuild,
+    pipelines,
+    project,
+    projectHasSource,
+    projectId,
+    repositoryWorkflowsQuery,
+    setDangerOpen,
+    setDeleteOpen,
+    setTab,
+    setTriggerBuildOpen,
+    setTriggerPipelineId,
+    triggerBuildOpen,
+    triggerPipelineId,
+  }
+}
+
+function ProjectDetailPage() {
+  const pageState = useProjectDetailPageState()
+
+  if (pageState.status === 'loading') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-10 w-72" />
+        <Skeleton className="h-56 w-full" />
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Failed to load project: {pageState.message}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'missing') return null
+
+  const {
+    activeTab,
+    builds,
+    canDeleteProjects,
+    canTriggerBuild,
+    canWritePipelines,
+    canWriteProjects,
+    dangerOpen,
+    deleteMutation,
+    deleteOpen,
+    handleDelete,
+    label,
+    lastBuildByPipeline,
+    latestSucceededBuild,
+    navigate,
+    openTriggerBuild,
+    pipelines,
+    project,
+    projectHasSource,
+    projectId,
+    repositoryWorkflowsQuery,
+    setDangerOpen,
+    setDeleteOpen,
+    setTab,
+    setTriggerBuildOpen,
+    setTriggerPipelineId,
+    triggerBuildOpen,
+    triggerPipelineId,
+  } = pageState
+
+  const openBuild = (buildId: string) => {
+    void navigate({ to: '/builds/$buildId', params: { buildId } })
   }
 
   return (
@@ -418,217 +347,32 @@ function ProjectDetailPage() {
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
 
-        {/* ---- Pipelines tab ---- */}
-        <TabsContent value="pipelines">
-          <div className="space-y-4 pt-2">
-            {canWritePipelines && pipelines.length > 0 ? (
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  render={
-                    <Link
-                      to="/projects/$projectId/pipelines/new"
-                      params={{ projectId }}
-                    />
-                  }
-                >
-                  <HugeiconsIcon icon={Add01Icon} />
-                  Add pipeline
-                </Button>
-              </div>
-            ) : null}
+        <ProjectPipelinesTab
+          canTriggerBuild={canTriggerBuild}
+          canWritePipelines={canWritePipelines}
+          defaultBranch={project.default_branch}
+          hasValidRepositoryWorkflow={
+            repositoryWorkflowsQuery.data?.workflows.some(
+              (workflow) => workflow.valid,
+            ) ?? false
+          }
+          lastBuildByPipeline={lastBuildByPipeline}
+          pipelines={pipelines}
+          projectHasSource={projectHasSource}
+          projectId={projectId}
+          workflowDiscoveryFailed={!!repositoryWorkflowsQuery.error}
+          workflowDiscoveryLoading={repositoryWorkflowsQuery.isLoading}
+        />
 
-            {pipelines.length === 0 ? (
-              <Empty className="border p-8">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    {repositoryWorkflowsQuery.isLoading ? (
-                      <Spinner className="size-5" />
-                    ) : (
-                      <HugeiconsIcon icon={Add01Icon} />
-                    )}
-                  </EmptyMedia>
-                  <EmptyTitle>
-                    {repositoryWorkflowsQuery.isLoading
-                      ? 'Checking your repository'
-                      : repositoryWorkflowsQuery.data?.workflows.some(
-                            (workflow) => workflow.valid,
-                          )
-                        ? 'Your repository is ready'
-                        : 'Set up your first build'}
-                  </EmptyTitle>
-                  <EmptyDescription>
-                    {!canWritePipelines
-                      ? 'Ask a developer or admin to set up the first build.'
-                      : repositoryWorkflowsQuery.isLoading
-                        ? `Looking for Oore workflows on ${project.default_branch ?? 'the default branch'}...`
-                        : repositoryWorkflowsQuery.error
-                          ? 'Oore could not inspect the repository. Open setup to retry or continue manually.'
-                          : repositoryWorkflowsQuery.data?.workflows.some(
-                                (workflow) => workflow.valid,
-                              )
-                            ? 'Oore found a checked-in workflow. Review it, name the pipeline, and run your first build.'
-                            : 'Choose a clear starter for your app. Advanced build details stay out of the way until you need them.'}
-                  </EmptyDescription>
-                </EmptyHeader>
-                {canWritePipelines ? (
-                  <EmptyContent>
-                    <Button
-                      render={
-                        <Link
-                          to="/projects/$projectId/pipelines/new"
-                          params={{ projectId }}
-                        />
-                      }
-                    >
-                      <HugeiconsIcon icon={Add01Icon} />
-                      {repositoryWorkflowsQuery.data?.workflows.some(
-                        (workflow) => workflow.valid,
-                      )
-                        ? 'Use repository workflow'
-                        : 'Set up a build'}
-                    </Button>
-                  </EmptyContent>
-                ) : null}
-              </Empty>
-            ) : (
-              pipelines.map((pipeline) => {
-                const lb = lastBuildByPipeline.get(pipeline.id)
-                return (
-                  <PipelineCard
-                    key={pipeline.id}
-                    pipeline={pipeline}
-                    projectId={projectId}
-                    defaultBranch={project.default_branch}
-                    canWrite={canWritePipelines}
-                    canTriggerBuild={canTriggerBuild && projectHasSource}
-                    lastBuildStatus={lb?.status}
-                    lastBuildTime={lb?.time}
-                  />
-                )
-              })
-            )}
-          </div>
-        </TabsContent>
-
-        {/* ---- Builds tab ---- */}
-        <TabsContent value="builds">
-          <div className="pt-2">
-            <Card>
-              <CardContent>
-                {(() => {
-                  if (!latestSucceededBuild) return null
-                  return (
-                    <div className="mb-3 flex items-center gap-2 text-sm">
-                      <Badge variant="default" className="text-[10px]">
-                        Latest
-                      </Badge>
-                      <Link
-                        to="/builds/$buildId"
-                        params={{ buildId: latestSucceededBuild.id }}
-                        className="font-mono text-xs text-primary hover:underline"
-                      >
-                        Build #{latestSucceededBuild.build_number}
-                      </Link>
-                      <span className="text-xs text-muted-foreground">
-                        on {latestSucceededBuild.branch ?? 'n/a'} ·{' '}
-                        {relativeTime(latestSucceededBuild.queued_at)}
-                      </span>
-                    </div>
-                  )
-                })()}
-                {builds.length === 0 ? (
-                  <Empty className="p-8">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <HugeiconsIcon icon={PlayIcon} />
-                      </EmptyMedia>
-                      <EmptyTitle>No builds yet</EmptyTitle>
-                      <EmptyDescription>
-                        {canTriggerBuild
-                          ? 'Run this project’s first pipeline to see its status, output, and artifacts here.'
-                          : 'Builds will appear here once triggered by a developer.'}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    {canTriggerBuild &&
-                    pipelines.length > 0 &&
-                    projectHasSource ? (
-                      <EmptyContent>
-                        <Button size="sm" onClick={() => openTriggerBuild()}>
-                          <HugeiconsIcon icon={PlayIcon} />
-                          Run first build
-                        </Button>
-                      </EmptyContent>
-                    ) : null}
-                  </Empty>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Build</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Trigger</TableHead>
-                        <TableHead>Branch</TableHead>
-                        <TableHead>Commit</TableHead>
-                        <TableHead>Queued</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {builds.map((build) => (
-                        <TableRow
-                          key={build.id}
-                          className="group cursor-pointer"
-                          role="link"
-                          tabIndex={0}
-                          onClick={() =>
-                            void navigate({
-                              to: '/builds/$buildId',
-                              params: { buildId: build.id },
-                            })
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault()
-                              void navigate({
-                                to: '/builds/$buildId',
-                                params: { buildId: build.id },
-                              })
-                            }
-                          }}
-                        >
-                          <TableCell className="font-mono text-sm group-hover:underline">
-                            #{build.build_number}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={getStatusVariant(build.status)}>
-                              {build.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {build.trigger_type}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {build.branch ?? 'n/a'}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {build.commit_sha
-                              ? build.commit_sha.slice(0, 10)
-                              : 'n/a'}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {relativeTime(build.queued_at)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+        <ProjectBuildsTab
+          builds={builds}
+          canTriggerBuild={canTriggerBuild}
+          latestSucceededBuild={latestSucceededBuild}
+          onOpenBuild={openBuild}
+          onTriggerBuild={() => openTriggerBuild()}
+          pipelineCount={pipelines.length}
+          projectHasSource={projectHasSource}
+        />
 
         {/* ---- Settings tab ---- */}
         <TabsContent value="settings">
@@ -687,7 +431,7 @@ function ProjectDetailPage() {
       <TriggerBuildDialog
         open={triggerBuildOpen}
         onOpenChange={(nextOpen) => {
-          setTriggerBuildOpen(nextOpen)
+          setTriggerBuildOpen(() => nextOpen)
           if (!nextOpen) setTriggerPipelineId(undefined)
         }}
         fixedProjectId={projectId}

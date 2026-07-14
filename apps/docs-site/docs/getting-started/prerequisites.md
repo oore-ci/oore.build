@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "System requirements for running Oore CI including macOS, Xcode, and Flutter dependencies."
+description: 'System requirements for running Oore CI including macOS, Xcode, and Flutter dependencies.'
 ---
 
 # Prerequisites
@@ -9,11 +9,11 @@ Before installing Oore CI, verify that your system meets these requirements.
 
 ## System requirements
 
-| Requirement | Details |
-|---|---|
-| **Operating system** | macOS (required for daemon and CLI in V1) |
-| **Network access** | Reachability to GitHub (`github.com`), your OIDC provider, and your source control provider |
-| **Xcode Command Line Tools** | Required for iOS/macOS build jobs (`xcode-select --install`) |
+| Requirement                  | Details                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| **Operating system**         | macOS (required for daemon and CLI in V1)                                                   |
+| **Network access**           | Reachability to GitHub (`github.com`), your OIDC provider, and your source control provider |
+| **Xcode Command Line Tools** | Required for iOS/macOS build jobs (`xcode-select --install`)                                |
 
 ## Required tools for release installer
 

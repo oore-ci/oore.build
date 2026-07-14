@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Deploy Oore CI on a Mac Studio with NetBird reachability and Warpgate trusted-proxy auth."
+description: 'Deploy Oore CI on a Mac Studio with NetBird reachability and Warpgate trusted-proxy auth.'
 ---
 
 # Mac Studio + NetBird + Warpgate

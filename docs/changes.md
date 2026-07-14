@@ -12,8 +12,24 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-14
+
+- **React correctness follow-up**:
+  - Component modules now export components only, preserving Fast Refresh state while shared schemas, variants, and release-note formatting live in focused utility modules.
+  - State writes use explicit pure updater functions where React Doctor could otherwise mistake plain callback parameters for updater callbacks; one-use callback indirection was removed without changing UI behavior.
+  - Query fallbacks are referentially stable, setup transitions depend on the exact status fields they read, and the sanctioned mount-only effect helper uses React Effect Events while preserving unmount cleanup.
+  - Pipeline configuration and Preferences now follow their visible product boundaries: trigger, command, signing, External Access, runtime update, and artifact-storage concerns live in focused components, with related form state moved through pure reducers.
+  - Styling utilities share the existing UI vendor chunk, while TanStack Router and Query share one stable framework chunk; this removes tiny extra requests and gzip envelopes from the initial path while keeping the bundle under its production budget.
+  - A full React Doctor 0.7.7 scan of `apps/web` now reports no findings and scores 100/100, including clean `only-export-components`, `no-impure-state-updater`, `exhaustive-deps`, and component-structure checks.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 ## 2026-07-13
 
+- **Current dependency stack and repeatable shadcn 4 migration**:
+  - Frontend, docs, site, and release tooling now use their current compatible direct package releases, including shadcn CLI 4.13, Vite 8, Vitest 4, Oxlint 1.73 with type-aware rules, TypeScript 7, Hugeicons 4, and Wrangler 4. ESLint and typescript-eslint have been removed. Rust lockfile dependencies are updated to the newest versions compatible with the repository's installed Rust toolchain.
+  - Every installed web UI primitive was refreshed from the current Base UI shadcn registry while preserving Oore's semantic badge states, destructive confirmation defaults, responsive shell/table containment, and terminal log scrolling contract.
+  - `make deps-update`, `make ui-diff`, and the interactive `make ui-update` provide the supported package and component migration path; contributor guidance records the required validation and local extension review.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Repository source avatars**:
   - Repository sync now persists GitHub owner avatars and GitLab project avatars, falling back to a GitLab namespace avatar when a project has none. Project, source, and repository-picker views display that identity with a visible initials fallback for local or image-less repositories.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5

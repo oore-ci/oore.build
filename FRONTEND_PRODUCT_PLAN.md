@@ -39,7 +39,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Adopt one action grammar: create/add, connect/pair, navigate, retry, and destructive actions.
 - [x] Make Button own icon sizing instead of per-call numeric sizes.
 - [ ] Standardize page headers, primary-action placement, empty states, loading states, and persistent errors.
-- [ ] Update current shadcn components selectively, starting with Button, Select, Card, Sidebar, Empty, Field, and Button Group.
+- [x] Update installed shadcn components to the current v4 registry while preserving Oore-specific behavior and repeatable migration commands.
 - [ ] Break up only the high-churn giant components: pipeline form, preferences, build detail, and terminal viewer.
   - [ ] Pipeline form
   - [ ] Preferences
@@ -75,7 +75,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Narrow the eager Base UI vendor chunk so route-only controls are not preloaded.
 - [x] Add a production bundle budget and a repeatable reporting command.
 - [x] Verify core shadcn components against the current registry and update frontend dependencies within current major versions.
-- [ ] Handle Vite, Vitest, ESLint, shadcn, Hugeicons, and TypeScript major upgrades separately.
+- [x] Handle Vite, Vitest, Oxlint, shadcn, Hugeicons, and TypeScript major upgrades separately.
 - [x] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.
 - [x] Publish an alpha release and complete signed-in desktop/mobile smoke testing.
 

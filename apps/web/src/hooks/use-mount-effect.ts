@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useEffectEvent } from 'react'
 
 /**
  * Runs an effect exactly once on mount. Accepts an optional cleanup function.
@@ -11,5 +11,7 @@ import { useEffect } from 'react'
  * - Use key-based remounting (Rule 5)
  */
 export function useMountEffect(effect: () => void | (() => void)) {
-  useEffect(effect, [])
+  const runEffect = useEffectEvent(effect)
+
+  useEffect(() => runEffect(), [])
 }

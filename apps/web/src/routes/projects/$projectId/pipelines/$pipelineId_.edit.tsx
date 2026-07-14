@@ -86,7 +86,7 @@ export const Route = createFileRoute(
   component: EditPipelinePage,
 })
 
-function EditPipelinePage() {
+function useEditPipelinePageState() {
   const { projectId, pipelineId } = Route.useParams()
   const { signing: retrySigning, signingError } = Route.useSearch()
   const navigate = useNavigate()
@@ -113,26 +113,15 @@ function EditPipelinePage() {
     : 'Edit Pipeline'
 
   if (isLoading || signingQuery.isLoading || iosSigningQuery.isLoading) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-96 w-full" />
-      </PageLayout>
-    )
+    return { status: 'loading' as const, label }
   }
 
   if (error || !data) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load pipeline: {error?.message ?? 'Not found'}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
+    return {
+      status: 'error' as const,
+      label,
+      message: error?.message ?? 'Not found',
+    }
   }
 
   const { pipeline } = data
@@ -250,20 +239,18 @@ function EditPipelinePage() {
     let hasPayloadErrors = false
     const origSetErrors = (errors: Array<string>) => {
       hasPayloadErrors = true
-      setValidationErrors(errors)
+      setValidationErrors(() => errors)
     }
 
-    const signingPayload = await buildAndroidSigningPayload(
-      values,
-      releaseKeystoreFile,
-      debugKeystoreFile,
-      origSetErrors,
-    )
-    const iosSigningPayload = await buildIosSigningPayload(
-      values,
-      iosSigningFiles,
-      origSetErrors,
-    )
+    const [signingPayload, iosSigningPayload] = await Promise.all([
+      buildAndroidSigningPayload(
+        values,
+        releaseKeystoreFile,
+        debugKeystoreFile,
+        origSetErrors,
+      ),
+      buildIosSigningPayload(values, iosSigningFiles, origSetErrors),
+    ])
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via origSetErrors callback during payload construction
     if (hasPayloadErrors) {
       return
@@ -499,20 +486,20 @@ function EditPipelinePage() {
       return null
     }
 
-    const provisioningProfiles: Array<{
-      bundle_id: string
-      profile_filename?: string
-      profile_base64?: string
-    }> = []
-    for (const bundleId of bundleIds) {
-      const profileFile = iosSigningFiles.profileFiles[bundleId]
-      if (!profileFile) continue
-      provisioningProfiles.push({
-        bundle_id: bundleId,
-        profile_filename: profileFile.name,
-        profile_base64: await fileToBase64(profileFile),
-      })
-    }
+    const provisioningProfiles = await Promise.all(
+      bundleIds.flatMap((bundleId) => {
+        const profileFile = iosSigningFiles.profileFiles[bundleId]
+        return profileFile
+          ? [
+              fileToBase64(profileFile).then((profileBase64) => ({
+                bundle_id: bundleId,
+                profile_filename: profileFile.name,
+                profile_base64: profileBase64,
+              })),
+            ]
+          : []
+      }),
+    )
 
     const apiPrivateKey = iosSigningFiles.apiKeyFile
       ? await fileToUtf8(iosSigningFiles.apiKeyFile)
@@ -588,6 +575,90 @@ function EditPipelinePage() {
       toast.error(`Failed to sync iOS signing: ${message}`)
     }
   }
+
+  return {
+    status: 'ready' as const,
+    deviceName,
+    deviceUdid,
+    formInitialValues,
+    handleRegisterDevice,
+    handleSubmit,
+    handleSyncIosSigning,
+    iosDevicesQuery,
+    iosSigningQuery,
+    label,
+    manualOnlyTriggers,
+    navigate,
+    pipeline,
+    pipelineId,
+    projectId,
+    registerIosDeviceMutation,
+    retrySigning,
+    setDeviceName,
+    setDeviceUdid,
+    signingError,
+    signingQuery,
+    syncIosSigningMutation,
+    updateIosSigningMutation,
+    updateMutation,
+    updateSigningMutation,
+    validationErrors,
+  }
+}
+
+function EditPipelinePage() {
+  const pageState = useEditPipelinePageState()
+
+  if (pageState.status === 'loading') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-96 w-full" />
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load pipeline: {pageState.message}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
+  }
+
+  const {
+    deviceName,
+    deviceUdid,
+    formInitialValues,
+    handleRegisterDevice,
+    handleSubmit,
+    handleSyncIosSigning,
+    iosDevicesQuery,
+    iosSigningQuery,
+    label,
+    manualOnlyTriggers,
+    navigate,
+    pipeline,
+    pipelineId,
+    projectId,
+    registerIosDeviceMutation,
+    retrySigning,
+    setDeviceName,
+    setDeviceUdid,
+    signingError,
+    signingQuery,
+    syncIosSigningMutation,
+    updateIosSigningMutation,
+    updateMutation,
+    updateSigningMutation,
+    validationErrors,
+  } = pageState
 
   return (
     <PageLayout width="wide">

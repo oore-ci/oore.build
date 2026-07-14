@@ -1,5 +1,6 @@
 import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { Children } from 'react'
 import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
@@ -37,8 +38,8 @@ export default function SetupHint({
       {children ? <div className="mt-2 leading-relaxed">{children}</div> : null}
       {items && items.length > 0 ? (
         <ul className="mt-2 list-disc space-y-1 pl-5 leading-relaxed">
-          {items.map((item, index) => (
-            <li key={index}>{item}</li>
+          {Children.map(items, (item) => (
+            <li>{item}</li>
           ))}
         </ul>
       ) : null}

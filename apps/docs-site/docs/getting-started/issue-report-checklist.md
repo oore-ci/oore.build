@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "A minimal checklist to help alpha testers file reproducible reports on their first try."
+description: 'A minimal checklist to help alpha testers file reproducible reports on their first try.'
 ---
 
 # Issue Report Checklist
@@ -19,19 +19,23 @@ Every issue must include the following four sections:
 ## Good vs. Bad Reports
 
 ### ❌ Minimal/Bad
+
 > "The build failed after I connected GitHub."
 
-*Why it's bad: No logs, no steps, no environment info.*
+_Why it's bad: No logs, no steps, no environment info._
 
 ### ✅ High Quality
+
 > "Build #145 failed at the checkout step. I am on macOS 14.4 using the `alpha` channel with a GitHub App integration."
-> 
+>
 > **Steps**:
+>
 > 1. Connect GitHub via Hosted UI.
 > 2. Create a new project.
 > 3. Click 'Run Build'.
-> 
+>
 > **Logs**:
+>
 > ```text
 > 2026-03-10T14:22:00Z ERROR checkout: local_login_loopback_required
 > ```
@@ -39,6 +43,7 @@ Every issue must include the following four sections:
 ## Troubleshooting first
 
 Before filing, try these high-level checks:
+
 - Is the daemon running? (`oore status`)
 - Is your browser online?
 - If using a temporary tunnel, did you check the [tunnel troubleshooting example](/getting-started/public-alpha#tunnel-troubleshooting) in the Public Alpha guide?

@@ -16,7 +16,7 @@ import type {
   SortingState,
 } from '@tanstack/react-table'
 
-import type { UserRole } from '@/lib/types'
+import type { User, UserRole } from '@/lib/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -65,6 +65,7 @@ export const Route = createFileRoute('/settings/users')({
 })
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const EMPTY_USERS: Array<User> = []
 
 const ROLE_OPTIONS: Record<string, string> = {
   admin: 'Admin',
@@ -91,7 +92,7 @@ interface ConfirmAction {
   userIds?: Array<string>
 }
 
-function UsersSettingsPage() {
+function useUsersSettingsPageState() {
   const authUser = useAuthStore((s) => s.user)
   const { data, isLoading, error } = useUsers()
   const inviteMutation = useInviteUser()
@@ -227,7 +228,7 @@ function UsersSettingsPage() {
     [reEnableMutation, showError],
   )
 
-  const users = data?.users ?? []
+  const users = data?.users ?? EMPTY_USERS
   const userStatusCounts = useMemo(
     () =>
       users.reduce(
@@ -315,6 +316,44 @@ function UsersSettingsPage() {
   })()
 
   if (isLoading) {
+    return { status: 'loading' as const }
+  }
+
+  if (error) {
+    return {
+      status: 'error' as const,
+      message: error instanceof Error ? error.message : 'Unknown error',
+    }
+  }
+
+  return {
+    status: 'ready' as const,
+    confirmAction,
+    confirmDescription,
+    confirmTitle,
+    emailError,
+    handleBulkDisable,
+    handleConfirm,
+    handleInvite,
+    inviteEmail,
+    inviteError,
+    inviteMutation,
+    inviteRole,
+    pendingMutation,
+    setConfirmAction,
+    setEmailError,
+    setInviteEmail,
+    setInviteRole,
+    table,
+    users,
+    userStatusCounts,
+  }
+}
+
+function UsersSettingsPage() {
+  const pageState = useUsersSettingsPageState()
+
+  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
         <PageMeta title="User Management" noindex />
@@ -332,19 +371,40 @@ function UsersSettingsPage() {
     )
   }
 
-  if (error) {
+  if (pageState.status === 'error') {
     return (
       <PageLayout>
         <PageMeta title="User Management" noindex />
         <Alert variant="destructive">
           <AlertDescription>
-            Failed to load users:{' '}
-            {error instanceof Error ? error.message : 'Unknown error'}
+            Failed to load users: {pageState.message}
           </AlertDescription>
         </Alert>
       </PageLayout>
     )
   }
+
+  const {
+    confirmAction,
+    confirmDescription,
+    confirmTitle,
+    emailError,
+    handleBulkDisable,
+    handleConfirm,
+    handleInvite,
+    inviteEmail,
+    inviteError,
+    inviteMutation,
+    inviteRole,
+    pendingMutation,
+    setConfirmAction,
+    setEmailError,
+    setInviteEmail,
+    setInviteRole,
+    table,
+    users,
+    userStatusCounts,
+  } = pageState
 
   return (
     <PageLayout width="wide">

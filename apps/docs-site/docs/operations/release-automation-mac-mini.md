@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Automate Oore CI releases using GitHub Actions with hosted or self-hosted runners."
+description: 'Automate Oore CI releases using GitHub Actions with hosted or self-hosted runners.'
 ---
 
 # Release Automation

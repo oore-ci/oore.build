@@ -15,7 +15,6 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import {
   useDeleteIntegration,
@@ -29,7 +28,6 @@ import { getIntegrationStatusVariant } from '@/lib/status-variants'
 import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
 import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
-import RepositoryAvatar from '@/components/repository-avatar'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -52,10 +50,10 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import type { Integration } from '@/lib/types'
+import { IntegrationInventory } from './integration-inventory'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: {
@@ -89,7 +87,103 @@ function humanizeAuthMode(mode: string): string {
   )
 }
 
-function IntegrationDetailPage() {
+function IntegrationConnectionDetails({
+  gitLabWebhookUrl,
+  integration,
+  lastWebhookAt,
+}: {
+  gitLabWebhookUrl: string
+  integration: Integration
+  lastWebhookAt: number | undefined
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          Connection details
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableBody>
+            <TableRow>
+              <TableCell className="w-56 text-muted-foreground">
+                Provider
+              </TableCell>
+              <TableCell>{integration.provider}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted-foreground">Host URL</TableCell>
+              <TableCell>{integration.host_url}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted-foreground">Auth mode</TableCell>
+              <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
+            </TableRow>
+            {integration.provider === 'gitlab' ? (
+              <>
+                <TableRow>
+                  <TableCell className="text-muted-foreground">
+                    Webhook URL
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <code className="font-mono text-xs">
+                        {gitLabWebhookUrl}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Copy GitLab webhook URL"
+                        title="Copy GitLab webhook URL"
+                        onClick={() => {
+                          void navigator.clipboard
+                            .writeText(gitLabWebhookUrl)
+                            .then(
+                              () => toast.success('Webhook URL copied'),
+                              () => toast.error('Could not copy webhook URL'),
+                            )
+                        }}
+                      >
+                        <HugeiconsIcon icon={Copy01Icon} />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-muted-foreground">
+                    Last webhook delivery
+                  </TableCell>
+                  <TableCell>
+                    {lastWebhookAt
+                      ? new Date(lastWebhookAt * 1000).toLocaleString()
+                      : 'Waiting for a test delivery'}
+                  </TableCell>
+                </TableRow>
+              </>
+            ) : null}
+            {integration.app_id ? (
+              <TableRow>
+                <TableCell className="text-muted-foreground">App ID</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {integration.app_id}
+                </TableCell>
+              </TableRow>
+            ) : null}
+            <TableRow>
+              <TableCell className="text-muted-foreground">Created</TableCell>
+              <TableCell>
+                {new Date(integration.created_at * 1000).toLocaleString()}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function useIntegrationDetailPageState() {
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
   const navigate = useNavigate()
@@ -102,15 +196,12 @@ function IntegrationDetailPage() {
   const deleteMutation = useDeleteIntegration()
   const gitlabAuthorizeMutation = useGitLabAuthorize()
 
-  const setLabel = useBreadcrumbStore((s) => s.setLabel)
-
   const label =
     detail?.integration.display_name ??
     detail?.integration.provider ??
     'Source Details'
 
   useBreadcrumbLabel(
-    setLabel,
     '/settings/integrations/$integrationId',
     detail?.integration.display_name ?? detail?.integration.provider,
   )
@@ -162,31 +253,14 @@ function IntegrationDetailPage() {
   }
 
   if (isLoading) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-56 w-full" />
-      </PageLayout>
-    )
+    return { status: 'loading' as const, label }
   }
 
   if (error) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load source: {error.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
+    return { status: 'error' as const, label, message: error.message }
   }
 
-  if (!detail) return null
+  if (!detail) return { status: 'missing' as const }
 
   const { integration } = detail
   const installations = installationsData?.installations ?? []
@@ -210,6 +284,79 @@ function IntegrationDetailPage() {
   )
   const canSyncInstallations =
     integration.provider === 'github' || integration.provider === 'gitlab'
+
+  return {
+    status: 'ready' as const,
+    canSyncInstallations,
+    deleteMutation,
+    detail,
+    gitLabWebhookUrl,
+    gitlabAuthorizeMutation,
+    handleDisconnect,
+    handleSync,
+    installations,
+    installationsLabel,
+    integration,
+    integrationId,
+    label,
+    providerLabel,
+    repositories,
+    repositoriesLabel,
+    sourceDescription,
+    syncLabel,
+    syncMutation,
+  }
+}
+
+function IntegrationDetailPage() {
+  const pageState = useIntegrationDetailPageState()
+
+  if (pageState.status === 'loading') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-56 w-full" />
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Failed to load source: {pageState.message}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'missing') return null
+
+  const {
+    canSyncInstallations,
+    detail,
+    gitLabWebhookUrl,
+    gitlabAuthorizeMutation,
+    handleDisconnect,
+    handleSync,
+    installations,
+    installationsLabel,
+    integration,
+    integrationId,
+    label,
+    providerLabel,
+    repositories,
+    repositoriesLabel,
+    sourceDescription,
+    syncLabel,
+    syncMutation,
+  } = pageState
 
   return (
     <PageLayout width="wide">
@@ -270,97 +417,11 @@ function IntegrationDetailPage() {
         </Card>
       </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Connection details
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">
-                  Provider
-                </TableCell>
-                <TableCell>{integration.provider}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">
-                  Host URL
-                </TableCell>
-                <TableCell>{integration.host_url}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">
-                  Auth mode
-                </TableCell>
-                <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
-              </TableRow>
-              {integration.provider === 'gitlab' ? (
-                <>
-                  <TableRow>
-                    <TableCell className="text-muted-foreground">
-                      Webhook URL
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <code className="font-mono text-xs">
-                          {gitLabWebhookUrl}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Copy GitLab webhook URL"
-                          title="Copy GitLab webhook URL"
-                          onClick={() => {
-                            void navigator.clipboard
-                              .writeText(gitLabWebhookUrl)
-                              .then(
-                                () => toast.success('Webhook URL copied'),
-                                () => toast.error('Could not copy webhook URL'),
-                              )
-                          }}
-                        >
-                          <HugeiconsIcon icon={Copy01Icon} />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell className="text-muted-foreground">
-                      Last webhook delivery
-                    </TableCell>
-                    <TableCell>
-                      {detail.last_webhook_at
-                        ? new Date(
-                            detail.last_webhook_at * 1000,
-                          ).toLocaleString()
-                        : 'Waiting for a test delivery'}
-                    </TableCell>
-                  </TableRow>
-                </>
-              ) : null}
-              {integration.app_id ? (
-                <TableRow>
-                  <TableCell className="text-muted-foreground">
-                    App ID
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {integration.app_id}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-              <TableRow>
-                <TableCell className="text-muted-foreground">Created</TableCell>
-                <TableCell>
-                  {new Date(integration.created_at * 1000).toLocaleString()}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <IntegrationConnectionDetails
+        gitLabWebhookUrl={gitLabWebhookUrl}
+        integration={integration}
+        lastWebhookAt={detail.last_webhook_at}
+      />
 
       {integration.provider === 'gitlab' && !detail.last_webhook_at ? (
         <Alert>
@@ -419,6 +480,7 @@ function IntegrationDetailPage() {
                       ? `https://github.com/apps/${integration.app_slug}/installations/select_target`
                       : `https://github.com/apps/${integration.app_slug}/installations/new`
                   }
+                  aria-label="Manage this source on GitHub"
                   target="_blank"
                   rel="noopener noreferrer"
                 />
@@ -489,102 +551,13 @@ function IntegrationDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            {installationsLabel} ({installations.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {installations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No{' '}
-              {integration.provider === 'gitlab'
-                ? 'GitLab account'
-                : 'installation'}{' '}
-              yet
-              {integration.provider === 'github' && integration.app_slug
-                ? ' - install your GitHub App to get started.'
-                : '.'}
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>External ID</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {installations.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell>{inst.account_name}</TableCell>
-                    <TableCell>{inst.account_type ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {inst.external_id}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            {repositoriesLabel} ({repositories.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {repositories.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No{' '}
-              {integration.provider === 'gitlab'
-                ? 'GitLab projects'
-                : 'repositories'}{' '}
-              synced yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Repository</TableHead>
-                  <TableHead>Default branch</TableHead>
-                  <TableHead>Visibility</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {repositories.map((repo) => (
-                  <TableRow key={repo.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <RepositoryAvatar
-                          fullName={repo.full_name}
-                          avatarUrl={repo.avatar_url}
-                        />
-                        <span>{repo.full_name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {repo.default_branch ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={repo.is_private ? 'secondary' : 'outline'}
-                      >
-                        {repo.is_private ? 'private' : 'public'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <IntegrationInventory
+        installations={installations}
+        installationsLabel={installationsLabel}
+        integration={integration}
+        repositories={repositories}
+        repositoriesLabel={repositoriesLabel}
+      />
     </PageLayout>
   )
 }

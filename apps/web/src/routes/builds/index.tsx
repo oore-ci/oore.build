@@ -61,6 +61,7 @@ import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
+import type { Build, Project } from '@/lib/types'
 
 const PAGE_SIZE = 20
 
@@ -85,7 +86,144 @@ export const Route = createFileRoute('/builds/')({
   component: BuildsListPage,
 })
 
-function BuildsListPage() {
+function BuildsHistoryCard({
+  builds,
+  canTriggerBuild,
+  onOpenBuild,
+  onOpenTrigger,
+  projects,
+  total,
+}: {
+  builds: Array<Build>
+  canTriggerBuild: boolean
+  onOpenBuild: (buildId: string) => void
+  onOpenTrigger: () => void
+  projects: Array<Project>
+  total: number
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Build queue and history
+          </CardTitle>
+          <span className="text-xs text-muted-foreground">{total} total</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {builds.length === 0 ? (
+          <Empty className="p-8">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <HugeiconsIcon icon={PlayIcon} />
+              </EmptyMedia>
+              <EmptyTitle>No builds yet</EmptyTitle>
+              <EmptyDescription>
+                Run a pipeline to see its status, output, and artifacts here.
+              </EmptyDescription>
+            </EmptyHeader>
+            {canTriggerBuild ? (
+              <EmptyContent>
+                <Button
+                  size="sm"
+                  onClick={onOpenTrigger}
+                  disabled={isDemoMode}
+                  title={isDemoMode ? READ_ONLY_REASON : undefined}
+                >
+                  <HugeiconsIcon icon={PlayIcon} />
+                  Run first build
+                </Button>
+              </EmptyContent>
+            ) : null}
+          </Empty>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Build</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Trigger</TableHead>
+                <TableHead>Branch</TableHead>
+                <TableHead>Commit</TableHead>
+                <TableHead>Created</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {builds.map((build) => (
+                <TableRow
+                  key={build.id}
+                  className="group cursor-pointer"
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => onOpenBuild(build.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onOpenBuild(build.id)
+                    }
+                  }}
+                >
+                  <TableCell>
+                    <div>
+                      <p className="font-mono text-sm group-hover:underline">
+                        #{build.build_number}
+                      </p>
+                      <p className="font-mono text-[11px] text-muted-foreground">
+                        {build.id.slice(0, 8)}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <p className="text-sm">
+                      {build.context?.project_name ??
+                        projects.find(
+                          (project) => project.id === build.project_id,
+                        )?.name ??
+                        'Unknown project'}
+                    </p>
+                    {build.context?.pipeline_name ? (
+                      <p className="text-xs text-muted-foreground">
+                        {build.context.pipeline_name}
+                      </p>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={getStatusVariant(build.status)}>
+                      {build.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{build.trigger_type}</Badge>
+                      {build.trigger_actor ? (
+                        <span className="text-xs text-muted-foreground">
+                          by {build.trigger_actor}
+                        </span>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {build.branch ?? 'n/a'}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {build.commit_sha ? build.commit_sha.slice(0, 10) : 'n/a'}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {relativeTime(build.created_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function useBuildsListPageState() {
   const navigate = Route.useNavigate()
   const search = useSearch({ from: '/builds/' })
   const page = search.page ?? 1
@@ -124,6 +262,66 @@ function BuildsListPage() {
     !projectsQuery.isLoading && !projectsQuery.error && projects.length === 0
   const isLoading = buildsQuery.isLoading || projectsQuery.isLoading
   const error = buildsQuery.error ?? projectsQuery.error
+
+  return {
+    branchFilter,
+    builds,
+    canTriggerBuild,
+    canWriteIntegrations,
+    canWriteProjects,
+    error,
+    integrationConnectTo,
+    isLoading,
+    missingProjects,
+    navigate,
+    page,
+    projectFilter,
+    projects,
+    runtimeMode,
+    setBranchFilter,
+    setProjectFilter,
+    setStatusFilter,
+    setTriggerBuildOpen,
+    statusFilter,
+    total,
+    totalPages,
+    triggerBuildOpen,
+  }
+}
+
+function BuildsListPage() {
+  const pageState = useBuildsListPageState()
+  const {
+    branchFilter,
+    builds,
+    canTriggerBuild,
+    canWriteIntegrations,
+    canWriteProjects,
+    error,
+    integrationConnectTo,
+    isLoading,
+    missingProjects,
+    navigate,
+    page,
+    projectFilter,
+    projects,
+    runtimeMode,
+    setBranchFilter,
+    setProjectFilter,
+    setStatusFilter,
+    setTriggerBuildOpen,
+    statusFilter,
+    total,
+    totalPages,
+    triggerBuildOpen,
+  } = pageState
+
+  const openBuild = (buildId: string) => {
+    void navigate({
+      to: '/builds/$buildId',
+      params: { buildId },
+    })
+  }
 
   return (
     <PageLayout width="wide">
@@ -281,139 +479,14 @@ function BuildsListPage() {
             </CardContent>
           </Card>
         ) : (
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                  Build queue and history
-                </CardTitle>
-                <span className="text-xs text-muted-foreground">
-                  {total} total
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {builds.length === 0 ? (
-                <Empty className="p-8">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <HugeiconsIcon icon={PlayIcon} />
-                    </EmptyMedia>
-                    <EmptyTitle>No builds yet</EmptyTitle>
-                    <EmptyDescription>
-                      Run a pipeline to see its status, output, and artifacts
-                      here.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  {canTriggerBuild ? (
-                    <EmptyContent>
-                      <Button
-                        size="sm"
-                        onClick={() => setTriggerBuildOpen(true)}
-                        disabled={isDemoMode}
-                        title={isDemoMode ? READ_ONLY_REASON : undefined}
-                      >
-                        <HugeiconsIcon icon={PlayIcon} />
-                        Run first build
-                      </Button>
-                    </EmptyContent>
-                  ) : null}
-                </Empty>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Build</TableHead>
-                      <TableHead>Project</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Trigger</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead>Commit</TableHead>
-                      <TableHead>Created</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {builds.map((build) => (
-                      <TableRow
-                        key={build.id}
-                        className="group cursor-pointer"
-                        role="link"
-                        tabIndex={0}
-                        onClick={() =>
-                          void navigate({
-                            to: '/builds/$buildId',
-                            params: { buildId: build.id },
-                          })
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            void navigate({
-                              to: '/builds/$buildId',
-                              params: { buildId: build.id },
-                            })
-                          }
-                        }}
-                      >
-                        <TableCell>
-                          <div>
-                            <p className="font-mono text-sm group-hover:underline">
-                              #{build.build_number}
-                            </p>
-                            <p className="font-mono text-[11px] text-muted-foreground">
-                              {build.id.slice(0, 8)}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <p className="text-sm">
-                            {build.context?.project_name ??
-                              projects.find(
-                                (project) => project.id === build.project_id,
-                              )?.name ??
-                              'Unknown project'}
-                          </p>
-                          {build.context?.pipeline_name ? (
-                            <p className="text-xs text-muted-foreground">
-                              {build.context.pipeline_name}
-                            </p>
-                          ) : null}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getStatusVariant(build.status)}>
-                            {build.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline">
-                              {build.trigger_type}
-                            </Badge>
-                            {build.trigger_actor ? (
-                              <span className="text-xs text-muted-foreground">
-                                by {build.trigger_actor}
-                              </span>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {build.branch ?? 'n/a'}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {build.commit_sha
-                            ? build.commit_sha.slice(0, 10)
-                            : 'n/a'}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {relativeTime(build.created_at)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <BuildsHistoryCard
+            builds={builds}
+            canTriggerBuild={canTriggerBuild}
+            onOpenBuild={openBuild}
+            onOpenTrigger={() => setTriggerBuildOpen(true)}
+            projects={projects}
+            total={total}
+          />
         )
       ) : null}
 

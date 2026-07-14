@@ -95,7 +95,10 @@ export default function PageBreadcrumb() {
           const isLast = i === lastIndex
 
           return (
-            <span key={i} className="contents">
+            <span
+              key={`${crumb.to ?? 'current'}:${crumb.label}`}
+              className="contents"
+            >
               {i > 0 && (
                 <BreadcrumbSeparator
                   className={i < lastIndex ? 'hidden md:block' : ''}

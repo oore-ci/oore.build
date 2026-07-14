@@ -28,7 +28,6 @@ import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
 import { cn } from '@/lib/utils'
-import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
@@ -57,14 +56,11 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
 
-  const setLabel = useBreadcrumbStore((state) => state.setLabel)
-
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
     : 'Build Details'
 
   useBreadcrumbLabel(
-    setLabel,
     '/builds/$buildId',
     data?.build.build_number ? `Build #${data.build.build_number}` : undefined,
   )

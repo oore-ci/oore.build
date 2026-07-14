@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for build artifact management and downloads in Oore CI."
+description: 'API endpoints for build artifact management and downloads in Oore CI.'
 ---
 
 # Artifacts API

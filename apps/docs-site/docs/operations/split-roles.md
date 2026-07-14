@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Run Oore CI backend and frontend roles on separate hosts."
+description: 'Run Oore CI backend and frontend roles on separate hosts.'
 ---
 
 # Split Backend and Frontend Roles
@@ -9,11 +9,11 @@ Use this deployment shape when the daemon and build runner should run on one hos
 
 ## Roles
 
-| Role | Install mode | Host support | Installs |
-|---|---|---|---|
-| All-in-one | `all` | macOS | `oored`, `oore`, embedded runner, `oore-web`, web assets |
-| Backend | `backend` | macOS | `oored`, `oore`, embedded runner |
-| Frontend | `frontend` | Linux or macOS | `oore-web`, web assets |
+| Role       | Install mode | Host support   | Installs                                                 |
+| ---------- | ------------ | -------------- | -------------------------------------------------------- |
+| All-in-one | `all`        | macOS          | `oored`, `oore`, embedded runner, `oore-web`, web assets |
+| Backend    | `backend`    | macOS          | `oored`, `oore`, embedded runner                         |
+| Frontend   | `frontend`   | Linux or macOS | `oore-web`, web assets                                   |
 
 `OORE_INSTALL_MODE=auto` prompts for a role on interactive macOS installs. On Linux, it selects `frontend`.
 

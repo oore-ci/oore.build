@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure build pipelines using .oore.yaml in your repository."
+description: 'Configure build pipelines using .oore.yaml in your repository.'
 ---
 
 # Write a Pipeline Config (.oore.yaml)
@@ -16,7 +16,7 @@ The `.oore.yaml` file defines how Oore CI builds your Flutter application. Place
 
 ```yaml
 version: 1
-flutter_version: "3.24.0"
+flutter_version: '3.24.0'
 platforms:
   - android
 commands:
@@ -27,7 +27,7 @@ commands:
   post_build: []
 artifacts:
   patterns:
-    - "build/app/outputs/flutter-apk/*.apk"
+    - 'build/app/outputs/flutter-apk/*.apk'
 ```
 
 ## Full schema
@@ -36,23 +36,23 @@ For the complete `.oore.yaml` schema reference, see [.oore.yaml Reference](/refe
 
 ### Top-level fields
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `version` | `integer` | Yes | Schema version (must be `1`) |
-| `flutter_version` | `string` | No | Flutter version to use. Overridden by `.fvmrc` if present. |
-| `platforms` | `string[]` | Yes | Target platforms: `android`, `ios`, `macos` |
-| `commands` | `object` | Yes | Build command stages |
-| `artifacts` | `object` | No | Artifact collection patterns |
+| Field             | Type       | Required | Description                                                |
+| ----------------- | ---------- | -------- | ---------------------------------------------------------- |
+| `version`         | `integer`  | Yes      | Schema version (must be `1`)                               |
+| `flutter_version` | `string`   | No       | Flutter version to use. Overridden by `.fvmrc` if present. |
+| `platforms`       | `string[]` | Yes      | Target platforms: `android`, `ios`, `macos`                |
+| `commands`        | `object`   | Yes      | Build command stages                                       |
+| `artifacts`       | `object`   | No       | Artifact collection patterns                               |
 
 ### Commands
 
 Commands are executed in three stages:
 
-| Stage | When it runs | Typical use |
-|---|---|---|
-| `pre_build` | Before the main build | `flutter pub get`, code generation |
-| `build` | Main build step | `flutter build apk`, `flutter build ipa` |
-| `post_build` | After a successful build | Testing, additional processing |
+| Stage        | When it runs             | Typical use                              |
+| ------------ | ------------------------ | ---------------------------------------- |
+| `pre_build`  | Before the main build    | `flutter pub get`, code generation       |
+| `build`      | Main build step          | `flutter build apk`, `flutter build ipa` |
+| `post_build` | After a successful build | Testing, additional processing           |
 
 Each stage is a list of shell commands executed sequentially. If any command returns a non-zero exit code, the build fails.
 
@@ -61,9 +61,9 @@ Each stage is a list of shell commands executed sequentially. If any command ret
 ```yaml
 platform_build_args:
   android:
-    - "--split-per-abi"
+    - '--split-per-abi'
   ios:
-    - "--flavor=staging"
+    - '--flavor=staging'
 ```
 
 ### Platform-specific commands
@@ -91,9 +91,9 @@ env:
 ```yaml
 artifacts:
   patterns:
-    - "build/app/outputs/flutter-apk/*.apk"
-    - "build/ios/ipa/*.ipa"
-    - "build/macos/Build/Products/Release/*.app"
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
+    - 'build/macos/Build/Products/Release/*.app'
 ```
 
 Glob patterns are matched against workspace-relative paths. Filename-only patterns such as `*.apk` still match anywhere. Configure triggers and concurrency in the pipeline UI/API, not in repository YAML.
@@ -102,7 +102,7 @@ Glob patterns are matched against workspace-relative paths. Filename-only patter
 
 ```yaml
 version: 1
-flutter_version: "3.24.0"
+flutter_version: '3.24.0'
 platforms:
   - android
   - ios
@@ -116,11 +116,11 @@ commands:
   post_build: []
 platform_build_args:
   android:
-    extra_args: "--split-per-abi"
+    extra_args: '--split-per-abi'
 artifacts:
   patterns:
-    - "build/app/outputs/flutter-apk/*.apk"
-    - "build/ios/ipa/*.ipa"
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
 ```
 
 ## Config resolution

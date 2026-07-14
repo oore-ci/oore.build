@@ -122,7 +122,7 @@ function GitLabSetupPage() {
 
   function selectHostKind(value: GitLabHostKind | null) {
     if (!value) return
-    setSelectedHostKind(value)
+    setSelectedHostKind(() => value)
     if (value === 'gitlab_com') {
       form.setValue('host_url', 'https://gitlab.com', {
         shouldDirty: true,

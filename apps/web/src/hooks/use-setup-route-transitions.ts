@@ -27,33 +27,26 @@ export function useBootstrapStepTransition(
 ) {
   const navigate = useNavigate()
   const setCurrentStep = useSetupStore((state) => state.setCurrentStep)
+  const setupState = status?.state
+  const runtimeMode = status?.runtime_mode
 
   useEffect(() => {
-    if (!status || !sessionToken) {
+    if (!setupState || !sessionToken) {
       setCurrentStep(0)
       return
     }
 
-    const step = stateToStep(status.state, status.runtime_mode)
+    const step = stateToStep(setupState, runtimeMode)
     setCurrentStep(step)
 
-    if (
-      status.state === 'bootstrap_pending' ||
-      status.state === 'uninitialized'
-    ) {
+    if (setupState === 'bootstrap_pending' || setupState === 'uninitialized') {
       void navigate({ to: '/setup/mode' })
-    } else if (status.state === 'idp_configured') {
+    } else if (setupState === 'idp_configured') {
       void navigate({ to: '/setup/owner' })
-    } else if (status.state === 'owner_created') {
+    } else if (setupState === 'owner_created') {
       void navigate({ to: '/setup/complete' })
     }
-  }, [
-    navigate,
-    sessionToken,
-    setCurrentStep,
-    status?.runtime_mode,
-    status?.state,
-  ])
+  }, [navigate, runtimeMode, sessionToken, setCurrentStep, setupState])
 }
 
 export function useSetupModeGuard(
@@ -61,21 +54,17 @@ export function useSetupModeGuard(
   expectedAuthMode: 'oidc' | 'trusted_proxy',
 ) {
   const navigate = useNavigate()
+  const runtimeMode = status?.runtime_mode
+  const remoteAuthMode = status?.remote_auth_mode
 
   useEffect(() => {
     if (
-      status &&
-      (status.runtime_mode !== 'remote' ||
-        status.remote_auth_mode !== expectedAuthMode)
+      runtimeMode &&
+      (runtimeMode !== 'remote' || remoteAuthMode !== expectedAuthMode)
     ) {
       void navigate({ to: '/setup/mode' })
     }
-  }, [
-    expectedAuthMode,
-    navigate,
-    status?.remote_auth_mode,
-    status?.runtime_mode,
-  ])
+  }, [expectedAuthMode, navigate, remoteAuthMode, runtimeMode])
 }
 
 export function useSetupCurrentStep(step: number | null) {
@@ -89,16 +78,18 @@ export function useSetupCurrentStep(step: number | null) {
 export function useOwnerStepTransition(status?: SetupStatus) {
   const navigate = useNavigate()
   const setCurrentStep = useSetupStore((state) => state.setCurrentStep)
+  const setupState = status?.state
+  const runtimeMode = status?.runtime_mode
 
   useEffect(() => {
-    if (!status) return
+    if (!setupState || !runtimeMode) return
 
-    setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-    if (status.state === 'owner_created') {
-      setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
+    setCurrentStep(runtimeMode === 'local' ? 2 : 3)
+    if (setupState === 'owner_created') {
+      setCurrentStep(runtimeMode === 'local' ? 3 : 4)
       void navigate({ to: '/setup/complete' })
     }
-  }, [navigate, setCurrentStep, status?.runtime_mode, status?.state])
+  }, [navigate, runtimeMode, setCurrentStep, setupState])
 }
 
 export function useExpiredSetupSessionRedirect(isExpired: boolean) {

@@ -45,7 +45,7 @@ const presetHeaders: Record<Exclude<TrustedProxyPreset, 'custom'>, string> = {
 
 const trustedProxySchema = z.object({
   proxyPreset: trustedProxyPresetSchema,
-  ownerEmail: z.string().email('Enter a valid owner email'),
+  ownerEmail: z.email('Enter a valid owner email'),
   userEmailHeader: z.string().min(1, 'Header name is required'),
   trustedProxyCidrs: z.string().optional(),
   sharedSecret: z.string().optional(),

@@ -97,7 +97,7 @@ export function LogOutput({
                     transform: `translateY(${virtualRow.start + verticalPadding}px)`,
                   }}
                   className={cn(
-                    'flex font-mono text-[13px] leading-[20px] text-card-foreground',
+                    'flex font-mono text-[13px] leading-5 text-card-foreground',
                     isError && 'bg-destructive/10 text-destructive',
                   )}
                 >

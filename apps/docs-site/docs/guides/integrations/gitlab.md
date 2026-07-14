@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Connect GitLab repositories to Oore CI for webhook-triggered builds."
+description: 'Connect GitLab repositories to Oore CI for webhook-triggered builds.'
 ---
 
 # Connect GitLab
@@ -69,12 +69,12 @@ Also revoke the OAuth application in GitLab if no longer needed.
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/integrations/gitlab/start` | Begin GitLab OAuth flow |
-| `POST` | `/v1/integrations/gitlab/authorize` | Complete authorization |
-| `GET` | `/v1/integrations/{id}/repositories` | List accessible repositories |
-| `DELETE` | `/v1/integrations/{id}` | Remove integration |
+| Method   | Path                                 | Description                  |
+| -------- | ------------------------------------ | ---------------------------- |
+| `POST`   | `/v1/integrations/gitlab/start`      | Begin GitLab OAuth flow      |
+| `POST`   | `/v1/integrations/gitlab/authorize`  | Complete authorization       |
+| `GET`    | `/v1/integrations/{id}/repositories` | List accessible repositories |
+| `DELETE` | `/v1/integrations/{id}`              | Remove integration           |
 
 ## Reference
 

@@ -103,7 +103,7 @@ function ProjectsListPage() {
   const isCreateOpen = createOpen || openCreateFromSearch
 
   function handleCreateOpenChange(open: boolean) {
-    setCreateOpen(open)
+    setCreateOpen(() => open)
     if (!open && search.openCreate === '1') {
       void navigate({ to: '/projects', search: {}, replace: true })
     }

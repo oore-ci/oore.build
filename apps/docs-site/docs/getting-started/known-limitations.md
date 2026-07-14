@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Current public-alpha limitations and constraints for Oore CI v0.1.x."
+description: 'Current public-alpha limitations and constraints for Oore CI v0.1.x.'
 ---
 
 # Known Alpha Limitations (v0.1.x)

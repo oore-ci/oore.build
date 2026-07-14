@@ -16,10 +16,10 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import {
   useSetupLocalOwnerCreate,
-  useSetupOidcStart,
   useSetupStatus,
   useSetupTrustedProxyClaimOwner,
 } from '@/hooks/use-setup'
+import { useSetupOidcVerificationStart } from '@/hooks/use-authorization-start'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { useSetupStore } from '@/stores/setup-store'
 import {
@@ -30,7 +30,7 @@ import { PageMeta } from '@/lib/seo'
 import { useOwnerStepTransition } from '@/hooks/use-setup-route-transitions'
 
 const localOwnerSchema = z.object({
-  email: z.string().email('Enter a valid email address'),
+  email: z.email('Enter a valid email address'),
 })
 
 type LocalOwnerForm = z.infer<typeof localOwnerSchema>
@@ -93,7 +93,7 @@ function OwnerStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
-  const startOidcMutation = useSetupOidcStart()
+  const startOidcMutation = useSetupOidcVerificationStart()
   const localOwnerMutation = useSetupLocalOwnerCreate()
   const trustedProxyClaimMutation = useSetupTrustedProxyClaimOwner()
   const { data: status } = useSetupStatus()
@@ -158,7 +158,6 @@ function OwnerStep() {
           try {
             sessionStorage.setItem('oore_oidc_state', data.state)
             sessionStorage.setItem('oore_oidc_flow', 'setup_owner')
-            sessionStorage.setItem('oore_setup_session_token', sessionToken)
           } catch {
             // ignore
           }

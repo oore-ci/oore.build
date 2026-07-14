@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for user management and invitations in Oore CI."
+description: 'API endpoints for user management and invitations in Oore CI.'
 ---
 
 # Users API
@@ -63,10 +63,10 @@ POST /v1/users/invite
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | `string` | Yes | Email address (must match OIDC provider account) |
-| `role` | `string` | Yes | Role to assign: `admin`, `developer`, or `qa_viewer` |
+| Field   | Type     | Required | Description                                          |
+| ------- | -------- | -------- | ---------------------------------------------------- |
+| `email` | `string` | Yes      | Email address (must match OIDC provider account)     |
+| `role`  | `string` | Yes      | Role to assign: `admin`, `developer`, or `qa_viewer` |
 
 ### Response `200 OK`
 
@@ -74,11 +74,11 @@ Returns the created user object with `invited` status.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Invalid email or role |
-| 403 | `forbidden` | Insufficient permissions |
-| 409 | `already_exists` | User with this email already exists |
+| Status | Code             | Description                         |
+| ------ | ---------------- | ----------------------------------- |
+| 400    | `invalid_input`  | Invalid email or role               |
+| 403    | `forbidden`      | Insufficient permissions            |
+| 409    | `already_exists` | User with this email already exists |
 
 ---
 
@@ -98,9 +98,9 @@ PATCH /v1/users/{user_id}/role
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `role` | `string` | Yes | New role: `admin`, `developer`, or `qa_viewer` |
+| Field  | Type     | Required | Description                                    |
+| ------ | -------- | -------- | ---------------------------------------------- |
+| `role` | `string` | Yes      | New role: `admin`, `developer`, or `qa_viewer` |
 
 ### Response `200 OK`
 
@@ -108,11 +108,11 @@ Returns the updated user object.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Invalid role value |
-| 403 | `forbidden` | Insufficient permissions |
-| 404 | `not_found` | User not found |
+| Status | Code            | Description              |
+| ------ | --------------- | ------------------------ |
+| 400    | `invalid_input` | Invalid role value       |
+| 403    | `forbidden`     | Insufficient permissions |
+| 404    | `not_found`     | User not found           |
 
 ---
 
@@ -132,10 +132,10 @@ Returns the updated user object with `disabled` status.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 403 | `forbidden` | Insufficient permissions |
-| 404 | `not_found` | User not found |
+| Status | Code        | Description              |
+| ------ | ----------- | ------------------------ |
+| 403    | `forbidden` | Insufficient permissions |
+| 404    | `not_found` | User not found           |
 
 ::: info
 This endpoint disables the user rather than permanently deleting them. User records are preserved for the audit trail.
@@ -159,7 +159,7 @@ Returns the updated user object with `active` status.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 403 | `forbidden` | Insufficient permissions |
-| 404 | `not_found` | User not found |
+| Status | Code        | Description              |
+| ------ | ----------- | ------------------------ |
+| 403    | `forbidden` | Insufficient permissions |
+| 404    | `not_found` | User not found           |

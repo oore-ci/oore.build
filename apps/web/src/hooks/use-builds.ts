@@ -23,9 +23,7 @@ import {
   getBuildLogs,
   listArtifacts,
   listBuilds,
-  listScopedDownloadTokens,
   rerunBuild,
-  revokeScopedDownloadToken,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
@@ -315,38 +313,6 @@ export function useCreateScopedDownloadToken() {
     onSuccess: (_data, { artifactId }) => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
-      })
-    },
-  })
-}
-
-export function useScopedDownloadTokens(artifactId: string) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
-    queryFn: () => listScopedDownloadTokens(baseUrl!, token!, artifactId),
-    enabled: !!baseUrl && !!token && !!artifactId,
-  })
-}
-
-export function useRevokeScopedDownloadToken() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (tokenId: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return revokeScopedDownloadToken(baseUrl, token, tokenId)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'scoped-tokens'],
       })
     },
   })

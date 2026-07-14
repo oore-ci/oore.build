@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Diagnose and fix common Oore CI issues including builds, auth, and connectivity."
+description: 'Diagnose and fix common Oore CI issues including builds, auth, and connectivity.'
 ---
 
 # Troubleshooting

@@ -235,7 +235,7 @@ export function ArtifactsPanel({
   }
 
   function handleShareLink(artifact: Artifact) {
-    setShareArtifact(artifact)
+    setShareArtifact(() => artifact)
     setCreatedToken(null)
     setTtlSecs('86400')
     setSingleUse(false)
@@ -253,7 +253,7 @@ export function ArtifactsPanel({
       },
       {
         onSuccess: (res) => {
-          setCreatedToken(res)
+          setCreatedToken(() => res)
         },
         onError: (err) => {
           toast.error(`Failed to create share link: ${err.message}`)
@@ -369,7 +369,7 @@ export function ArtifactsPanel({
                   items={TTL_OPTIONS}
                   value={ttlSecs}
                   onValueChange={(value) => {
-                    if (value != null) setTtlSecs(value)
+                    if (value != null) setTtlSecs(() => value)
                   }}
                 >
                   <SelectTrigger id="ttl-select">

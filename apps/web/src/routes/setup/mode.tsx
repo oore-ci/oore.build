@@ -88,8 +88,6 @@ function SetupModeStep() {
     setCurrentStep(1)
   })
 
-
-
   const errorMessage = setupModeMutation.error
     ? getApiErrorMessage(setupModeMutation.error, {
         invalid_state: 'Setup mode cannot be changed after owner creation.',

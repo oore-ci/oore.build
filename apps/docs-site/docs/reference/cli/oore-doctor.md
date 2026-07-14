@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for oore doctor environment and signing diagnostics."
+description: 'CLI reference for oore doctor environment and signing diagnostics.'
 ---
 
 # oore doctor
@@ -15,11 +15,11 @@ oore doctor [--json] [--platform android|ios|macos]... [--all]
 
 ## Flags
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Print machine-readable diagnostic report |
+| Flag                    | Description                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `--json`                | Print machine-readable diagnostic report                                       |
 | `--platform <platform>` | Add Android, iOS, or macOS target checks; repeat the flag for multiple targets |
-| `--all` | Run all platform checks |
+| `--all`                 | Run all platform checks                                                        |
 
 ## Checks
 
@@ -34,10 +34,10 @@ Every check is `ok`, `warning`, `missing`, or `skipped`. Warnings cover optional
 
 ## Exit codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | All selected required checks passed (warnings are allowed) |
-| `1` | One or more required checks missing |
+| Code | Meaning                                                    |
+| ---- | ---------------------------------------------------------- |
+| `0`  | All selected required checks passed (warnings are allowed) |
+| `1`  | One or more required checks missing                        |
 
 ## Example output
 

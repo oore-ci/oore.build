@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Build lifecycle states and transitions in Oore CI."
+description: 'Build lifecycle states and transitions in Oore CI.'
 ---
 
 # Build States
@@ -9,17 +9,17 @@ Every build in Oore CI transitions through a defined set of states from creation
 
 ## States
 
-| State | Description |
-|---|---|
-| `queued` | Build created, waiting for a runner to claim it |
+| State       | Description                                              |
+| ----------- | -------------------------------------------------------- |
+| `queued`    | Build created, waiting for a runner to claim it          |
 | `scheduled` | Assigned to a runner's queue, waiting to start execution |
-| `assigned` | Runner has claimed the job via heartbeat/claim cycle |
-| `running` | Build commands are executing on the runner |
-| `succeeded` | All build commands completed with exit code 0 |
-| `failed` | A build command returned a non-zero exit code |
-| `canceled` | Build was canceled by a user |
-| `timed_out` | Build exceeded the maximum execution time |
-| `expired` | Build sat in the queue too long without being claimed |
+| `assigned`  | Runner has claimed the job via heartbeat/claim cycle     |
+| `running`   | Build commands are executing on the runner               |
+| `succeeded` | All build commands completed with exit code 0            |
+| `failed`    | A build command returned a non-zero exit code            |
+| `canceled`  | Build was canceled by a user                             |
+| `timed_out` | Build exceeded the maximum execution time                |
+| `expired`   | Build sat in the queue too long without being claimed    |
 
 ## Transitions
 
@@ -63,11 +63,11 @@ Canceling an already-terminal build has no effect.
 
 ## Build timing fields
 
-| Field | Set when |
-|---|---|
-| `queued_at` | Build created |
-| `started_at` | Runner begins execution (transition to `running`) |
-| `finished_at` | Build reaches a terminal state |
+| Field         | Set when                                          |
+| ------------- | ------------------------------------------------- |
+| `queued_at`   | Build created                                     |
+| `started_at`  | Runner begins execution (transition to `running`) |
+| `finished_at` | Build reaches a terminal state                    |
 
 ## Runner interaction
 

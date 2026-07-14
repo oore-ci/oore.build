@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Set up Auth0 OIDC authentication for Oore CI."
+description: 'Set up Auth0 OIDC authentication for Oore CI.'
 ---
 
 # Auth0 OIDC Setup
@@ -27,11 +27,11 @@ This guide walks you through creating an Auth0 application and connecting it to 
 
 Go to the **Settings** tab and set:
 
-| Field | Value |
-|---|---|
+| Field                     | Value                                                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | **Allowed Callback URLs** | `http://127.0.0.1:4173/auth/callback, http://localhost:3000/auth/callback, https://ci.oore.build/auth/callback` |
-| **Allowed Logout URLs** | `http://127.0.0.1:4173, http://localhost:3000` |
-| **Allowed Web Origins** | `http://127.0.0.1:4173, http://localhost:3000` |
+| **Allowed Logout URLs**   | `http://127.0.0.1:4173, http://localhost:3000`                                                                  |
+| **Allowed Web Origins**   | `http://127.0.0.1:4173, http://localhost:3000`                                                                  |
 
 Both setup and regular sign-in use the same `/auth/callback` path — you only need one URI per origin. For a custom domain, replace the hosted UI URI with yours.
 
@@ -69,11 +69,11 @@ curl https://your-tenant.auth0.com/.well-known/openid-configuration | jq .issuer
 
 During setup, enter:
 
-| Field | Value |
-|---|---|
-| **Issuer URL** | `https://{your-domain}/` (include trailing slash) |
-| **Client ID** | From step 3 |
-| **Client secret** | From step 3 |
+| Field             | Value                                             |
+| ----------------- | ------------------------------------------------- |
+| **Issuer URL**    | `https://{your-domain}/` (include trailing slash) |
+| **Client ID**     | From step 3                                       |
+| **Client secret** | From step 3                                       |
 
 ## Troubleshooting
 

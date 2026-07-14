@@ -34,6 +34,11 @@ export const Route = createFileRoute('/login')({
   component: LoginPage,
 })
 
+const lastAuthTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
 function instanceHostname(url: string): string {
   if (!url.trim()) return window.location.host
   try {
@@ -44,10 +49,7 @@ function instanceHostname(url: string): string {
 }
 
 function formatLastAuthTime(epochSeconds: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(epochSeconds * 1000)
+  return lastAuthTimeFormatter.format(epochSeconds * 1000)
 }
 
 function formatAuthMethodLabel(
@@ -77,7 +79,7 @@ function resolveBackendHostname(url: string): string {
   }
 }
 
-function LoginPage() {
+function useLoginPageState() {
   const instance = useActiveInstance()
   const instances = useInstanceStore((s) => s.instances)
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
@@ -313,6 +315,54 @@ function LoginPage() {
     instanceId: instance?.id ?? null,
     onLogin: handleLogin,
   })
+
+  return {
+    activeInstanceId,
+    connectivityIssue,
+    error,
+    handleLogin,
+    hostedUi,
+    instance,
+    instanceList,
+    lastAuthMeta,
+    loading,
+    localEmail,
+    localLoginAvailable,
+    localModeNetworkBlocked,
+    loginFlow,
+    runtimeMode,
+    setActiveInstance,
+    setLocalEmail,
+    setShowAddInstance,
+    setupStatusQuery,
+    showAddInstance,
+    trustedProxyLoginAvailable,
+  }
+}
+
+function LoginPage() {
+  const {
+    activeInstanceId,
+    connectivityIssue,
+    error,
+    handleLogin,
+    hostedUi,
+    instance,
+    instanceList,
+    lastAuthMeta,
+    loading,
+    localEmail,
+    localLoginAvailable,
+    localModeNetworkBlocked,
+    loginFlow,
+    runtimeMode,
+    setActiveInstance,
+    setLocalEmail,
+    setShowAddInstance,
+    setupStatusQuery,
+    showAddInstance,
+    trustedProxyLoginAvailable,
+  } = useLoginPageState()
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">

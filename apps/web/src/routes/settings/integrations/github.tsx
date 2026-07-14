@@ -12,7 +12,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
-import { useGitHubAppStart } from '@/hooks/use-integrations'
+import { usePreviewGitHubAppSetup } from '@/hooks/use-authorization-start'
 import { PageMeta } from '@/lib/seo'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
@@ -38,7 +38,7 @@ export const Route = createFileRoute('/settings/integrations/github')({
 
 function GitHubSetupPage() {
   const instance = useActiveInstance()
-  const startMutation = useGitHubAppStart()
+  const startMutation = usePreviewGitHubAppSetup()
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Create, verify, and restore Oore CI backups."
+description: 'Create, verify, and restore Oore CI backups.'
 ---
 
 # Backup and Restore

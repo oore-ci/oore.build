@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Upload iOS signing certificates and provisioning profiles to Oore CI."
+description: 'Upload iOS signing certificates and provisioning profiles to Oore CI.'
 ---
 
 # Acquire iOS Certificates and Profiles
@@ -17,10 +17,10 @@ Before you can sign iOS builds in Oore CI, you need signing certificates and pro
 
 iOS code signing requires two assets:
 
-| Asset | Purpose | Where to get it |
-|---|---|---|
-| **Signing certificate** (`.p12`) | Proves your identity as the developer | Created in Apple Developer portal, exported from Keychain |
-| **Provisioning profile** (`.mobileprovision`) | Links your certificate to specific apps and devices | Created in Apple Developer portal |
+| Asset                                         | Purpose                                             | Where to get it                                           |
+| --------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------- |
+| **Signing certificate** (`.p12`)              | Proves your identity as the developer               | Created in Apple Developer portal, exported from Keychain |
+| **Provisioning profile** (`.mobileprovision`) | Links your certificate to specific apps and devices | Created in Apple Developer portal                         |
 
 ## 1. Create a signing certificate
 

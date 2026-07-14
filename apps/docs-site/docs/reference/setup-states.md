@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Setup state machine transitions from uninitialized to ready in Oore CI."
+description: 'Setup state machine transitions from uninitialized to ready in Oore CI.'
 ---
 
 # Setup State Machine
@@ -9,13 +9,13 @@ Every Oore CI instance progresses through a fixed sequence of states during firs
 
 ## States
 
-| State | Description |
-|---|---|
-| `uninitialized` | Fresh database, no bootstrap token generated yet |
-| `bootstrap_pending` | Bootstrap token generated, waiting for verification |
-| `idp_configured` | Access mode and any remote auth configuration saved |
-| `owner_created` | Owner account created via local, OIDC, or trusted-proxy verification |
-| `ready` | Setup complete, all setup endpoints permanently disabled |
+| State               | Description                                                          |
+| ------------------- | -------------------------------------------------------------------- |
+| `uninitialized`     | Fresh database, no bootstrap token generated yet                     |
+| `bootstrap_pending` | Bootstrap token generated, waiting for verification                  |
+| `idp_configured`    | Access mode and any remote auth configuration saved                  |
+| `owner_created`     | Owner account created via local, OIDC, or trusted-proxy verification |
+| `ready`             | Setup complete, all setup endpoints permanently disabled             |
 
 ## Transitions
 
@@ -23,12 +23,12 @@ Every Oore CI instance progresses through a fixed sequence of states during firs
 uninitialized → bootstrap_pending → idp_configured → owner_created → ready
 ```
 
-| From | To | Triggered by |
-|---|---|---|
-| `uninitialized` | `bootstrap_pending` | `oore setup token` generates a bootstrap token |
-| `bootstrap_pending` | `idp_configured` | Local Only preferences are saved, `POST /v1/setup/oidc/configure` succeeds, or trusted-proxy setup is configured |
-| `idp_configured` | `owner_created` | Loopback Local Only owner creation, `POST /v1/setup/owner/verify-oidc`, or trusted-proxy owner claim succeeds |
-| `owner_created` | `ready` | `POST /v1/setup/complete` succeeds |
+| From                | To                  | Triggered by                                                                                                     |
+| ------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `uninitialized`     | `bootstrap_pending` | `oore setup token` generates a bootstrap token                                                                   |
+| `bootstrap_pending` | `idp_configured`    | Local Only preferences are saved, `POST /v1/setup/oidc/configure` succeeds, or trusted-proxy setup is configured |
+| `idp_configured`    | `owner_created`     | Loopback Local Only owner creation, `POST /v1/setup/owner/verify-oidc`, or trusted-proxy owner claim succeeds    |
+| `owner_created`     | `ready`             | `POST /v1/setup/complete` succeeds                                                                               |
 
 Transitions are strictly forward-only. There is no rollback mechanism — if you need to restart setup, delete the database and start fresh.
 
@@ -36,17 +36,17 @@ Transitions are strictly forward-only. There is no rollback mechanism — if you
 
 Setup endpoints are gated by the current state. Calling an endpoint in the wrong state returns `409 Conflict` with code `invalid_state`.
 
-| Endpoint | Required state | Auth |
-|---|---|---|
-| `GET /v1/public/setup-status` | Any | None (public) |
-| `POST /v1/setup/bootstrap-token/verify` | Any except `ready` | None |
-| `POST /v1/setup/preferences` | `bootstrap_pending` or `idp_configured` | Setup session |
-| `POST /v1/setup/oidc/configure` | `bootstrap_pending` | Setup session |
-| `POST /v1/setup/trusted-proxy/configure` | `bootstrap_pending` or `idp_configured` | Setup session |
-| `POST /v1/setup/owner/start-oidc` | `idp_configured` | Setup session |
-| `POST /v1/setup/owner/verify-oidc` | `idp_configured` | Setup session |
-| `POST /v1/setup/owner/claim-trusted-proxy` | `idp_configured` | Setup session plus trusted proxy identity |
-| `POST /v1/setup/complete` | `owner_created` | Setup session |
+| Endpoint                                   | Required state                          | Auth                                      |
+| ------------------------------------------ | --------------------------------------- | ----------------------------------------- |
+| `GET /v1/public/setup-status`              | Any                                     | None (public)                             |
+| `POST /v1/setup/bootstrap-token/verify`    | Any except `ready`                      | None                                      |
+| `POST /v1/setup/preferences`               | `bootstrap_pending` or `idp_configured` | Setup session                             |
+| `POST /v1/setup/oidc/configure`            | `bootstrap_pending`                     | Setup session                             |
+| `POST /v1/setup/trusted-proxy/configure`   | `bootstrap_pending` or `idp_configured` | Setup session                             |
+| `POST /v1/setup/owner/start-oidc`          | `idp_configured`                        | Setup session                             |
+| `POST /v1/setup/owner/verify-oidc`         | `idp_configured`                        | Setup session                             |
+| `POST /v1/setup/owner/claim-trusted-proxy` | `idp_configured`                        | Setup session plus trusted proxy identity |
+| `POST /v1/setup/complete`                  | `owner_created`                         | Setup session                             |
 
 Once the state reaches `ready`, all `/v1/setup/*` endpoints return `409 Conflict` with code `already_configured`.
 
