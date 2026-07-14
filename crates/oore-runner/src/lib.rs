@@ -428,7 +428,9 @@ struct IosSigningMaterialization {
     keychain_path: PathBuf,
     export_options_plist_path: PathBuf,
     bundle_profile_mapping: Vec<(String, String)>,
+    bundle_profile_paths: Vec<(String, PathBuf)>,
     effective_export_method: String,
+    signing_identity_sha1: String,
     signing_identity_name: Option<String>,
 }
 
@@ -723,6 +725,7 @@ fn install_ios_signing_bundle(
 
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
         let mut bundle_profile_mapping = Vec::new();
+        let mut bundle_profile_paths = Vec::new();
         for profile in &bundle.provisioning_profiles {
             if profile.bundle_id.trim().is_empty() {
                 anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
@@ -765,6 +768,7 @@ fn install_ios_signing_bundle(
             })?;
             installed_profiles.push(installed_path);
             bundle_profile_mapping.push((profile.bundle_id.clone(), profile_ref));
+            bundle_profile_paths.push((profile.bundle_id.clone(), work_path));
         }
 
         run_security_command_with_strings(&[
@@ -857,12 +861,40 @@ fn install_ios_signing_bundle(
         run_security_command_with_strings(&[
             "set-key-partition-list".to_string(),
             "-S".to_string(),
-            "apple-tool:,apple:".to_string(),
+            "apple-tool:,apple:,codesign:".to_string(),
             "-s".to_string(),
             "-k".to_string(),
             keychain_password.clone(),
             keychain_path_str.clone(),
         ])?;
+
+        let signing_preflight_path = signing_dir.join("oore-signing-preflight");
+        fs::copy("/usr/bin/true", &signing_preflight_path).map_err(|error| {
+            anyhow::anyhow!("failed to prepare iOS signing identity preflight: {error}")
+        })?;
+        run_ios_signing_tool(
+            "/usr/bin/codesign",
+            vec![
+                "--force".to_string(),
+                "--sign".to_string(),
+                signing_identity_sha1.clone(),
+                "--keychain".to_string(),
+                keychain_path_str.clone(),
+                "--timestamp=none".to_string(),
+                signing_preflight_path.display().to_string(),
+            ],
+            "use the imported iOS signing identity from the build keychain",
+        )?;
+        run_ios_signing_tool(
+            "/usr/bin/codesign",
+            vec![
+                "--verify".to_string(),
+                "--strict".to_string(),
+                signing_preflight_path.display().to_string(),
+            ],
+            "verify imported iOS signing identity access",
+        )?;
+        let _ = fs::remove_file(signing_preflight_path);
 
         let effective_export_method = resolve_ios_export_method();
         let export_options_plist_path = signing_dir.join("ExportOptions.plist");
@@ -879,7 +911,9 @@ fn install_ios_signing_bundle(
             keychain_path: keychain_path.clone(),
             export_options_plist_path,
             bundle_profile_mapping,
+            bundle_profile_paths,
             effective_export_method,
+            signing_identity_sha1,
             signing_identity_name: Some(signing_identity_name),
         })
     })();
@@ -909,6 +943,295 @@ fn install_ios_signing_bundle(
             Err(err)
         }
     }
+}
+
+fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyhow::Result<String> {
+    let output = Command::new(program)
+        .args(&args)
+        .output()
+        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        anyhow::bail!("failed to {action}: {detail}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn collect_paths_with_extension(
+    root: &Path,
+    extension: &str,
+    output: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    for entry in fs::read_dir(root)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", root.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if matches!(
+                path.file_name().and_then(|value| value.to_str()),
+                Some(".git" | ".dart_tool" | "Pods")
+            ) {
+                continue;
+            }
+            if path.extension().and_then(|value| value.to_str()) == Some(extension) {
+                output.push(path.clone());
+            }
+            collect_paths_with_extension(&path, extension, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn find_newest_path_with_extension(root: &Path, extension: &str) -> anyhow::Result<PathBuf> {
+    let mut candidates = Vec::new();
+    collect_paths_with_extension(root, extension, &mut candidates)?;
+    candidates
+        .into_iter()
+        .max_by_key(|path| {
+            fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no .{extension} bundle was produced under {}",
+                root.display()
+            )
+        })
+}
+
+fn find_direct_path_with_extension(root: &Path, extension: &str) -> anyhow::Result<PathBuf> {
+    fs::read_dir(root)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", root.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_dir() && path.extension().and_then(|value| value.to_str()) == Some(extension)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no direct .{extension} bundle was produced under {}",
+                root.display()
+            )
+        })
+}
+
+fn read_apple_bundle_identifier(bundle_path: &Path) -> anyhow::Result<String> {
+    run_ios_signing_tool(
+        "/usr/libexec/PlistBuddy",
+        vec![
+            "-c".to_string(),
+            "Print :CFBundleIdentifier".to_string(),
+            bundle_path.join("Info.plist").display().to_string(),
+        ],
+        &format!("read bundle identifier from {}", bundle_path.display()),
+    )
+}
+
+fn profile_path_for_bundle<'a>(
+    materialization: &'a IosSigningMaterialization,
+    bundle_id: &str,
+) -> anyhow::Result<&'a Path> {
+    materialization
+        .bundle_profile_paths
+        .iter()
+        .find(|(candidate, _)| candidate == bundle_id)
+        .map(|(_, path)| path.as_path())
+        .ok_or_else(|| {
+            anyhow::anyhow!("no stored provisioning profile matches bundle ID {bundle_id}")
+        })
+}
+
+fn extract_profile_entitlements(profile_path: &Path, output_path: &Path) -> anyhow::Result<()> {
+    let decoded_path = output_path.with_extension("profile.plist");
+    run_ios_signing_tool(
+        "/usr/bin/security",
+        vec![
+            "cms".to_string(),
+            "-D".to_string(),
+            "-i".to_string(),
+            profile_path.display().to_string(),
+            "-o".to_string(),
+            decoded_path.display().to_string(),
+        ],
+        &format!("decode provisioning profile {}", profile_path.display()),
+    )?;
+    run_ios_signing_tool(
+        "/usr/bin/plutil",
+        vec![
+            "-extract".to_string(),
+            "Entitlements".to_string(),
+            "xml1".to_string(),
+            "-o".to_string(),
+            output_path.display().to_string(),
+            decoded_path.display().to_string(),
+        ],
+        &format!("extract entitlements from {}", profile_path.display()),
+    )?;
+    let _ = fs::remove_file(decoded_path);
+    Ok(())
+}
+
+fn codesign_path(
+    path: &Path,
+    materialization: &IosSigningMaterialization,
+    entitlements: Option<&Path>,
+) -> anyhow::Result<()> {
+    let mut args = vec![
+        "--force".to_string(),
+        "--sign".to_string(),
+        materialization.signing_identity_sha1.clone(),
+        "--keychain".to_string(),
+        materialization.keychain_path.display().to_string(),
+        "--timestamp=none".to_string(),
+    ];
+    if let Some(entitlements) = entitlements {
+        args.push("--entitlements".to_string());
+        args.push(entitlements.display().to_string());
+    }
+    args.push(path.display().to_string());
+    run_ios_signing_tool(
+        "/usr/bin/codesign",
+        args,
+        &format!("sign {}", path.display()),
+    )?;
+    Ok(())
+}
+
+fn collect_nested_code(root: &Path, output: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    for entry in fs::read_dir(root)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", root.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nested_code(&path, output)?;
+            if matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("framework" | "xpc")
+            ) {
+                output.push(path);
+            }
+        } else if path.extension().and_then(|value| value.to_str()) == Some("dylib") {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn manually_sign_ios_archive(
+    workspace: &Path,
+    materialization: &IosSigningMaterialization,
+) -> anyhow::Result<PathBuf> {
+    let archive = find_newest_path_with_extension(workspace, "xcarchive")?;
+    let applications = archive.join("Products").join("Applications");
+    let app = find_direct_path_with_extension(&applications, "app")?;
+    let entitlements_dir = materialization
+        .export_options_plist_path
+        .parent()
+        .unwrap_or(workspace)
+        .join("entitlements");
+    fs::create_dir_all(&entitlements_dir)?;
+
+    let mut app_extensions = Vec::new();
+    collect_paths_with_extension(&app, "appex", &mut app_extensions)?;
+
+    let mut nested_code = Vec::new();
+    collect_nested_code(&app, &mut nested_code)?;
+    nested_code.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for path in nested_code {
+        codesign_path(&path, materialization, None)?;
+    }
+
+    app_extensions.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for extension in &app_extensions {
+        let bundle_id = read_apple_bundle_identifier(extension)?;
+        let profile = profile_path_for_bundle(materialization, &bundle_id)?;
+        fs::copy(profile, extension.join("embedded.mobileprovision"))
+            .map_err(|error| anyhow::anyhow!("failed to embed profile for {bundle_id}: {error}"))?;
+        let entitlements = entitlements_dir.join(format!(
+            "{}.plist",
+            xcode_build_setting_identifier(&bundle_id)
+        ));
+        extract_profile_entitlements(profile, &entitlements)?;
+        codesign_path(extension, materialization, Some(&entitlements))?;
+    }
+
+    let app_bundle_id = read_apple_bundle_identifier(&app)?;
+    let app_profile = profile_path_for_bundle(materialization, &app_bundle_id)?;
+    fs::copy(app_profile, app.join("embedded.mobileprovision"))
+        .map_err(|error| anyhow::anyhow!("failed to embed profile for {app_bundle_id}: {error}"))?;
+    let app_entitlements = entitlements_dir.join(format!(
+        "{}.plist",
+        xcode_build_setting_identifier(&app_bundle_id)
+    ));
+    extract_profile_entitlements(app_profile, &app_entitlements)?;
+    codesign_path(&app, materialization, Some(&app_entitlements))?;
+
+    run_ios_signing_tool(
+        "/usr/bin/codesign",
+        vec![
+            "--verify".to_string(),
+            "--deep".to_string(),
+            "--strict".to_string(),
+            "--verbose=2".to_string(),
+            app.display().to_string(),
+        ],
+        &format!("verify signed app {}", app.display()),
+    )?;
+
+    let package_root = entitlements_dir.join("package");
+    let payload = package_root.join("Payload");
+    if package_root.exists() {
+        fs::remove_dir_all(&package_root)?;
+    }
+    fs::create_dir_all(&payload)?;
+    let packaged_app = payload.join(
+        app.file_name()
+            .ok_or_else(|| anyhow::anyhow!("archive app path has no filename"))?,
+    );
+    run_ios_signing_tool(
+        "/usr/bin/ditto",
+        vec![
+            app.display().to_string(),
+            packaged_app.display().to_string(),
+        ],
+        "copy signed app into IPA payload",
+    )?;
+
+    let ios_build_dir = archive
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| anyhow::anyhow!("archive path is missing its iOS build directory"))?;
+    let ipa_dir = ios_build_dir.join("ipa");
+    fs::create_dir_all(&ipa_dir)?;
+    let ipa_path = ipa_dir.join(format!(
+        "{}.ipa",
+        app.file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Runner")
+    ));
+    if ipa_path.exists() {
+        fs::remove_file(&ipa_path)?;
+    }
+    run_ios_signing_tool(
+        "/usr/bin/ditto",
+        vec![
+            "-c".to_string(),
+            "-k".to_string(),
+            "--sequesterRsrc".to_string(),
+            "--keepParent".to_string(),
+            payload.display().to_string(),
+            ipa_path.display().to_string(),
+        ],
+        "package signed IPA",
+    )?;
+    fs::metadata(&ipa_path)
+        .map_err(|error| anyhow::anyhow!("signed IPA was not created: {error}"))?;
+    Ok(ipa_path)
 }
 
 fn ios_signing_prepared_marker(
@@ -982,7 +1305,7 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
 
 fn adapt_ios_command_for_signing(
     command: &str,
-    export_options_plist: &Path,
+    _export_options_plist: &Path,
 ) -> anyhow::Result<String> {
     if !is_ios_flutter_build_command(command) {
         return Ok(command.to_string());
@@ -1031,69 +1354,13 @@ fn adapt_ios_command_for_signing(
         );
     }
 
-    // Flutter forwards FLUTTER_XCODE_* environment variables as command-line
-    // xcodebuild settings. Oore resolves each app target's exact installed
-    // profile from its bundle ID. ExportOptions.plist pins the imported
-    // distribution certificate for the IPA export. Identity selection uses the
-    // same bundle-ID lookup as profiles so app targets override repository
-    // development identities without forcing a certificate onto every target
-    // in the workspace, including unsigned CocoaPods dependencies.
-    args.push(format!(
-        "--export-options-plist={}",
-        export_options_plist.display()
-    ));
+    // Xcode's certificate discovery is tied to a GUI security session on some
+    // headless macOS runners. Build an unsigned archive first; Oore then embeds
+    // the stored profiles and signs every nested bundle directly with the exact
+    // managed identity and temporary keychain.
+    args.push("--no-codesign".to_string());
 
     Ok(args.join(" "))
-}
-
-fn ios_signing_xcode_environment(
-    bundle: &RunnerIosSigningBundle,
-    materialization: &IosSigningMaterialization,
-) -> Vec<(String, String)> {
-    let mut env = vec![
-        (
-            "FLUTTER_XCODE_DEVELOPMENT_TEAM".to_string(),
-            bundle.team_id.trim().to_string(),
-        ),
-        (
-            "FLUTTER_XCODE_CODE_SIGN_STYLE".to_string(),
-            "Manual".to_string(),
-        ),
-        (
-            "FLUTTER_XCODE_PROVISIONING_PROFILE".to_string(),
-            String::new(),
-        ),
-        (
-            "FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER".to_string(),
-            "$(OORE_PROFILE_$(OORE_PROFILE_KEY))".to_string(),
-        ),
-        (
-            "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
-            "$(OORE_IDENTITY_$(OORE_PROFILE_KEY))".to_string(),
-        ),
-        (
-            "FLUTTER_XCODE_OORE_PROFILE_KEY".to_string(),
-            "$(PRODUCT_BUNDLE_IDENTIFIER:identifier)".to_string(),
-        ),
-        (
-            "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
-            format!("--keychain {}", materialization.keychain_path.display()),
-        ),
-    ];
-    for (bundle_id, profile_ref) in &materialization.bundle_profile_mapping {
-        let bundle_setting = xcode_build_setting_identifier(bundle_id);
-        env.push((
-            format!("FLUTTER_XCODE_OORE_PROFILE_{bundle_setting}"),
-            profile_ref.clone(),
-        ));
-        if let Some(ref identity) = materialization.signing_identity_name {
-            env.push((
-                format!("FLUTTER_XCODE_OORE_IDENTITY_{bundle_setting}"),
-                identity.clone(),
-            ));
-        }
-    }
-    env
 }
 
 fn xcode_build_setting_identifier(value: &str) -> String {
@@ -2244,11 +2511,6 @@ async fn execute_build(
         ios_signing_bundle.as_ref(),
         ios_signing_materialization.as_ref(),
     ) {
-        // Flutter deliberately forwards FLUTTER_XCODE_* variables as xcodebuild
-        // command-line settings, which have higher precedence than repository-local
-        // development signing settings. This keeps signing zero-config for projects
-        // with app extensions while pinning the imported distribution identity.
-        step_env.extend(ios_signing_xcode_environment(bundle, materialization));
         let _ = append_runner_log_line(
             client,
             daemon_url,
@@ -2451,6 +2713,97 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             anyhow::anyhow!("Step failed with exit code {}", exit_code)
                         };
                         return (steps, Err(err));
+                    }
+                    if command_applied {
+                        let Some(materialization) = ios_signing_materialization.as_ref() else {
+                            return (
+                                steps,
+                                Err(anyhow::anyhow!(
+                                    "iOS signing command ran without prepared signing material"
+                                )),
+                            );
+                        };
+                        let signing_step_name = "ios-sign";
+                        let signing_started = now_unix();
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_start_marker(
+                                signing_step_name,
+                                "Sign and package iOS archive with managed credentials",
+                            ),
+                        )
+                        .await;
+                        let signing_result = manually_sign_ios_archive(&workspace, materialization);
+                        let signing_finished = now_unix();
+                        let signing_succeeded = signing_result.is_ok();
+                        steps.push(StepResult {
+                            name: signing_step_name.to_string(),
+                            status: if signing_succeeded {
+                                "succeeded"
+                            } else {
+                                "failed"
+                            }
+                            .to_string(),
+                            exit_code: if signing_succeeded { Some(0) } else { Some(1) },
+                            started_at: signing_started,
+                            finished_at: signing_finished,
+                            duration_ms: (signing_finished - signing_started) * 1000,
+                        });
+                        match signing_result {
+                            Ok(ipa_path) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stdout",
+                                    &format!(
+                                        "[oore-signing] Signed IPA created at {}",
+                                        ipa_path.display()
+                                    ),
+                                )
+                                .await;
+                            }
+                            Err(error) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stderr",
+                                    &format!("[oore-signing] {error:#}"),
+                                )
+                                .await;
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stdout",
+                                    &step_end_marker(signing_step_name, "failed", Some(1)),
+                                )
+                                .await;
+                                return (steps, Err(error));
+                            }
+                        }
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_end_marker(signing_step_name, "succeeded", Some(0)),
+                        )
+                        .await;
                     }
                 }
             }
@@ -4194,8 +4547,8 @@ mod tests {
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.starts_with("flutter build ipa --release"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(!adapted.contains("--export-options-plist"));
     }
 
     #[test]
@@ -4215,8 +4568,8 @@ mod tests {
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.contains("flutter build ipa --release"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(!adapted.contains("--export-options-plist"));
     }
 
     #[test]
@@ -4233,9 +4586,9 @@ mod tests {
 
         assert!(signing_applied);
         assert!(normalized.contains("flutter build ipa --release"));
-        assert!(!normalized.contains("--no-codesign"));
+        assert!(normalized.contains("--no-codesign"));
         assert!(normalized.contains("--dart-define-from-file=.env"));
-        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(!normalized.contains("--export-options-plist"));
     }
 
     #[test]
@@ -4269,8 +4622,8 @@ mod tests {
         assert!(signing_applied);
         assert!(normalized.contains("fvm flutter build ipa --release"));
         assert!(!normalized.contains("--export-method"));
-        assert!(!normalized.contains("--no-codesign"));
-        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(normalized.contains("--no-codesign"));
+        assert!(!normalized.contains("--export-options-plist"));
     }
 
     #[test]
@@ -4283,84 +4636,8 @@ mod tests {
 
         assert!(!adapted.contains("/tmp/repo.plist"));
         assert!(!adapted.contains("--codesign"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/OoreExportOptions.plist"));
-    }
-
-    #[test]
-    fn passes_ios_signing_as_flutter_xcode_command_line_settings() {
-        let bundle = RunnerIosSigningBundle {
-            enabled: true,
-            mode: oore_contract::IosSigningMode::Manual,
-            team_id: " TEAM123 ".to_string(),
-            export_method: "ad-hoc".to_string(),
-            p12_filename: "distribution.p12".to_string(),
-            p12_base64: "ignored".to_string(),
-            p12_password: "ignored".to_string(),
-            provisioning_profiles: vec![],
-        };
-        let materialization = IosSigningMaterialization {
-            p12_path: PathBuf::from("/tmp/signing/distribution.p12"),
-            keychain_path: PathBuf::from("/tmp/signing/oore-ci-build.keychain-db"),
-            export_options_plist_path: PathBuf::from("/tmp/signing/ExportOptions.plist"),
-            bundle_profile_mapping: vec![
-                ("com.zerodha.kite3".to_string(), "Kite Ad Hoc".to_string()),
-                (
-                    "com.zerodha.kite3.HoldingsSummary".to_string(),
-                    "Kite Holdings Ad Hoc".to_string(),
-                ),
-            ],
-            effective_export_method: "release-testing".to_string(),
-            signing_identity_name: Some(
-                "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
-            ),
-        };
-
-        let env = ios_signing_xcode_environment(&bundle, &materialization);
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_DEVELOPMENT_TEAM".to_string(),
-            "TEAM123".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_CODE_SIGN_STYLE".to_string(),
-            "Manual".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_PROVISIONING_PROFILE".to_string(),
-            String::new(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER".to_string(),
-            "$(OORE_PROFILE_$(OORE_PROFILE_KEY))".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_OORE_PROFILE_KEY".to_string(),
-            "$(PRODUCT_BUNDLE_IDENTIFIER:identifier)".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_OORE_PROFILE_com_zerodha_kite3".to_string(),
-            "Kite Ad Hoc".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_OORE_PROFILE_com_zerodha_kite3_HoldingsSummary".to_string(),
-            "Kite Holdings Ad Hoc".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
-            "$(OORE_IDENTITY_$(OORE_PROFILE_KEY))".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_OORE_IDENTITY_com_zerodha_kite3".to_string(),
-            "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_OORE_IDENTITY_com_zerodha_kite3_HoldingsSummary".to_string(),
-            "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
-        )));
-        assert!(env.contains(&(
-            "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
-            "--keychain /tmp/signing/oore-ci-build.keychain-db".to_string(),
-        )));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(!adapted.contains("--export-options-plist"));
     }
 
     #[test]
@@ -4369,6 +4646,21 @@ mod tests {
             xcode_build_setting_identifier("com.example.app-share"),
             "com_example_app_share"
         );
+    }
+
+    #[test]
+    fn selects_only_the_direct_app_from_an_xcarchive() {
+        let workspace = temp_workspace();
+        let applications = workspace.join("Products/Applications");
+        let app = applications.join("Runner.app");
+        let nested_app = app.join("Watch/Companion.app");
+        fs::create_dir_all(&nested_app).expect("create archive apps");
+
+        assert_eq!(
+            find_direct_path_with_extension(&applications, "app").expect("find main app"),
+            app
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]
