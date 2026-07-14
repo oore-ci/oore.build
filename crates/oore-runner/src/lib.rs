@@ -1034,10 +1034,10 @@ fn adapt_ios_command_for_signing(
     // Flutter forwards FLUTTER_XCODE_* environment variables as command-line
     // xcodebuild settings. Oore resolves each app target's exact installed
     // profile from its bundle ID. ExportOptions.plist pins the imported
-    // distribution certificate for the IPA export. Do not force
-    // CODE_SIGN_IDENTITY here: command-line settings apply to every target in
-    // the workspace, including unsigned CocoaPods dependencies. Xcode selects
-    // the matching identity from the temporary keychain for the app targets.
+    // distribution certificate for the IPA export. Identity selection uses the
+    // same bundle-ID lookup as profiles so app targets override repository
+    // development identities without forcing a certificate onto every target
+    // in the workspace, including unsigned CocoaPods dependencies.
     args.push(format!(
         "--export-options-plist={}",
         export_options_plist.display()
@@ -1068,6 +1068,10 @@ fn ios_signing_xcode_environment(
             "$(OORE_PROFILE_$(OORE_PROFILE_KEY))".to_string(),
         ),
         (
+            "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
+            "$(OORE_IDENTITY_$(OORE_PROFILE_KEY))".to_string(),
+        ),
+        (
             "FLUTTER_XCODE_OORE_PROFILE_KEY".to_string(),
             "$(PRODUCT_BUNDLE_IDENTIFIER:identifier)".to_string(),
         ),
@@ -1077,13 +1081,17 @@ fn ios_signing_xcode_environment(
         ),
     ];
     for (bundle_id, profile_ref) in &materialization.bundle_profile_mapping {
+        let bundle_setting = xcode_build_setting_identifier(bundle_id);
         env.push((
-            format!(
-                "FLUTTER_XCODE_OORE_PROFILE_{}",
-                xcode_build_setting_identifier(bundle_id)
-            ),
+            format!("FLUTTER_XCODE_OORE_PROFILE_{bundle_setting}"),
             profile_ref.clone(),
         ));
+        if let Some(ref identity) = materialization.signing_identity_name {
+            env.push((
+                format!("FLUTTER_XCODE_OORE_IDENTITY_{bundle_setting}"),
+                identity.clone(),
+            ));
+        }
     }
     env
 }
@@ -4338,13 +4346,21 @@ mod tests {
             "Kite Holdings Ad Hoc".to_string(),
         )));
         assert!(env.contains(&(
+            "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
+            "$(OORE_IDENTITY_$(OORE_PROFILE_KEY))".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_OORE_IDENTITY_com_zerodha_kite3".to_string(),
+            "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_OORE_IDENTITY_com_zerodha_kite3_HoldingsSummary".to_string(),
+            "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
+        )));
+        assert!(env.contains(&(
             "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
             "--keychain /tmp/signing/oore-ci-build.keychain-db".to_string(),
         )));
-        assert!(
-            !env.iter()
-                .any(|(key, _)| key.ends_with("CODE_SIGN_IDENTITY"))
-        );
     }
 
     #[test]
