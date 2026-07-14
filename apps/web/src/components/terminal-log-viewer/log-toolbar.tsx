@@ -10,19 +10,21 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import type { RefObject } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 
 interface LogToolbarProps {
-  isStreaming: boolean
-  logCount: number
-  searchOpen: boolean
   searchQuery: string
   searchInputRef: RefObject<HTMLInputElement | null>
   wrapLines: boolean
   showScrollLatest: boolean
-  onSearchOpen: () => void
-  onSearchClose: () => void
+  hasErrors: boolean
   onSearchQueryChange: (query: string) => void
+  onSearchClear: () => void
   onJumpToError: () => void
   onToggleWrap: () => void
   onDownload: () => void
@@ -30,63 +32,49 @@ interface LogToolbarProps {
 }
 
 export function LogToolbar({
-  isStreaming,
-  logCount,
-  searchOpen,
   searchQuery,
   searchInputRef,
   wrapLines,
   showScrollLatest,
-  onSearchOpen,
-  onSearchClose,
+  hasErrors,
   onSearchQueryChange,
+  onSearchClear,
   onJumpToError,
   onToggleWrap,
   onDownload,
   onScrollLatest,
 }: LogToolbarProps) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border border-b-0 bg-muted/50 px-3 py-2">
-      {isStreaming ? (
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full bg-success opacity-75 motion-safe:animate-ping" />
-            <span className="relative inline-flex size-2 bg-success" />
-          </span>
-          Live
-        </span>
-      ) : (
-        <span className="text-xs text-muted-foreground">{logCount} lines</span>
-      )}
-
-      <div className="flex-1" />
-
-      {searchOpen ? (
-        <div className="flex min-w-48 flex-1 items-center gap-1 sm:max-w-64">
-          <Input
-            ref={searchInputRef}
-            value={searchQuery}
-            onChange={(event) => onSearchQueryChange(event.target.value)}
-            placeholder="Search logs..."
-            className="h-9 min-w-0 flex-1 font-mono text-xs"
-          />
-          <ToolbarButton label="Close log search" onClick={onSearchClose}>
-            <HugeiconsIcon icon={Cancel01Icon} />
-          </ToolbarButton>
-        </div>
-      ) : (
-        <ToolbarButton
-          label="Search logs"
-          title="Search (Ctrl+F)"
-          onClick={onSearchOpen}
-        >
+    <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
+      <InputGroup className="order-first w-full flex-none bg-background sm:order-none sm:w-56">
+        <InputGroupInput
+          ref={searchInputRef}
+          value={searchQuery}
+          onChange={(event) => onSearchQueryChange(event.target.value)}
+          placeholder="Search logs"
+          aria-label="Search build logs"
+          className="font-mono text-xs"
+        />
+        <InputGroupAddon align="inline-start">
           <HugeiconsIcon icon={Search01Icon} />
-        </ToolbarButton>
-      )}
+        </InputGroupAddon>
+        {searchQuery ? (
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              size="icon-xs"
+              aria-label="Clear log search"
+              onClick={onSearchClear}
+            >
+              <HugeiconsIcon icon={Cancel01Icon} />
+            </InputGroupButton>
+          </InputGroupAddon>
+        ) : null}
+      </InputGroup>
 
       <ToolbarButton
         label="Jump to first error"
         title="Jump to first error"
+        disabled={!hasErrors}
         onClick={onJumpToError}
       >
         <HugeiconsIcon icon={AlertCircleIcon} />
@@ -125,6 +113,7 @@ function ToolbarButton({
   title,
   className = 'max-md:size-11',
   pressed,
+  disabled,
   onClick,
   children,
 }: {
@@ -132,6 +121,7 @@ function ToolbarButton({
   title?: string
   className?: string
   pressed?: boolean
+  disabled?: boolean
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -142,6 +132,7 @@ function ToolbarButton({
       className={className}
       aria-label={label}
       aria-pressed={pressed}
+      disabled={disabled}
       onClick={onClick}
       title={title}
     >

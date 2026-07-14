@@ -168,7 +168,7 @@ export const settingsHandlers = [
       ...instancePreferences,
       ...body,
       updated_at: now(),
-    } as InstancePreferences
+    }
 
     return HttpResponse.json({
       preferences: {

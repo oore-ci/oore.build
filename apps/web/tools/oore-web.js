@@ -603,9 +603,9 @@ function sha256(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex')
 }
 
-function extractTarGz(archivePath, extractDir) {
+function extractTarGz(bundlePath, extractDir) {
   fs.mkdirSync(extractDir, { recursive: true })
-  const result = spawnSync('tar', ['-xzf', archivePath, '-C', extractDir], {
+  const result = spawnSync('tar', ['-xzf', bundlePath, '-C', extractDir], {
     stdio: 'pipe',
     encoding: 'utf8',
   })
@@ -870,10 +870,10 @@ async function runUpdate(config) {
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oore-web-update-'))
   try {
-    const archivePath = path.join(tmpDir, archiveName)
+    const bundlePath = path.join(tmpDir, archiveName)
     const extractDir = path.join(tmpDir, 'extract')
-    fs.writeFileSync(archivePath, archiveBytes)
-    extractTarGz(archivePath, extractDir)
+    fs.writeFileSync(bundlePath, archiveBytes)
+    extractTarGz(bundlePath, extractDir)
 
     const extractedBinary = path.join(extractDir, 'bin', 'oore-web')
     const extractedDist = path.join(extractDir, 'web-dist')

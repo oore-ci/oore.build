@@ -1,12 +1,12 @@
 import { AnsiLine } from './ansi-line'
-import { ERROR_PATTERN, formatDuration, stepStatusVariant } from './log-model'
+import { isErrorLine } from './log-model'
 import type { RefObject } from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 
 import type { BuildLogChunk } from '@/lib/types'
 import type { SelectedStepMeta } from './types'
-import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { cn } from '@/lib/utils'
 
 interface LogOutputProps {
   logs: Array<BuildLogChunk>
@@ -33,26 +33,21 @@ export function LogOutput({
   scrollContainerRef,
   virtualizer,
 }: LogOutputProps) {
+  const verticalPadding = 8
   const maxSeq = logs.length > 0 ? logs[logs.length - 1].sequence : 0
   const lineNumWidth = Math.max(String(maxSeq).length, 3)
 
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden bg-card">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
       {selectedStepMeta ? (
-        <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-2">
-          <Badge variant={stepStatusVariant(selectedStepMeta.status)}>
-            {selectedStepMeta.status}
-          </Badge>
-          <span className="text-xs font-medium">{selectedStep}</span>
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/20 px-4 py-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            {selectedStep}
+          </span>
           {selectedStepMeta.command ? (
-            <code className="font-mono text-[11px] text-muted-foreground">
+            <code className="min-w-0 truncate font-mono text-[11px] text-foreground">
               $ {selectedStepMeta.command}
             </code>
-          ) : null}
-          {selectedStepMeta.durationMs != null ? (
-            <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-              {formatDuration(selectedStepMeta.durationMs / 1000)}
-            </span>
           ) : null}
         </div>
       ) : null}
@@ -73,22 +68,22 @@ export function LogOutput({
         </div>
       ) : (
         <ScrollArea
-          className="min-h-0 flex-1"
+          className="h-full min-h-0 flex-1"
+          horizontal={!wrapLines}
           viewportRef={scrollContainerRef}
           role="region"
           aria-label="Build log output"
         >
           <div
             style={{
-              height: `${virtualizer.getTotalSize()}px`,
+              height: `${virtualizer.getTotalSize() + verticalPadding * 2}px`,
               width: '100%',
               position: 'relative',
             }}
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const chunk = logs[virtualRow.index]
-              const isStderr = chunk.stream === 'stderr'
-              const isError = ERROR_PATTERN.test(chunk.content)
+              const isError = isErrorLine(chunk.content)
               return (
                 <div
                   key={virtualRow.key}
@@ -99,28 +94,29 @@ export function LogOutput({
                     top: 0,
                     left: 0,
                     width: '100%',
-                    transform: `translateY(${virtualRow.start}px)`,
+                    transform: `translateY(${virtualRow.start + verticalPadding}px)`,
                   }}
-                  className={`flex font-mono text-[13px] leading-[20px] ${
-                    isStderr
-                      ? 'text-destructive'
-                      : isError
-                        ? 'bg-destructive/10 text-destructive'
-                        : 'text-card-foreground'
-                  }`}
+                  className={cn(
+                    'flex font-mono text-[13px] leading-5 text-card-foreground',
+                    isError && 'bg-destructive/10 text-destructive',
+                  )}
                 >
                   <span
-                    className="shrink-0 select-none px-3 text-right text-muted-foreground"
+                    className={cn(
+                      'sticky left-0 z-10 shrink-0 select-none border-r px-3 text-right text-muted-foreground',
+                      isError ? 'bg-destructive/10' : 'bg-card',
+                    )}
                     style={{ width: `${lineNumWidth + 4}ch` }}
                   >
                     {chunk.sequence}
                   </span>
                   <span
-                    className={
+                    className={cn(
+                      'pl-3 pr-4',
                       wrapLines
-                        ? 'whitespace-pre-wrap break-all pr-4'
-                        : 'whitespace-pre pr-4'
-                    }
+                        ? 'whitespace-pre-wrap break-all'
+                        : 'whitespace-pre',
+                    )}
                   >
                     <AnsiLine content={chunk.content} />
                   </span>

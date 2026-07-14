@@ -5,16 +5,17 @@
  * VitePress CSS variable reference: https://vitepress.dev/reference/default-theme-config#css-variables
  */
 
-@import url("@fontsource-variable/inter");
+@import url('@fontsource-variable/inter');
 
 /* ------------------------------------------------------------------ */
 /* Fonts                                                               */
 /* ------------------------------------------------------------------ */
 :root {
-  --vp-font-family-base: "Inter Variable", "Inter", ui-sans-serif, system-ui,
-    sans-serif;
-  --vp-font-family-mono: ui-monospace, "Cascadia Code", "Source Code Pro",
-    Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --vp-font-family-base:
+    'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --vp-font-family-mono:
+    ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas,
+    'DejaVu Sans Mono', monospace;
 }
 
 /* ------------------------------------------------------------------ */

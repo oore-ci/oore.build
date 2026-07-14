@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Complete reference for the .oore.yaml pipeline configuration file format."
+description: 'Complete reference for the .oore.yaml pipeline configuration file format.'
 ---
 
 # .oore.yaml Reference
@@ -12,65 +12,65 @@ For a guide on writing this file, see [Write a Pipeline Config](/guides/projects
 ## Schema
 
 ```yaml
-version: 1                          # Required. Must be 1.
+version: 1 # Required. Must be 1.
 
-flutter_version: "3.24.0"           # Optional. Overridden by .fvmrc if present.
+flutter_version: '3.24.0' # Optional. Overridden by .fvmrc if present.
 
-platforms:                           # Required. At least one platform.
-  - android                          # Options: android, ios, macos
+platforms: # Required. At least one platform.
+  - android # Options: android, ios, macos
   - ios
 
-commands:                            # Required. Build command stages.
-  pre_build:                         # Optional. Runs before build.
+commands: # Required. Build command stages.
+  pre_build: # Optional. Runs before build.
     - flutter pub get
     - dart run build_runner build
-  build:                             # Required. Main build commands.
+  build: # Required. Main build commands.
     - flutter build apk --release
-  post_build:                        # Optional. Runs after successful build.
+  post_build: # Optional. Runs after successful build.
     - echo "Build complete"
 
-platform_build_args:                 # Optional. Per-platform build arguments.
+platform_build_args: # Optional. Per-platform build arguments.
   android:
-    - "--split-per-abi"
+    - '--split-per-abi'
   ios:
-    - "--flavor=staging"
+    - '--flavor=staging'
 
-platform_commands:                   # Optional. Override commands per platform.
+platform_commands: # Optional. Override commands per platform.
   android: flutter build apk --release --split-per-abi
   ios: flutter build ipa --release
 
-env:                                 # Optional. Environment variables for builds.
+env: # Optional. Environment variables for builds.
   - key: JAVA_HOME
     value: /usr/local/opt/openjdk@17
 
-artifacts:                           # Optional. Artifact collection patterns.
+artifacts: # Optional. Artifact collection patterns.
   patterns:
-    - "build/app/outputs/flutter-apk/*.apk"
-    - "build/ios/ipa/*.ipa"
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
 ```
 
 ## Field reference
 
 ### Top level
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `version` | `integer` | Yes | — | Schema version. Must be `1`. |
-| `flutter_version` | `string` | No | — | Flutter SDK version. Overridden by `.fvmrc` in repo root. |
-| `platforms` | `string[]` | Yes | — | Target platforms: `android`, `ios`, `macos`. |
-| `commands` | `object` | Yes | — | Build command stages. |
-| `platform_build_args` | `object` | No | — | Per-platform build arguments. |
-| `platform_commands` | `object` | No | — | Per-platform command overrides. |
-| `env` | `object[]` | No | `[]` | Environment variables. |
-| `artifacts` | `object` | No | — | Artifact collection config. |
+| Field                 | Type       | Required | Default | Description                                               |
+| --------------------- | ---------- | -------- | ------- | --------------------------------------------------------- |
+| `version`             | `integer`  | Yes      | —       | Schema version. Must be `1`.                              |
+| `flutter_version`     | `string`   | No       | —       | Flutter SDK version. Overridden by `.fvmrc` in repo root. |
+| `platforms`           | `string[]` | Yes      | —       | Target platforms: `android`, `ios`, `macos`.              |
+| `commands`            | `object`   | Yes      | —       | Build command stages.                                     |
+| `platform_build_args` | `object`   | No       | —       | Per-platform build arguments.                             |
+| `platform_commands`   | `object`   | No       | —       | Per-platform command overrides.                           |
+| `env`                 | `object[]` | No       | `[]`    | Environment variables.                                    |
+| `artifacts`           | `object`   | No       | —       | Artifact collection config.                               |
 
 ### commands
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `pre_build` | `string[]` | No | Commands run before the main build |
-| `build` | `string[]` | Yes | Main build commands |
-| `post_build` | `string[]` | No | Commands run after a successful build |
+| Field        | Type       | Required | Description                           |
+| ------------ | ---------- | -------- | ------------------------------------- |
+| `pre_build`  | `string[]` | No       | Commands run before the main build    |
+| `build`      | `string[]` | Yes      | Main build commands                   |
+| `post_build` | `string[]` | No       | Commands run after a successful build |
 
 Commands are executed sequentially. If any command returns a non-zero exit code, the build fails and subsequent commands are skipped.
 
@@ -80,10 +80,10 @@ Each platform value is a string array appended to its default build command.
 
 ### env
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `key` | `string` | Yes | Environment variable name |
-| `value` | `string` | Yes | Environment variable value |
+| Field   | Type     | Required | Description                |
+| ------- | -------- | -------- | -------------------------- |
+| `key`   | `string` | Yes      | Environment variable name  |
+| `value` | `string` | Yes      | Environment variable value |
 
 ### artifacts.patterns
 

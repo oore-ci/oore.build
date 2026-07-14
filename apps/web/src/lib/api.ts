@@ -13,8 +13,6 @@ import type {
   CreateApiTokenResponse,
   CreateBuildRequest,
   CreateBuildResponse,
-  CreateLocalGitIntegrationRequest,
-  CreateLocalGitIntegrationResponse,
   CreateNotificationChannelRequest,
   CreatePipelineRequest,
   CreatePipelineResponse,
@@ -24,12 +22,9 @@ import type {
   CreateScopedDownloadTokenResponse,
   DeleteNotificationChannelResponse,
   DiscoverRepositoryWorkflowsResponse,
-  EffectiveProjectRetentionResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
   GetExternalAccessOidcResponse,
-  GitHubAppCompleteRequest,
-  GitHubAppCompleteResponse,
   GitHubAppStartRequest,
   GitHubAppStartResponse,
   GitLabAuthorizeRequest,
@@ -41,7 +36,6 @@ import type {
   InviteUserRequest,
   InviteUserResponse,
   ListApiTokensResponse,
-  ListArtifactDownloadTokensResponse,
   ListArtifactsResponse,
   ListAuditLogsResponse,
   ListBuildsResponse,
@@ -98,14 +92,12 @@ import type {
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
-  UpdateProjectRetentionOverrideRequest,
   UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
   UpdateTrustedProxySettingsRequest,
   UpdateUserRoleRequest,
   UpdateUserRoleResponse,
-  UserProfileResponse,
   ValidatePipelineRequest,
   ValidatePipelineResponse,
 } from '@/lib/types'
@@ -242,7 +234,6 @@ export function setupOidcStart(
 
 export function setupOidcVerify(
   baseUrl: string,
-  sessionToken: string,
   code: string,
   state: string,
 ): Promise<SetupOidcVerifyResponse> {
@@ -251,7 +242,6 @@ export function setupOidcVerify(
     '/v1/setup/owner/verify-oidc',
     {
       method: 'POST',
-      headers: authHeaders(sessionToken),
       body: JSON.stringify({ code, state }),
     },
   )
@@ -335,15 +325,6 @@ export function getSetupSummary(
 }
 
 // ── User management API ─────────────────────────────────────────
-
-export function getMe(
-  baseUrl: string,
-  token: string,
-): Promise<UserProfileResponse> {
-  return request<UserProfileResponse>(baseUrl, '/v1/users/me', {
-    headers: authHeaders(token),
-  })
-}
 
 export function getBackendUpdateStatus(
   baseUrl: string,
@@ -518,22 +499,6 @@ export function githubAppStart(
   )
 }
 
-export function githubAppComplete(
-  baseUrl: string,
-  token: string,
-  data: GitHubAppCompleteRequest,
-): Promise<GitHubAppCompleteResponse> {
-  return request<GitHubAppCompleteResponse>(
-    baseUrl,
-    '/v1/integrations/github/complete',
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
-}
-
 export function syncInstallations(
   baseUrl: string,
   token: string,
@@ -594,22 +559,6 @@ export function gitlabAuthorize(
   )
 }
 
-export function createLocalGitIntegration(
-  baseUrl: string,
-  token: string,
-  data: CreateLocalGitIntegrationRequest,
-): Promise<CreateLocalGitIntegrationResponse> {
-  return request<CreateLocalGitIntegrationResponse>(
-    baseUrl,
-    '/v1/integrations/local-git',
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
-}
-
 export function browseLocalGitDirectories(
   baseUrl: string,
   token: string,
@@ -629,30 +578,6 @@ export function browseLocalGitDirectories(
   })
 }
 
-export function listLocalGitIntegrations(
-  baseUrl: string,
-  token: string,
-): Promise<ListIntegrationsResponse> {
-  return request<ListIntegrationsResponse>(
-    baseUrl,
-    '/v1/integrations/local-git',
-    {
-      headers: authHeaders(token),
-    },
-  )
-}
-
-export function deleteLocalGitIntegration(
-  baseUrl: string,
-  token: string,
-  id: string,
-): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(baseUrl, `/v1/integrations/local-git/${id}`, {
-    method: 'DELETE',
-    headers: authHeaders(token),
-  })
-}
-
 // ── Runner API ─────────────────────────────────────────────────
 
 export function listRunners(
@@ -660,16 +585,6 @@ export function listRunners(
   token: string,
 ): Promise<ListRunnersResponse> {
   return request<ListRunnersResponse>(baseUrl, '/v1/runners', {
-    headers: authHeaders(token),
-  })
-}
-
-export function getRunner(
-  baseUrl: string,
-  token: string,
-  runnerId: string,
-): Promise<UpdateRunnerResponse> {
-  return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
     headers: authHeaders(token),
   })
 }
@@ -1021,30 +936,6 @@ export function createScopedDownloadToken(
   )
 }
 
-export function listScopedDownloadTokens(
-  baseUrl: string,
-  token: string,
-  artifactId: string,
-): Promise<ListArtifactDownloadTokensResponse> {
-  return request<ListArtifactDownloadTokensResponse>(
-    baseUrl,
-    `/v1/artifacts/${artifactId}/scoped-tokens`,
-    { headers: authHeaders(token) },
-  )
-}
-
-export function revokeScopedDownloadToken(
-  baseUrl: string,
-  token: string,
-  tokenId: string,
-): Promise<{ revoked: boolean }> {
-  return request<{ revoked: boolean }>(
-    baseUrl,
-    `/v1/artifact-tokens/${tokenId}`,
-    { method: 'DELETE', headers: authHeaders(token) },
-  )
-}
-
 // ── Project API ─────────────────────────────────────────────────
 
 export function listProjects(
@@ -1389,18 +1280,6 @@ export function createNotificationChannel(
   )
 }
 
-export function getNotificationChannel(
-  baseUrl: string,
-  token: string,
-  id: string,
-): Promise<NotificationChannelResponse> {
-  return request<NotificationChannelResponse>(
-    baseUrl,
-    `/v1/settings/notification-channels/${id}`,
-    { headers: authHeaders(token) },
-  )
-}
-
 export function updateNotificationChannel(
   baseUrl: string,
   token: string,
@@ -1491,50 +1370,6 @@ export function getRetentionLastCleanup(
     baseUrl,
     '/v1/settings/retention/last-cleanup',
     { headers: authHeaders(token) },
-  )
-}
-
-export function getProjectRetention(
-  baseUrl: string,
-  token: string,
-  projectId: string,
-): Promise<EffectiveProjectRetentionResponse> {
-  return request<EffectiveProjectRetentionResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}/retention`,
-    { headers: authHeaders(token) },
-  )
-}
-
-export function updateProjectRetention(
-  baseUrl: string,
-  token: string,
-  projectId: string,
-  data: UpdateProjectRetentionOverrideRequest,
-): Promise<EffectiveProjectRetentionResponse> {
-  return request<EffectiveProjectRetentionResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}/retention`,
-    {
-      method: 'PUT',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
-}
-
-export async function deleteProjectRetention(
-  baseUrl: string,
-  token: string,
-  projectId: string,
-): Promise<EffectiveProjectRetentionResponse> {
-  return request<EffectiveProjectRetentionResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}/retention`,
-    {
-      method: 'DELETE',
-      headers: authHeaders(token),
-    },
   )
 }
 

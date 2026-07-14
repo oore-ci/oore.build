@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for the oore setup command and bootstrap token management."
+description: 'CLI reference for the oore setup command and bootstrap token management.'
 ---
 
 # oore setup
@@ -32,14 +32,14 @@ Run `oored` once before `setup init` so database migrations exist. Initializatio
 
 ### Flags
 
-| Flag | Description |
-|---|---|
-| `--mode` | `local` or `trusted-proxy` |
-| `--owner-email` | Initial owner identity |
-| `--user-email-header` | Trusted-proxy identity header; required for Trusted Proxy mode |
-| `--trusted-proxy-cidr` | Allowed proxy peer CIDR; repeat for additional peers |
-| `--shared-secret-file` | File containing the backend trusted-proxy proof |
-| `--force` | Reinitialize only before owner creation; use deliberately |
+| Flag                   | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `--mode`               | `local` or `trusted-proxy`                                     |
+| `--owner-email`        | Initial owner identity                                         |
+| `--user-email-header`  | Trusted-proxy identity header; required for Trusted Proxy mode |
+| `--trusted-proxy-cidr` | Allowed proxy peer CIDR; repeat for additional peers           |
+| `--shared-secret-file` | File containing the backend trusted-proxy proof                |
+| `--force`              | Reinitialize only before owner creation; use deliberately      |
 
 ## Interactive setup
 
@@ -51,8 +51,8 @@ Runs the full 4-step interactive setup flow from the terminal. This is the CLI e
 
 ### Flags
 
-| Flag | Default | Env var | Description |
-|---|---|---|---|
+| Flag           | Default                 | Env var           | Description             |
+| -------------- | ----------------------- | ----------------- | ----------------------- |
 | `--daemon-url` | `http://127.0.0.1:8787` | `OORE_DAEMON_URL` | URL of the oored daemon |
 
 ### Interactive flow
@@ -70,6 +70,7 @@ The interactive setup walks through 4 steps. At each step, the command checks th
 ```
 
 The CLI:
+
 1. Checks the daemon state via `GET /v1/public/setup-status`
 2. Opens the local SQLite database
 3. Generates a bootstrap token with a 15-minute TTL
@@ -87,6 +88,7 @@ The CLI:
 ```
 
 The CLI prompts for:
+
 - **OIDC Issuer URL** — text input (required)
 - **Client ID** — text input (required)
 - **Client Secret** — password input (optional, hidden)
@@ -110,6 +112,7 @@ To obtain these values, see the [OIDC setup guides](/guides/oidc/).
 ```
 
 The CLI:
+
 1. Binds a TCP listener on a random free port on `127.0.0.1`
 2. Displays the redirect URI for the operator to add to their IdP's allowed callback URLs
 3. Calls `POST /v1/setup/owner/start-oidc` with the loopback redirect URI
@@ -144,13 +147,13 @@ If the daemon is already past certain steps (e.g., OIDC was configured in a prev
 
 ### Error handling
 
-| Situation | Behavior |
-|---|---|
-| Cannot reach daemon | Prints a message suggesting to start `oored run` |
-| Setup already complete | Exits confirming `ready` state |
-| Session expired | Automatically re-acquires a session token and continues |
-| OIDC configuration error | Offers retry with fresh inputs |
-| OIDC authentication error | Displays the IdP error in the browser and exits |
+| Situation                 | Behavior                                                |
+| ------------------------- | ------------------------------------------------------- |
+| Cannot reach daemon       | Prints a message suggesting to start `oored run`        |
+| Setup already complete    | Exits confirming `ready` state                          |
+| Session expired           | Automatically re-acquires a session token and continues |
+| OIDC configuration error  | Offers retry with fresh inputs                          |
+| OIDC authentication error | Displays the IdP error in the browser and exits         |
 
 ---
 
@@ -164,10 +167,10 @@ Creates a short-lived, single-use code for a frontend-only host in a Remote Trus
 
 The exchange returns the backend proof and configured identity-header name only to the frontend installer. The installer saves that backend proof and generates a separate local reverse-proxy -> `oore-web` proof. It does not print or retain the pairing code after use.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--ttl` | `10m` | Expiry duration; must be from one second to one hour |
-| `--json` | `false` | Print the code, expiry epoch, and `single_use` in JSON |
+| Flag           | Default          | Description                                                            |
+| -------------- | ---------------- | ---------------------------------------------------------------------- |
+| `--ttl`        | `10m`            | Expiry duration; must be from one second to one hour                   |
+| `--json`       | `false`          | Print the code, expiry epoch, and `single_use` in JSON                 |
 | `--state-file` | platform default | Backend setup database path; also available as `OORE_SETUP_STATE_FILE` |
 
 Creating a new code revokes any unconsumed earlier code. Use manual proof files only when an advanced secret-distribution workflow requires them; never use one value for both proxy hops.
@@ -184,21 +187,21 @@ Generate a one-time bootstrap token for initializing an Oore CI instance. This t
 
 ### Flags
 
-| Flag | Default | Env var | Description |
-|---|---|---|---|
-| `--ttl` | `15m` | — | Token time-to-live (e.g., `5m`, `1h`, `30s`) |
-| `--json` | `false` | — | Output in machine-readable JSON format |
-| `--state-file` | Platform default | `OORE_SETUP_STATE_FILE` | Override the database path |
+| Flag           | Default          | Env var                 | Description                                  |
+| -------------- | ---------------- | ----------------------- | -------------------------------------------- |
+| `--ttl`        | `15m`            | —                       | Token time-to-live (e.g., `5m`, `1h`, `30s`) |
+| `--json`       | `false`          | —                       | Output in machine-readable JSON format       |
+| `--state-file` | Platform default | `OORE_SETUP_STATE_FILE` | Override the database path                   |
 
 ### TTL format
 
 The `--ttl` flag accepts [humantime](https://docs.rs/humantime/) duration strings:
 
-| Example | Duration |
-|---|---|
-| `15m` | 15 minutes |
-| `1h` | 1 hour |
-| `30s` | 30 seconds |
+| Example | Duration          |
+| ------- | ----------------- |
+| `15m`   | 15 minutes        |
+| `1h`    | 1 hour            |
+| `30s`   | 30 seconds        |
 | `1h30m` | 1 hour 30 minutes |
 
 ### Output

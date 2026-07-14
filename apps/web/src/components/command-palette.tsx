@@ -25,6 +25,9 @@ import { useProjects } from '@/hooks/use-projects'
 import { useAuthStore } from '@/stores/auth-store'
 import { useUiStore } from '@/stores/ui-store'
 import { useHasPermission } from '@/hooks/use-permissions'
+import type { Project } from '@/lib/types'
+
+const EMPTY_PROJECTS: Array<Project> = []
 
 interface PaletteItem {
   id: string
@@ -45,7 +48,7 @@ export default function CommandPalette() {
   const canWriteProjects = useHasPermission('projects', 'write')
 
   const { data: projectsData } = useProjects({ limit: 50 })
-  const projects = projectsData?.projects ?? []
+  const projects = projectsData?.projects ?? EMPTY_PROJECTS
 
   // Keyboard shortcut to open
   useMountEffect(() => {

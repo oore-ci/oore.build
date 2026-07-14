@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Upgrade Oore CI to a new version with zero-downtime strategies."
+description: 'Upgrade Oore CI to a new version with zero-downtime strategies.'
 ---
 
 # Upgrade Procedures

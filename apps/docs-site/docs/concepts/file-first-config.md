@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How Oore CI uses .oore.yaml for repository-level pipeline configuration."
+description: 'How Oore CI uses .oore.yaml for repository-level pipeline configuration.'
 ---
 
 # File-First Configuration
@@ -22,19 +22,19 @@ At build creation time, the daemon captures a **config snapshot** — a frozen c
 
 The snapshot includes:
 
-| Field | Description |
-|-------|-------------|
-| `snapshot_version` | Schema version (currently `2`) |
-| `config_resolution_policy` | Always `file_first_ui_fallback` |
-| `config_path` | Path to config file (default: `.oore.yaml`) |
-| `config_path_explicit` | Whether the user explicitly set the path vs using the default |
-| `ui_execution_config` | Pipeline execution settings from the UI |
-| `artifact_patterns` | Glob patterns for artifact collection (e.g., `*.apk`, `*.ipa`) |
-| `trigger_type` | How the build was triggered (`manual` or `webhook`) |
-| `commit_sha` | The exact commit to build |
-| `branch` | The branch name |
-| `repo_url` | Repository clone URL |
-| `captured_at` | Unix timestamp when the snapshot was taken |
+| Field                      | Description                                                    |
+| -------------------------- | -------------------------------------------------------------- |
+| `snapshot_version`         | Schema version (currently `2`)                                 |
+| `config_resolution_policy` | Always `file_first_ui_fallback`                                |
+| `config_path`              | Path to config file (default: `.oore.yaml`)                    |
+| `config_path_explicit`     | Whether the user explicitly set the path vs using the default  |
+| `ui_execution_config`      | Pipeline execution settings from the UI                        |
+| `artifact_patterns`        | Glob patterns for artifact collection (e.g., `*.apk`, `*.ipa`) |
+| `trigger_type`             | How the build was triggered (`manual` or `webhook`)            |
+| `commit_sha`               | The exact commit to build                                      |
+| `branch`                   | The branch name                                                |
+| `repo_url`                 | Repository clone URL                                           |
+| `captured_at`              | Unix timestamp when the snapshot was taken                     |
 
 ## Why snapshots matter
 
@@ -62,10 +62,10 @@ These settings are captured in the snapshot's `ui_execution_config` field and us
 
 ## Trigger types and config resolution
 
-| Trigger | Config source | Notes |
-|---------|---------------|-------|
-| **Manual** (API or UI) | UI config only | Snapshot contains UI settings; `.oore.yaml` is available to the runner for override |
-| **Webhook** (GitHub/GitLab push) | Both | Daemon normalizes the webhook event, applies trigger filters, and creates a build with `repo_url` for the runner to clone |
+| Trigger                          | Config source  | Notes                                                                                                                     |
+| -------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Manual** (API or UI)           | UI config only | Snapshot contains UI settings; `.oore.yaml` is available to the runner for override                                       |
+| **Webhook** (GitHub/GitLab push) | Both           | Daemon normalizes the webhook event, applies trigger filters, and creates a build with `repo_url` for the runner to clone |
 
 In both cases, the runner receives the full snapshot and can apply the file-first resolution at execution time.
 

@@ -39,7 +39,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Adopt one action grammar: create/add, connect/pair, navigate, retry, and destructive actions.
 - [x] Make Button own icon sizing instead of per-call numeric sizes.
 - [ ] Standardize page headers, primary-action placement, empty states, loading states, and persistent errors.
-- [ ] Update current shadcn components selectively, starting with Button, Select, Card, Sidebar, Empty, Field, and Button Group.
+- [x] Update installed shadcn components to the current v4 registry while preserving Oore-specific behavior and repeatable migration commands.
 - [ ] Break up only the high-churn giant components: pipeline form, preferences, build detail, and terminal viewer.
   - [ ] Pipeline form
   - [ ] Preferences
@@ -75,7 +75,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - [x] Narrow the eager Base UI vendor chunk so route-only controls are not preloaded.
 - [x] Add a production bundle budget and a repeatable reporting command.
 - [x] Verify core shadcn components against the current registry and update frontend dependencies within current major versions.
-- [ ] Handle Vite, Vitest, ESLint, shadcn, Hugeicons, and TypeScript major upgrades separately.
+- [x] Handle Vite, Vitest, Oxlint, shadcn, Hugeicons, and TypeScript major upgrades separately.
 - [x] Run React Doctor regression scan, frontend checks, docs gate, and `make validate`.
 - [x] Publish an alpha release and complete signed-in desktop/mobile smoke testing.
 
@@ -126,3 +126,17 @@ Remote-mode HttpOnly cookie sessions require frontend/backend architecture work 
 - [ ] Use Kite read-only as the mature multi-workflow benchmark without copying its legacy pipeline defects or exposing repository secrets.
 
 **Gate:** after selecting a repository, a new user can understand the recommended next action without CI-specific knowledge; when repository-owned Oore config exists, the UI visibly discovers and validates it before the first run, and the runner executes the exact config from the checked-out commit.
+
+## Milestone 10 — Outcome-first build details and immersive logs
+
+This follow-up supersedes Milestone 2's placement of artifacts as a secondary section. Real-project testing showed that a successful build's output is a primary outcome and must remain visible while its execution details are inspected.
+
+- [x] Keep artifacts above the fold in a dedicated build-output column on desktop and before logs on narrow screens.
+- [x] Make artifact download the visible primary row action and group copy/share utilities in a compact actions menu.
+- [x] Present logs as one cohesive, full-height workspace with a persistent search field, line counts, download, wrapping, and explicit error navigation.
+- [x] Keep step navigation and selected output in the same workspace, default successful builds to the complete log, and focus running or failed builds on the relevant step.
+- [x] Separate log transport from severity: ordinary `stderr` progress stays neutral and only explicit error lines receive destructive treatment.
+- [x] Keep detailed event history one click away beside logs instead of requiring a page scroll.
+- [x] Verify the successful-artifact state in the local signed-in demo, including log filtering, timeline switching, and false-positive severity cases.
+
+**Gate:** the first viewport answers whether the build succeeded, what it produced, and where execution details live; successful Git and tool progress is visually calm; focused tests, production build, React Doctor, docs gate, and `make validate` pass.

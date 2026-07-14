@@ -7,7 +7,10 @@ import {
 } from '@/lib/instance-context'
 
 export const Route = createFileRoute('/builds/$buildId')({
-  staticData: { breadcrumbLabel: 'Details' },
+  staticData: {
+    breadcrumbLabel: 'Details',
+    breadcrumbParent: { label: 'Builds', to: '/builds' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)

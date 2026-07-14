@@ -87,7 +87,7 @@ function defaults(
   }
 }
 
-export default function TriggerBuildDialog({
+function useTriggerBuildDialogState({
   open,
   onOpenChange,
   fixedProjectId,
@@ -219,6 +219,60 @@ export default function TriggerBuildDialog({
     !pipelinesQuery.isLoading &&
     !pipelinesQuery.error &&
     pipelines.length === 0
+
+  return {
+    createBuildMutation,
+    defaultBranch,
+    defaultPipelineId,
+    description,
+    fixedPipelineId,
+    fixedPipelineName,
+    fixedProjectId,
+    form,
+    handleClose,
+    noPipelines,
+    noProjects,
+    onOpenChange,
+    onSubmit,
+    open,
+    pipelineItems,
+    pipelines,
+    pipelinesQuery,
+    projectId,
+    projectItems,
+    projects,
+    projectsQuery,
+    sourceMissing,
+    title,
+  }
+}
+
+export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
+  const {
+    createBuildMutation,
+    defaultBranch,
+    defaultPipelineId,
+    description,
+    fixedPipelineId,
+    fixedPipelineName,
+    fixedProjectId,
+    form,
+    handleClose,
+    noPipelines,
+    noProjects,
+    onOpenChange,
+    onSubmit,
+    open,
+    pipelineItems,
+    pipelines,
+    pipelinesQuery,
+    projectId,
+    projectItems,
+    projects,
+    projectsQuery,
+    sourceMissing,
+    title,
+  } = useTriggerBuildDialogState(props)
 
   return (
     <Dialog

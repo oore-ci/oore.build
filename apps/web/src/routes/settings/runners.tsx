@@ -48,6 +48,9 @@ import {
 } from '@/components/ui/table'
 import { Spinner } from '@/components/ui/spinner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import RunnerStatusDot from '@/components/runner-status-dot'
+
+const EMPTY_RUNNERS: Array<Runner> = []
 
 export const Route = createFileRoute('/settings/runners')({
   staticData: { breadcrumbLabel: 'Runners' },
@@ -83,24 +86,6 @@ function getHeartbeatStaleness(
   const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
   if (diffSecs > 60) return 'stale'
   return 'fresh'
-}
-
-function StatusDot({ status }: { status: string }) {
-  if (status === 'online' || status === 'busy') {
-    return (
-      <span className="relative mr-2 inline-flex size-2">
-        <span className="bg-success absolute inline-flex size-full animate-ping rounded-full opacity-75" />
-        <span className="bg-success relative inline-flex size-2 rounded-full" />
-      </span>
-    )
-  }
-  if (status === 'offline') {
-    return (
-      <span className="bg-destructive mr-2 inline-flex size-2 rounded-full" />
-    )
-  }
-  // draining
-  return <span className="bg-warning mr-2 inline-flex size-2 rounded-full" />
 }
 
 function formatCapabilities(capabilities: Runner['capabilities']): string {
@@ -243,7 +228,7 @@ function RunnersSettingsPage() {
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  const runners = data?.runners ?? []
+  const runners = data?.runners ?? EMPTY_RUNNERS
   const onlineCount = useMemo(
     () =>
       runners.filter(
@@ -373,7 +358,7 @@ function RunnersSettingsPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center">
-                            <StatusDot status={runner.status} />
+                            <RunnerStatusDot status={runner.status} />
                             <Badge
                               variant={getRunnerStatusVariant(runner.status)}
                             >
@@ -429,7 +414,7 @@ function RunnersSettingsPage() {
         open={dialogOpen}
         runner={selectedRunner}
         onOpenChange={(open) => {
-          setDialogOpen(open)
+          setDialogOpen(() => open)
           if (!open) {
             setSelectedRunner(null)
           }

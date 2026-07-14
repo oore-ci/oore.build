@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Set up Okta OIDC authentication for Oore CI."
+description: 'Set up Okta OIDC authentication for Oore CI.'
 ---
 
 # Okta OIDC Setup
@@ -23,13 +23,13 @@ This guide walks you through creating an Okta OIDC application and connecting it
 
 ## 2. Configure the application
 
-| Field | Value |
-|---|---|
-| **App integration name** | `Oore CI` |
-| **Grant type** | Authorization Code |
-| **Sign-in redirect URIs** | `http://127.0.0.1:4173/auth/callback`, `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
-| **Sign-out redirect URIs** | `http://127.0.0.1:4173`, `http://localhost:3000` |
-| **Controlled access** | Choose your access policy |
+| Field                      | Value                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **App integration name**   | `Oore CI`                                                                                                           |
+| **Grant type**             | Authorization Code                                                                                                  |
+| **Sign-in redirect URIs**  | `http://127.0.0.1:4173/auth/callback`, `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
+| **Sign-out redirect URIs** | `http://127.0.0.1:4173`, `http://localhost:3000`                                                                    |
+| **Controlled access**      | Choose your access policy                                                                                           |
 
 Both setup and regular sign-in use the same `/auth/callback` path — you only need one URI per origin. For a custom domain, replace the hosted UI URI with yours.
 
@@ -62,11 +62,11 @@ curl https://dev-123456.okta.com/oauth2/default/.well-known/openid-configuration
 
 During setup, enter:
 
-| Field | Value |
-|---|---|
-| **Issuer URL** | `https://{your-okta-domain}/oauth2/default` |
-| **Client ID** | From step 3 |
-| **Client secret** | From step 3 |
+| Field             | Value                                       |
+| ----------------- | ------------------------------------------- |
+| **Issuer URL**    | `https://{your-okta-domain}/oauth2/default` |
+| **Client ID**     | From step 3                                 |
+| **Client secret** | From step 3                                 |
 
 ## Troubleshooting
 

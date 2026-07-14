@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Set up Keycloak OIDC authentication for Oore CI."
+description: 'Set up Keycloak OIDC authentication for Oore CI.'
 ---
 
 # Keycloak OIDC Setup
@@ -35,12 +35,12 @@ Click **Next**.
 
 On the **Login settings** step:
 
-| Field | Value |
-|---|---|
-| **Root URL** | `http://127.0.0.1:4173` |
-| **Valid redirect URIs** | `http://127.0.0.1:4173/auth/callback`, `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
-| **Valid post logout redirect URIs** | `http://127.0.0.1:4173`, `http://localhost:3000` |
-| **Web origins** | `http://127.0.0.1:4173`, `http://localhost:3000` |
+| Field                               | Value                                                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Root URL**                        | `http://127.0.0.1:4173`                                                                                             |
+| **Valid redirect URIs**             | `http://127.0.0.1:4173/auth/callback`, `http://localhost:3000/auth/callback`, `https://ci.oore.build/auth/callback` |
+| **Valid post logout redirect URIs** | `http://127.0.0.1:4173`, `http://localhost:3000`                                                                    |
+| **Web origins**                     | `http://127.0.0.1:4173`, `http://localhost:3000`                                                                    |
 
 Both setup and regular sign-in use the same `/auth/callback` path — you only need one URI per origin. For a custom domain, replace the hosted UI URI with yours.
 
@@ -71,11 +71,11 @@ curl https://auth.mycompany.com/realms/main/.well-known/openid-configuration | j
 
 During setup, enter:
 
-| Field | Value |
-|---|---|
-| **Issuer URL** | `https://{keycloak-host}/realms/{realm-name}` |
-| **Client ID** | `oore-build` (or whatever you chose in step 1) |
-| **Client secret** | From step 3 |
+| Field             | Value                                          |
+| ----------------- | ---------------------------------------------- |
+| **Issuer URL**    | `https://{keycloak-host}/realms/{realm-name}`  |
+| **Client ID**     | `oore-build` (or whatever you chose in step 1) |
+| **Client secret** | From step 3                                    |
 
 ## Troubleshooting
 

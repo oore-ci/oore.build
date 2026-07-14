@@ -26,6 +26,9 @@ use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
+const PROJECT_SELECT: &str = "SELECT p.*, r.full_name AS repository_full_name, r.avatar_url AS repository_avatar_url \
+    FROM projects p LEFT JOIN integration_repositories r ON r.id = p.repository_id";
+
 // ── Row conversion ──────────────────────────────────────────────
 
 fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
@@ -38,6 +41,8 @@ fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
         name: row.get("name"),
         description: row.get("description"),
         repository_id: row.get("repository_id"),
+        repository_full_name: row.get("repository_full_name"),
+        repository_avatar_url: row.get("repository_avatar_url"),
         settings,
         default_branch: row.get("default_branch"),
         created_by: row.get("created_by"),
@@ -413,6 +418,8 @@ pub async fn create_project(
         name: name.to_string(),
         description: req.description,
         repository_id,
+        repository_full_name: None,
+        repository_avatar_url: None,
         settings: serde_json::json!({}),
         default_branch,
         created_by: auth.0.user_id,
@@ -453,10 +460,10 @@ pub async fn list_projects(
             .await
             .unwrap_or(0);
 
-            let rows = sqlx::query(
-                "SELECT * FROM projects WHERE name LIKE ?1 OR description LIKE ?1 \
-                 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-            )
+            let rows = sqlx::query(&format!(
+                "{PROJECT_SELECT} WHERE p.name LIKE ?1 OR p.description LIKE ?1 \
+                 ORDER BY p.created_at DESC LIMIT ?2 OFFSET ?3"
+            ))
             .bind(&pattern)
             .bind(limit)
             .bind(offset)
@@ -478,20 +485,21 @@ pub async fn list_projects(
                 .await
                 .unwrap_or(0);
 
-            let rows =
-                sqlx::query("SELECT * FROM projects ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
-                    .bind(limit)
-                    .bind(offset)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| {
-                        error!(error = %e, "failed to list projects");
-                        api_err(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "store_error",
-                            "Failed to list projects",
-                        )
-                    })?;
+            let rows = sqlx::query(&format!(
+                "{PROJECT_SELECT} ORDER BY p.created_at DESC LIMIT ?1 OFFSET ?2"
+            ))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to list projects");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to list projects",
+                )
+            })?;
 
             (total, rows)
         }
@@ -510,12 +518,12 @@ pub async fn list_projects(
             .await
             .unwrap_or(0);
 
-            let rows = sqlx::query(
-                "SELECT p.* FROM projects p \
+            let rows = sqlx::query(&format!(
+                "{PROJECT_SELECT} \
                  INNER JOIN project_members pm ON pm.project_id = p.id \
                  WHERE pm.user_id = ?1 AND (p.name LIKE ?2 OR p.description LIKE ?2) \
-                 ORDER BY p.created_at DESC LIMIT ?3 OFFSET ?4",
-            )
+                 ORDER BY p.created_at DESC LIMIT ?3 OFFSET ?4"
+            ))
             .bind(&auth.0.user_id)
             .bind(&pattern)
             .bind(limit)
@@ -543,12 +551,12 @@ pub async fn list_projects(
             .await
             .unwrap_or(0);
 
-            let rows = sqlx::query(
-                "SELECT p.* FROM projects p \
+            let rows = sqlx::query(&format!(
+                "{PROJECT_SELECT} \
                  INNER JOIN project_members pm ON pm.project_id = p.id \
                  WHERE pm.user_id = ?1 \
-                 ORDER BY p.created_at DESC LIMIT ?2 OFFSET ?3",
-            )
+                 ORDER BY p.created_at DESC LIMIT ?2 OFFSET ?3"
+            ))
             .bind(&auth.0.user_id)
             .bind(limit)
             .bind(offset)
@@ -593,7 +601,7 @@ pub async fn get_project(
     .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
 
-    let project_row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
+    let project_row = sqlx::query(&format!("{PROJECT_SELECT} WHERE p.id = ?1"))
         .bind(&project_id)
         .fetch_optional(&pool)
         .await
@@ -725,7 +733,7 @@ pub async fn update_project(
 
     if set_parts.is_empty() {
         // Nothing to update — just return the current project
-        let row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
+        let row = sqlx::query(&format!("{PROJECT_SELECT} WHERE p.id = ?1"))
             .bind(&project_id)
             .fetch_one(&pool)
             .await
@@ -783,7 +791,7 @@ pub async fn update_project(
 
     info!(project_id = %project_id, "project updated");
 
-    let row = sqlx::query("SELECT * FROM projects WHERE id = ?1")
+    let row = sqlx::query(&format!("{PROJECT_SELECT} WHERE p.id = ?1"))
         .bind(&project_id)
         .fetch_one(&pool)
         .await

@@ -35,12 +35,20 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
   switch (type) {
@@ -90,6 +98,99 @@ const TTL_OPTIONS = [
   { value: '604800', label: '7 days' },
 ] as const
 
+function ArtifactRow({
+  artifact,
+  isDownloadPending,
+  onDownload,
+  onCopyLink,
+  onShare,
+}: {
+  artifact: Artifact
+  isDownloadPending: boolean
+  onDownload: (artifactId: string, name: string) => void
+  onCopyLink: (artifactId: string, name: string) => void
+  onShare: (artifact: Artifact) => void
+}) {
+  const expired = isArtifactExpired(artifact)
+  const expiryLabel = artifactExpiryLabel(artifact)
+
+  return (
+    <div
+      className={`flex items-center gap-2 border p-2 ${expired ? 'opacity-50' : ''}`}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">{artifact.name}</p>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <Badge
+            variant={artifactTypeBadgeVariant(artifact.artifact_type)}
+            className="text-[10px]"
+          >
+            {artifact.artifact_type}
+          </Badge>
+          <span className="text-[10px] text-muted-foreground">
+            {artifact.file_size != null
+              ? formatFileSize(artifact.file_size)
+              : '—'}
+          </span>
+          {expiryLabel ? (
+            <span
+              className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}
+            >
+              {expiryLabel}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          variant="outline"
+          size="icon-xs"
+          title="Download"
+          aria-label={`Download ${artifact.name}`}
+          onClick={() => onDownload(artifact.id, artifact.name)}
+          disabled={isDownloadPending || expired}
+        >
+          {isDownloadPending ? (
+            <Spinner />
+          ) : (
+            <HugeiconsIcon icon={Download04Icon} />
+          )}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Share options for ${artifact.name}`}
+                title="Share options"
+                disabled={expired}
+              />
+            }
+          >
+            <HugeiconsIcon icon={Share08Icon} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-auto">
+            <DropdownMenuGroup>
+              <DropdownMenuItem
+                onClick={() => onCopyLink(artifact.id, artifact.name)}
+                disabled={isDownloadPending}
+              >
+                <HugeiconsIcon icon={Copy01Icon} />
+                Copy download link
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onShare(artifact)}>
+                <HugeiconsIcon icon={Share08Icon} />
+                Create share link
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  )
+}
+
 export function ArtifactsPanel({
   artifacts,
   isLoading,
@@ -134,7 +235,7 @@ export function ArtifactsPanel({
   }
 
   function handleShareLink(artifact: Artifact) {
-    setShareArtifact(artifact)
+    setShareArtifact(() => artifact)
     setCreatedToken(null)
     setTtlSecs('86400')
     setSingleUse(false)
@@ -152,7 +253,7 @@ export function ArtifactsPanel({
       },
       {
         onSuccess: (res) => {
-          setCreatedToken(res)
+          setCreatedToken(() => res)
         },
         onError: (err) => {
           toast.error(`Failed to create share link: ${err.message}`)
@@ -195,84 +296,16 @@ export function ArtifactsPanel({
             </p>
           ) : (
             <div className="space-y-2">
-              {artifacts.map((artifact) => {
-                const expired = isArtifactExpired(artifact)
-                const expiryLabel = artifactExpiryLabel(artifact)
-
-                return (
-                  <div
-                    key={artifact.id}
-                    className={`flex items-center gap-2 border p-2 ${expired ? 'opacity-50' : ''}`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">
-                        {artifact.name}
-                      </p>
-                      <div className="mt-0.5 flex items-center gap-1.5">
-                        <Badge
-                          variant={artifactTypeBadgeVariant(
-                            artifact.artifact_type,
-                          )}
-                          className="text-[10px]"
-                        >
-                          {artifact.artifact_type}
-                        </Badge>
-                        <span className="text-[10px] text-muted-foreground">
-                          {artifact.file_size != null
-                            ? formatFileSize(artifact.file_size)
-                            : '—'}
-                        </span>
-                        {expiryLabel ? (
-                          <span
-                            className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}
-                          >
-                            {expiryLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-0.5">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        title="Share link"
-                        aria-label={`Share link for ${artifact.name}`}
-                        onClick={() => handleShareLink(artifact)}
-                        disabled={expired}
-                      >
-                        <HugeiconsIcon icon={Share08Icon} size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        title="Copy download link"
-                        aria-label={`Copy link for ${artifact.name}`}
-                        onClick={() =>
-                          handleCopyLink(artifact.id, artifact.name)
-                        }
-                        disabled={downloadMutation.isPending || expired}
-                      >
-                        <HugeiconsIcon icon={Copy01Icon} size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 shrink-0"
-                        title="Download"
-                        aria-label={`Download ${artifact.name}`}
-                        onClick={() =>
-                          handleDownload(artifact.id, artifact.name)
-                        }
-                        disabled={downloadMutation.isPending || expired}
-                      >
-                        <HugeiconsIcon icon={Download04Icon} size={14} />
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })}
+              {artifacts.map((artifact) => (
+                <ArtifactRow
+                  key={artifact.id}
+                  artifact={artifact}
+                  isDownloadPending={downloadMutation.isPending}
+                  onDownload={handleDownload}
+                  onCopyLink={handleCopyLink}
+                  onShare={handleShareLink}
+                />
+              ))}
             </div>
           )}
         </CardContent>
@@ -329,24 +362,27 @@ export function ArtifactsPanel({
               </DialogFooter>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
                 <Label htmlFor="ttl-select">Expires after</Label>
                 <Select
+                  items={TTL_OPTIONS}
                   value={ttlSecs}
                   onValueChange={(value) => {
-                    if (value != null) setTtlSecs(value)
+                    if (value != null) setTtlSecs(() => value)
                   }}
                 >
                   <SelectTrigger id="ttl-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {TTL_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      {TTL_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
               </div>

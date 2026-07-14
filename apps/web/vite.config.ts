@@ -143,12 +143,12 @@ export default defineConfig({
           )
             return 'ui-vendor'
 
-          // TanStack Query (no circular dep with react-vendor)
+          // Keep the TanStack routing and query runtimes in one stable chunk.
           if (
             id.includes('/@tanstack/react-query/') ||
             id.includes('/@tanstack/query-core/')
           )
-            return 'query-vendor'
+            return 'router-vendor'
 
           // Form libs (lazy-loaded via dialog components)
           if (
@@ -164,13 +164,13 @@ export default defineConfig({
           // Icon library
           if (id.includes('/@hugeicons/')) return 'icons'
 
-          // Styling utilities (pure functions, no React)
+          // Styling utilities are part of the shared UI runtime.
           if (
             id.includes('/tailwind-merge/') ||
             id.includes('/class-variance-authority/') ||
             id.includes('/clsx/')
           )
-            return 'ui-utils'
+            return 'ui-vendor'
         },
       },
     },

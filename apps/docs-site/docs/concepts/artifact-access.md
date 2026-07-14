@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How Oore CI generates signed download links for build artifacts."
+description: 'How Oore CI generates signed download links for build artifacts.'
 ---
 
 # Artifact Access Model
@@ -11,11 +11,11 @@ How Oore CI stores, secures, and serves build artifacts.
 
 Oore CI supports three artifact storage backends:
 
-| Backend | Description | Best for |
-|---------|-------------|----------|
-| `local` | Files stored on the daemon's filesystem | Development, single-machine setups |
-| `s3` | Amazon S3 or S3-compatible storage | Production deployments |
-| `r2` | Cloudflare R2 | Production deployments with Cloudflare |
+| Backend | Description                             | Best for                               |
+| ------- | --------------------------------------- | -------------------------------------- |
+| `local` | Files stored on the daemon's filesystem | Development, single-machine setups     |
+| `s3`    | Amazon S3 or S3-compatible storage      | Production deployments                 |
+| `r2`    | Cloudflare R2                           | Production deployments with Cloudflare |
 
 Configure storage via the [Settings API](/reference/api/settings#update-artifact-storage) or the web UI. See the [Configure Storage guide](/guides/artifacts/configure-storage) for step-by-step instructions.
 
@@ -64,14 +64,15 @@ When a user wants to download an artifact:
 
 Signed URLs are the core security mechanism for artifact access:
 
-| Property | Upload | Download |
-|----------|--------|----------|
-| **TTL** | 30 minutes | 15 minutes |
-| **Auth required to generate** | Runner token | User session + `builds:read` |
-| **URL reusable** | No (single-use for S3) | Until expiry |
-| **Accessible without session** | Yes (presigned) | Yes (presigned) |
+| Property                       | Upload                 | Download                     |
+| ------------------------------ | ---------------------- | ---------------------------- |
+| **TTL**                        | 30 minutes             | 15 minutes                   |
+| **Auth required to generate**  | Runner token           | User session + `builds:read` |
+| **URL reusable**               | No (single-use for S3) | Until expiry                 |
+| **Accessible without session** | Yes (presigned)        | Yes (presigned)              |
 
 The presigned URL model means:
+
 - **No credentials in URLs**: S3 access keys are never exposed to runners or users
 - **Time-limited access**: URLs expire, preventing stale links from being shared indefinitely
 - **No proxy bottleneck**: Downloads go directly to S3/R2, not through the daemon

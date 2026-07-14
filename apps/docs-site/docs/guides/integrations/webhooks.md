@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure webhook events and payloads for Oore CI integrations."
+description: 'Configure webhook events and payloads for Oore CI integrations.'
 ---
 
 # Webhook Troubleshooting
@@ -17,10 +17,10 @@ When you push code or open a pull request:
 
 ## Webhook endpoints
 
-| Provider | Endpoint |
-|---|---|
-| GitHub | `POST /v1/webhooks/github` |
-| GitLab | `POST /v1/webhooks/gitlab` |
+| Provider | Endpoint                   |
+| -------- | -------------------------- |
+| GitHub   | `POST /v1/webhooks/github` |
+| GitLab   | `POST /v1/webhooks/gitlab` |
 
 ## GitHub webhook troubleshooting
 
@@ -38,11 +38,11 @@ Check GitHub's webhook delivery log:
 
 Common causes:
 
-| Error | Fix |
-|---|---|
+| Error              | Fix                                                          |
+| ------------------ | ------------------------------------------------------------ |
 | Connection refused | Ensure the daemon is running and reachable from the internet |
-| 401 Unauthorized | Verify the GitHub App credentials are valid |
-| Timeout | Check network connectivity between GitHub and your instance |
+| 401 Unauthorized   | Verify the GitHub App credentials are valid                  |
+| Timeout            | Check network connectivity between GitHub and your instance  |
 
 ### No builds triggered
 

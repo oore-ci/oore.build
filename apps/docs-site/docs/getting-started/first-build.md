@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Trigger and monitor your first Flutter build on Oore CI."
+description: 'Trigger and monitor your first Flutter build on Oore CI.'
 ---
 
 # Create Your First Build
@@ -33,7 +33,7 @@ Add a `.oore.yaml` file to the root of your repository:
 
 ```yaml
 version: 1
-flutter_version: "3.24.0"
+flutter_version: '3.24.0'
 platforms:
   - android
 commands:
@@ -44,7 +44,7 @@ commands:
   post_build: []
 artifacts:
   patterns:
-    - "**/*.apk"
+    - '**/*.apk'
 ```
 
 Push the file to your repository. Oore CI reads this file at build time — no UI configuration needed.
@@ -103,17 +103,17 @@ When the build succeeds, artifacts (e.g., the `.apk` file) appear in the build d
 
 ## Build states
 
-| State | Meaning |
-|---|---|
-| `queued` | Waiting for a runner to pick up the job |
-| `scheduled` | Assigned to a runner, waiting to start |
-| `assigned` | Runner has claimed the job |
-| `running` | Build commands executing |
-| `succeeded` | Build completed successfully |
-| `failed` | Build commands returned a non-zero exit code |
-| `canceled` | Build was manually canceled |
-| `timed_out` | Build exceeded the time limit |
-| `expired` | Build sat in queue too long without being claimed |
+| State       | Meaning                                           |
+| ----------- | ------------------------------------------------- |
+| `queued`    | Waiting for a runner to pick up the job           |
+| `scheduled` | Assigned to a runner, waiting to start            |
+| `assigned`  | Runner has claimed the job                        |
+| `running`   | Build commands executing                          |
+| `succeeded` | Build completed successfully                      |
+| `failed`    | Build commands returned a non-zero exit code      |
+| `canceled`  | Build was manually canceled                       |
+| `timed_out` | Build exceeded the time limit                     |
+| `expired`   | Build sat in queue too long without being claimed |
 
 For the full state machine, see [Build States](/reference/build-states).
 

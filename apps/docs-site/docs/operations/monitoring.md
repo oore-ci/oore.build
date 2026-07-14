@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Monitor Oore CI health with Prometheus metrics and alerting."
+description: 'Monitor Oore CI health with Prometheus metrics and alerting.'
 ---
 
 # Monitoring
@@ -54,14 +54,14 @@ export RUST_LOG=oored=debug,tower_http=info
 
 ## What to monitor
 
-| Check | How | Alert threshold |
-|---|---|---|
-| **Daemon up** | `GET /healthz` returns 200 | Any non-200 response |
-| **Setup state** | `GET /v1/public/setup-status` | State unexpectedly not `ready` |
-| **Runner health** | Check runner heartbeats in UI | Runner offline for >5 minutes |
-| **Build queue depth** | Monitor builds in `queued` state | Builds queued for >10 minutes |
-| **Disk space** | System monitoring | <10% free on artifact storage volume |
-| **Database size** | `ls -la ~/Library/Application Support/oore/oore.db` | Growing unexpectedly |
+| Check                 | How                                                 | Alert threshold                      |
+| --------------------- | --------------------------------------------------- | ------------------------------------ |
+| **Daemon up**         | `GET /healthz` returns 200                          | Any non-200 response                 |
+| **Setup state**       | `GET /v1/public/setup-status`                       | State unexpectedly not `ready`       |
+| **Runner health**     | Check runner heartbeats in UI                       | Runner offline for >5 minutes        |
+| **Build queue depth** | Monitor builds in `queued` state                    | Builds queued for >10 minutes        |
+| **Disk space**        | System monitoring                                   | <10% free on artifact storage volume |
+| **Database size**     | `ls -la ~/Library/Application Support/oore/oore.db` | Growing unexpectedly                 |
 
 ## Log aggregation
 

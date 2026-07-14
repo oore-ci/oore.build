@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/table'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import RepositoryAvatar from '@/components/repository-avatar'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/projects/')({
@@ -102,7 +103,7 @@ function ProjectsListPage() {
   const isCreateOpen = createOpen || openCreateFromSearch
 
   function handleCreateOpenChange(open: boolean) {
-    setCreateOpen(open)
+    setCreateOpen(() => open)
     if (!open && search.openCreate === '1') {
       void navigate({ to: '/projects', search: {}, replace: true })
     }
@@ -243,13 +244,22 @@ function ProjectsListPage() {
                     }}
                   >
                     <TableCell>
-                      <div>
-                        <p className="font-medium group-hover:underline">
-                          {project.name}
-                        </p>
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          {project.id.slice(0, 8)}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        {project.repository_full_name ? (
+                          <RepositoryAvatar
+                            fullName={project.repository_full_name}
+                            avatarUrl={project.repository_avatar_url}
+                          />
+                        ) : null}
+                        <div>
+                          <p className="font-medium group-hover:underline">
+                            {project.name}
+                          </p>
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            {project.repository_full_name ??
+                              project.id.slice(0, 8)}
+                          </p>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">

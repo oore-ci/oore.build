@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for triggering, monitoring, and canceling builds in Oore CI."
+description: 'API endpoints for triggering, monitoring, and canceling builds in Oore CI.'
 ---
 
 # Builds API
@@ -28,12 +28,12 @@ POST /v1/projects/{project_id}/builds
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `pipeline_id` | `string` | Yes | ID of the pipeline to build |
-| `branch` | `string` | No | Branch to resolve before queueing; defaults to the project's default branch |
-| `commit_sha` | `string` | No | Specific commit to build |
-| `trigger_ref` | `string` | No | Reference string (e.g., PR number) |
+| Field         | Type     | Required | Description                                                                 |
+| ------------- | -------- | -------- | --------------------------------------------------------------------------- |
+| `pipeline_id` | `string` | Yes      | ID of the pipeline to build                                                 |
+| `branch`      | `string` | No       | Branch to resolve before queueing; defaults to the project's default branch |
+| `commit_sha`  | `string` | No       | Specific commit to build                                                    |
+| `trigger_ref` | `string` | No       | Reference string (e.g., PR number)                                          |
 
 ### Response `200 OK`
 
@@ -109,17 +109,17 @@ Returns the full build object including step results, runner assignment, and tim
 
 ### Build status values
 
-| Status | Description |
-|---|---|
-| `queued` | Waiting for a runner to claim |
-| `scheduled` | Assigned to a runner, waiting to start |
-| `assigned` | Runner has claimed the job |
-| `running` | Build commands executing |
-| `succeeded` | Build completed with exit code 0 |
-| `failed` | Build commands returned non-zero exit code |
-| `canceled` | Build was canceled |
-| `timed_out` | Build exceeded time limit |
-| `expired` | Build sat in queue too long |
+| Status      | Description                                |
+| ----------- | ------------------------------------------ |
+| `queued`    | Waiting for a runner to claim              |
+| `scheduled` | Assigned to a runner, waiting to start     |
+| `assigned`  | Runner has claimed the job                 |
+| `running`   | Build commands executing                   |
+| `succeeded` | Build completed with exit code 0           |
+| `failed`    | Build commands returned non-zero exit code |
+| `canceled`  | Build was canceled                         |
+| `timed_out` | Build exceeded time limit                  |
+| `expired`   | Build sat in queue too long                |
 
 ---
 

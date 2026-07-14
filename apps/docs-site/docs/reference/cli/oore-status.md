@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for oore status (setup summary + authenticated queue/build/runner details)."
+description: 'CLI reference for oore status (setup summary + authenticated queue/build/runner details).'
 ---
 
 # oore status
@@ -16,11 +16,11 @@ oore status [--daemon-url <url>] [--token <session_token>] [--json]
 
 ## Flags
 
-| Flag | Env var | Description |
-|------|---------|-------------|
-| `--daemon-url` | `OORE_DAEMON_URL` | Daemon URL (defaults to config file, then `http://127.0.0.1:8787`) |
-| `--token` | `OORE_SESSION_TOKEN` | Session token for authenticated details (falls back to config file) |
-| `--json` | — | Emit machine-readable summary |
+| Flag           | Env var              | Description                                                         |
+| -------------- | -------------------- | ------------------------------------------------------------------- |
+| `--daemon-url` | `OORE_DAEMON_URL`    | Daemon URL (defaults to config file, then `http://127.0.0.1:8787`)  |
+| `--token`      | `OORE_SESSION_TOKEN` | Session token for authenticated details (falls back to config file) |
+| `--json`       | —                    | Emit machine-readable summary                                       |
 
 ## Output modes
 

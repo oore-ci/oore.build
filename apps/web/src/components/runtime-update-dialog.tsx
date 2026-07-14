@@ -27,15 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
-
-export function formatReleaseNotes(notes: string): string {
-  return notes
-    .replace(/^#{1,6}\s+.*(?:\r?\n)+/, '')
-    .replace(/^\*\*Full Changelog\*\*:.*$/gim, '')
-    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .trim()
-}
+import { formatReleaseNotes } from '@/components/runtime-update-utils'
 
 function updateButtonLabel(phase: string | undefined, pending: boolean) {
   if (pending) return 'Starting...'
@@ -210,6 +202,7 @@ export default function RuntimeUpdateDialog({
                     render={
                       <a
                         href={release.changelog_url}
+                        aria-label={`Open the full changelog for ${release.latest_version}`}
                         target="_blank"
                         rel="noopener noreferrer"
                       />

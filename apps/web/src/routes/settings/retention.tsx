@@ -1,10 +1,10 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
+import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
 
-import type { RetentionCleanupTarget } from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { RetentionSummaryCard } from './retention-summary-card'
 
 export const Route = createFileRoute('/settings/retention')({
   staticData: { breadcrumbLabel: 'Retention' },
@@ -84,23 +85,208 @@ const retentionSchema = z.object({
 
 type RetentionFormValues = z.infer<typeof retentionSchema>
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
+function EnabledRetentionFields({
+  form,
+}: {
+  form: UseFormReturn<RetentionFormValues>
+}) {
+  return (
+    <>
+      <div className="border-t pt-6">
+        <h4 className="text-sm font-medium mb-4">Retention Criteria</h4>
+        <p className="text-muted-foreground text-sm mb-4">
+          Builds matching any of the criteria below will be cleaned up. Leave a
+          field empty to disable that criterion.
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <FormField
+            control={form.control}
+            name="max_age_days"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Max age (days)</FormLabel>
+                <FormControl>
+                  <Input type="number" min={1} placeholder="e.g. 30" {...field} />
+                </FormControl>
+                <FormDescription>Delete builds older than this</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="max_builds_per_project"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Max builds per project</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="e.g. 100"
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>Keep only the N most recent</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="max_artifact_size_mb"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Max artifact size (MB)</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="e.g. 5120"
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>Per-project artifact size cap</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      </div>
+
+      <div className="border-t pt-6">
+        <h4 className="text-sm font-medium mb-4">Cleanup Behavior</h4>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="cleanup_target"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Cleanup mode</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="artifacts_only">
+                      Artifacts only — keep build history
+                    </SelectItem>
+                    <SelectItem value="full">
+                      Full delete — remove everything
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  &ldquo;Artifacts only&rdquo; deletes files but preserves build
+                  logs and metadata
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="cleanup_interval_secs"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Cleanup interval</FormLabel>
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    {CLEANUP_INTERVALS.map((interval) => (
+                      <SelectItem key={interval.value} value={interval.value}>
+                        {interval.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormDescription>How often the cleanup job runs</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      </div>
+
+      <div className="border-t pt-6">
+        <h4 className="text-sm font-medium mb-4">Protected Statuses</h4>
+        <p className="text-muted-foreground text-sm mb-4">
+          Builds with these statuses will never be cleaned up, regardless of
+          other criteria.
+        </p>
+        <FormField
+          control={form.control}
+          name="keep_statuses"
+          render={({ field }) => (
+            <FormItem>
+              <div className="flex flex-wrap gap-4">
+                {TERMINAL_STATUSES.map((status) => (
+                  <label
+                    key={status.value}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <Checkbox
+                      checked={field.value.includes(status.value)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          field.onChange([...field.value, status.value])
+                        } else {
+                          field.onChange(
+                            field.value.filter((s) => s !== status.value),
+                          )
+                        }
+                      }}
+                    />
+                    {status.label}
+                  </label>
+                ))}
+              </div>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <div className="border-t pt-6">
+        <FormField
+          control={form.control}
+          name="dry_run"
+          render={({ field }) => (
+            <FormItem className="flex items-center gap-3">
+              <FormControl>
+                <Checkbox
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+              <div className="space-y-0.5">
+                <FormLabel>Dry run mode</FormLabel>
+                <FormDescription>
+                  When enabled, the cleanup job will log what it would delete
+                  without actually removing anything. Useful for testing your
+                  policy.
+                </FormDescription>
+              </div>
+            </FormItem>
+          )}
+        />
+      </div>
+    </>
+  )
 }
 
-function formatRelativeTime(unixSecs: number): string {
-  const now = Math.floor(Date.now() / 1000)
-  const diff = now - unixSecs
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
-
-function RetentionPage() {
+function useRetentionPageState() {
   const { data: policyData, isLoading: policyLoading } = useRetentionPolicy()
   const { data: cleanupData, isLoading: cleanupLoading } =
     useRetentionLastCleanup()
@@ -167,7 +353,7 @@ function RetentionPage() {
         max_artifact_size_bytes: maxSizeMb
           ? Math.round(maxSizeMb * 1024 * 1024)
           : undefined,
-        cleanup_target: values.cleanup_target as RetentionCleanupTarget,
+        cleanup_target: values.cleanup_target,
         keep_statuses: values.keep_statuses,
         dry_run: values.dry_run,
         cleanup_interval_secs: Number(values.cleanup_interval_secs),
@@ -188,6 +374,24 @@ function RetentionPage() {
   }
 
   if (policyLoading) {
+    return { status: 'loading' as const }
+  }
+
+  return {
+    status: 'ready' as const,
+    cleanupLoading,
+    enabled,
+    form,
+    lastCleanup,
+    onSubmit,
+    updateMutation,
+  }
+}
+
+function RetentionPage() {
+  const pageState = useRetentionPageState()
+
+  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
@@ -207,6 +411,15 @@ function RetentionPage() {
       </PageLayout>
     )
   }
+
+  const {
+    cleanupLoading,
+    enabled,
+    form,
+    lastCleanup,
+    onSubmit,
+    updateMutation,
+  } = pageState
 
   return (
     <PageLayout width="wide">
@@ -251,233 +464,7 @@ function RetentionPage() {
                 )}
               />
 
-              {enabled && (
-                <>
-                  <div className="border-t pt-6">
-                    <h4 className="text-sm font-medium mb-4">
-                      Retention Criteria
-                    </h4>
-                    <p className="text-muted-foreground text-sm mb-4">
-                      Builds matching any of the criteria below will be cleaned
-                      up. Leave a field empty to disable that criterion.
-                    </p>
-
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <FormField
-                        control={form.control}
-                        name="max_age_days"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Max age (days)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={1}
-                                placeholder="e.g. 30"
-                                {...field}
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Delete builds older than this
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="max_builds_per_project"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Max builds per project</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={1}
-                                placeholder="e.g. 100"
-                                {...field}
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Keep only the N most recent
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="max_artifact_size_mb"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Max artifact size (MB)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={1}
-                                placeholder="e.g. 5120"
-                                {...field}
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Per-project artifact size cap
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="border-t pt-6">
-                    <h4 className="text-sm font-medium mb-4">
-                      Cleanup Behavior
-                    </h4>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <FormField
-                        control={form.control}
-                        name="cleanup_target"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Cleanup mode</FormLabel>
-                            <Select
-                              value={field.value}
-                              onValueChange={field.onChange}
-                            >
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="artifacts_only">
-                                  Artifacts only — keep build history
-                                </SelectItem>
-                                <SelectItem value="full">
-                                  Full delete — remove everything
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormDescription>
-                              &ldquo;Artifacts only&rdquo; deletes files but
-                              preserves build logs and metadata
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="cleanup_interval_secs"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Cleanup interval</FormLabel>
-                            <Select
-                              value={field.value}
-                              onValueChange={field.onChange}
-                            >
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {CLEANUP_INTERVALS.map((interval) => (
-                                  <SelectItem
-                                    key={interval.value}
-                                    value={interval.value}
-                                  >
-                                    {interval.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormDescription>
-                              How often the cleanup job runs
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="border-t pt-6">
-                    <h4 className="text-sm font-medium mb-4">
-                      Protected Statuses
-                    </h4>
-                    <p className="text-muted-foreground text-sm mb-4">
-                      Builds with these statuses will never be cleaned up,
-                      regardless of other criteria.
-                    </p>
-                    <FormField
-                      control={form.control}
-                      name="keep_statuses"
-                      render={({ field }) => (
-                        <FormItem>
-                          <div className="flex flex-wrap gap-4">
-                            {TERMINAL_STATUSES.map((status) => (
-                              <label
-                                key={status.value}
-                                className="flex items-center gap-2 text-sm"
-                              >
-                                <Checkbox
-                                  checked={field.value.includes(status.value)}
-                                  onCheckedChange={(checked) => {
-                                    if (checked) {
-                                      field.onChange([
-                                        ...field.value,
-                                        status.value,
-                                      ])
-                                    } else {
-                                      field.onChange(
-                                        field.value.filter(
-                                          (s) => s !== status.value,
-                                        ),
-                                      )
-                                    }
-                                  }}
-                                />
-                                {status.label}
-                              </label>
-                            ))}
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <div className="border-t pt-6">
-                    <FormField
-                      control={form.control}
-                      name="dry_run"
-                      render={({ field }) => (
-                        <FormItem className="flex items-center gap-3">
-                          <FormControl>
-                            <Checkbox
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          </FormControl>
-                          <div className="space-y-0.5">
-                            <FormLabel>Dry run mode</FormLabel>
-                            <FormDescription>
-                              When enabled, the cleanup job will log what it
-                              would delete without actually removing anything.
-                              Useful for testing your policy.
-                            </FormDescription>
-                          </div>
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                </>
-              )}
+              {enabled ? <EnabledRetentionFields form={form} /> : null}
 
               <div className="flex justify-end pt-2">
                 <Button type="submit" disabled={updateMutation.isPending}>
@@ -490,61 +477,10 @@ function RetentionPage() {
         </form>
       </Form>
 
-      {/* Last Cleanup Summary */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Last Cleanup
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {cleanupLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-64" />
-              <Skeleton className="h-4 w-48" />
-            </div>
-          ) : lastCleanup ? (
-            <div className="grid gap-4 sm:grid-cols-4">
-              <div>
-                <p className="text-muted-foreground text-sm">Builds cleaned</p>
-                <p className="text-lg font-semibold">
-                  {lastCleanup.builds_expired}
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-sm">
-                  Artifacts deleted
-                </p>
-                <p className="text-lg font-semibold">
-                  {lastCleanup.artifacts_deleted}
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-sm">Space reclaimed</p>
-                <p className="text-lg font-semibold">
-                  {formatBytes(lastCleanup.bytes_reclaimed)}
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-sm">Ran</p>
-                <p className="text-lg font-semibold">
-                  {formatRelativeTime(lastCleanup.ran_at)}
-                  {lastCleanup.dry_run && (
-                    <Badge variant="outline" className="ml-2">
-                      Dry run
-                    </Badge>
-                  )}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              No cleanup has run yet. Enable the retention policy and wait for
-              the next scheduled run.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <RetentionSummaryCard
+        isLoading={cleanupLoading}
+        lastCleanup={lastCleanup}
+      />
     </PageLayout>
   )
 }

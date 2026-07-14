@@ -182,6 +182,15 @@ docs-check:
 ui-init:
 	bun run ui:init
 
+ui-diff:
+	bun run ui:diff
+
+ui-update:
+	bun run ui:update
+
+deps-update:
+	bun run deps:update
+
 # ── Portless (named .localhost URLs for dev) ─────────────────────
 # Start the portless reverse proxy (run once, stays in background)
 portless-proxy:

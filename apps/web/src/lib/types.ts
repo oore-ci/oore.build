@@ -263,6 +263,7 @@ export interface IntegrationRepository {
   full_name: string
   default_branch?: string
   is_private: boolean
+  avatar_url?: string
   created_at: number
   updated_at: number
 }
@@ -703,6 +704,8 @@ export interface Project {
   name: string
   description?: string
   repository_id?: string
+  repository_full_name?: string
+  repository_avatar_url?: string
   settings: Record<string, unknown>
   default_branch?: string
   created_by: string

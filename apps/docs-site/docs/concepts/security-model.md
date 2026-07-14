@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Security architecture of Oore CI including Remote auth providers, RBAC, and encryption."
+description: 'Security architecture of Oore CI including Remote auth providers, RBAC, and encryption.'
 ---
 
 # Security Model
@@ -68,25 +68,25 @@ Sensitive data (OIDC client secrets, signing credentials) is encrypted with **AE
 
 The first-run bootstrap token (required for Remote-mode setup flows) has multiple protections:
 
-| Protection | Detail |
-|---|---|
-| **Randomness** | 32 bytes (256 bits) from `OsRng` |
-| **Storage** | Only SHA-256 hash stored; plaintext shown once |
-| **TTL** | Configurable, default 15 minutes |
-| **Single-use** | Consumed on first successful verification |
-| **Rate limiting** | Locked after 5 failed attempts |
+| Protection        | Detail                                         |
+| ----------------- | ---------------------------------------------- |
+| **Randomness**    | 32 bytes (256 bits) from `OsRng`               |
+| **Storage**       | Only SHA-256 hash stored; plaintext shown once |
+| **TTL**           | Configurable, default 15 minutes               |
+| **Single-use**    | Consumed on first successful verification      |
+| **Rate limiting** | Locked after 5 failed attempts                 |
 
 ## Token and secret handling
 
-| Data | Storage | Protection |
-|---|---|---|
-| Bootstrap token | SHA-256 hash in SQLite | Plaintext never stored |
-| Setup session token | SHA-256 hash in SQLite | 30-minute sliding TTL |
-| User session token | SHA-256 hash in SQLite | 24-hour TTL |
-| OIDC client secret | AES-256-GCM encrypted in SQLite | File-stored encryption key |
+| Data                        | Storage                         | Protection                 |
+| --------------------------- | ------------------------------- | -------------------------- |
+| Bootstrap token             | SHA-256 hash in SQLite          | Plaintext never stored     |
+| Setup session token         | SHA-256 hash in SQLite          | 30-minute sliding TTL      |
+| User session token          | SHA-256 hash in SQLite          | 24-hour TTL                |
+| OIDC client secret          | AES-256-GCM encrypted in SQLite | File-stored encryption key |
 | Trusted proxy shared secret | AES-256-GCM encrypted in SQLite | File-stored encryption key |
-| Signing certificates | AES-256-GCM encrypted in SQLite | Same encryption key |
-| Keystore passwords | AES-256-GCM encrypted in SQLite | Same encryption key |
+| Signing certificates        | AES-256-GCM encrypted in SQLite | Same encryption key        |
+| Keystore passwords          | AES-256-GCM encrypted in SQLite | Same encryption key        |
 
 ## CORS policy
 

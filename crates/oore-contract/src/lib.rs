@@ -617,6 +617,8 @@ pub struct IntegrationRepository {
     pub full_name: String,
     pub default_branch: Option<String>,
     pub is_private: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1638,6 +1640,10 @@ pub struct Project {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_full_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_avatar_url: Option<String>,
     #[schema(value_type = Object)]
     pub settings: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]

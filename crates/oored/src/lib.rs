@@ -428,6 +428,13 @@ fn validate_session(
         )
     })?;
 
+    validate_session_hash(state_file, &hash_token(token))
+}
+
+fn validate_session_hash(
+    state_file: &mut SetupStateFile,
+    expected_hash: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
     let session = state_file.setup_session.as_ref().ok_or_else(|| {
         api_err(
             StatusCode::UNAUTHORIZED,
@@ -436,8 +443,7 @@ fn validate_session(
         )
     })?;
 
-    let hashed = hash_token(token);
-    if hashed != session.hash {
+    if expected_hash != session.hash {
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
             "invalid_session",
@@ -1224,7 +1230,7 @@ async fn setup_oidc_start(
     validate_redirect_uri(&req.redirect_uri, &allowed_origins)?;
 
     // Validate setup session and state
-    {
+    let setup_session_hash = {
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state");
@@ -1255,6 +1261,17 @@ async fn setup_oidc_start(
         }
 
         validate_session(&mut sf, &headers)?;
+        let session_hash = sf
+            .setup_session
+            .as_ref()
+            .map(|session| session.hash.clone())
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "no_session",
+                    "No active setup session",
+                )
+            })?;
 
         // Persist the bumped session expiry
         store.save(&sf).await.map_err(|e| {
@@ -1265,7 +1282,8 @@ async fn setup_oidc_start(
                 "Failed to save setup state",
             )
         })?;
-    }
+        session_hash
+    };
 
     // Load the OIDC config (allows IdpConfigured state)
     let oidc_config = load_oidc_config_for_setup(&state).await?;
@@ -1308,6 +1326,7 @@ async fn setup_oidc_start(
                     nonce,
                     redirect_uri: req.redirect_uri,
                     created_at: now,
+                    setup_session_hash: Some(setup_session_hash.clone()),
                 },
             );
         }
@@ -1394,6 +1413,7 @@ async fn setup_oidc_start(
                 nonce,
                 redirect_uri: req.redirect_uri,
                 created_at: now,
+                setup_session_hash: Some(setup_session_hash),
             },
         );
     }
@@ -1412,10 +1432,36 @@ async fn setup_oidc_start(
 /// Requires a valid setup session and `setup_state == IdpConfigured`.
 async fn setup_oidc_verify(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(req): Json<SetupOidcVerifyRequest>,
 ) -> ApiResult<SetupOidcVerifyResponse> {
     info!("verify-oidc: request received");
+
+    let pending = {
+        let mut pending_map = state.pending_auth.lock().await;
+        pending_map.remove(&req.state).ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_state",
+                "Unknown or expired OIDC state parameter",
+            )
+        })?
+    };
+
+    if now_unix() - pending.created_at >= 600 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "auth_expired",
+            "OIDC authorization request has expired",
+        ));
+    }
+
+    let setup_session_hash = pending.setup_session_hash.as_deref().ok_or_else(|| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_state",
+            "OIDC state does not belong to a setup flow",
+        )
+    })?;
 
     // Validate setup session and state
     {
@@ -1448,7 +1494,7 @@ async fn setup_oidc_verify(
             ));
         }
 
-        validate_session(&mut sf, &headers)?;
+        validate_session_hash(&mut sf, setup_session_hash)?;
 
         store.save(&sf).await.map_err(|e| {
             error!(error = %e, "failed to save setup state");
@@ -1461,26 +1507,6 @@ async fn setup_oidc_verify(
     }
 
     info!("verify-oidc: session validated");
-
-    // Retrieve pending auth entry (validates CSRF state)
-    let pending = {
-        let mut pending_map = state.pending_auth.lock().await;
-        pending_map.remove(&req.state).ok_or_else(|| {
-            api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_state",
-                "Unknown or expired OIDC state parameter",
-            )
-        })?
-    };
-
-    if now_unix() - pending.created_at >= 600 {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "auth_expired",
-            "OIDC authorization request has expired",
-        ));
-    }
 
     info!("verify-oidc: pending auth found, starting token exchange");
 

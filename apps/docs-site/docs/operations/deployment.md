@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Deploy Oore CI in production including launchd, reverse proxy, and TLS setup."
+description: 'Deploy Oore CI in production including launchd, reverse proxy, and TLS setup.'
 ---
 
 # Production Deployment

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Invite team members to your Oore CI instance with role-based access control."
+description: 'Invite team members to your Oore CI instance with role-based access control.'
 ---
 
 # Invite Your Team
@@ -24,11 +24,11 @@ This tutorial walks you through inviting team members to your Oore CI instance a
 2. Enter the user's **email address** (must match the email from your configured auth mode)
 3. Select a **role**:
 
-   | Role | What they can do |
-   |---|---|
-   | **Admin** | Manage users, projects, pipelines, settings — everything except ownership transfer |
-   | **Developer** | Create projects, configure pipelines, trigger builds, download artifacts |
-   | **QA Viewer** | View builds and download artifacts (read-only access to projects) |
+   | Role          | What they can do                                                                   |
+   | ------------- | ---------------------------------------------------------------------------------- |
+   | **Admin**     | Manage users, projects, pipelines, settings — everything except ownership transfer |
+   | **Developer** | Create projects, configure pipelines, trigger builds, download artifacts           |
+   | **QA Viewer** | View builds and download artifacts (read-only access to projects)                  |
 
 4. Click **Invite**
 
@@ -50,15 +50,15 @@ Go to **Settings > Users** and confirm the user appears as `active` after their 
 
 ## Roles overview
 
-| Permission | Owner | Admin | Developer | QA Viewer |
-|---|---|---|---|---|
-| Manage users | Yes | Yes | No | No |
-| Manage settings | Yes | Yes | No | No |
-| Create/edit projects | Yes | Yes | Yes | No |
-| Configure pipelines | Yes | Yes | Yes | No |
-| Trigger builds | Yes | Yes | Yes | No |
-| View builds | Yes | Yes | Yes | Yes |
-| Download artifacts | Yes | Yes | Yes | Yes |
+| Permission           | Owner | Admin | Developer | QA Viewer |
+| -------------------- | ----- | ----- | --------- | --------- |
+| Manage users         | Yes   | Yes   | No        | No        |
+| Manage settings      | Yes   | Yes   | No        | No        |
+| Create/edit projects | Yes   | Yes   | Yes       | No        |
+| Configure pipelines  | Yes   | Yes   | Yes       | No        |
+| Trigger builds       | Yes   | Yes   | Yes       | No        |
+| View builds          | Yes   | Yes   | Yes       | Yes       |
+| Download artifacts   | Yes   | Yes   | Yes       | Yes       |
 
 For the full permission matrix, see [RBAC Reference](/reference/rbac).
 

@@ -690,6 +690,13 @@ async fn sync_gitlab_projects(
         default_branch: Option<String>,
         visibility: Option<String>,
         web_url: Option<String>,
+        avatar_url: Option<String>,
+        namespace: Option<GitLabNamespace>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GitLabNamespace {
+        avatar_url: Option<String>,
     }
 
     let mut projects = Vec::new();
@@ -758,11 +765,11 @@ async fn sync_gitlab_projects(
         let is_private = project.visibility.as_deref() != Some("public");
 
         sqlx::query(
-            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, avatar_url, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9) \
              ON CONFLICT(installation_id, external_id) DO UPDATE SET \
              full_name = excluded.full_name, default_branch = excluded.default_branch, \
-             is_private = excluded.is_private, html_url = excluded.html_url, updated_at = excluded.updated_at",
+             is_private = excluded.is_private, html_url = excluded.html_url, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(installation_id)
@@ -771,6 +778,12 @@ async fn sync_gitlab_projects(
         .bind(&project.default_branch)
         .bind(is_private as i32)
         .bind(&project.web_url)
+        .bind(
+            project
+                .avatar_url
+                .as_ref()
+                .or_else(|| project.namespace.as_ref().and_then(|namespace| namespace.avatar_url.as_ref())),
+        )
         .bind(now)
         .execute(&mut *tx)
         .await
@@ -1674,6 +1687,8 @@ mod tests {
                                 "default_branch": "main",
                                 "visibility": "private",
                                 "web_url": format!("https://gitlab.example/group/repo-{id}"),
+                                "avatar_url": if id == 1 { Some("https://gitlab.example/project-avatar.png") } else { None },
+                                "namespace": { "avatar_url": "https://gitlab.example/namespace-avatar.png" },
                             })
                         })
                         .collect()
@@ -1684,6 +1699,7 @@ mod tests {
                         "default_branch": "main",
                         "visibility": "private",
                         "web_url": "https://gitlab.example/group/repo-101",
+                        "namespace": { "avatar_url": "https://gitlab.example/namespace-avatar.png" },
                     })]
                 };
                 let mut headers = axum::http::HeaderMap::new();
@@ -1702,7 +1718,7 @@ mod tests {
             "CREATE TABLE integration_repositories (
                 id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, external_id TEXT NOT NULL,
                 full_name TEXT NOT NULL, default_branch TEXT, is_private INTEGER NOT NULL,
-                html_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                html_url TEXT, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
                 UNIQUE(installation_id, external_id)
             )",
         )
@@ -1714,7 +1730,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO integration_repositories VALUES ('stale', 'install', 'stale', 'group/stale', 'main', 1, NULL, 1, 1)",
+            "INSERT INTO integration_repositories VALUES ('stale', 'install', 'stale', 'group/stale', 'main', 1, NULL, NULL, 1, 1)",
         )
         .execute(&pool)
         .await
@@ -1748,6 +1764,26 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 101);
+        let first_avatar: Option<String> = sqlx::query_scalar(
+            "SELECT avatar_url FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let fallback_avatar: Option<String> = sqlx::query_scalar(
+            "SELECT avatar_url FROM integration_repositories WHERE external_id = '101'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            first_avatar.as_deref(),
+            Some("https://gitlab.example/project-avatar.png")
+        );
+        assert_eq!(
+            fallback_avatar.as_deref(),
+            Some("https://gitlab.example/namespace-avatar.png")
+        );
         assert!(linked.is_none());
         server.abort();
     }

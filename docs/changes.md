@@ -12,8 +12,43 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-14
+
+- **React correctness follow-up**:
+  - Component modules now export components only, preserving Fast Refresh state while shared schemas, variants, and release-note formatting live in focused utility modules.
+  - State writes use explicit pure updater functions where React Doctor could otherwise mistake plain callback parameters for updater callbacks; one-use callback indirection was removed without changing UI behavior.
+  - Query fallbacks are referentially stable, setup transitions depend on the exact status fields they read, and the sanctioned mount-only effect helper uses React Effect Events while preserving unmount cleanup.
+  - Pipeline configuration and Preferences now follow their visible product boundaries: trigger, command, signing, External Access, runtime update, and artifact-storage concerns live in focused components, with related form state moved through pure reducers.
+  - Styling utilities share the existing UI vendor chunk, while TanStack Router and Query share one stable framework chunk; this removes tiny extra requests and gzip envelopes from the initial path while keeping the bundle under its production budget.
+  - A full React Doctor 0.7.7 scan of `apps/web` now reports no findings and scores 100/100, including clean `only-export-components`, `no-impure-state-updater`, `exhaustive-deps`, and component-structure checks.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 ## 2026-07-13
 
+- **Current dependency stack and repeatable shadcn 4 migration**:
+  - Frontend, docs, site, and release tooling now use their current compatible direct package releases, including shadcn CLI 4.13, Vite 8, Vitest 4, Oxlint 1.73 with type-aware rules, TypeScript 7, Hugeicons 4, and Wrangler 4. ESLint and typescript-eslint have been removed. Rust lockfile dependencies are updated to the newest versions compatible with the repository's installed Rust toolchain.
+  - Every installed web UI primitive was refreshed from the current Base UI shadcn registry while preserving Oore's semantic badge states, destructive confirmation defaults, responsive shell/table containment, and terminal log scrolling contract.
+  - `make deps-update`, `make ui-diff`, and the interactive `make ui-update` provide the supported package and component migration path; contributor guidance records the required validation and local extension review.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Repository source avatars**:
+  - Repository sync now persists GitHub owner avatars and GitLab project avatars, falling back to a GitLab namespace avatar when a project has none. Project, source, and repository-picker views display that identity with a visible initials fallback for local or image-less repositories.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Compact demo-mode treatment**:
+  - Demo builds now rely on the persistent compact Demo Mode indicator instead of repeating the same read-only notice in a full-width banner above every page.
+  - The app header now reserves its navigation space for breadcrumbs, with duplicate Oore branding removed and a wider desktop search target.
+  - Page-title back links no longer shift detail-screen headings downward. Route metadata now gives the app-header breadcrumb a clickable parent destination, including the immediate parent on compact screens.
+  - Collapsed primary and admin sidebar navigation exposes the built-in item tooltips without replacing links with inert buttons.
+  - Sidebar expansion is now a persisted UI preference, so refreshes and later browser sessions preserve the user's chosen working width.
+  - The connectivity banner now reflects the browser's actual offline state instead of interpreting unrelated API errors or background-tab wakeups as proof that `oored` is unreachable.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Outcome-first build details and immersive logs**:
+  - Build artifacts now stay above the fold beside the execution workspace on desktop and move into a peer tab beside Logs and Timeline on narrower screens; each file uses a compact direct-download action and one share-options action for copying temporary links or creating scoped links.
+  - Artifact share-link expiry choices now show human-readable durations in the trigger instead of raw second values.
+  - Build source, duration, and timing now sit in the title metadata instead of occupying a separate summary card.
+  - Logs now use one internally scrollable GitHub-inspired workspace with a compact single-row toolbar, persistent search, pinned line numbers, comfortable content padding, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab. The workspace fills the remaining viewport with a deliberate bottom gutter on narrower screens and stays bounded on desktop.
+  - Ordinary `stderr` output is no longer treated as failure severity. Only explicit error lines receive destructive styling or power the jump-to-error action, avoiding false alarms from Git progress and flags such as `--no-fatal-infos`.
+  - The shared app inset now consumes only the space left beside the sidebar, preventing the header and page content from drifting one sidebar-width beyond the viewport; wide data tables keep their overflow within their own scroll region.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Persistent runtime update notice**:
   - Instance owners now see available frontend and backend updates directly above the sidebar user menu instead of needing to discover them in Preferences.
   - The update dialog shows each runtime's current and target versions, managed-service readiness, generated release notes, and the GitHub comparison changelog before starting an update.

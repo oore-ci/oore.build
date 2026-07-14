@@ -43,6 +43,7 @@ pub struct PendingAuth {
     pub nonce: Nonce,
     pub redirect_uri: String,
     pub created_at: i64,
+    pub setup_session_hash: Option<String>,
 }
 
 /// Query parameters returned by the IdP on the callback redirect.
@@ -375,6 +376,7 @@ pub async fn oidc_start(
                 nonce,
                 redirect_uri,
                 created_at: now,
+                setup_session_hash: None,
             },
         );
     }
@@ -417,6 +419,14 @@ pub async fn oidc_callback(
             StatusCode::BAD_REQUEST,
             "auth_expired",
             "OIDC authorization request has expired",
+        ));
+    }
+
+    if pending.setup_session_hash.is_some() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_state",
+            "OIDC state belongs to a setup flow",
         ));
     }
 

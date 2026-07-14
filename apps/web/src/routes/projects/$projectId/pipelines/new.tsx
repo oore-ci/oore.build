@@ -53,7 +53,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
-  staticData: { breadcrumbLabel: 'New Pipeline' },
+  staticData: {
+    breadcrumbLabel: 'New Pipeline',
+    breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -268,7 +271,7 @@ function RepositoryWorkflowSummary({
   )
 }
 
-function NewPipelinePage() {
+function useNewPipelinePageState() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
@@ -377,8 +380,12 @@ function NewPipelinePage() {
     setValidationErrors([])
 
     const [signingPayload, iosSigningPayload] = await Promise.all([
-      buildAndroidSigningPayload(data, releaseKeystoreFile, debugKeystoreFile),
-      buildIosSigningPayload(data, iosSigningFiles),
+      buildAndroidSigningPayload(
+        { ...data },
+        releaseKeystoreFile,
+        debugKeystoreFile,
+      ),
+      buildIosSigningPayload({ ...data }, iosSigningFiles),
     ])
     if (
       (data.android_signing_release_enabled ||
@@ -657,12 +664,60 @@ function NewPipelinePage() {
     }
   }
 
+  return {
+    activeTemplate,
+    createMutation,
+    handleSubmit,
+    invalidWorkflows,
+    manualOnlyTriggers,
+    manualSetup,
+    navigate,
+    projectData,
+    projectId,
+    selectedTemplate,
+    selectedWorkflow,
+    selectedWorkflowPath,
+    setManualSetup,
+    setSelectedTemplate,
+    setSelectedWorkflowPath,
+    updateIosSigningMutation,
+    updateSigningMutation,
+    validationErrors,
+    validWorkflows,
+    workflowsQuery,
+  }
+}
+
+function NewPipelinePage() {
+  const pageState = useNewPipelinePageState()
+  const {
+    activeTemplate,
+    createMutation,
+    handleSubmit,
+    invalidWorkflows,
+    manualOnlyTriggers,
+    manualSetup,
+    navigate,
+    projectData,
+    projectId,
+    selectedTemplate,
+    selectedWorkflow,
+    selectedWorkflowPath,
+    setManualSetup,
+    setSelectedTemplate,
+    setSelectedWorkflowPath,
+    updateIosSigningMutation,
+    updateSigningMutation,
+    validationErrors,
+    validWorkflows,
+    workflowsQuery,
+  } = pageState
+
   return (
     <PageLayout width="wide">
       <PageMeta title="New Pipeline" />
       <PageHeader
         title="Set up a build"
-        back={{ to: `/projects/${projectId}`, label: 'Project' }}
         description="Use the workflow already in your repository, or start with a guided template."
       />
       <div className="mx-auto mb-6 max-w-4xl">

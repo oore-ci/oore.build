@@ -7,17 +7,20 @@ import {
   defaultSelectedStep,
   findFirstErrorIndex,
   groupLogs,
+  isErrorLine,
 } from './log-model'
-import { MobileStepSelector, StepSidebar } from './step-navigation'
+import { StepNavigation } from './step-navigation'
 import type { SelectedStepMeta, TerminalLogViewerProps } from './types'
 import { useWindowEvent } from '@/hooks/use-window-event'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
+import { cn } from '@/lib/utils'
 
 export default function TerminalLogViewer({
   logs,
   stepResults,
   isStreaming,
+  fillAvailableHeight = false,
   isLoading = false,
   logsUnavailable = false,
   isTerminal = false,
@@ -26,7 +29,6 @@ export default function TerminalLogViewer({
   const [autoScroll, setAutoScroll] = useState(true)
   const [wrapLines, setWrapLines] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchOpen, setSearchOpen] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -63,8 +65,6 @@ export default function TerminalLogViewer({
     if (!group) return null
     return {
       command: group.command,
-      status: group.status,
-      durationMs: group.durationMs,
     }
   }, [selectedStep, stepGroupsByName])
 
@@ -91,15 +91,6 @@ export default function TerminalLogViewer({
     return () => element.removeEventListener('scroll', handleScroll)
   })
 
-  const openSearch = useCallback(() => {
-    setSearchOpen(true)
-    setTimeout(() => searchInputRef.current?.focus(), 0)
-  }, [])
-  const closeSearch = useCallback(() => {
-    setSearchOpen(false)
-    setSearchQuery('')
-  }, [])
-
   useWindowEvent('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
       const target = event.target as HTMLElement | null
@@ -109,14 +100,18 @@ export default function TerminalLogViewer({
       const rect = element.getBoundingClientRect()
       if (rect.top < window.innerHeight && rect.bottom > 0) {
         event.preventDefault()
-        openSearch()
+        searchInputRef.current?.focus()
       }
     }
-    if (event.key === 'Escape' && searchOpen) closeSearch()
+    if (event.key === 'Escape' && searchQuery) {
+      setSearchQuery('')
+      searchInputRef.current?.focus()
+    }
   })
 
   const logStepGroups = stepGroups.filter((group) => group.logs.length > 0)
   const hasSteps = logStepGroups.length > 0
+  const hasErrors = filteredLogs.some((chunk) => isErrorLine(chunk.content))
 
   function jumpToFirstError() {
     const index = findFirstErrorIndex(filteredLogs)
@@ -145,27 +140,58 @@ export default function TerminalLogViewer({
     virtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' })
   }
 
+  const lineCountLabel = searchQuery
+    ? `${filteredLogs.length} of ${selectedLogs.length} lines`
+    : `${selectedLogs.length} lines`
+
   return (
-    <div className="flex h-[60dvh] min-h-96 max-h-[48rem] flex-col">
-      <LogToolbar
-        isStreaming={isStreaming}
-        logCount={filteredLogs.length}
-        searchOpen={searchOpen}
-        searchQuery={searchQuery}
-        searchInputRef={searchInputRef}
-        wrapLines={wrapLines}
-        showScrollLatest={!autoScroll && filteredLogs.length > 0}
-        onSearchOpen={openSearch}
-        onSearchClose={closeSearch}
-        onSearchQueryChange={setSearchQuery}
-        onJumpToError={jumpToFirstError}
-        onToggleWrap={() => setWrapLines((value) => !value)}
-        onDownload={downloadRawLogs}
-        onScrollLatest={scrollToLatest}
-      />
+    <section
+      aria-labelledby="build-logs-heading"
+      className={cn(
+        'flex flex-col overflow-hidden border bg-card',
+        fillAvailableHeight
+          ? 'h-full min-h-80'
+          : 'h-[clamp(28rem,62dvh,50rem)]',
+      )}
+    >
+      <div className="flex shrink-0 flex-col gap-2 border-b bg-muted/20 px-3 py-2 sm:flex-row sm:items-center">
+        <div className="flex shrink-0 items-baseline gap-2">
+          <h2 id="build-logs-heading" className="text-sm font-medium">
+            Build logs
+          </h2>
+          {isStreaming ? (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full bg-success opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex size-2 bg-success" />
+              </span>
+              Live
+            </span>
+          ) : (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {lineCountLabel}
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 sm:ml-auto">
+          <LogToolbar
+            searchQuery={searchQuery}
+            searchInputRef={searchInputRef}
+            wrapLines={wrapLines}
+            showScrollLatest={!autoScroll && filteredLogs.length > 0}
+            hasErrors={hasErrors}
+            onSearchQueryChange={setSearchQuery}
+            onSearchClear={() => setSearchQuery('')}
+            onJumpToError={jumpToFirstError}
+            onToggleWrap={() => setWrapLines((value) => !value)}
+            onDownload={downloadRawLogs}
+            onScrollLatest={scrollToLatest}
+          />
+        </div>
+      </div>
 
       {hasSteps ? (
-        <MobileStepSelector
+        <StepNavigation
           groups={logStepGroups}
           selectedStep={selectedStep}
           allLogCount={allVisibleLogs.length}
@@ -173,21 +199,7 @@ export default function TerminalLogViewer({
         />
       ) : null}
 
-      <div
-        className={
-          hasSteps
-            ? 'grid min-h-0 flex-1 grid-cols-1 overflow-hidden border md:grid-cols-[220px_minmax(0,1fr)]'
-            : 'min-h-0 flex-1 overflow-hidden border'
-        }
-      >
-        {hasSteps ? (
-          <StepSidebar
-            groups={logStepGroups}
-            selectedStep={selectedStep}
-            allLogCount={allVisibleLogs.length}
-            onSelect={setUserSelectedStep}
-          />
-        ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
         <LogOutput
           logs={filteredLogs}
           selectedStep={selectedStep}
@@ -201,6 +213,6 @@ export default function TerminalLogViewer({
           virtualizer={virtualizer}
         />
       </div>
-    </div>
+    </section>
   )
 }

@@ -1,24 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type {
-  CreateLocalGitIntegrationRequest,
-  GitHubAppStartRequest,
-  GitLabAuthorizeRequest,
-  GitLabStartRequest,
-} from '@/lib/types'
+import type { GitLabAuthorizeRequest, GitLabStartRequest } from '@/lib/types'
 import {
   browseLocalGitDirectories,
-  createLocalGitIntegration,
   deleteIntegration,
-  deleteLocalGitIntegration,
   getIntegration,
-  githubAppComplete,
-  githubAppStart,
   gitlabAuthorize,
   gitlabStart,
   listInstallations,
   listIntegrationRepos,
   listIntegrations,
-  listLocalGitIntegrations,
   syncInstallations,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -122,39 +112,6 @@ export function useRepositoryProvider(repositoryId?: string, enabled = true) {
   })
 }
 
-export function useGitHubAppStart() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-
-  return useMutation({
-    mutationFn: (data: GitHubAppStartRequest) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return githubAppStart(baseUrl, token, data)
-    },
-  })
-}
-
-export function useGitHubAppComplete() {
-  const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (code: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return githubAppComplete(baseUrl, token, { code })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-    },
-  })
-}
-
 export function useSyncInstallations() {
   const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
@@ -241,41 +198,6 @@ export function useDeleteIntegration() {
   })
 }
 
-export function useLocalGitIntegrations(enabled = true) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
-    queryFn: () => listLocalGitIntegrations(baseUrl!, token!),
-    enabled: enabled && !!baseUrl && !!token,
-  })
-}
-
-export function useCreateLocalGitIntegration() {
-  const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (data: CreateLocalGitIntegrationRequest) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return createLocalGitIntegration(baseUrl, token, data)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
-      })
-    },
-  })
-}
-
 export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -289,28 +211,5 @@ export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
     ],
     queryFn: () => browseLocalGitDirectories(baseUrl!, token!, path),
     enabled: enabled && !!baseUrl && !!token,
-  })
-}
-
-export function useDeleteLocalGitIntegration() {
-  const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (id: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return deleteLocalGitIntegration(baseUrl, token, id)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
-      })
-    },
   })
 }

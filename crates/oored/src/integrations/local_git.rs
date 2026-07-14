@@ -548,6 +548,7 @@ pub async fn create_local_git_integration(
         full_name: repo_name,
         default_branch,
         is_private: true,
+        avatar_url: None,
         created_at: now,
         updated_at: now,
     };

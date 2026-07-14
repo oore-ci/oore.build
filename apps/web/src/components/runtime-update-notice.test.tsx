@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RuntimeUpdateNotice from './runtime-update-notice'
-import { formatReleaseNotes } from './runtime-update-dialog'
+import { formatReleaseNotes } from './runtime-update-utils'
 import { SidebarProvider } from '@/components/ui/sidebar'
 
 const { useRuntimeUpdates } = vi.hoisted(() => ({

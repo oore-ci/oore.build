@@ -9,8 +9,17 @@ interface StepMarker {
   command?: string
 }
 
-export const ERROR_PATTERN =
-  /\b(error|ERROR|FAILED|FAILURE|fatal|FATAL|exception|EXCEPTION|panic|PANIC)\b/
+const ERROR_PATTERNS = [
+  /^(?:error|fatal|failure|exception|panic)(?:\b|:)/i,
+  /(?:^|\s)(?:error|fatal|exception|panic):\s/i,
+  /\b(?:build failed|failed with|execution failed|uncaught exception)\b/i,
+]
+
+export function isErrorLine(content: string): boolean {
+  const normalized = content.trim()
+  if (!normalized || normalized.startsWith('$ ')) return false
+  return ERROR_PATTERNS.some((pattern) => pattern.test(normalized))
+}
 
 function parseStepMarker(content: string): StepMarker | null {
   const prefix = '[oore-step] '
@@ -105,16 +114,12 @@ export function defaultSelectedStep(
   return (
     stepGroups.find(
       (group) => group.status === 'failed' && group.logs.length > 0,
-    )?.name ??
-    stepGroups.find((group) => group.logs.length > 0)?.name ??
-    'all'
+    )?.name ?? 'all'
   )
 }
 
 export function findFirstErrorIndex(lines: Array<BuildLogChunk>): number {
-  return lines.findIndex(
-    (chunk) => chunk.stream === 'stderr' || ERROR_PATTERN.test(chunk.content),
-  )
+  return lines.findIndex((chunk) => isErrorLine(chunk.content))
 }
 
 export function formatDuration(seconds: number): string {
@@ -123,18 +128,4 @@ export function formatDuration(seconds: number): string {
   const secs = Math.round(seconds % 60)
   if (mins < 60) return `${mins}m ${secs}s`
   return `${Math.floor(mins / 60)}h ${mins % 60}m`
-}
-
-export function stepStatusVariant(status: string) {
-  const normalized = status.trim().toLowerCase()
-  if (normalized === 'running') return 'info' as const
-  if (normalized === 'succeeded') return 'success' as const
-  if (
-    normalized === 'failed' ||
-    normalized === 'canceled' ||
-    normalized === 'timed_out'
-  ) {
-    return 'destructive' as const
-  }
-  return 'outline' as const
 }

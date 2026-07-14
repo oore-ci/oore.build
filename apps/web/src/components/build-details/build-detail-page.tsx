@@ -13,6 +13,7 @@ import { EventTimeline } from './event-timeline'
 import type { BuildLogChunk } from '@/lib/types'
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuildNotification } from '@/hooks/use-build-notification'
+import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
 import {
   isTerminalStatus,
   useArtifacts,
@@ -26,7 +27,7 @@ import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
-import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { cn } from '@/lib/utils'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
@@ -34,9 +35,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export function BuildDetailPage({ buildId }: { buildId: string }) {
   const navigate = useNavigate()
+  const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
@@ -53,14 +56,11 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
 
-  const setLabel = useBreadcrumbStore((state) => state.setLabel)
-
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
     : 'Build Details'
 
   useBreadcrumbLabel(
-    setLabel,
     '/builds/$buildId',
     data?.build.build_number ? `Build #${data.build.build_number}` : undefined,
   )
@@ -141,17 +141,29 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           : undefined
 
   return (
-    <PageLayout width="full">
+    <PageLayout
+      width="full"
+      className={cn(
+        usesTabbedArtifacts &&
+          'flex h-[calc(100dvh-3rem)] min-h-0 flex-none flex-col gap-6 space-y-0 pb-6',
+      )}
+    >
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
-        back={{ to: '/builds', label: 'Builds' }}
+        description={
+          [build.context?.project_name, build.context?.pipeline_name]
+            .filter(Boolean)
+            .join(' · ') || undefined
+        }
         meta={
           <>
             <Badge variant={getStatusVariant(build.status)}>
               {build.status}
             </Badge>
             <Badge variant="outline">{build.trigger_type}</Badge>
+            <span aria-hidden className="h-3 w-px bg-border" />
+            <BuildSummary build={build} duration={duration} />
           </>
         }
         actions={
@@ -198,8 +210,6 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         }
       />
 
-      <BuildSummary build={build} duration={duration} />
-
       {failureReason ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
@@ -207,40 +217,72 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         </Alert>
       ) : null}
 
-      <section
-        aria-labelledby="build-logs-heading"
-        className="min-w-0 space-y-2"
+      <Tabs
+        key={usesTabbedArtifacts ? 'compact' : 'desktop'}
+        defaultValue="logs"
+        className={cn('gap-3', usesTabbedArtifacts && 'min-h-0 flex-1')}
       >
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 id="build-logs-heading" className="text-sm font-medium">
-              Build logs
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {isTerminal
-                ? 'Output, errors, and step-level context.'
-                : 'Live output, errors, and step-level context.'}
-            </p>
+        <TabsList variant="line">
+          <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="timeline">
+            Timeline{events.length > 0 ? ` (${events.length})` : ''}
+          </TabsTrigger>
+          {usesTabbedArtifacts ? (
+            <TabsTrigger value="artifacts">
+              Artifacts
+              {artifactsQuery.data?.artifacts.length
+                ? ` (${artifactsQuery.data.artifacts.length})`
+                : ''}
+            </TabsTrigger>
+          ) : null}
+        </TabsList>
+        <div
+          className={cn(
+            'grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]',
+            usesTabbedArtifacts && 'min-h-0 flex-1',
+          )}
+        >
+          <div
+            className={cn('min-w-0', usesTabbedArtifacts && 'h-full min-h-0')}
+          >
+            <TabsContent
+              value="logs"
+              className={cn(usesTabbedArtifacts && 'h-full min-h-0')}
+            >
+              <TerminalLogViewer
+                logs={mergedLogs}
+                stepResults={build.step_results ?? []}
+                isStreaming={isStreaming && !isTerminal}
+                fillAvailableHeight={usesTabbedArtifacts}
+                isLoading={isTerminal && fullLogsQuery.isLoading}
+                logsUnavailable={fullLogsQuery.isError}
+                isTerminal={isTerminal}
+              />
+            </TabsContent>
+            <TabsContent value="timeline">
+              <EventTimeline events={events} />
+            </TabsContent>
+            {usesTabbedArtifacts ? (
+              <TabsContent value="artifacts">
+                <ArtifactsPanel
+                  artifacts={artifactsQuery.data?.artifacts ?? []}
+                  isLoading={artifactsQuery.isLoading}
+                  buildStatus={build.status}
+                />
+              </TabsContent>
+            ) : null}
           </div>
+          {!usesTabbedArtifacts ? (
+            <aside aria-label="Build output" className="sticky top-6">
+              <ArtifactsPanel
+                artifacts={artifactsQuery.data?.artifacts ?? []}
+                isLoading={artifactsQuery.isLoading}
+                buildStatus={build.status}
+              />
+            </aside>
+          ) : null}
         </div>
-        <TerminalLogViewer
-          logs={mergedLogs}
-          stepResults={build.step_results ?? []}
-          isStreaming={isStreaming && !isTerminal}
-          isLoading={isTerminal && fullLogsQuery.isLoading}
-          logsUnavailable={fullLogsQuery.isError}
-          isTerminal={isTerminal}
-        />
-      </section>
-
-      <div className="grid items-start gap-6 xl:grid-cols-2">
-        <ArtifactsPanel
-          artifacts={artifactsQuery.data?.artifacts ?? []}
-          isLoading={artifactsQuery.isLoading}
-          buildStatus={build.status}
-        />
-        <EventTimeline events={events} />
-      </div>
+      </Tabs>
     </PageLayout>
   )
 }
