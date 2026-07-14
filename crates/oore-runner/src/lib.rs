@@ -433,6 +433,7 @@ struct IosSigningMaterialization {
 
 struct IosSigningCleanup {
     keychain_path: PathBuf,
+    original_default_keychain: String,
     original_keychains: Vec<String>,
     installed_profiles: Vec<PathBuf>,
 }
@@ -441,6 +442,7 @@ impl Drop for IosSigningCleanup {
     fn drop(&mut self) {
         cleanup_ios_signing_state(
             Some(&self.keychain_path),
+            Some(&self.original_default_keychain),
             &self.original_keychains,
             &self.installed_profiles,
         );
@@ -473,6 +475,7 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
 
 fn cleanup_ios_signing_state(
     keychain_path: Option<&Path>,
+    original_default_keychain: Option<&str>,
     original_keychains: &[String],
     installed_profiles: &[PathBuf],
 ) {
@@ -481,6 +484,15 @@ fn cleanup_ios_signing_state(
     }
 
     if let Some(path) = keychain_path {
+        if let Some(default_keychain) = original_default_keychain {
+            let _ = run_security_command_with_strings(&[
+                "default-keychain".to_string(),
+                "-d".to_string(),
+                "user".to_string(),
+                "-s".to_string(),
+                default_keychain.to_string(),
+            ]);
+        }
         if !original_keychains.is_empty() {
             let _ = run_security_command_with_strings(
                 &[
@@ -696,6 +708,7 @@ fn install_ios_signing_bundle(
     let keychain_path = signing_dir.join("oore-ci-build.keychain-db");
     let keychain_path_str = keychain_path.display().to_string();
     let mut keychain_created = false;
+    let mut original_default_keychain = None;
     let mut original_keychains = Vec::new();
 
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
@@ -767,6 +780,14 @@ fn install_ios_signing_bundle(
 
         let original_keychain_output = run_security_command(&["list-keychains", "-d", "user"])?;
         original_keychains = parse_keychain_list(&original_keychain_output);
+        let original_default_output = run_security_command(&["default-keychain", "-d", "user"])?;
+        original_default_keychain = parse_keychain_list(&original_default_output)
+            .into_iter()
+            .next();
+        anyhow::ensure!(
+            original_default_keychain.is_some(),
+            "no default user keychain is configured"
+        );
 
         let mut list_args = vec![
             "list-keychains".to_string(),
@@ -777,6 +798,13 @@ fn install_ios_signing_bundle(
         ];
         list_args.extend(original_keychains.clone());
         run_security_command_with_strings(&list_args)?;
+        run_security_command_with_strings(&[
+            "default-keychain".to_string(),
+            "-d".to_string(),
+            "user".to_string(),
+            "-s".to_string(),
+            keychain_path_str.clone(),
+        ])?;
 
         run_security_command_with_strings(&[
             "import".to_string(),
@@ -846,6 +874,8 @@ fn install_ios_signing_bundle(
             materialization,
             IosSigningCleanup {
                 keychain_path,
+                original_default_keychain: original_default_keychain
+                    .expect("default keychain verified before signing setup"),
                 original_keychains,
                 installed_profiles,
             },
@@ -857,6 +887,7 @@ fn install_ios_signing_bundle(
                 } else {
                     None
                 },
+                original_default_keychain.as_deref(),
                 &original_keychains,
                 &installed_profiles,
             );
@@ -4205,5 +4236,13 @@ SHA-1 hash: 0ADDF2727054A792183CF51F72B687DCA1D35C6B
             Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B")
         );
         assert_eq!(parse_certificate_sha1_hash("SHA-1 hash: invalid"), None);
+    }
+
+    #[test]
+    fn parses_default_keychain_path_for_restore() {
+        assert_eq!(
+            parse_keychain_list("    \"/Users/runner/Library/Keychains/login.keychain-db\"\n"),
+            vec!["/Users/runner/Library/Keychains/login.keychain-db"]
+        );
     }
 }
