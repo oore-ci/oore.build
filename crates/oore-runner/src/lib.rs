@@ -955,19 +955,27 @@ fn adapt_ios_command_for_signing(
         );
     }
 
-    args.retain(|arg| arg != "--no-codesign");
-    let mut remove_export_method_value = false;
-    args.retain(|arg| {
-        if remove_export_method_value {
-            remove_export_method_value = false;
-            return false;
+    let mut filtered_args = Vec::with_capacity(args.len());
+    let mut remove_next_value = false;
+    for arg in args {
+        if remove_next_value {
+            remove_next_value = false;
+            continue;
         }
-        if arg == "--export-method" {
-            remove_export_method_value = true;
-            return false;
+        if arg == "--export-method" || arg == "--export-options-plist" {
+            remove_next_value = true;
+            continue;
         }
-        !arg.starts_with("--export-method=")
-    });
+        if arg == "--codesign"
+            || arg == "--no-codesign"
+            || arg.starts_with("--export-method=")
+            || arg.starts_with("--export-options-plist=")
+        {
+            continue;
+        }
+        filtered_args.push(arg);
+    }
+    args = filtered_args;
 
     let rewrote_ios_target = rewrite_flutter_ios_target_to_ipa(&mut args);
     if !rewrote_ios_target && !contains_flutter_build_target(&args, "ipa") {
@@ -976,17 +984,16 @@ fn adapt_ios_command_for_signing(
         );
     }
 
-    let has_export_plist = args
-        .iter()
-        .any(|arg| arg.starts_with("--export-options-plist="));
-    if !has_export_plist {
-        args.push(format!(
-            "--export-options-plist={}",
-            export_options_plist.display()
-        ));
-    }
+    // Archive without signing so project-local development signing settings cannot
+    // override Oore's distribution identity. The export step then signs every target
+    // with the certificate and per-bundle profiles in ExportOptions.plist.
+    args.push("--no-codesign".to_string());
 
-    Ok(args.join(" "))
+    Ok(format!(
+        "{} && OORE_XCARCHIVE=$(find build/ios/archive -maxdepth 1 -type d -name '*.xcarchive' -print -quit) && test -n \"$OORE_XCARCHIVE\" && mkdir -p build/ios/ipa && xcrun xcodebuild -exportArchive -archivePath \"$OORE_XCARCHIVE\" -exportPath build/ios/ipa -exportOptionsPlist \"{}\"",
+        args.join(" "),
+        export_options_plist.display()
+    ))
 }
 
 fn normalize_stage_command_for_execution(
@@ -4068,14 +4075,16 @@ mod tests {
     }
 
     #[test]
-    fn adapts_flutter_build_ios_to_signed_ipa_command() {
+    fn adapts_flutter_build_ios_to_unsigned_archive_then_signed_export() {
         let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
         let command = "flutter build ios --release --no-codesign";
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.starts_with("flutter build ipa --release"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(adapted.contains("xcrun xcodebuild -exportArchive"));
+        assert!(adapted.contains("-archivePath \"$OORE_XCARCHIVE\""));
+        assert!(adapted.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
     }
 
     #[test]
@@ -4095,8 +4104,9 @@ mod tests {
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.contains("flutter build ipa --release"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(adapted.contains("xcrun xcodebuild -exportArchive"));
+        assert!(adapted.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
     }
 
     #[test]
@@ -4113,9 +4123,10 @@ mod tests {
 
         assert!(signing_applied);
         assert!(normalized.contains("flutter build ipa --release"));
-        assert!(!normalized.contains("--no-codesign"));
+        assert!(normalized.contains("--no-codesign"));
         assert!(normalized.contains("--dart-define-from-file=.env"));
-        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(normalized.contains("xcrun xcodebuild -exportArchive"));
+        assert!(normalized.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
     }
 
     #[test]
@@ -4149,7 +4160,23 @@ mod tests {
         assert!(signing_applied);
         assert!(normalized.contains("fvm flutter build ipa --release"));
         assert!(!normalized.contains("--export-method"));
-        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(normalized.contains("--no-codesign"));
+        assert!(normalized.contains("xcrun xcodebuild -exportArchive"));
+        assert!(normalized.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
+    }
+
+    #[test]
+    fn replaces_pipeline_export_options_with_oore_signed_export() {
+        let export_plist = PathBuf::from("/tmp/OoreExportOptions.plist");
+        let command =
+            "fvm flutter build ipa --release --codesign --export-options-plist /tmp/repo.plist";
+        let adapted =
+            adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
+
+        assert!(!adapted.contains("/tmp/repo.plist"));
+        assert!(!adapted.contains("--codesign"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(adapted.contains("-exportOptionsPlist \"/tmp/OoreExportOptions.plist\""));
     }
 
     #[test]

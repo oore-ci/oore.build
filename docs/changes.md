@@ -19,6 +19,7 @@ Rules:
   - The imported certificate's SHA-1 remains pinned in ExportOptions and `CODE_SIGN_IDENTITY`, so this daemon-safe verification does not weaken or broaden signing selection.
   - Key partition access is applied only to signing keys via macOS `security set-key-partition-list -s`, preventing the ACL step from invalidating an otherwise valid imported distribution identity.
   - When Oore supplies ExportOptions, the runner removes both accepted forms of Flutter's conflicting `--export-method` option before executing the build command.
+  - Flutter iOS pipelines now create an unsigned archive before Oore performs the signed export with its exact distribution certificate and per-bundle provisioning-profile map. Repository-local development signing settings can no longer force a developer certificate or Apple-account login on the headless runner, including projects with app extensions.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Portable iOS certificate inspection**:
   - PKCS#12 inspection and re-export now try the portable command first, then use OpenSSL 3's legacy provider only when an older bundle requires it. Valid Apple certificates can therefore be saved on the supported macOS backend, whose system LibreSSL does not recognize the `-legacy` option.
