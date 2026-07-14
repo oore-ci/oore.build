@@ -388,14 +388,13 @@ fn parse_openssl_time(value: &str) -> Option<i64> {
         return None;
     }
 
-    DateTime::parse_from_str(raw, "%b %e %H:%M:%S %Y %Z")
+    let utc_value = raw
+        .strip_suffix(" GMT")
+        .or_else(|| raw.strip_suffix(" UTC"))
+        .unwrap_or(raw);
+    NaiveDateTime::parse_from_str(utc_value, "%b %e %H:%M:%S %Y")
         .ok()
-        .map(|dt| dt.with_timezone(&Utc).timestamp())
-        .or_else(|| {
-            NaiveDateTime::parse_from_str(raw, "%b %e %H:%M:%S %Y")
-                .ok()
-                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).timestamp())
-        })
+        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).timestamp())
 }
 
 /// Reads PKCS#12 data across both macOS LibreSSL and OpenSSL 3.
@@ -433,6 +432,13 @@ async fn parse_p12_metadata(
         let p12_path = std::env::temp_dir().join(format!("oore-ios-cert-{token}.p12"));
         let password_path = std::env::temp_dir().join(format!("oore-ios-cert-pass-{token}.txt"));
         let cert_path = std::env::temp_dir().join(format!("oore-ios-cert-{token}.pem"));
+        let key_path = std::env::temp_dir().join(format!("oore-ios-key-{token}.pem"));
+        let cleanup_paths = [
+            p12_path.clone(),
+            password_path.clone(),
+            cert_path.clone(),
+            key_path.clone(),
+        ];
 
         fs::write(&p12_path, &p12_bytes).map_err(|e| {
             anyhow::anyhow!(
@@ -461,7 +467,7 @@ async fn parse_p12_metadata(
         .map_err(|e| anyhow::anyhow!("failed to execute openssl pkcs12: {e}"))?;
         if !cert_output.status.success() {
             let stderr = String::from_utf8_lossy(&cert_output.stderr);
-            cleanup_temp_paths(&[p12_path, password_path, cert_path]);
+            cleanup_temp_paths(&cleanup_paths);
             anyhow::bail!("failed to parse p12 certificate with openssl: {stderr}");
         }
         fs::write(&cert_path, &cert_output.stdout).map_err(|e| {
@@ -471,6 +477,60 @@ async fn parse_p12_metadata(
             )
         })?;
         set_strict_permissions(&cert_path);
+
+        let key_output = run_openssl_pkcs12(&[
+            "-in",
+            p12_path.to_string_lossy().as_ref(),
+            "-nocerts",
+            "-nodes",
+            "-passin",
+            &passin,
+        ])
+        .map_err(|e| anyhow::anyhow!("failed to execute openssl pkcs12: {e}"))?;
+        if !key_output.status.success() {
+            let stderr = String::from_utf8_lossy(&key_output.stderr);
+            cleanup_temp_paths(&cleanup_paths);
+            anyhow::bail!("failed to parse p12 private key with openssl: {stderr}");
+        }
+        fs::write(&key_path, &key_output.stdout).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to write temporary private key '{}': {e}",
+                key_path.display()
+            )
+        })?;
+        set_strict_permissions(&key_path);
+
+        let cert_public_key = Command::new("openssl")
+            .args([
+                "x509",
+                "-in",
+                cert_path.to_string_lossy().as_ref(),
+                "-pubkey",
+                "-noout",
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to inspect p12 certificate public key: {e}"))?;
+        let private_public_key = Command::new("openssl")
+            .args([
+                "pkey",
+                "-in",
+                key_path.to_string_lossy().as_ref(),
+                "-pubout",
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to inspect p12 private key: {e}"))?;
+        if !cert_public_key.status.success() || !private_public_key.status.success() {
+            let cert_error = String::from_utf8_lossy(&cert_public_key.stderr);
+            let key_error = String::from_utf8_lossy(&private_public_key.stderr);
+            cleanup_temp_paths(&cleanup_paths);
+            anyhow::bail!(
+                "failed to compare p12 certificate and private key: certificate={cert_error}; key={key_error}"
+            );
+        }
+        if cert_public_key.stdout != private_public_key.stdout {
+            cleanup_temp_paths(&cleanup_paths);
+            anyhow::bail!("p12 certificate does not match its private key");
+        }
 
         let metadata_output = Command::new("openssl")
             .args([
@@ -485,7 +545,7 @@ async fn parse_p12_metadata(
             ])
             .output()
             .map_err(|e| anyhow::anyhow!("failed to execute openssl x509: {e}"))?;
-        cleanup_temp_paths(&[p12_path, password_path, cert_path]);
+        cleanup_temp_paths(&cleanup_paths);
         if !metadata_output.status.success() {
             let stderr = String::from_utf8_lossy(&metadata_output.stderr);
             anyhow::bail!("failed to inspect p12 certificate metadata: {stderr}");
@@ -523,6 +583,8 @@ async fn verify_p12_keychain_import_compatibility(
         let p12_path = std::env::temp_dir().join(format!("oore-ios-import-check-{token}.p12"));
         let keychain_path =
             std::env::temp_dir().join(format!("oore-ios-import-check-{token}.keychain-db"));
+        let exported_identity_path =
+            std::env::temp_dir().join(format!("oore-ios-identity-check-{token}.p12"));
         let keychain_password = random_secret_hex();
 
         fs::write(&p12_path, &p12_bytes).map_err(|e| {
@@ -539,6 +601,7 @@ async fn verify_p12_keychain_import_compatibility(
                 .output();
             let _ = fs::remove_file(&keychain_path);
             let _ = fs::remove_file(&p12_path);
+            let _ = fs::remove_file(&exported_identity_path);
         };
 
         let create_output = Command::new("security")
@@ -579,25 +642,43 @@ async fn verify_p12_keychain_import_compatibility(
             .args([
                 "import",
                 p12_path.to_string_lossy().as_ref(),
+                "-f",
+                "pkcs12",
                 "-k",
                 keychain_path.to_string_lossy().as_ref(),
                 "-P",
                 &p12_password,
-                "-T",
-                "/usr/bin/codesign",
-                "-T",
-                "/usr/bin/security",
-                "-T",
-                "/usr/bin/xcodebuild",
+                "-A",
             ])
             .output()
             .map_err(|e| anyhow::anyhow!("failed to execute security import: {e}"))?;
 
-        cleanup();
-
         if !import_output.status.success() {
             let stderr = String::from_utf8_lossy(&import_output.stderr);
+            cleanup();
             anyhow::bail!("failed to import p12 into macOS keychain: {stderr}");
+        }
+
+        let export_output = Command::new("security")
+            .args([
+                "export",
+                "-k",
+                keychain_path.to_string_lossy().as_ref(),
+                "-t",
+                "identities",
+                "-f",
+                "pkcs12",
+                "-P",
+                &keychain_password,
+                "-o",
+                exported_identity_path.to_string_lossy().as_ref(),
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("failed to execute security identity export: {e}"))?;
+        cleanup();
+        if !export_output.status.success() {
+            let stderr = String::from_utf8_lossy(&export_output.stderr);
+            anyhow::bail!("p12 imported without a usable macOS signing identity: {stderr}");
         }
 
         Ok(())
@@ -1394,7 +1475,7 @@ async fn sync_ios_signing_assets(
     }
 
     let mut p12_was_reexported = false;
-    let p12_metadata = match (existing_p12.clone(), existing_password.clone()) {
+    let mut p12_metadata = match (existing_p12.clone(), existing_password.clone()) {
         (Some(p12_base64), Some(password)) => {
             let p12_bytes = match decode_b64(&p12_base64) {
                 Ok(bytes) => bytes,
@@ -1528,6 +1609,32 @@ async fn sync_ios_signing_assets(
         _ => None,
     };
 
+    info!(
+        pipeline_id = %pipeline_id,
+        mode = %settings.mode,
+        expires_at = ?p12_metadata.as_ref().and_then(|metadata| metadata.expires_at),
+        serial = ?p12_metadata.as_ref().and_then(|metadata| metadata.serial_number.as_deref()),
+        "inspected stored iOS certificate before asset sync"
+    );
+
+    if matches!(mode, IosSigningMode::Api)
+        && p12_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.expires_at)
+            .is_some_and(|expires_at| expires_at <= now_unix())
+    {
+        warn!(
+            pipeline_id = %pipeline_id,
+            "stored API-mode iOS certificate is expired; forcing certificate regeneration"
+        );
+        warnings.push(
+            "Stored API-mode iOS certificate has expired and will be regenerated".to_string(),
+        );
+        existing_p12 = None;
+        existing_password = None;
+        p12_metadata = None;
+    }
+
     let p12_serial = p12_metadata
         .as_ref()
         .and_then(|metadata| metadata.serial_number.clone());
@@ -1557,22 +1664,7 @@ async fn sync_ios_signing_assets(
             Ok(bundle) => {
                 generated_certificate = Some(bundle);
             }
-            Err((status, err)) => {
-                if cert_records.is_empty() {
-                    return Err((status, err));
-                }
-                warn!(
-                    pipeline_id = %pipeline_id,
-                    code = %err.code,
-                    error = %err.error,
-                    http_status = %status,
-                    "failed to generate API-mode iOS certificate bundle; continuing with existing Apple certificate record"
-                );
-                warnings.push(format!(
-                    "Could not generate a new iOS certificate bundle from Apple API ({}) - continuing with existing Apple certificate references",
-                    err.error
-                ));
-            }
+            Err(error) => return Err(error),
         }
     }
 
@@ -3228,6 +3320,18 @@ pub async fn get_job_ios_signing(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_openssl_certificate_expiry_in_utc() {
+        assert_eq!(
+            parse_openssl_time("May 27 16:16:29 2021 GMT"),
+            Some(1_622_132_189)
+        );
+        assert_eq!(
+            parse_openssl_time("Jul 14 18:07:24 2027 UTC"),
+            Some(1_815_588_444)
+        );
+    }
 
     #[test]
     fn materialized_ios_filenames_must_be_basenames() {

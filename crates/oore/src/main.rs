@@ -341,6 +341,10 @@ enum RunnerSubcommand {
     Register(RunnerRegisterArgs),
     /// Start the runner daemon (poll for jobs, execute builds)
     Start(RunnerStartArgs),
+    /// Install and start the runner in the logged-in macOS user session
+    InstallService(RunnerServiceArgs),
+    /// Stop and remove the managed macOS runner service
+    UninstallService,
 }
 
 #[derive(Debug, Args)]
@@ -361,6 +365,13 @@ struct RunnerStartArgs {
     /// Daemon URL (loaded from config if not specified)
     #[arg(long, env = "OORE_DAEMON_URL")]
     daemon_url: Option<String>,
+    /// Path to runner config file
+    #[arg(long, default_value = "~/.oore/runner.json")]
+    config: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct RunnerServiceArgs {
     /// Path to runner config file
     #[arg(long, default_value = "~/.oore/runner.json")]
     config: Option<String>,
@@ -2523,22 +2534,7 @@ async fn handle_runner_register(args: RunnerRegisterArgs) -> anyhow::Result<()> 
 }
 
 async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
-    let config_path = args
-        .config
-        .map(|p| {
-            if let Some(stripped) = p.strip_prefix("~/") {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(stripped)
-            } else {
-                PathBuf::from(p)
-            }
-        })
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".oore/runner.json")
-        });
+    let config_path = runner_config_path(args.config)?;
 
     let config: RunnerConfig = serde_json::from_str(
         &fs::read_to_string(&config_path)
@@ -2555,6 +2551,16 @@ async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
     };
 
     oore_runner::run_runner_forever(shared_cfg, Some(daemon_url)).await
+}
+
+fn runner_config_path(value: Option<String>) -> anyhow::Result<PathBuf> {
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    Ok(match value {
+        Some(path) if path == "~" => home,
+        Some(path) if path.starts_with("~/") => home.join(&path[2..]),
+        Some(path) => PathBuf::from(path),
+        None => home.join(".oore/runner.json"),
+    })
 }
 
 fn config_key_supported(key: &str) -> bool {
@@ -3557,6 +3563,177 @@ fn backup_restore(args: BackupRestoreArgs) -> anyhow::Result<()> {
 
 const DAEMON_SERVICE_LABEL: &str = "build.oore.oored";
 const WEB_SERVICE_LABEL: &str = "build.oore.oore-web";
+const RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
+
+fn launchd_xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn render_runner_launch_agent(
+    executable: &Path,
+    config: &Path,
+    home: &Path,
+    log_path: &Path,
+    path: &str,
+) -> String {
+    let values = [
+        executable.display().to_string(),
+        "runner".to_string(),
+        "start".to_string(),
+        "--config".to_string(),
+        config.display().to_string(),
+    ];
+    let arguments = values
+        .iter()
+        .map(|value| format!("        <string>{}</string>", launchd_xml_escape(value)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{RUNNER_SERVICE_LABEL}</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>ProgramArguments</key>
+    <array>
+{arguments}
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{}</string>
+        <key>PATH</key>
+        <string>{}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{}</string>
+    <key>StandardErrorPath</key>
+    <string>{}</string>
+</dict>
+</plist>
+"#,
+        launchd_xml_escape(&home.display().to_string()),
+        launchd_xml_escape(path),
+        launchd_xml_escape(&log_path.display().to_string()),
+        launchd_xml_escape(&log_path.display().to_string()),
+    )
+}
+
+fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
+    let output = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .context("failed to determine current user id")?;
+    if !output.status.success() {
+        anyhow::bail!("failed to determine current user id");
+    }
+    let uid = String::from_utf8(output.stdout)
+        .context("current user id was not valid UTF-8")?
+        .trim()
+        .to_string();
+    Ok((
+        format!("gui/{uid}"),
+        format!("gui/{uid}/{RUNNER_SERVICE_LABEL}"),
+    ))
+}
+
+fn handle_runner_install_service(args: RunnerServiceArgs) -> anyhow::Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("managed runner service installation is supported on macOS only");
+    }
+
+    let config = runner_config_path(args.config)?;
+    if !config.is_file() {
+        anyhow::bail!(
+            "runner is not registered; run `oore runner register` before installing the service"
+        );
+    }
+
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    let logs = home.join(".oore/logs");
+    let log_path = logs.join("oore-runner.log");
+    let plist = launch_agent_plist(RUNNER_SERVICE_LABEL)?;
+    let executable = std::env::current_exe().context("failed to locate the oore executable")?;
+    let path = std::env::var("PATH").unwrap_or_else(|_| {
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+    });
+
+    fs::create_dir_all(&logs)?;
+    fs::create_dir_all(
+        plist
+            .parent()
+            .context("runner plist has no parent directory")?,
+    )?;
+    fs::write(
+        &plist,
+        render_runner_launch_agent(&executable, &config, &home, &log_path, &path),
+    )?;
+
+    let lint = std::process::Command::new("plutil")
+        .args(["-lint", &plist.display().to_string()])
+        .status()
+        .context("failed to validate runner service plist")?;
+    if !lint.success() {
+        anyhow::bail!("runner service plist is invalid: {}", plist.display());
+    }
+
+    let (domain, service) = current_user_launchd_domain()?;
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &service])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let bootstrap = std::process::Command::new("launchctl")
+        .args(["bootstrap", &domain, &plist.display().to_string()])
+        .status()
+        .context("failed to start runner service")?;
+    if bootstrap.success() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &service])
+            .status();
+        println!("Installed and started runner service: {RUNNER_SERVICE_LABEL}");
+    } else {
+        println!("Installed runner service: {RUNNER_SERVICE_LABEL}");
+        println!("The runner will start at the next interactive macOS login.");
+    }
+    println!("Plist: {}", plist.display());
+    println!("Logs:  {}", log_path.display());
+    println!(
+        "iOS signing runs here because Apple Keychain access requires a logged-in macOS session."
+    );
+    Ok(())
+}
+
+fn handle_runner_uninstall_service() -> anyhow::Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("managed runner service removal is supported on macOS only");
+    }
+    let plist = launch_agent_plist(RUNNER_SERVICE_LABEL)?;
+    let (_, service) = current_user_launchd_domain()?;
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &service])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if plist.exists() {
+        fs::remove_file(&plist)?;
+    }
+    println!("Removed runner service: {RUNNER_SERVICE_LABEL}");
+    Ok(())
+}
 
 fn launch_agent_plist(label: &str) -> anyhow::Result<PathBuf> {
     Ok(dirs::home_dir()
@@ -4268,6 +4445,8 @@ fn main() -> anyhow::Result<()> {
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_start(args))?;
             }
+            RunnerSubcommand::InstallService(args) => handle_runner_install_service(args)?,
+            RunnerSubcommand::UninstallService => handle_runner_uninstall_service()?,
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
@@ -4323,6 +4502,37 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runner_service_is_scoped_to_the_aqua_login_session() {
+        let plist = render_runner_launch_agent(
+            Path::new("/Users/me/.oore/bin/oore"),
+            Path::new("/Users/me/.oore/runner.json"),
+            Path::new("/Users/me"),
+            Path::new("/Users/me/.oore/logs/oore-runner.log"),
+            "/usr/bin:/bin",
+        );
+
+        assert!(plist.contains("<string>build.oore.oore-runner</string>"));
+        assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
+        assert!(plist.contains("<string>/Users/me/.oore/bin/oore</string>"));
+        assert!(plist.contains("<string>runner</string>\n        <string>start</string>"));
+        assert!(plist.contains("<string>/Users/me/.oore/runner.json</string>"));
+    }
+
+    #[test]
+    fn runner_service_escapes_launchd_values() {
+        let plist = render_runner_launch_agent(
+            Path::new("/Users/a&b/oore"),
+            Path::new("/Users/a&b/runner.json"),
+            Path::new("/Users/a&b"),
+            Path::new("/Users/a&b/runner.log"),
+            "/usr/bin:/a&b",
+        );
+
+        assert!(plist.contains("/Users/a&amp;b/oore"));
+        assert!(plist.contains("/usr/bin:/a&amp;b"));
+    }
 
     #[test]
     fn command_timeout_stops_stalled_service_commands() {

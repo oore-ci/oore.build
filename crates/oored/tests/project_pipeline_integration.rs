@@ -2191,7 +2191,7 @@ async fn test_register_ios_device_surfaces_apple_error() {
 }
 
 #[tokio::test]
-async fn test_sync_ios_signing_falls_back_when_certificate_creation_conflicts() {
+async fn test_sync_ios_signing_fails_when_certificate_creation_conflicts() {
     let dir = tempfile::tempdir().unwrap();
     let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
@@ -2348,18 +2348,12 @@ async fn test_sync_ios_signing_falls_back_when_certificate_creation_conflicts() 
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "sync ios signing: {json}");
-    assert_eq!(json["ok"].as_bool(), Some(true));
-    assert_eq!(json["updated_profiles"].as_u64(), Some(1));
-    let warnings = json["warnings"].as_array().cloned().unwrap_or_default();
-    assert!(
-        warnings.iter().any(|item| {
-            item.as_str()
-                .unwrap_or_default()
-                .contains("Could not generate a new iOS certificate bundle")
-        }),
-        "expected certificate generation fallback warning: {json}"
+    assert_eq!(
+        status,
+        StatusCode::BAD_GATEWAY,
+        "sync must fail when Oore cannot create certificate material it owns: {json}"
     );
+    assert_eq!(json["code"].as_str(), Some("apple_api_error"));
     let captured_body = certificate_create_body
         .lock()
         .expect("read captured cert create body")

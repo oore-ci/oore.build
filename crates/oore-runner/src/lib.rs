@@ -453,7 +453,7 @@ impl Drop for IosSigningCleanup {
 }
 
 fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("security")
+    let output = Command::new("/usr/bin/security")
         .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
@@ -465,7 +465,7 @@ fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
 }
 
 fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> {
-    let output = Command::new("security")
+    let output = Command::new("/usr/bin/security")
         .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
@@ -536,20 +536,21 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_certificate_sha1_hash(raw: &str) -> Option<String> {
-    raw.lines().find_map(|line| {
-        let candidate = line.trim().strip_prefix("SHA-1 hash:")?.trim();
-        (candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()))
-            .then(|| candidate.to_string())
-    })
-}
-
-fn parse_certificate_label(raw: &str) -> Option<String> {
-    raw.lines().find_map(|line| {
-        let (_, attribute) = line.split_once("\"labl\"")?;
-        let (_, value) = attribute.split_once("=\"")?;
-        let value = value.strip_suffix('"')?.trim();
-        (!value.is_empty()).then(|| value.to_string())
+fn parse_distribution_certificate(raw: &str) -> Option<(String, String)> {
+    raw.split("SHA-256 hash:").find_map(|block| {
+        let name = block
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("\"alis\"<blob>=\""))?
+            .strip_suffix('"')?;
+        if !name.contains("Distribution") {
+            return None;
+        }
+        let sha1 = block
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("SHA-1 hash:"))?
+            .trim();
+        (sha1.len() == 40 && sha1.chars().all(|ch| ch.is_ascii_hexdigit()))
+            .then(|| (sha1.to_string(), name.to_string()))
     })
 }
 
@@ -791,6 +792,12 @@ fn install_ios_signing_bundle(
             keychain_password.clone(),
             keychain_path_str.clone(),
         ])?;
+        run_security_command_with_strings(&[
+            "set-keychain-settings".to_string(),
+            "-lut".to_string(),
+            "21600".to_string(),
+            keychain_path_str.clone(),
+        ])?;
 
         let original_keychain_output = run_security_command(&["list-keychains", "-d", "user"])?;
         original_keychains = parse_keychain_list(&original_keychain_output);
@@ -803,15 +810,18 @@ fn install_ios_signing_bundle(
             "no default user keychain is configured"
         );
 
-        let mut list_args = vec![
+        // Match Codemagic's proven keychain layout: keep the user's normal
+        // keychains available for Apple's public trust chain and append the
+        // isolated build keychain that owns the private signing identity.
+        let mut build_keychain_search_list = vec![
             "list-keychains".to_string(),
             "-d".to_string(),
             "user".to_string(),
             "-s".to_string(),
-            keychain_path_str.clone(),
         ];
-        list_args.extend(original_keychains.clone());
-        run_security_command_with_strings(&list_args)?;
+        build_keychain_search_list.extend(original_keychains.iter().cloned());
+        build_keychain_search_list.push(keychain_path_str.clone());
+        run_security_command_with_strings(&build_keychain_search_list)?;
         run_security_command_with_strings(&[
             "default-keychain".to_string(),
             "-d".to_string(),
@@ -823,16 +833,13 @@ fn install_ios_signing_bundle(
         run_security_command_with_strings(&[
             "import".to_string(),
             p12_path.display().to_string(),
+            "-f".to_string(),
+            "pkcs12".to_string(),
             "-k".to_string(),
             keychain_path_str.clone(),
             "-P".to_string(),
             bundle.p12_password.clone(),
-            "-T".to_string(),
-            "/usr/bin/codesign".to_string(),
-            "-T".to_string(),
-            "/usr/bin/security".to_string(),
-            "-T".to_string(),
-            "/usr/bin/xcodebuild".to_string(),
+            "-A".to_string(),
         ])?;
 
         run_security_command_with_strings(&[
@@ -846,27 +853,19 @@ fn install_ios_signing_bundle(
             anyhow::anyhow!("no sign-capable private key found after importing p12: {error}")
         })?;
 
-        let certificate_output = run_security_command_with_strings(&[
+        let certificates = run_security_command_with_strings(&[
             "find-certificate".to_string(),
+            "-a".to_string(),
             "-Z".to_string(),
             keychain_path_str.clone(),
         ])?;
-        let signing_identity_sha1 = parse_certificate_sha1_hash(&certificate_output)
-            .ok_or_else(|| anyhow::anyhow!("no signing certificate found after importing p12"))?;
-        let signing_identity_name =
-            parse_certificate_label(&certificate_output).ok_or_else(|| {
-                anyhow::anyhow!("imported signing certificate did not expose an identity name")
+        let (signing_identity_sha1, signing_identity_name) =
+            parse_distribution_certificate(&certificates).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no Apple Distribution certificate found after importing p12:\n{}",
+                    certificates.trim()
+                )
             })?;
-
-        run_security_command_with_strings(&[
-            "set-key-partition-list".to_string(),
-            "-S".to_string(),
-            "apple-tool:,apple:,codesign:".to_string(),
-            "-s".to_string(),
-            "-k".to_string(),
-            keychain_password.clone(),
-            keychain_path_str.clone(),
-        ])?;
 
         let signing_preflight_path = signing_dir.join("oore-signing-preflight");
         fs::copy("/usr/bin/true", &signing_preflight_path).map_err(|error| {
@@ -953,7 +952,14 @@ fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyho
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
+        let mut detail = if stderr.is_empty() { stdout } else { stderr };
+        if detail.contains("errSecInternalComponent")
+            || detail.contains("User interaction is not allowed")
+        {
+            detail.push_str(
+                "; the runner is outside an interactive macOS login session. Register it as an external runner and run `oore runner install-service`",
+            );
+        }
         anyhow::bail!("failed to {action}: {detail}");
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -3160,6 +3166,17 @@ fn compute_file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+fn runner_artifact_upload_url(daemon_url: &str, upload_url: &str) -> String {
+    const LOCAL_UPLOAD_PATH: &str = "/v1/artifacts/local-upload/";
+    match upload_url.split_once(LOCAL_UPLOAD_PATH) {
+        Some((_, token)) => format!(
+            "{}{LOCAL_UPLOAD_PATH}{token}",
+            daemon_url.trim_end_matches('/')
+        ),
+        None => upload_url.to_string(),
+    }
+}
+
 async fn scan_and_upload_artifacts(
     workspace: &std::path::Path,
     client: &reqwest::Client,
@@ -3275,7 +3292,7 @@ async fn scan_and_upload_artifacts(
 
         let create_resp: oore_contract::CreateArtifactResponse = resp.json().await?;
         let artifact_id = create_resp.artifact.id;
-        let upload_url = create_resp.upload_url;
+        let upload_url = runner_artifact_upload_url(daemon_url, &create_resp.upload_url);
 
         if upload_url.is_empty() {
             abort_artifact(
@@ -3573,6 +3590,24 @@ mod tests {
                 .get("version")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|version| !version.is_empty())
+        );
+    }
+
+    #[test]
+    fn local_artifact_uploads_use_the_runner_daemon_url() {
+        assert_eq!(
+            runner_artifact_upload_url(
+                "http://127.0.0.1:8787",
+                "https://ci.example.com/v1/artifacts/local-upload/token"
+            ),
+            "http://127.0.0.1:8787/v1/artifacts/local-upload/token"
+        );
+        assert_eq!(
+            runner_artifact_upload_url(
+                "http://127.0.0.1:8787",
+                "https://s3.example.com/bucket/artifact?signature=abc"
+            ),
+            "https://s3.example.com/bucket/artifact?signature=abc"
         );
     }
 
@@ -4679,25 +4714,22 @@ mod tests {
     }
 
     #[test]
-    fn parses_certificate_sha1_hash() {
+    fn parses_imported_distribution_certificate() {
         let output = r#"
 SHA-256 hash: 7C16B3FEEB8C0DD77E73D2714F4E63C4F4EBB57CDAF72F11F121AF610AB1647F
 SHA-1 hash: 0ADDF2727054A792183CF51F72B687DCA1D35C6B
 keychain: "/tmp/oore-ci-build.keychain-db"
 attributes:
     "alis"<blob>="Apple Distribution: Zerodha Broking Limited (843ED8PUW8)"
-    "labl"<blob>="Apple Distribution: Zerodha Broking Limited (843ED8PUW8)"
 "#;
         assert_eq!(
-            parse_certificate_sha1_hash(output).as_deref(),
-            Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B")
+            parse_distribution_certificate(output),
+            Some((
+                "0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string(),
+                "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string()
+            ))
         );
-        assert_eq!(parse_certificate_sha1_hash("SHA-1 hash: invalid"), None);
-        assert_eq!(
-            parse_certificate_label(output).as_deref(),
-            Some("Apple Distribution: Zerodha Broking Limited (843ED8PUW8)")
-        );
-        assert_eq!(parse_certificate_label("\"labl\"<blob>=\"\""), None);
+        assert_eq!(parse_distribution_certificate("no certificates"), None);
     }
 
     #[test]

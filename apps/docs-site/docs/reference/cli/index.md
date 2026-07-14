@@ -116,6 +116,8 @@ The operator CLI handles setup, authentication, and administration.
 | [`oore status`](/reference/cli/oore-status)                   | Show setup status and authenticated operational summary | Implemented |
 | `oore runner register`                                        | Register an external build runner                       | Implemented |
 | `oore runner start`                                           | Start external runner process                           | Implemented |
+| `oore runner install-service`                                 | Install a macOS login-session runner service            | Implemented |
+| `oore runner uninstall-service`                               | Remove the managed macOS runner service                 | Implemented |
 | [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values                            | Implemented |
 | [`oore config get <key>`](/reference/cli/oore-config)         | Get CLI configuration values                            | Implemented |
 | [`oore doctor`](/reference/cli/oore-doctor)                   | Run environment/signing diagnostics                     | Implemented |
@@ -132,3 +134,5 @@ The operator CLI handles setup, authentication, and administration.
 ### Embedded runner note
 
 The single-host default flow does not require `oore runner start`. The daemon (`oored`) auto-starts an embedded local runner unless `OORED_RUNNER_MODE=external`.
+
+iOS signing is the exception: use `OORED_RUNNER_MODE=external` and `oore runner install-service` so code signing runs in the logged-in macOS user session required by Apple Keychain Services.

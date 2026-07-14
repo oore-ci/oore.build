@@ -12,18 +12,28 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-15
+
+- **Reliable iOS runner session and local artifact delivery**:
+  - `oore runner install-service` now installs a persistent macOS LaunchAgent in the logged-in Aqua session, where Apple permits non-interactive access to imported signing keys. `oore runner uninstall-service` removes it. This replaces unsupported iOS signing from a system LaunchDaemon or background login session while preserving a separately managed `oored` backend.
+  - If Keychain Services rejects signing because a runner is outside that session, the build error now names the supported service command instead of ending at macOS's opaque `errSecInternalComponent` message.
+  - Runner-side PKCS#12 import uses an isolated temporary keychain, allows the imported identity to be used non-interactively for the build, verifies it with a real preflight signature, and restores the user's original keychain state during cleanup.
+  - Local-storage artifact upload URLs are routed over the runner's configured daemon connection. Large IPA uploads no longer leave the private Mac, traverse the public frontend proxy, and return to the same backend; S3 and other external presigned URLs remain unchanged.
+  - API signing rejects expired stored distribution certificates and provisions a fresh certificate instead of silently reusing an unusable `.p12`. If Apple refuses certificate creation, sync fails explicitly rather than generating profiles for a certificate whose private key Oore does not own.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
+
 ## 2026-07-14
 
 - **Reliable runner-side iOS identity import**:
   - The macOS runner now verifies the imported PKCS#12 material through the private signing key and certificate instead of relying on trust evaluation that can report no identities inside a system LaunchDaemon.
   - The imported certificate's SHA-1 remains pinned in ExportOptions, while the archive selects the matching identity from Oore's temporary keychain and exact per-bundle profiles. This prevents a command-line app identity from leaking into unsigned dependency targets while keeping repository-local development profiles out of the release artifact.
-  - Key partition access is applied only to signing keys via macOS `security set-key-partition-list -s`, preventing the ACL step from invalidating an otherwise valid imported distribution identity.
+  - The imported signing identity explicitly allows non-interactive use inside Oore's temporary build keychain, avoiding a Keychain approval prompt during archive and export.
   - When Oore supplies ExportOptions, the runner removes both accepted forms of Flutter's conflicting `--export-method` option before executing the build command.
   - Flutter iOS pipelines now create a signed archive with Oore's imported distribution identity and temporary keychain before exporting the IPA. Oore routes each stored provisioning profile to only the matching app or extension bundle ID during the archive, while third-party Pods remain profile-free; ExportOptions preserves the same exact mapping during export. This supports apps with extensions without rewriting their Xcode project.
   - The isolated build keychain becomes the runner user's default only for the signing window, allowing Xcode's distribution exporter to resolve the imported identity; cleanup restores both the previous default and search list before deleting the temporary keychain.
   - Archive builds no longer force one app certificate onto every Xcode target. Xcode now selects the matching imported identity for the app and extension profiles, while CocoaPods and other unsigned dependency targets remain outside the app-signing boundary; ExportOptions still pins the exact certificate SHA-1 for the final IPA.
   - App and extension archive identities use the same bundle-ID-keyed Xcode lookup as their profiles. This overrides repository development identities only for stored app bundles without reintroducing the dependency-target signing failure.
-  - Headless runners now avoid Xcode's GUI-session-dependent certificate discovery entirely: Oore creates the unsigned archive, embeds each bundle's stored profile, directly signs nested frameworks, extensions, and the app with the managed temporary keychain, verifies the result, and packages the IPA.
+  - Oore directly signs the archived app's nested frameworks, extensions, and main bundle with the managed temporary keychain, verifies the result, and packages the IPA. The runner itself remains in the active macOS login session required by Apple Keychain Services.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Portable iOS certificate inspection**:
   - PKCS#12 inspection and re-export now try the portable command first, then use OpenSSL 3's legacy provider only when an older bundle requires it. Valid Apple certificates can therefore be saved on the supported macOS backend, whose system LibreSSL does not recognize the `-legacy` option.

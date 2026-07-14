@@ -35,6 +35,16 @@ This creates a runner record on the daemon and writes a config file at `~/.oore/
 
 ## 2. Start the runner
 
+On macOS, install the managed user service:
+
+```bash
+oore runner install-service
+```
+
+The service starts at interactive login and remains running in the user's Aqua session. This is the supported mode for iOS signing because Apple Keychain Services does not expose imported private keys to a system LaunchDaemon or a background-only login session.
+
+For temporary foreground use instead:
+
 ```bash
 oore runner start
 ```
@@ -68,7 +78,13 @@ The runner process:
 
 ## Stopping the runner
 
-Stop the `oore runner start` process (Ctrl+C or kill the process). The daemon marks it as `offline` after heartbeat timeout.
+For a foreground runner, stop `oore runner start` with Ctrl+C. For the managed macOS service, run:
+
+```bash
+oore runner uninstall-service
+```
+
+The daemon marks the runner as `offline` after the heartbeat timeout.
 
 ## API endpoints
 
