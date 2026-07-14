@@ -15,7 +15,8 @@ Rules:
 ## 2026-07-14
 
 - **Reliable runner-side iOS identity import**:
-  - The macOS runner now verifies a PKCS#12 signing identity immediately after importing it, before changing key access controls, matching the native sequence that succeeds on the build host.
+  - The macOS runner now verifies the imported PKCS#12 material through the private signing key and certificate instead of relying on trust evaluation that can report no identities inside a system LaunchDaemon.
+  - The imported certificate's SHA-1 remains pinned in ExportOptions and `CODE_SIGN_IDENTITY`, so this daemon-safe verification does not weaken or broaden signing selection.
   - Key partition access is applied only to signing keys via macOS `security set-key-partition-list -s`, preventing the ACL step from invalidating an otherwise valid imported distribution identity.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Portable iOS certificate inspection**:

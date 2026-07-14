@@ -521,19 +521,12 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_codesigning_identity_hashes(raw: &str) -> Vec<String> {
-    raw.lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            let (_, rest) = trimmed.split_once(')')?;
-            let candidate = rest.split_whitespace().next()?;
-            if candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                Some(candidate.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
+fn parse_certificate_sha1_hash(raw: &str) -> Option<String> {
+    raw.lines().find_map(|line| {
+        let candidate = line.trim().strip_prefix("SHA-1 hash:")?.trim();
+        (candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()))
+            .then(|| candidate.to_string())
+    })
 }
 
 fn random_password_hex() -> String {
@@ -800,17 +793,24 @@ fn install_ios_signing_bundle(
             "/usr/bin/xcodebuild".to_string(),
         ])?;
 
-        let identity_output = run_security_command_with_strings(&[
-            "find-identity".to_string(),
-            "-v".to_string(),
-            "-p".to_string(),
-            "codesigning".to_string(),
+        run_security_command_with_strings(&[
+            "find-key".to_string(),
+            "-s".to_string(),
+            "-t".to_string(),
+            "private".to_string(),
+            keychain_path_str.clone(),
+        ])
+        .map_err(|error| {
+            anyhow::anyhow!("no sign-capable private key found after importing p12: {error}")
+        })?;
+
+        let certificate_output = run_security_command_with_strings(&[
+            "find-certificate".to_string(),
+            "-Z".to_string(),
             keychain_path_str.clone(),
         ])?;
-        let identity_hashes = parse_codesigning_identity_hashes(&identity_output);
-        if identity_hashes.is_empty() {
-            anyhow::bail!("no valid code signing identity found after importing p12");
-        }
+        let signing_identity_sha1 = parse_certificate_sha1_hash(&certificate_output)
+            .ok_or_else(|| anyhow::anyhow!("no signing certificate found after importing p12"))?;
 
         run_security_command_with_strings(&[
             "set-key-partition-list".to_string(),
@@ -822,7 +822,6 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
         ])?;
 
-        let signing_identity_sha1 = identity_hashes.first().cloned();
         let effective_export_method = resolve_ios_export_method();
         let export_options_plist_path = signing_dir.join("ExportOptions.plist");
         write_export_options_plist(
@@ -830,7 +829,7 @@ fn install_ios_signing_bundle(
             bundle.team_id.trim(),
             &effective_export_method,
             &bundle_profile_mapping,
-            signing_identity_sha1.as_deref(),
+            Some(&signing_identity_sha1),
         )?;
 
         Ok(IosSigningMaterialization {
@@ -838,7 +837,7 @@ fn install_ios_signing_bundle(
             export_options_plist_path,
             bundle_profile_mapping,
             effective_export_method,
-            signing_identity_sha1,
+            signing_identity_sha1: Some(signing_identity_sha1),
         })
     })();
 
@@ -4157,16 +4156,15 @@ mod tests {
     }
 
     #[test]
-    fn parses_valid_codesigning_identity_hashes() {
+    fn parses_certificate_sha1_hash() {
         let output = r#"
-  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Distribution: Example (TEAM1234)"
-     1 valid identities found
+SHA-256 hash: 7C16B3FEEB8C0DD77E73D2714F4E63C4F4EBB57CDAF72F11F121AF610AB1647F
+SHA-1 hash: 0ADDF2727054A792183CF51F72B687DCA1D35C6B
 "#;
-        let hashes = parse_codesigning_identity_hashes(output);
-        assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes[0], "0123456789ABCDEF0123456789ABCDEF01234567");
-
-        let none = parse_codesigning_identity_hashes("  0 valid identities found");
-        assert!(none.is_empty());
+        assert_eq!(
+            parse_certificate_sha1_hash(output).as_deref(),
+            Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B")
+        );
+        assert_eq!(parse_certificate_sha1_hash("SHA-1 hash: invalid"), None);
     }
 }
