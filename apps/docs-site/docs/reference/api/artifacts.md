@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for build artifact management and downloads in Oore CI."
+description: 'API endpoints for build artifact management and downloads in Oore CI.'
 ---
 
 # Artifacts API
@@ -84,6 +84,14 @@ POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts
 **Authentication**: Runner token (Bearer)
 
 This endpoint is called by the runner process, not by end users.
+
+The returned artifact is `pending`. After uploading, the runner must call:
+
+```
+POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete
+```
+
+If upload fails, it calls the corresponding `/abort` endpoint. Only completed (`available`) artifacts appear in list and download APIs.
 
 ---
 

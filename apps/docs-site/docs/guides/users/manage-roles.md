@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Assign and manage user roles and permissions in Oore CI."
+description: 'Assign and manage user roles and permissions in Oore CI.'
 ---
 
 # Manage User Roles
@@ -22,11 +22,11 @@ Go to **Settings > Users** and find the user whose role you want to change.
 
 Click the user's current role and select the new role from the dropdown:
 
-| Role | Permissions |
-|---|---|
-| **Admin** | Manage users, settings, projects, pipelines, builds |
+| Role          | Permissions                                                |
+| ------------- | ---------------------------------------------------------- |
+| **Admin**     | Manage users, settings, projects, pipelines, builds        |
 | **Developer** | Create/manage projects, trigger builds, download artifacts |
-| **QA Viewer** | View builds and download artifacts only |
+| **QA Viewer** | View builds and download artifacts only                    |
 
 ### 3. Save
 
@@ -47,12 +47,12 @@ curl -X PATCH http://127.0.0.1:8787/v1/users/{user_id}/role \
 
 ### Role values
 
-| API value | Display name |
-|---|---|
-| `owner` | Owner |
-| `admin` | Admin |
-| `developer` | Developer |
-| `qa_viewer` | QA Viewer |
+| API value   | Display name |
+| ----------- | ------------ |
+| `owner`     | Owner        |
+| `admin`     | Admin        |
+| `developer` | Developer    |
+| `qa_viewer` | QA Viewer    |
 
 ::: info
 The `owner` role cannot be assigned via the role change endpoint. There is exactly one owner per instance (created during setup).
@@ -60,6 +60,6 @@ The `owner` role cannot be assigned via the role change endpoint. There is exact
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
+| Method  | Path                       | Description      |
+| ------- | -------------------------- | ---------------- |
 | `PATCH` | `/v1/users/{user_id}/role` | Change user role |

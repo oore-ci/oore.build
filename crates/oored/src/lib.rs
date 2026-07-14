@@ -9,6 +9,7 @@ pub mod builds;
 pub mod crypto;
 pub mod embedded_runner;
 pub mod extractors;
+pub mod frontend_pairing;
 pub mod instance_settings;
 pub mod integrations;
 pub mod logs;
@@ -23,8 +24,10 @@ pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
+pub mod runtime_updates;
 pub mod scheduler;
 pub mod session;
 pub mod storage;
@@ -35,6 +38,7 @@ pub mod util;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, DefaultBodyLimit, State};
@@ -100,6 +104,8 @@ pub struct AppState {
     pub allowed_origins: Arc<RwLock<Vec<String>>>,
     /// Effective public base URL for externally reachable callbacks/download links.
     pub public_url: Arc<RwLock<Option<String>>>,
+    /// Owner-triggered backend update state.
+    pub runtime_update: runtime_updates::RuntimeUpdateState,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -114,7 +120,29 @@ fn local_subject_for_email(email: &str) -> String {
 }
 
 fn trusted_proxy_subject_for_email(email: &str) -> String {
-    format!("warpgate::{}", email.trim().to_lowercase())
+    format!("trusted-proxy::{}", email.trim().to_lowercase())
+}
+
+fn normalize_optional_setup_owner_email(
+    value: Option<String>,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    crate::instance_settings::normalize_email_value(trimmed)
+        .map(Some)
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "setup_owner_email must be a valid email address",
+            )
+        })
 }
 
 /// Maximum number of concurrent pending OIDC auth requests.
@@ -400,6 +428,13 @@ fn validate_session(
         )
     })?;
 
+    validate_session_hash(state_file, &hash_token(token))
+}
+
+fn validate_session_hash(
+    state_file: &mut SetupStateFile,
+    expected_hash: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
     let session = state_file.setup_session.as_ref().ok_or_else(|| {
         api_err(
             StatusCode::UNAUTHORIZED,
@@ -408,8 +443,7 @@ fn validate_session(
         )
     })?;
 
-    let hashed = hash_token(token);
-    if hashed != session.hash {
+    if expected_hash != session.hash {
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
             "invalid_session",
@@ -435,8 +469,57 @@ fn validate_session(
 
 // ── Handlers ─────────────────────────────────────────────────────
 
+fn installed_runtime_metadata() -> serde_json::Value {
+    let install_root = std::env::var_os("OORE_INSTALL_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".oore")));
+
+    let read_trimmed = |name: &str| -> Option<String> {
+        let root = install_root.as_ref()?;
+        let value = std::fs::read_to_string(root.join(name)).ok()?;
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    };
+
+    json!({
+        "version": read_trimmed("VERSION").unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+        "channel": read_trimmed("CHANNEL"),
+        "github_repo": read_trimmed("GITHUB_REPO"),
+        "package_version": env!("CARGO_PKG_VERSION"),
+    })
+}
+
 async fn healthz() -> Json<serde_json::Value> {
-    Json(json!({"ok": true}))
+    let mut metadata = installed_runtime_metadata();
+    if let serde_json::Value::Object(ref mut map) = metadata {
+        map.insert("ok".to_string(), serde_json::Value::Bool(true));
+    }
+    Json(metadata)
+}
+
+/// Liveness is intentionally independent of SQLite so a process which can
+/// accept requests remains observable while a dependency is being repaired.
+async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
+    let db_ready = {
+        let store = state.store.lock().await;
+        sqlx::query("SELECT 1").execute(store.pool()).await.is_ok()
+    };
+    let encryption_ready = state.encryption_key.len() == 32;
+    let ready = db_ready && encryption_ready;
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(json!({
+            "ok": ready,
+            "database": db_ready,
+            // Migrations and the runtime key are completed before the router is built.
+            "migrations": db_ready,
+            "encryption": encryption_ready,
+        })),
+    )
 }
 
 async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {
@@ -910,6 +993,7 @@ async fn setup_trusted_proxy_configure(
         .unwrap_or_else(|| {
             crate::instance_settings::DEFAULT_TRUSTED_PROXY_EMAIL_HEADER.to_string()
         });
+    let setup_owner_email = normalize_optional_setup_owner_email(req.setup_owner_email)?;
     let trusted_proxy_cidrs =
         crate::instance_settings::normalize_requested_trusted_proxy_cidrs(req.trusted_proxy_cidrs)?;
     let trusted_proxy_cidrs_json = serde_json::to_string(&trusted_proxy_cidrs).map_err(|e| {
@@ -950,15 +1034,17 @@ async fn setup_trusted_proxy_configure(
 
     let now = now_unix();
     sqlx::query(
-        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
-         VALUES (1, ?1, ?2, ?3, NULL, ?4, ?4)
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, NULL, ?5, ?5)
          ON CONFLICT(id) DO UPDATE SET
             user_email_header = excluded.user_email_header,
+            setup_owner_email = excluded.setup_owner_email,
             trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
             encrypted_shared_secret = excluded.encrypted_shared_secret,
             updated_at = excluded.updated_at",
     )
     .bind(&user_email_header)
+    .bind(&setup_owner_email)
     .bind(&trusted_proxy_cidrs_json)
     .bind(encrypted_shared_secret.clone())
     .bind(now)
@@ -986,6 +1072,7 @@ async fn setup_trusted_proxy_configure(
 
     Ok(Json(SetupTrustedProxyConfigureResponse {
         state: sf.setup_state,
+        setup_owner_email,
         has_shared_secret: encrypted_shared_secret.is_some(),
         configured_at: now,
         session_expires_at: sf.setup_session.as_ref().map(|s| s.expires_at),
@@ -1091,6 +1178,15 @@ async fn setup_owner_claim_trusted_proxy(
     )?;
     let email =
         crate::instance_settings::extract_trusted_proxy_email(&headers, &trusted_proxy_settings)?;
+    if let Some(expected_owner_email) = trusted_proxy_settings.setup_owner_email.as_deref()
+        && email != expected_owner_email
+    {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "trusted_proxy_owner_email_mismatch",
+            "Trusted proxy identity does not match the configured setup owner email",
+        ));
+    }
 
     let now = now_unix();
     sf.owner = Some(OwnerRecord {
@@ -1134,7 +1230,7 @@ async fn setup_oidc_start(
     validate_redirect_uri(&req.redirect_uri, &allowed_origins)?;
 
     // Validate setup session and state
-    {
+    let setup_session_hash = {
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state");
@@ -1165,6 +1261,17 @@ async fn setup_oidc_start(
         }
 
         validate_session(&mut sf, &headers)?;
+        let session_hash = sf
+            .setup_session
+            .as_ref()
+            .map(|session| session.hash.clone())
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "no_session",
+                    "No active setup session",
+                )
+            })?;
 
         // Persist the bumped session expiry
         store.save(&sf).await.map_err(|e| {
@@ -1175,7 +1282,8 @@ async fn setup_oidc_start(
                 "Failed to save setup state",
             )
         })?;
-    }
+        session_hash
+    };
 
     // Load the OIDC config (allows IdpConfigured state)
     let oidc_config = load_oidc_config_for_setup(&state).await?;
@@ -1218,6 +1326,7 @@ async fn setup_oidc_start(
                     nonce,
                     redirect_uri: req.redirect_uri,
                     created_at: now,
+                    setup_session_hash: Some(setup_session_hash.clone()),
                 },
             );
         }
@@ -1304,6 +1413,7 @@ async fn setup_oidc_start(
                 nonce,
                 redirect_uri: req.redirect_uri,
                 created_at: now,
+                setup_session_hash: Some(setup_session_hash),
             },
         );
     }
@@ -1322,10 +1432,36 @@ async fn setup_oidc_start(
 /// Requires a valid setup session and `setup_state == IdpConfigured`.
 async fn setup_oidc_verify(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(req): Json<SetupOidcVerifyRequest>,
 ) -> ApiResult<SetupOidcVerifyResponse> {
     info!("verify-oidc: request received");
+
+    let pending = {
+        let mut pending_map = state.pending_auth.lock().await;
+        pending_map.remove(&req.state).ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_state",
+                "Unknown or expired OIDC state parameter",
+            )
+        })?
+    };
+
+    if now_unix() - pending.created_at >= 600 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "auth_expired",
+            "OIDC authorization request has expired",
+        ));
+    }
+
+    let setup_session_hash = pending.setup_session_hash.as_deref().ok_or_else(|| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_state",
+            "OIDC state does not belong to a setup flow",
+        )
+    })?;
 
     // Validate setup session and state
     {
@@ -1358,7 +1494,7 @@ async fn setup_oidc_verify(
             ));
         }
 
-        validate_session(&mut sf, &headers)?;
+        validate_session_hash(&mut sf, setup_session_hash)?;
 
         store.save(&sf).await.map_err(|e| {
             error!(error = %e, "failed to save setup state");
@@ -1371,26 +1507,6 @@ async fn setup_oidc_verify(
     }
 
     info!("verify-oidc: session validated");
-
-    // Retrieve pending auth entry (validates CSRF state)
-    let pending = {
-        let mut pending_map = state.pending_auth.lock().await;
-        pending_map.remove(&req.state).ok_or_else(|| {
-            api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_state",
-                "Unknown or expired OIDC state parameter",
-            )
-        })?
-    };
-
-    if now_unix() - pending.created_at >= 600 {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "auth_expired",
-            "OIDC authorization request has expired",
-        ));
-    }
 
     info!("verify-oidc: pending auth found, starting token exchange");
 
@@ -1756,22 +1872,10 @@ async fn complete_setup(
     {
         owner.oidc_subject = Some(local_subject_for_email(&owner.email));
     }
-    sf.setup_state = SetupState::Ready;
-    sf.setup_session = None; // Clear session on completion
-    sf.updated_at = now;
-
     let instance_id = sf.instance_id.clone();
 
-    store.save(&sf).await.map_err(|e| {
-        error!(error = %e, "failed to save setup state");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to save setup state",
-        )
-    })?;
-
-    // Insert owner into users table
+    // Insert owner into users table before marking setup ready. That prevents
+    // a half-ready instance with no usable owner if user creation fails.
     if let Some(ref owner) = sf.owner {
         let oidc_subject = owner
             .oidc_subject
@@ -1781,8 +1885,14 @@ async fn complete_setup(
         let pool = store.pool();
 
         sqlx::query(
-            "INSERT OR IGNORE INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, 'owner', 'active', ?5, ?5)",
+            "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 'owner', 'active', ?5, ?5) \
+             ON CONFLICT(email) DO UPDATE SET \
+                oidc_subject = excluded.oidc_subject, \
+                display_name = excluded.display_name, \
+                role = 'owner', \
+                status = 'active', \
+                updated_at = excluded.updated_at",
         )
         .bind(&user_id)
         .bind(&owner.email)
@@ -1796,18 +1906,45 @@ async fn complete_setup(
             api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to create owner user")
         })?;
 
+        let owner_user_id: String =
+            sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower(?1) LIMIT 1")
+                .bind(&owner.email)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to resolve owner user id");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to load owner user",
+                    )
+                })?;
+
         let _ = write_audit_log(
             pool,
-            Some(&user_id),
+            Some(&owner_user_id),
             "owner_created",
             "user",
-            Some(&user_id),
+            Some(&owner_user_id),
             None,
         )
         .await;
 
         info!(email = %owner.email, "owner user created in users table");
     }
+
+    sf.setup_state = SetupState::Ready;
+    sf.setup_session = None; // Clear session on completion
+    sf.updated_at = now;
+
+    store.save(&sf).await.map_err(|e| {
+        error!(error = %e, "failed to save setup state");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to save setup state",
+        )
+    })?;
 
     Ok(Json(SetupCompleteResponse {
         state: SetupState::Ready,
@@ -1955,6 +2092,7 @@ async fn build_router_inner(
         stream_tokens: logs::StreamTokenStore::new(),
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
+        runtime_update: runtime_updates::new_state(),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2033,7 +2171,9 @@ async fn build_router_inner(
 
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .route("/v1/public/setup-status", get(setup_status))
+        .route("/v1/frontend/pair", post(frontend_pairing::pair))
         .route(
             "/v1/setup/bootstrap-token/verify",
             post(verify_bootstrap_token),
@@ -2067,9 +2207,12 @@ async fn build_router_inner(
         .route("/v1/auth/logout", post(auth::logout))
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
+        .route(
+            "/v1/system/update",
+            get(runtime_updates::get_status).post(runtime_updates::start_update),
+        )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
-        .route("/v1/users/transfer-owner", post(users::transfer_owner))
         .route(
             "/v1/users/{user_id}/role",
             axum::routing::patch(users::update_user_role),
@@ -2188,6 +2331,10 @@ async fn build_router_inner(
                 .patch(projects::update_project)
                 .delete(projects::delete_project),
         )
+        .route(
+            "/v1/projects/{project_id}/repository-workflows",
+            get(repository_workflows::discover_repository_workflows),
+        )
         // Project member endpoints
         .route(
             "/v1/projects/{project_id}/members",
@@ -2269,8 +2416,9 @@ async fn build_router_inner(
         )
         .route("/v1/runners/{runner_id}/claim", post(runners::claim_job))
         .route(
-            "/v1/runners/{runner_id}/jobs/{job_id}/checkout-auth",
-            get(runners::get_checkout_auth),
+            "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{*git_path}",
+            get(integrations::gitlab::proxy_git_checkout)
+                .post(integrations::gitlab::proxy_git_checkout),
         )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/status",
@@ -2307,6 +2455,14 @@ async fn build_router_inner(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/artifacts",
             post(artifacts::create_artifact),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete",
+            post(artifacts::complete_artifact),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort",
+            post(artifacts::abort_artifact),
         )
         .route(
             "/v1/builds/{build_id}/artifacts",

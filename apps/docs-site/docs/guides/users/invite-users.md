@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Invite new users to your Oore CI instance via email."
+description: 'Invite new users to your Oore CI instance via email.'
 ---
 
 # Invite Team Members
@@ -20,11 +20,11 @@ In the web UI, go to **Settings > Users** and click **Invite User**.
 
 Enter the email address and select a role:
 
-| Role | Description |
-|---|---|
-| **Admin** | Full management access (users, settings, projects) |
-| **Developer** | Create and manage projects, trigger builds |
-| **QA Viewer** | Read-only access to builds and artifacts |
+| Role          | Description                                        |
+| ------------- | -------------------------------------------------- |
+| **Admin**     | Full management access (users, settings, projects) |
+| **Developer** | Create and manage projects, trigger builds         |
+| **QA Viewer** | Read-only access to builds and artifacts           |
 
 Click **Invite**.
 
@@ -54,7 +54,7 @@ Check **Settings > Users** — the user appears with `invited` status until they
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
+| Method | Path               | Description       |
+| ------ | ------------------ | ----------------- |
 | `POST` | `/v1/users/invite` | Invite a new user |
-| `GET` | `/v1/users` | List all users |
+| `GET`  | `/v1/users`        | List all users    |

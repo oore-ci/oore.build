@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Create a new project in Oore CI and link it to a source repository."
+description: 'Create a new project in Oore CI and link it to a source repository.'
 ---
 
 # Create a Project
@@ -25,10 +25,10 @@ Choose the integration (GitHub or GitLab) and browse or search for the repositor
 
 ### 3. Configure the project
 
-| Field | Required | Description |
-|---|---|---|
-| **Name** | Yes | Display name for the project |
-| **Repository** | Yes | The linked source repository |
+| Field          | Required | Description                  |
+| -------------- | -------- | ---------------------------- |
+| **Name**       | Yes      | Display name for the project |
+| **Repository** | Yes      | The linked source repository |
 
 ### 4. Create
 

@@ -7,6 +7,7 @@ export function useAutoScroll(
   enabled: boolean,
 ) {
   useEffect(() => {
-    if (enabled && count > 0) virtualizer.scrollToIndex(count - 1, { align: 'end' })
+    if (enabled && count > 0)
+      virtualizer.scrollToIndex(count - 1, { align: 'end' })
   }, [count, enabled, virtualizer])
 }

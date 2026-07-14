@@ -1,23 +1,27 @@
 ---
 status: implemented
-description: "Run the Oore CI setup wizard to configure local, OIDC, or trusted-proxy access and create your first owner account."
+description: 'Run the backend-owned Oore CI setup wizard to choose Local Only, Remote OIDC, or Remote Trusted Proxy access and create your first owner account.'
 ---
 
 # Set Up Your Instance
 
-This tutorial walks you through the Oore CI setup wizard — from starting the daemon to having a fully configured instance with either:
+This tutorial walks you through the Oore CI setup wizard, from starting the daemon to a configured instance.
+Setup state lives in `oored`; the CLI, hosted UI, and self-hosted UI are just clients for the same backend setup API.
 
-- local-only access
-- remote access through OIDC
-- remote access through a trusted proxy such as Warpgate
+During setup you choose one access mode:
+
+| Mode                   | What it means                                                                               | Requirements                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Local Only`           | Loopback-only local login for one-machine evaluation or operator access.                    | Browser or CLI reaches the backend on loopback. No local passwords.                                             |
+| `Remote OIDC`          | Non-loopback users authenticate with any OIDC-compatible identity provider.                 | HTTPS browser path to the backend and OIDC issuer/client details.                                               |
+| `Remote Trusted Proxy` | An upstream identity-aware proxy authenticates users and forwards identity headers to Oore. | HTTPS browser path through that proxy, a trusted identity header, and a shared secret on proxy-to-backend hops. |
 
 ## What you need
 
 - Oore CI [installed](/getting-started/install)
-- One of:
-  - an OIDC provider configured with a client application (see [Configure OIDC](/guides/oidc/) if you haven't done this yet), or
-  - a trusted proxy that forwards user identity as a header (for example Warpgate)
-- If using OIDC: your issuer URL, client ID, and client secret (if required by your provider)
+- For `Remote OIDC`: your issuer URL, client ID, and client secret if required by your provider
+- For `Remote Trusted Proxy`: the forwarded user email header, trusted proxy peer CIDRs, and a shared secret from the proxy path to the daemon
+- For hosted UI setup: an HTTPS backend URL reachable from your browser network path
 
 ## 1. Start the daemon
 
@@ -61,8 +65,8 @@ State:   bootstrap_pending
 DB:      /Users/you/Library/Application Support/oore/oore.db
 
 To complete setup, either:
-  1. Open https://ci.oore.build and add http://127.0.0.1:8787 as an instance, then continue setup
-  2. Run: oore setup
+  1. Run: oore setup
+  2. Open a web UI that can reach this backend, add the instance, then continue setup
 ```
 
 Copy the token value. You'll need it in the next step.
@@ -73,23 +77,32 @@ The bootstrap token is single-use and expires after its TTL (default: 15 minutes
 
 ## 3. Complete setup
 
-Choose one of two methods: the **web UI** or the **interactive CLI**.
+Choose one of two clients: the **web UI** or the **interactive CLI**. Both configure the same backend daemon.
 
 ### Option A: Web UI
 
-1. Open [ci.oore.build](https://ci.oore.build).
-2. Add your backend instance URL (`http://127.0.0.1:8787` for local setup).
+1. Open the UI that can reach your backend:
+   - [ci.oore.build](https://ci.oore.build) for HTTPS-reachable backends.
+   - `http://127.0.0.1:4173` for the bundled local frontend.
+   - your split frontend origin if `oore-web` is running on a separate host.
+2. Add your backend instance:
+   - Hosted UI: enter the HTTPS backend URL.
+   - Local or split frontend proxy: leave **Backend URL** empty so requests use the same origin proxy.
 3. Open the setup flow for that instance.
 
 4. Follow the setup steps:
 
-   | Step | What you do |
-   |---|---|
-   | **1. Bootstrap** | Paste your bootstrap token to authenticate |
-   | **2. Mode** | Choose `Local Only`, `Remote (OIDC)`, or `Remote (Trusted Proxy / Warpgate)` |
+   | Step              | What you do                                                                               |
+   | ----------------- | ----------------------------------------------------------------------------------------- |
+   | **1. Bootstrap**  | Paste your bootstrap token to authenticate                                                |
+   | **2. Mode**       | Choose `Local Only`, `Remote OIDC`, or `Remote Trusted Proxy`                             |
    | **3. Auth setup** | Configure OIDC, or trusted-proxy header settings, or skip directly to owner in local mode |
-   | **4. Owner** | Verify the owner account through OIDC, trusted proxy, or local owner creation |
-   | **5. Finalize** | Confirm to lock setup endpoints permanently |
+   | **4. Owner**      | Verify the owner account through OIDC, trusted proxy, or local owner creation             |
+   | **5. Finalize**   | Confirm to lock setup endpoints permanently                                               |
+
+::: warning Hosted UI reachability
+`ci.oore.build` is frontend-only. It does not host your daemon and it cannot call `http://127.0.0.1:*`. Use CLI setup or the local frontend for loopback-only setup, or expose the backend through HTTPS before using the hosted UI.
+:::
 
 ### Option B: Interactive CLI
 
@@ -99,7 +112,7 @@ Run the setup command:
 oore setup
 ```
 
-The CLI walks through the same setup flow:
+The CLI walks through the same backend setup flow. This example shows `Remote OIDC`; `Local Only` skips provider configuration, and `Remote Trusted Proxy` asks for proxy identity settings instead.
 
 ```
 oore setup -- interactive instance configuration
@@ -114,7 +127,7 @@ State:     bootstrap_pending
   > Bootstrap verified. Session token acquired.
 
 [Step 2/5] Access mode
-  Mode: Remote (OIDC)
+  Mode: Remote OIDC
   > Access mode saved.
 
 [Step 3/5] OIDC provider configuration
@@ -133,13 +146,17 @@ State:     bootstrap_pending
   > Setup complete! Instance ID: a1b2c3d4-...
 ```
 
-If you choose `Remote (Trusted Proxy / Warpgate)`, the web UI setup flow asks for:
+If you choose `Remote Trusted Proxy`, setup asks for:
 
-- trusted user email header (default: `x-warpgate-username`)
+- initial owner email
+- proxy preset (`Generic proxy`, `Warpgate`, or `Custom header`)
+- trusted user email header (`Generic proxy` uses `x-oore-user-email`; `Warpgate` uses `x-warpgate-username`)
 - optional trusted proxy CIDRs
-- optional shared secret sent by the proxy as `x-oore-trusted-proxy-secret`
+- shared secret sent by the trusted proxy path as `x-oore-trusted-proxy-secret`
 
-Then the owner is claimed from the trusted proxy-authenticated request instead of an OIDC redirect.
+Then the owner is claimed from the trusted proxy-authenticated request instead of an OIDC redirect. The proxied email must match the configured initial owner email, so setup cannot accidentally create the wrong first owner. Provider-specific guides, such as Warpgate examples, are examples of this generic mode rather than separate setup modes.
+
+If the browser reaches the backend through `oore-web`, do not forward browser-supplied identity headers directly. Configure the auth proxy in front of `oore-web` to send the identity header plus `x-oore-web-trusted-proxy-secret`; `oore-web` strips identity headers unless that upstream proof is present, then injects the backend shared secret when proxying `/v1/*`.
 
 ::: info
 The CLI OIDC flow opens your default browser and listens on a random local port for the callback. Make sure your OIDC provider's allowed callback URLs include `http://localhost:*` or the specific port shown in the CLI output.
@@ -178,12 +195,12 @@ The instance progresses through four states. Each step requires the previous one
 bootstrap_pending → idp_configured → owner_created → ready
 ```
 
-| State | What happened | What's next |
-|---|---|---|
-| `bootstrap_pending` | Daemon started, waiting for bootstrap token | Verify token to get a setup session |
-| `idp_configured` | OIDC or trusted-proxy auth has been configured | Verify or claim the owner account |
-| `owner_created` | Owner identity verified, account created | Finalize to lock setup |
-| `ready` | Setup complete, all setup endpoints disabled | Instance ready for normal use |
+| State               | What happened                                                            | What's next                         |
+| ------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
+| `bootstrap_pending` | Daemon started, waiting for bootstrap token                              | Verify token to get a setup session |
+| `idp_configured`    | Access-mode preferences and any remote auth details have been configured | Verify or claim the owner account   |
+| `owner_created`     | Owner identity verified, account created                                 | Finalize to lock setup              |
+| `ready`             | Setup complete, all setup endpoints disabled                             | Instance ready for normal use       |
 
 For the full state machine reference, see [Setup States](/reference/setup-states).
 
@@ -221,7 +238,8 @@ Setup sessions expire after 30 minutes of inactivity. Restart the setup process 
 
 Your instance is running and authenticated. Continue with:
 
-- [Configure OIDC](/guides/oidc/) — detailed provider setup guides
-- [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) — recommended internal-only VPN deployment shape
+- [Configure OIDC](/guides/oidc/) — detailed provider setup guides for `Remote OIDC`
+- [Split Backend and Frontend](/operations/split-roles) — generic multi-host deployment shape
+- [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) — one internal-only Trusted Proxy deployment example
 - [API Reference](/reference/api/) — explore the API
 - [CLI Reference](/reference/cli/) — all available commands

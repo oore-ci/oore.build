@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Set up Azure AD (Entra ID) OIDC authentication for Oore CI."
+description: 'Set up Azure AD (Entra ID) OIDC authentication for Oore CI.'
 ---
 
 # Azure AD / Entra ID OIDC Setup
@@ -69,11 +69,11 @@ The **Application (client) ID** is on the **Overview** page of the app registrat
 
 During setup, enter:
 
-| Field | Value |
-|---|---|
-| **Issuer URL** | `https://login.microsoftonline.com/{tenant-id}/v2.0` |
-| **Client ID** | Application (client) ID from step 5 |
-| **Client secret** | Client secret value from step 3 |
+| Field             | Value                                                |
+| ----------------- | ---------------------------------------------------- |
+| **Issuer URL**    | `https://login.microsoftonline.com/{tenant-id}/v2.0` |
+| **Client ID**     | Application (client) ID from step 5                  |
+| **Client secret** | Client secret value from step 3                      |
 
 ## Troubleshooting
 

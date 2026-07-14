@@ -31,32 +31,36 @@ Oore CI uses three release channels to balance stability and velocity.
 curl -fsSL https://oore.build/install | bash
 
 # Install alpha
-curl -fsSL https://oore.build/install | OORE_CHANNEL=alpha bash
+curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 
 # Update to latest on your current channel
 oore update
 ```
 
-## Auth‑mode decision table
+## Auth mode decision table
 
 Choosing the right authentication mode depends on where you access your daemon from.
 
-| Mode               | Access      | Auth    | Use Case        |
-| ------------------ | ----------- | ------- | --------------- |
-| **Local-only**     | `127.0.0.1` | None    | Local eval      |
-| **Remote (OIDC)**  | HTTPS       | OIDC    | Team Dashboards |
-| **Remote (Proxy)** | Proxy/IAP   | Headers | Private/Ent     |
+| Mode                     | Access                       | Auth                                                               | Use case                                        |
+| ------------------------ | ---------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
+| **Local Only**           | Loopback only                | Loopback local login, no passwords                                 | Fast local evaluation or local operator access  |
+| **Remote OIDC**          | HTTPS                        | Any OIDC-compatible provider                                       | Team access without an identity proxy           |
+| **Remote Trusted Proxy** | HTTPS through identity proxy | Forwarded identity header plus shared secret on trusted proxy hops | Private networks or enterprise identity proxies |
 
-## The two supported onboarding paths
+## Supported onboarding paths
 
-Choosing the right path depends on your environment and whether your daemon is reachable from the public internet.
+Choosing the right path depends on how your browser reaches the backend. The backend owns setup and auth; the hosted or local frontend only drives the backend setup API.
 
-| Path            | Use When        | Requirements       | Tradeoffs           |
-| --------------- | --------------- | ------------------ | ------------------- |
-| **Local-first** | Fast local eval | macOS, loopback    | No remote access    |
-| **Hosted UI**   | Teams & Remote  | macOS, HTTPS, OIDC | Needs tunnel + OIDC |
+| Path                                 | Use When                               | Requirements                              | Tradeoffs                                    |
+| ------------------------------------ | -------------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| **Local-first**                      | Fast local eval                        | macOS, loopback                           | No remote access                             |
+| **Hosted UI + Remote OIDC**          | Teams without an identity proxy        | macOS backend, HTTPS URL, OIDC app        | Requires provider setup                      |
+| **Hosted UI + Remote Trusted Proxy** | Private/proxied deployments            | macOS backend behind HTTPS identity proxy | Proxy must forward a trusted identity header |
+| **Split frontend/backend**           | Browser-facing UI runs on another host | macOS backend plus `frontend` role host   | More moving parts, cleaner network boundary  |
 
 ![Oore CI Dashboard screenshot](/demo-dashboard.webp)
+
+> The public demo uses fixed sample data. It is read-only and does not create projects, pipelines, builds, or settings changes.
 
 ### Path A: Local-first (no HTTPS required)
 
@@ -89,22 +93,34 @@ Continue with:
 
 ### Path B: Hosted UI (requires an HTTPS-reachable backend URL)
 
-Best when you want the hosted UI at `https://ci.oore.build` from day one.
+Best when you want the hosted UI at `https://ci.oore.build` from day one. `ci.oore.build` is UI-only; it does not host your daemon, proxy your API traffic, or store your setup secrets.
 
 **Important constraint**: Browsers block `https` pages (like `ci.oore.build`) from making requests to `http://127.0.0.1` or other `http` origins. You **must** provide an `https://` URL for your backend.
 
 1. Install + start the daemon as above.
-2. Make your backend reachable over HTTPS (for example, via a tunnel):
+2. Make your backend reachable over HTTPS from your browser network path. A temporary tunnel is one example:
 
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8787
 ```
 
-3. Open `https://ci.oore.build`, add your tunnel URL as the backend, and follow the setup wizard.
+3. Open `https://ci.oore.build`, add your HTTPS backend URL, and follow the setup wizard.
+4. Choose `Remote OIDC` or `Remote Trusted Proxy`.
 
-### Cloudflared Troubleshooting (#43)
+### Path C: Split frontend/backend
 
-If you have trouble connecting your tunnel to the Hosted UI, check these common failure modes:
+Best when the browser-facing UI should run on Linux or another host while builds stay on a macOS backend.
+
+1. Install `backend` mode on the macOS host.
+2. Install `frontend` mode on the browser-facing host.
+3. Put HTTPS in front of the frontend host.
+4. In the UI, add the instance with **Backend URL** empty so browser API calls stay on the same origin and flow through `oore-web`.
+
+Continue with [Split Backend and Frontend](/operations/split-roles).
+
+### Temporary tunnel example: cloudflared troubleshooting {#tunnel-troubleshooting}
+
+If you use `cloudflared` as a temporary HTTPS tunnel for Hosted UI testing, check these common failure modes:
 
 1. **Tunnel URL has expired**
    - **Symptom**: Cloudflare logo page says "This tunnel is not active."
@@ -143,15 +159,17 @@ If your backend URL is `http://127.0.0.1:8787`, the hosted UI will not be able t
 - Use local setup (`oore setup`), or
 - expose the backend over HTTPS (tunnel / reverse proxy) and use that URL in hosted UI.
 
-### “Do I need OIDC on day one?”
+### "Do I need OIDC on day one?"
 
-Remote access defaults to OIDC, but local-first onboarding supports loopback-only login (no local passwords).
+No, if you are staying local-only or if an identity-aware proxy already authenticates users.
 
-If you want a remote-first path without configuring OIDC immediately, see the deployment docs for the `trusted_proxy` option:
+Use:
 
-- [Deployment](/operations/deployment)
+- `Local Only` for loopback evaluation.
+- `Remote Trusted Proxy` when a proxy forwards authenticated identity headers.
+- `Remote OIDC` when Oore should perform the browser redirect flow itself.
 
 ## How to report issues and security findings
 
 - Bugs/UX issues: GitHub issues (use the [Alpha Feedback Playbook](/getting-started/alpha-feedback-playbook))
-- Security reports: follow [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md) (private disclosure)
+- Security reports: follow [SECURITY.md](https://github.com/oore-ci/oore.build/blob/master/SECURITY.md) (private disclosure)

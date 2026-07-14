@@ -1,10 +1,10 @@
 blank_issues_enabled: true
 contact_links:
   - name: Questions and setup help (Discussions)
-    url: https://github.com/devaryakjha/oore.build/discussions
+    url: https://github.com/oore-ci/oore.build/discussions
     about: Ask onboarding and usage questions in Discussions.
   - name: Security vulnerability report
-    url: https://github.com/devaryakjha/oore.build/security/advisories/new
+    url: https://github.com/oore-ci/oore.build/security/advisories/new
     about: Report security issues privately.
   - name: Public alpha onboarding guide
     url: https://docs.oore.build/getting-started/public-alpha

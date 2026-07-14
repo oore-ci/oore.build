@@ -1,10 +1,18 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import {
+  AlertCircleIcon,
+  CheckmarkCircle02Icon,
+  File02Icon,
+  RefreshIcon,
+} from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
 import type {
   ConcurrencyPolicy,
   CreatePipelineRequest,
+  RepositoryWorkflowPreview,
   TriggerConfig,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
@@ -16,6 +24,7 @@ import {
 } from '@/lib/instance-context'
 import {
   useCreatePipeline,
+  useRepositoryWorkflows,
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
   useValidatePipeline,
@@ -23,13 +32,11 @@ import {
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useProject } from '@/hooks/use-projects'
 import {
-  defaultArtifactPatterns,
+  executionConfigFromForm,
   fileToBase64,
   fileToUtf8,
   parseBundleIdsInput,
   parseCsv,
-  parseEnvVars,
-  parseMultiline,
   selectedPlatforms,
   trimToUndefined,
 } from '@/lib/pipeline-form-utils'
@@ -38,9 +45,18 @@ import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
 import { PageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
-  staticData: { breadcrumbLabel: 'New Pipeline' },
+  staticData: {
+    breadcrumbLabel: 'New Pipeline',
+    breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -82,7 +98,7 @@ const emptyDefaults: PipelineFormValues = {
   ios_command_override: '',
   macos_command_override: '',
   env_vars: '',
-  artifact_patterns: '*.apk',
+  artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
   branches: '',
   max_concurrent: undefined,
 }
@@ -98,7 +114,9 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: false,
       platform_macos: false,
-      artifact_patterns: '*.apk',
+      enable_customization: true,
+      android_command_override: 'flutter build apk --debug',
+      artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
     } satisfies PipelineFormValues,
     events: ['push'],
   },
@@ -113,7 +131,8 @@ const PIPELINE_TEMPLATES = [
       platform_ios: false,
       platform_macos: false,
       android_signing_release_enabled: true,
-      artifact_patterns: '*.apk\n*.aab',
+      artifact_patterns:
+        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab',
     } satisfies PipelineFormValues,
     events: ['push', 'tag_push'],
   },
@@ -127,7 +146,8 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: true,
       platform_macos: false,
-      artifact_patterns: '*.apk\n*.aab\n*.ipa',
+      artifact_patterns:
+        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab\nbuild/ios/ipa/*.ipa',
     } satisfies PipelineFormValues,
     events: ['push', 'tag_push'],
   },
@@ -141,7 +161,8 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: true,
       platform_macos: true,
-      artifact_patterns: '*.apk\n*.aab\n*.ipa\n*.app',
+      artifact_patterns:
+        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab\nbuild/ios/ipa/*.ipa\nbuild/macos/Build/Products/Release/*.app',
     } satisfies PipelineFormValues,
     events: ['push', 'tag_push'],
   },
@@ -154,10 +175,109 @@ const PIPELINE_TEMPLATES = [
   },
 ] as const
 
-function NewPipelinePage() {
+function workflowDefaults(
+  workflow: RepositoryWorkflowPreview,
+): PipelineFormValues {
+  const execution = workflow.execution
+  const workflowName =
+    workflow.path
+      .split('/')
+      .at(-1)
+      ?.replace(/^\.oore\.?/, '')
+      .replace(/\.ya?ml$/, '')
+      .replaceAll('-', ' ')
+      .trim() || 'Repository workflow'
+
+  return {
+    ...emptyDefaults,
+    name:
+      workflow.path === '.oore.yaml' || workflow.path === '.oore.yml'
+        ? 'Repository workflow'
+        : workflowName.replace(/\b\w/g, (letter) => letter.toUpperCase()),
+    config_mode: 'explicit',
+    config_path: workflow.path,
+    platform_android: execution?.platforms.includes('android') ?? false,
+    platform_ios: execution?.platforms.includes('ios') ?? false,
+    platform_macos: execution?.platforms.includes('macos') ?? false,
+    flutter_version: execution?.flutter_version ?? '',
+    enable_customization: true,
+    pre_build_commands: execution?.commands.pre_build.join('\n') ?? '',
+    build_commands: execution?.commands.build.join('\n') ?? '',
+    post_build_commands: execution?.commands.post_build.join('\n') ?? '',
+    android_build_args: execution?.platform_build_args.android.join('\n') ?? '',
+    ios_build_args: execution?.platform_build_args.ios.join('\n') ?? '',
+    macos_build_args: execution?.platform_build_args.macos.join('\n') ?? '',
+    android_command_override: execution?.platform_commands.android ?? '',
+    ios_command_override: execution?.platform_commands.ios ?? '',
+    macos_command_override: execution?.platform_commands.macos ?? '',
+    artifact_patterns: execution?.artifact_patterns.join('\n') ?? '',
+  }
+}
+
+function RepositoryWorkflowSummary({
+  workflow,
+  reference,
+}: {
+  workflow: RepositoryWorkflowPreview
+  reference: string
+}) {
+  const execution = workflow.execution
+  if (!execution) return null
+  const commandCount =
+    execution.commands.pre_build.length +
+    execution.commands.build.length +
+    execution.commands.post_build.length +
+    Object.values(execution.platform_commands).filter(Boolean).length
+
+  return (
+    <div className="space-y-4">
+      <Alert>
+        <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} />
+        <AlertDescription>
+          Oore will read <code>{workflow.path}</code> from the exact commit
+          being built. This preview is from <code>{reference}</code>.
+        </AlertDescription>
+      </Alert>
+      <div className="grid gap-3 text-sm sm:grid-cols-2">
+        <div>
+          <p className="text-xs text-muted-foreground">Platforms</p>
+          <p>{execution.platforms.join(', ')}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Flutter</p>
+          <p>{execution.flutter_version ?? 'Detected from .fvmrc or runner'}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Commands</p>
+          <p>
+            {commandCount > 0
+              ? `${commandCount} configured`
+              : 'Platform defaults'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Artifacts</p>
+          <p className="font-mono text-xs">
+            {execution.artifact_patterns.join(', ') || 'Platform defaults'}
+          </p>
+        </div>
+      </div>
+      {execution.env_keys.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Environment keys: {execution.env_keys.join(', ')}. Values stay hidden.
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function useNewPipelinePageState() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
+  const workflowsQuery = useRepositoryWorkflows(projectId, undefined, {
+    enabled: !!projectData?.project.repository_id,
+  })
   const repoProviderQuery = useRepositoryProvider(
     projectData?.project.repository_id,
   )
@@ -167,10 +287,40 @@ function NewPipelinePage() {
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
   const [validationErrors, setValidationErrors] = useState<Array<string>>([])
+  const createdPipelineId = useRef<string | null>(null)
   const [selectedTemplate, setSelectedTemplate] = useState<string>('custom')
+  const [selectedWorkflowPath, setSelectedWorkflowPath] = useState<
+    string | null
+  >(null)
+  const [manualSetup, setManualSetup] = useState(false)
+  const { validWorkflows, invalidWorkflows } = (
+    workflowsQuery.data?.workflows ?? []
+  ).reduce<{
+    validWorkflows: Array<RepositoryWorkflowPreview>
+    invalidWorkflows: Array<RepositoryWorkflowPreview>
+  }>(
+    (groups, workflow) => {
+      groups[workflow.valid ? 'validWorkflows' : 'invalidWorkflows'].push(
+        workflow,
+      )
+      return groups
+    },
+    { validWorkflows: [], invalidWorkflows: [] },
+  )
+  const selectedWorkflow: RepositoryWorkflowPreview | undefined =
+    validWorkflows.find((workflow) => workflow.path === selectedWorkflowPath) ??
+    validWorkflows.at(0)
   const activeTemplate =
-    PIPELINE_TEMPLATES.find((t) => t.key === selectedTemplate) ??
-    PIPELINE_TEMPLATES[PIPELINE_TEMPLATES.length - 1]
+    !manualSetup && selectedWorkflow !== undefined
+      ? {
+          key: `repository:${selectedWorkflow.path}`,
+          label: selectedWorkflow.path,
+          description: 'Repository-owned workflow',
+          values: workflowDefaults(selectedWorkflow),
+          events: ['push'],
+        }
+      : (PIPELINE_TEMPLATES.find((t) => t.key === selectedTemplate) ??
+        PIPELINE_TEMPLATES[PIPELINE_TEMPLATES.length - 1])
 
   async function handleSubmit(
     data: PipelineFormValues,
@@ -184,6 +334,7 @@ function NewPipelinePage() {
       profileFiles: Record<string, File | null>
     },
   ) {
+    if (createdPipelineId.current) return
     const platforms = selectedPlatforms(data)
     if (platforms.length === 0) {
       setValidationErrors(['Pick at least one platform to build'])
@@ -204,18 +355,6 @@ function NewPipelinePage() {
         : undefined,
     }
 
-    const commands = data.enable_customization
-      ? {
-          pre_build: parseMultiline(data.pre_build_commands),
-          build: parseMultiline(data.build_commands),
-          post_build: parseMultiline(data.post_build_commands),
-        }
-      : { pre_build: [], build: [], post_build: [] }
-
-    const customPatterns = data.enable_customization
-      ? parseMultiline(data.artifact_patterns)
-      : []
-
     const payload: CreatePipelineRequest = {
       name: data.name.trim(),
       config_path:
@@ -223,30 +362,7 @@ function NewPipelinePage() {
           ? data.config_path?.trim()
           : '.oore.yaml',
       config_path_explicit: data.config_mode === 'explicit',
-      execution_config: {
-        platforms,
-        flutter_version: data.flutter_version?.trim() || undefined,
-        commands,
-        platform_build_args: data.enable_customization
-          ? {
-              android: parseMultiline(data.android_build_args),
-              ios: parseMultiline(data.ios_build_args),
-              macos: parseMultiline(data.macos_build_args),
-            }
-          : { android: [], ios: [], macos: [] },
-        platform_commands: data.enable_customization
-          ? {
-              android: data.android_command_override?.trim() || undefined,
-              ios: data.ios_command_override?.trim() || undefined,
-              macos: data.macos_command_override?.trim() || undefined,
-            }
-          : {},
-        env: data.enable_customization ? parseEnvVars(data.env_vars) : [],
-        artifact_patterns:
-          customPatterns.length > 0
-            ? customPatterns
-            : defaultArtifactPatterns(platforms),
-      },
+      execution_config: executionConfigFromForm(data),
       trigger_config,
       concurrency,
     }
@@ -263,15 +379,14 @@ function NewPipelinePage() {
 
     setValidationErrors([])
 
-    const signingPayload = await buildAndroidSigningPayload(
-      data,
-      releaseKeystoreFile,
-      debugKeystoreFile,
-    )
-    const iosSigningPayload = await buildIosSigningPayload(
-      data,
-      iosSigningFiles,
-    )
+    const [signingPayload, iosSigningPayload] = await Promise.all([
+      buildAndroidSigningPayload(
+        { ...data },
+        releaseKeystoreFile,
+        debugKeystoreFile,
+      ),
+      buildIosSigningPayload({ ...data }, iosSigningFiles),
+    ])
     if (
       (data.android_signing_release_enabled ||
         data.android_signing_debug_enabled) &&
@@ -283,11 +398,20 @@ function NewPipelinePage() {
       return
     }
 
+    let created: { pipeline: { id: string } }
     try {
-      const created = await createMutation.mutateAsync({
+      created = await createMutation.mutateAsync({
         projectId,
         data: payload,
       })
+      createdPipelineId.current = created.pipeline.id
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      toast.error(`Failed to create pipeline: ${message}`)
+      return
+    }
+
+    try {
       if (signingPayload) {
         await updateSigningMutation.mutateAsync({
           pipelineId: created.pipeline.id,
@@ -304,7 +428,15 @@ function NewPipelinePage() {
       void navigate({ to: '/projects/$projectId', params: { projectId } })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
-      toast.error(`Failed to create pipeline: ${message}`)
+      const signing = signingPayload ? 'android' : 'ios'
+      toast.error(
+        `Pipeline was created, but ${signing} signing failed: ${message}`,
+      )
+      void navigate({
+        to: '/projects/$projectId/pipelines/$pipelineId/edit',
+        params: { projectId, pipelineId: created.pipeline.id },
+        search: { signing, signingError: message },
+      })
     }
   }
 
@@ -483,24 +615,25 @@ function NewPipelinePage() {
       return null
     }
 
-    const provisioningProfiles: Array<{
-      bundle_id: string
-      profile_filename?: string
-      profile_base64?: string
-    }> = []
-    for (const bundleId of bundleIds) {
-      const profileFile = iosSigningFiles.profileFiles[bundleId]
-      if (!profileFile) continue
-      provisioningProfiles.push({
-        bundle_id: bundleId,
-        profile_filename: profileFile.name,
-        profile_base64: await fileToBase64(profileFile),
-      })
-    }
-
-    const apiPrivateKey = iosSigningFiles.apiKeyFile
-      ? await fileToUtf8(iosSigningFiles.apiKeyFile)
-      : undefined
+    const [provisioningProfiles, apiPrivateKey] = await Promise.all([
+      Promise.all(
+        bundleIds.flatMap((bundleId) => {
+          const profileFile = iosSigningFiles.profileFiles[bundleId]
+          return profileFile
+            ? [
+                fileToBase64(profileFile).then((profile_base64) => ({
+                  bundle_id: bundleId,
+                  profile_filename: profileFile.name,
+                  profile_base64,
+                })),
+              ]
+            : []
+        }),
+      ),
+      iosSigningFiles.apiKeyFile
+        ? fileToUtf8(iosSigningFiles.apiKeyFile)
+        : Promise.resolve(undefined),
+    ])
 
     return {
       enabled: data.ios_signing_enabled,
@@ -531,57 +664,248 @@ function NewPipelinePage() {
     }
   }
 
+  return {
+    activeTemplate,
+    createMutation,
+    handleSubmit,
+    invalidWorkflows,
+    manualOnlyTriggers,
+    manualSetup,
+    navigate,
+    projectData,
+    projectId,
+    selectedTemplate,
+    selectedWorkflow,
+    selectedWorkflowPath,
+    setManualSetup,
+    setSelectedTemplate,
+    setSelectedWorkflowPath,
+    updateIosSigningMutation,
+    updateSigningMutation,
+    validationErrors,
+    validWorkflows,
+    workflowsQuery,
+  }
+}
+
+function NewPipelinePage() {
+  const pageState = useNewPipelinePageState()
+  const {
+    activeTemplate,
+    createMutation,
+    handleSubmit,
+    invalidWorkflows,
+    manualOnlyTriggers,
+    manualSetup,
+    navigate,
+    projectData,
+    projectId,
+    selectedTemplate,
+    selectedWorkflow,
+    selectedWorkflowPath,
+    setManualSetup,
+    setSelectedTemplate,
+    setSelectedWorkflowPath,
+    updateIosSigningMutation,
+    updateSigningMutation,
+    validationErrors,
+    validWorkflows,
+    workflowsQuery,
+  } = pageState
+
   return (
     <PageLayout width="wide">
       <PageMeta title="New Pipeline" />
       <PageHeader
-        title="New Pipeline"
-        back={{ to: `/projects/${projectId}`, label: 'Project' }}
-        description="Configure a new build pipeline for this project."
+        title="Set up a build"
+        description="Use the workflow already in your repository, or start with a guided template."
       />
       <div className="mx-auto mb-6 max-w-4xl">
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Start from a template</p>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {PIPELINE_TEMPLATES.map((tmpl) => (
-              <button
-                key={tmpl.key}
+        {workflowsQuery.isLoading ? (
+          <Card>
+            <CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
+              <Spinner className="size-4" />
+              Looking for Oore workflows on{' '}
+              {projectData?.project.default_branch ?? 'the default branch'}...
+            </CardContent>
+          </Card>
+        ) : workflowsQuery.error ? (
+          <Alert variant="destructive">
+            <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                Oore could not inspect this repository. Nothing has been
+                changed. {workflowsQuery.error.message}
+              </span>
+              <Button
                 type="button"
-                onClick={() => setSelectedTemplate(tmpl.key)}
-                className={cn(
-                  'flex flex-col items-start gap-1 border p-3 text-left text-sm transition-colors hover:bg-accent',
-                  selectedTemplate === tmpl.key && 'border-primary bg-accent',
-                )}
+                size="sm"
+                variant="outline"
+                onClick={() => void workflowsQuery.refetch()}
               >
-                <span className="font-medium">{tmpl.label}</span>
-                <span className="text-xs text-muted-foreground">
-                  {tmpl.description}
-                </span>
-              </button>
-            ))}
+                <HugeiconsIcon icon={RefreshIcon} />
+                Retry
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setManualSetup(true)}
+              >
+                Continue manually
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : validWorkflows.length > 0 && !manualSetup ? (
+          <Card>
+            <CardHeader className="gap-2">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <HugeiconsIcon icon={File02Icon} size={18} />
+                  Repository workflow found
+                </CardTitle>
+                <Badge variant="secondary">
+                  {workflowsQuery.data?.reference}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                This is the reproducible setup checked into your repository, so
+                Oore recommends using it.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {validWorkflows.length > 1 ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {validWorkflows.map((workflow) => (
+                    <Button
+                      key={workflow.path}
+                      type="button"
+                      variant={
+                        (selectedWorkflowPath ?? validWorkflows.at(0)?.path) ===
+                        workflow.path
+                          ? 'secondary'
+                          : 'outline'
+                      }
+                      className="justify-start font-mono"
+                      onClick={() => setSelectedWorkflowPath(workflow.path)}
+                    >
+                      <HugeiconsIcon icon={File02Icon} />
+                      {workflow.path}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setManualSetup(true)}
+              >
+                Set up manually instead
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {invalidWorkflows.length > 0 ? (
+              <Alert variant="destructive">
+                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                <AlertDescription>
+                  Oore found repository workflow files, but they need attention:
+                  <ul className="mt-2 list-disc pl-5">
+                    {invalidWorkflows.map((workflow) => (
+                      <li key={workflow.path}>
+                        <code>{workflow.path}</code>:{' '}
+                        {workflow.errors.join('; ')}
+                      </li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            ) : !manualSetup ? (
+              <Alert>
+                <HugeiconsIcon icon={File02Icon} size={16} />
+                <AlertDescription>
+                  No Oore workflow was found on{' '}
+                  <code>{workflowsQuery.data?.reference}</code>. Choose a
+                  starter below; you can move the configuration into{' '}
+                  <code>.oore.yaml</code> later.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium">Choose a starting point</p>
+              {manualSetup && validWorkflows.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setManualSetup(false)}
+                >
+                  Use repository workflow
+                </Button>
+              ) : null}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {PIPELINE_TEMPLATES.map((tmpl) => (
+                <button
+                  key={tmpl.key}
+                  type="button"
+                  aria-pressed={selectedTemplate === tmpl.key}
+                  onClick={() => setSelectedTemplate(tmpl.key)}
+                  className={cn(
+                    'flex flex-col items-start gap-1 border p-3 text-left text-sm transition-colors hover:bg-accent',
+                    selectedTemplate === tmpl.key && 'border-primary bg-accent',
+                  )}
+                >
+                  <span className="font-medium">{tmpl.label}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {tmpl.description}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
+        )}
+      </div>
+      {(!workflowsQuery.isLoading || manualSetup) &&
+      (!workflowsQuery.error || manualSetup) ? (
+        <div className="mx-auto max-w-4xl">
+          <PipelineForm
+            key={activeTemplate.key}
+            initialValues={activeTemplate.values}
+            initialEvents={manualOnlyTriggers ? [] : [...activeTemplate.events]}
+            initialCancelPrevious={true}
+            manualOnlyTriggers={manualOnlyTriggers}
+            onSubmit={handleSubmit}
+            onCancel={() =>
+              void navigate({
+                to: '/projects/$projectId',
+                params: { projectId },
+              })
+            }
+            submitLabel="Create"
+            isPending={
+              createMutation.isPending ||
+              updateSigningMutation.isPending ||
+              updateIosSigningMutation.isPending
+            }
+            validationErrors={validationErrors}
+            repositoryWorkflow={
+              !manualSetup &&
+              selectedWorkflow !== undefined &&
+              workflowsQuery.data !== undefined ? (
+                <RepositoryWorkflowSummary
+                  workflow={selectedWorkflow}
+                  reference={workflowsQuery.data.reference}
+                />
+              ) : undefined
+            }
+            readOnly={isDemoMode}
+            readOnlyReason={READ_ONLY_REASON}
+          />
         </div>
-      </div>
-      <div className="mx-auto max-w-4xl">
-        <PipelineForm
-          key={selectedTemplate}
-          initialValues={activeTemplate.values}
-          initialEvents={manualOnlyTriggers ? [] : [...activeTemplate.events]}
-          initialCancelPrevious={true}
-          manualOnlyTriggers={manualOnlyTriggers}
-          onSubmit={handleSubmit}
-          onCancel={() =>
-            void navigate({ to: '/projects/$projectId', params: { projectId } })
-          }
-          submitLabel="Create"
-          isPending={
-            createMutation.isPending ||
-            updateSigningMutation.isPending ||
-            updateIosSigningMutation.isPending
-          }
-          validationErrors={validationErrors}
-        />
-      </div>
+      ) : null}
     </PageLayout>
   )
 }

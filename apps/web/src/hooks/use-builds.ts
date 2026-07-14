@@ -4,8 +4,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import type { UseQueryOptions } from '@tanstack/react-query'
 import type {
   Build,
+  BuildDetailResponse,
   BuildLogChunk,
   BuildStatus,
   CreateBuildRequest,
@@ -21,12 +23,21 @@ import {
   getBuildLogs,
   listArtifacts,
   listBuilds,
-  listScopedDownloadTokens,
   rerunBuild,
-  revokeScopedDownloadToken,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
+
+const BUILD_POLL_INTERVAL_MS = 3_000
+
+const TERMINAL_STATUSES: Set<string> = new Set<string>([
+  'succeeded',
+  'failed',
+  'canceled',
+  'timed_out',
+  'expired',
+])
 
 function useAuthToken(): string | null {
   const token = useAuthStore((s) => s.token)
@@ -38,7 +49,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function useBuilds(
@@ -55,31 +66,30 @@ export function useBuilds(
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
+  const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
-    queryFn: () => listBuilds(baseUrl!, token!, params),
-    enabled: baseUrl !== null && !!token,
-    refetchInterval: options?.refetchInterval,
+    queryFn: ({ signal }) => listBuilds(baseUrl!, token!, params, { signal }),
+    enabled: !!baseUrl && !!token,
+    staleTime: 5_000,
+    refetchInterval: (query) =>
+      hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
   })
 }
-
-const TERMINAL_STATUSES: Set<string> = new Set<string>([
-  'succeeded',
-  'failed',
-  'canceled',
-  'timed_out',
-  'expired',
-])
 
 export function isTerminalStatus(status: BuildStatus | string): boolean {
   return TERMINAL_STATUSES.has(status)
 }
 
+export function hasActiveBuilds(data: ListBuildsResponse | undefined): boolean {
+  return data?.builds.some((build) => !isTerminalStatus(build.status)) ?? false
+}
+
 export function useBuild(
   buildId: string,
-  options?: { refetchInterval?: number | false },
+  options?: Pick<UseQueryOptions<BuildDetailResponse>, 'refetchInterval'>,
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -87,8 +97,9 @@ export function useBuild(
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build', buildId],
-    queryFn: () => getBuild(baseUrl!, token!, buildId),
-    enabled: baseUrl !== null && !!token && !!buildId,
+    queryFn: ({ signal }) => getBuild(baseUrl!, token!, buildId, { signal }),
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -108,7 +119,7 @@ export function useCreateBuild() {
       projectId: string
       data: CreateBuildRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createBuild(baseUrl, token, projectId, data)
     },
@@ -171,7 +182,7 @@ export function useCancelBuild() {
 
   return useMutation({
     mutationFn: (buildId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return cancelBuild(baseUrl, token, buildId)
     },
@@ -194,7 +205,7 @@ export function useRerunBuild() {
 
   return useMutation({
     mutationFn: (buildId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return rerunBuild(baseUrl, token, buildId)
     },
@@ -209,14 +220,14 @@ export function useRerunBuild() {
   })
 }
 
-export function useBuildLogs(buildId: string) {
+export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-logs', buildId],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       // Fetch all log pages (server max per page is 5000)
       const pageSize = 5000
       let allLogs: Array<BuildLogChunk> = []
@@ -225,10 +236,17 @@ export function useBuildLogs(buildId: string) {
 
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       while (true) {
-        const page = await getBuildLogs(baseUrl!, token!, buildId, {
-          after_sequence: afterSeq >= 0 ? afterSeq : undefined,
-          limit: pageSize,
-        })
+        signal.throwIfAborted()
+        const page = await getBuildLogs(
+          baseUrl!,
+          token!,
+          buildId,
+          {
+            after_sequence: afterSeq >= 0 ? afterSeq : undefined,
+            limit: pageSize,
+          },
+          { signal },
+        )
         total = page.total
         if (page.logs.length === 0) break
         allLogs = allLogs.concat(page.logs)
@@ -239,7 +257,7 @@ export function useBuildLogs(buildId: string) {
 
       return { logs: allLogs, total }
     },
-    enabled: baseUrl !== null && !!token && !!buildId,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!buildId,
   })
 }
 
@@ -253,8 +271,10 @@ export function useArtifacts(
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifacts', buildId],
-    queryFn: () => listArtifacts(baseUrl!, token!, buildId),
-    enabled: baseUrl !== null && !!token && !!buildId,
+    queryFn: ({ signal }) =>
+      listArtifacts(baseUrl!, token!, buildId, { signal }),
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
     refetchInterval: options?.refetchInterval,
   })
 }
@@ -265,7 +285,7 @@ export function useArtifactDownloadLink() {
 
   return useMutation({
     mutationFn: (artifactId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return getArtifactDownloadLink(baseUrl, token, artifactId)
     },
@@ -286,45 +306,13 @@ export function useCreateScopedDownloadToken() {
       artifactId: string
       data: CreateScopedDownloadTokenRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createScopedDownloadToken(baseUrl, token, artifactId, data)
     },
     onSuccess: (_data, { artifactId }) => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
-      })
-    },
-  })
-}
-
-export function useScopedDownloadTokens(artifactId: string) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
-    queryFn: () => listScopedDownloadTokens(baseUrl!, token!, artifactId),
-    enabled: baseUrl !== null && !!token && !!artifactId,
-  })
-}
-
-export function useRevokeScopedDownloadToken() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (tokenId: string) => {
-      if (baseUrl === null || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return revokeScopedDownloadToken(baseUrl, token, tokenId)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'scoped-tokens'],
       })
     },
   })

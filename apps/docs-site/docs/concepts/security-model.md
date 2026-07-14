@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Security architecture of Oore CI including Remote auth providers, RBAC, and encryption."
+description: 'Security architecture of Oore CI including Remote auth providers, RBAC, and encryption.'
 ---
 
 # Security Model
@@ -12,7 +12,7 @@ This page explains the security design decisions in Oore CI and how they protect
 For any non-loopback access (`runtime_mode=remote`), Oore CI requires one of:
 
 - OpenID Connect (OIDC)
-- Trusted Proxy mode (for example Warpgate / IAP)
+- Trusted Proxy mode (for example Warpgate or an identity-aware proxy)
 
 There are no local passwords, no password storage, and no password reset flows.
 
@@ -20,16 +20,19 @@ The daemon also supports loopback-only local login (`POST /v1/auth/local/login`)
 
 **Why**: Eliminates an entire class of vulnerabilities (credential storage, brute force attacks, password reuse). Users authenticate with identity systems already used by the organization. Disabling a user in the upstream identity system revokes their ability to start new sessions.
 
-### Trusted Proxy mode (Warpgate / IAP)
+### Trusted Proxy mode
 
 In Trusted Proxy mode, Oore CI trusts identity headers from an upstream proxy and creates normal Oore sessions per user.
 
-- Default identity header: `x-warpgate-username` (expected to be an email)
-- Optional shared-secret header: `x-oore-trusted-proxy-secret`
+- Default identity header: `x-oore-user-email` (expected to be an email)
+- Setup UI presets can switch the header to provider-specific defaults such as `x-warpgate-username`
+- Shared-secret header for protected proxy hops: `x-oore-trusted-proxy-secret`
 - Trust boundary: headers are accepted only when the immediate peer is trusted (loopback by default, optional CIDR allowlist for remote proxy peers)
 - Authorization stays in Oore RBAC (owner/admin/developer/qa_viewer) via Oore users and roles
 
 This mode does not introduce local passwords; it shifts authentication to the upstream access proxy while preserving Oore sessioning, RBAC, and audit attribution.
+
+When `oore-web` sits between the browser and backend, it treats browser-supplied identity headers as untrusted. It strips common identity headers unless the upstream auth proxy also sends an `oore-web` proof header, then it forwards the identity header and injects the backend shared secret on the proxied API request.
 
 ### PKCE and CSRF protection (OIDC mode)
 
@@ -65,25 +68,25 @@ Sensitive data (OIDC client secrets, signing credentials) is encrypted with **AE
 
 The first-run bootstrap token (required for Remote-mode setup flows) has multiple protections:
 
-| Protection | Detail |
-|---|---|
-| **Randomness** | 32 bytes (256 bits) from `OsRng` |
-| **Storage** | Only SHA-256 hash stored; plaintext shown once |
-| **TTL** | Configurable, default 15 minutes |
-| **Single-use** | Consumed on first successful verification |
-| **Rate limiting** | Locked after 5 failed attempts |
+| Protection        | Detail                                         |
+| ----------------- | ---------------------------------------------- |
+| **Randomness**    | 32 bytes (256 bits) from `OsRng`               |
+| **Storage**       | Only SHA-256 hash stored; plaintext shown once |
+| **TTL**           | Configurable, default 15 minutes               |
+| **Single-use**    | Consumed on first successful verification      |
+| **Rate limiting** | Locked after 5 failed attempts                 |
 
 ## Token and secret handling
 
-| Data | Storage | Protection |
-|---|---|---|
-| Bootstrap token | SHA-256 hash in SQLite | Plaintext never stored |
-| Setup session token | SHA-256 hash in SQLite | 30-minute sliding TTL |
-| User session token | SHA-256 hash in SQLite | 24-hour TTL |
-| OIDC client secret | AES-256-GCM encrypted in SQLite | File-stored encryption key |
-| Trusted proxy shared secret (optional) | AES-256-GCM encrypted in SQLite | File-stored encryption key |
-| Signing certificates | AES-256-GCM encrypted in SQLite | Same encryption key |
-| Keystore passwords | AES-256-GCM encrypted in SQLite | Same encryption key |
+| Data                        | Storage                         | Protection                 |
+| --------------------------- | ------------------------------- | -------------------------- |
+| Bootstrap token             | SHA-256 hash in SQLite          | Plaintext never stored     |
+| Setup session token         | SHA-256 hash in SQLite          | 30-minute sliding TTL      |
+| User session token          | SHA-256 hash in SQLite          | 24-hour TTL                |
+| OIDC client secret          | AES-256-GCM encrypted in SQLite | File-stored encryption key |
+| Trusted proxy shared secret | AES-256-GCM encrypted in SQLite | File-stored encryption key |
+| Signing certificates        | AES-256-GCM encrypted in SQLite | Same encryption key        |
+| Keystore passwords          | AES-256-GCM encrypted in SQLite | Same encryption key        |
 
 ## CORS policy
 

@@ -28,3 +28,6 @@ semver.workspace = true
 sqlx.workspace = true
 tar.workspace = true
 tempfile.workspace = true
+base64.workspace = true
+ring.workspace = true
+ipnet.workspace = true

@@ -3,58 +3,359 @@
 This file is the only required in-repo internal documentation artifact.
 
 Purpose:
+
 - Provide a lightweight, reviewable ledger of behavior/contract changes.
 - Point reviewers to the corresponding Linear doc(s) / ADR(s).
 
 Rules:
+
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-15
+
+- **Combined pipelines with per-run platform selection**:
+  - Manual builds can select any non-empty subset of a multi-platform pipeline without changing its saved configuration. The choice is validated by the backend, stored in the build snapshot, and preserved by re-runs; webhook builds continue to run every configured platform.
+  - Repository-owned workflows keep file-first behavior. Partial runs filter default or `platform_commands` entries and explicitly reject shared `commands.build` lists that cannot be mapped safely to a platform.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-per-run-platform-selection-for-combined-pipelines-b34e810fd79b
+
+- **Reliable iOS runner session and local artifact delivery**:
+  - `oore runner install-service` now installs a persistent macOS LaunchAgent in the logged-in Aqua session, where Apple permits non-interactive access to imported signing keys. `oore runner uninstall-service` removes it. This replaces unsupported iOS signing from a system LaunchDaemon or background login session while preserving a separately managed `oored` backend.
+  - If Keychain Services rejects signing because a runner is outside that session, the build error now names the supported service command instead of ending at macOS's opaque `errSecInternalComponent` message.
+  - Runner-side PKCS#12 import uses an isolated temporary keychain, allows the imported identity to be used non-interactively for the build, verifies it with a real preflight signature, and restores the user's original keychain state during cleanup.
+  - Local-storage artifact upload URLs are routed over the runner's configured daemon connection. Large IPA uploads no longer leave the private Mac, traverse the public frontend proxy, and return to the same backend; S3 and other external presigned URLs remain unchanged.
+  - API signing rejects expired stored distribution certificates and provisions a fresh certificate instead of silently reusing an unusable `.p12`. If Apple refuses certificate creation, sync fails explicitly rather than generating profiles for a certificate whose private key Oore does not own.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
+
+## 2026-07-14
+
+- **Reliable runner-side iOS identity import**:
+  - The macOS runner now verifies the imported PKCS#12 material through the private signing key and certificate instead of relying on trust evaluation that can report no identities inside a system LaunchDaemon.
+  - The imported certificate's SHA-1 remains pinned in ExportOptions, while the archive selects the matching identity from Oore's temporary keychain and exact per-bundle profiles. This prevents a command-line app identity from leaking into unsigned dependency targets while keeping repository-local development profiles out of the release artifact.
+  - The imported signing identity explicitly allows non-interactive use inside Oore's temporary build keychain, avoiding a Keychain approval prompt during archive and export.
+  - When Oore supplies ExportOptions, the runner removes both accepted forms of Flutter's conflicting `--export-method` option before executing the build command.
+  - Flutter iOS pipelines now create a signed archive with Oore's imported distribution identity and temporary keychain before exporting the IPA. Oore routes each stored provisioning profile to only the matching app or extension bundle ID during the archive, while third-party Pods remain profile-free; ExportOptions preserves the same exact mapping during export. This supports apps with extensions without rewriting their Xcode project.
+  - The isolated build keychain becomes the runner user's default only for the signing window, allowing Xcode's distribution exporter to resolve the imported identity; cleanup restores both the previous default and search list before deleting the temporary keychain.
+  - Archive builds no longer force one app certificate onto every Xcode target. Xcode now selects the matching imported identity for the app and extension profiles, while CocoaPods and other unsigned dependency targets remain outside the app-signing boundary; ExportOptions still pins the exact certificate SHA-1 for the final IPA.
+  - App and extension archive identities use the same bundle-ID-keyed Xcode lookup as their profiles. This overrides repository development identities only for stored app bundles without reintroducing the dependency-target signing failure.
+  - Oore directly signs the archived app's nested frameworks, extensions, and main bundle with the managed temporary keychain, verifies the result, and packages the IPA. The runner itself remains in the active macOS login session required by Apple Keychain Services.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
+- **Portable iOS certificate inspection**:
+  - PKCS#12 inspection and re-export now try the portable command first, then use OpenSSL 3's legacy provider only when an older bundle requires it. Valid Apple certificates can therefore be saved on the supported macOS backend, whose system LibreSSL does not recognize the `-legacy` option.
+  - When LibreSSL rejects that compatibility option, Oore preserves the original certificate or password error instead of showing an unrelated OpenSSL flag failure.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
+- **Reliable command palette**:
+  - The Cmd/Ctrl+K search dialog now restores the required command context around its input, groups, and items, preventing the palette from crashing the entire web app when opened.
+  - A browser-style component regression test opens the real dialog through its keyboard shortcut and verifies that searchable navigation commands render.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Reachable artifact links behind a frontend proxy**:
+  - The web client now replaces only the daemon's loopback fallback origin with the instance URL it successfully used, so direct and scoped artifact links work through paired or reverse-proxied frontends even before `public_url` is configured. Explicit non-loopback storage and public URLs remain unchanged.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Static release discovery and canonical repository move**:
+  - Installed backends, frontend hosts, and the installer now resolve updates from `https://releases.oore.build/latest/<channel>.json` instead of making rate-limited GitHub API calls. GitHub remains the verified release-asset host.
+  - Every successful GitHub Release now publishes both a direct latest manifest and a newest-first complete history at `https://releases.oore.build/<channel>.json`, giving update checks and a future changelog page one stable source of truth.
+  - Cloudflare Pages response rules are mutually exclusive, so latest and history manifests expose one valid CORS origin and one cache policy instead of overlapping headers that browsers can reject.
+  - Existing installed metadata pointing at `devaryakjha/oore.build` is normalized to the canonical `oore-ci/oore.build` repository, and public repository links now use the organization URL.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+  - Linear runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+- **CI-style build step navigation**:
+  - Build steps now live in a compact navigation rail beside the terminal on desktop instead of consuming a large block above it. Narrow screens use a single horizontally scrollable step strip so the log remains the primary workspace.
+  - The complete log stays the default for successful builds, while running and failed builds still focus the relevant step. Each step exposes status, line count, and duration without competing with the output.
+  - Signed-in demo builds now include representative step markers for successful and failed runs, keeping this production-only state visible during local visual review.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **React correctness follow-up**:
+  - Component modules now export components only, preserving Fast Refresh state while shared schemas, variants, and release-note formatting live in focused utility modules.
+  - State writes use explicit pure updater functions where React Doctor could otherwise mistake plain callback parameters for updater callbacks; one-use callback indirection was removed without changing UI behavior.
+  - Query fallbacks are referentially stable, setup transitions depend on the exact status fields they read, and the sanctioned mount-only effect helper uses React Effect Events while preserving unmount cleanup.
+  - Pipeline configuration and Preferences now follow their visible product boundaries: trigger, command, signing, External Access, runtime update, and artifact-storage concerns live in focused components, with related form state moved through pure reducers.
+  - Styling utilities share the existing UI vendor chunk, while TanStack Router and Query share one stable framework chunk; this removes tiny extra requests and gzip envelopes from the initial path while keeping the bundle under its production budget.
+  - A full React Doctor 0.7.7 scan of `apps/web` now reports no findings and scores 100/100, including clean `only-export-components`, `no-impure-state-updater`, `exhaustive-deps`, and component-structure checks.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
+## 2026-07-13
+
+- **Current dependency stack and repeatable shadcn 4 migration**:
+  - Frontend, docs, site, and release tooling now use their current compatible direct package releases, including shadcn CLI 4.13, Vite 8, Vitest 4, Oxlint 1.73 with type-aware rules, TypeScript 7, Hugeicons 4, and Wrangler 4. ESLint and typescript-eslint have been removed. Rust lockfile dependencies are updated to the newest versions compatible with the repository's installed Rust toolchain.
+  - Every installed web UI primitive was refreshed from the current Base UI shadcn registry while preserving Oore's semantic badge states, destructive confirmation defaults, responsive shell/table containment, and terminal log scrolling contract.
+  - `make deps-update`, `make ui-diff`, and the interactive `make ui-update` provide the supported package and component migration path; contributor guidance records the required validation and local extension review.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Repository source avatars**:
+  - Repository sync now persists GitHub owner avatars and GitLab project avatars, falling back to a GitLab namespace avatar when a project has none. Project, source, and repository-picker views display that identity with a visible initials fallback for local or image-less repositories.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Compact demo-mode treatment**:
+  - Demo builds now rely on the persistent compact Demo Mode indicator instead of repeating the same read-only notice in a full-width banner above every page.
+  - The app header now reserves its navigation space for breadcrumbs, with duplicate Oore branding removed and a wider desktop search target.
+  - Page-title back links no longer shift detail-screen headings downward. Route metadata now gives the app-header breadcrumb a clickable parent destination, including the immediate parent on compact screens.
+  - Collapsed primary and admin sidebar navigation exposes the built-in item tooltips without replacing links with inert buttons.
+  - Sidebar expansion is now a persisted UI preference, so refreshes and later browser sessions preserve the user's chosen working width.
+  - The connectivity banner now reflects the browser's actual offline state instead of interpreting unrelated API errors or background-tab wakeups as proof that `oored` is unreachable.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Outcome-first build details and immersive logs**:
+  - Build artifacts now stay above the fold beside the execution workspace on desktop and move into a peer tab beside Logs and Timeline on narrower screens; each file uses a compact direct-download action and one share-options action for copying temporary links or creating scoped links.
+  - Artifact share-link expiry choices now show human-readable durations in the trigger instead of raw second values.
+  - Build source, duration, and timing now sit in the title metadata instead of occupying a separate summary card.
+  - Logs now use one internally scrollable GitHub-inspired workspace with a compact single-row toolbar, persistent search, pinned line numbers, comfortable content padding, complete-log defaults for successful builds, inline step navigation, and event history available as a neighboring tab. The workspace fills the remaining viewport with a deliberate bottom gutter on narrower screens and stays bounded on desktop.
+  - Ordinary `stderr` output is no longer treated as failure severity. Only explicit error lines receive destructive styling or power the jump-to-error action, avoiding false alarms from Git progress and flags such as `--no-fatal-infos`.
+  - The shared app inset now consumes only the space left beside the sidebar, preventing the header and page content from drifting one sidebar-width beyond the viewport; wide data tables keep their overflow within their own scroll region.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Persistent runtime update notice**:
+  - Instance owners now see available frontend and backend updates directly above the sidebar user menu instead of needing to discover them in Preferences.
+  - The update dialog shows each runtime's current and target versions, managed-service readiness, generated release notes, and the GitHub comparison changelog before starting an update.
+  - Runtime health and release checks now share one TanStack Query path across the sidebar and Preferences, with lightweight periodic refreshes so newly published updates appear without navigating away.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+- **Faster release builds**:
+  - macOS release jobs now restore target-specific Cargo caches, including unchanged workspace crates, instead of compiling the complete Rust dependency graph twice for every release.
+  - The daemon no longer pulls the unused AWS configuration, SSO, SSO-OIDC, and STS dependency chain merely to access the S3 behavior-version type.
+  - Release operations documentation now reflects the PAT-free GitHub Actions flow and hosted-runner defaults.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+- **Release dispatch branch propagation fix**:
+  - Autotag now dispatches the Release workflow from GitHub's built-in branch ref instead of a step-local variable that was unavailable during dispatch, preventing alpha tags from accidentally starting the default-branch release definition.
+  - Release smoke coverage locks the dispatch ref to `GITHUB_REF_NAME`.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+- **Retention settings authorization fix**:
+  - Global retention reads and writes now use the registered `instance_settings` RBAC resource, so owners and admins can load and manage retention instead of receiving a false `permission_denied` response.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+- **PAT-free alpha release dispatch**:
+  - Autotag now uses the repository-scoped GitHub Actions token to push release tags and explicitly dispatches the tag-aware Release workflow, removing the expired `RELEASE_PAT` bottleneck without losing downstream release execution to GitHub's recursion guard.
+  - Release smoke coverage enforces the required token permissions, dispatch path, and absence of personal access-token coupling.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+- **Graceful build-log transport fallback and explicit Android signing guidance**:
+  - Build logs now treat SSE-to-polling fallback as a normal transport change instead of showing a persistent error while polling continues successfully.
+  - Generated Android signing credentials use owner-only file permissions, and the signing guide now documents both zero-configuration temporary files and an explicit `CI=true` / `OORE_ANDROID_*` Gradle path.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
+- **Repository-first build setup**:
+  - Empty projects now inspect the linked repository before asking users to configure a pipeline. Valid checked-in workflows are recommended with a secret-free preview; missing, invalid, loading, and provider-error states lead to an explicit next action instead of a dense blank form.
+  - Repository execution fields stay read-only in the setup form so the checked-in file remains the single source of truth. Manual templates remain available as a deliberate fallback.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Reproducible manual build revisions**:
+  - Manual and API builds that select a branch now resolve and store its exact commit before entering the queue. Config snapshots, reruns, and runner checkout retain that SHA even if the branch advances later.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Read-only repository workflow discovery API**:
+  - Project maintainers can discover and semantically validate root `.oore.yaml`/`.oore.yml`, bounded `.oore/*.yaml|yml`, and an explicit repository-relative workflow path at a selected ref across GitHub, GitLab.com, self-managed GitLab, and local Git.
+  - Discovery is protected by project `ManagePipelines` permission, limits file counts and response sizes, rejects unsafe paths and refs, and returns only secret-free execution previews: environment keys are visible but raw YAML, environment values, and provider credentials are never returned.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Repository workflow config path safety**:
+  - Explicit repository workflow paths now use one workspace-relative path contract across pipeline create, update, dry-run validation, and runner execution. Absolute paths, traversal, dot or empty segments, backslash separators, oversized paths, and symlink escapes are rejected before the runner reads them.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Managed frontend onboarding and real Flutter migration fixes**:
+  - A paired same-origin `oore-web` frontend now becomes the browser's instance automatically when no instance has been saved, so invited users can proceed directly to authentication; manual instance management remains available for generic and multi-instance clients.
+  - Remote project creation now requires an explicitly selected connected repository and fills its editable name and default branch, while local project paths stay confined to Local Only mode.
+  - Pipeline forms preserve platform arguments, environment variables, and artifacts independently from custom command toggles. Built-in artifact patterns and the runner now share the same valid workspace-relative glob contract.
+  - Terminal build logs no longer present stale or duplicate live state, and the no-op client-only Validate action was removed in favor of validation on save.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Terminal log loading truth**:
+  - A completed build now shows an explicit loading state while persisted logs are being fetched instead of briefly claiming the build recorded no logs.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
+- **Reliable release tagging and Pages deployment**:
+  - Release tags are again cut from pushes to protected release-channel branches, avoiding a `workflow_run` trigger that GitHub only evaluates from the default branch.
+  - Pages projects now deploy serially and retry only transient Cloudflare 5xx API failures with bounded backoff; authentication and configuration errors still fail immediately.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+- **Runtime versions, owner-managed updates, and frontend state boundaries**:
+  - Preferences now reports frontend and backend versions independently, checks the installed release channel for updates, and lets the owner update managed `oore-web` and `oored` services through their existing systemd/launchd supervisors.
+  - Runner inventory now reports embedded and detached runner versions. Remote runner updates stay disabled until a runner-only package and managed service contract exist.
+  - Shared command-palette state now lives in Zustand, server update state remains in TanStack Query, build-log lifecycle state uses a reducer, and pipeline-form state no longer mirrors React Hook Form dirtiness through an effect.
+  - Linear feature docs: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5 and https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+- **Updater system-service authorization fix**:
+  - `oore update` now obtains and explains macOS administrator authorization before replacing installed files, then restarts system launchd services non-interactively with bounded launchctl commands so a stalled password or service command cannot leave an apparently updated but unverified release.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+- **Frontend release smoke follow-up**:
+  - Signed-in AWS smoke testing passed at desktop and 390 px widths for dashboard, projects, builds, sources, and GitLab setup; long setup URLs now wrap within narrow hint cards.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Frontend layout and action consistency follow-up**:
+  - Source connection actions now align across providers, connected-source and other inventory empty states use compact spacing, and equivalent navigation/create/copy/destructive actions share icons, wording, and visual treatment.
+  - Shared page headers no longer double their section spacing; project cards align their actions; narrow settings layouts reflow instead of overflowing; and icon-only controls expose accessible names and selected state.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
+## 2026-07-12
+
+- **Frontend build-log correctness foundation**:
+  - Terminal build details now fetch the final log snapshot only after completion and merge it with streamed chunks by sequence, preventing visible output from regressing while persistence catches up.
+  - Completed steps without runner log markers now default to All logs instead of selecting an empty step.
+  - Build logs are now the primary full-width workspace, with a compact summary above and artifacts and event history moved into secondary sections below.
+  - Step filtering now appears only for logs that can be associated truthfully; terminal controls use Base UI-backed shadcn components, semantic colors, and accessible labels.
+  - Added focused regression coverage and removed render-phase routing/store mutations from setup, instance, project, and build flows.
+  - Core build and project actions now distinguish navigation, source connection, settings, and build execution with consistent labels and icons.
+  - Projects and builds now share the registry-backed Empty pattern, with consistent sentence-case actions and task-specific recovery guidance.
+  - GitLab setup now guides admins through host choice, PAT/OAuth authentication, source verification, and webhook delivery readiness equally for GitLab.com and self-managed hosts.
+  - GitLab webhook and OAuth callback instructions use the configured External Access public URL, preserving split AWS frontend and private macOS backend deployments.
+  - GitLab setup schema, host choice, credentials, and webhook-secret controls now live in focused route-local modules while preserving the established setup flow.
+  - Build detail routing, orchestration, summary, artifacts, and event history now live in cohesive single-component modules without changing route behavior.
+  - Terminal log modeling, controls, step navigation, output, and ANSI rendering now live in cohesive modules behind the existing viewer API, with focused grouping and status-truth coverage.
+  - Core routes and settings now use sentence-case action labels, consistent task-specific verbs, Button-owned icon sizing, and accessible names for icon-only user actions.
+  - Verified Button, Select, Card, and Sidebar against the current shadcn registry and refreshed frontend runtime/tooling dependencies within their existing major versions; major upgrades remain isolated for later work.
+  - Corrected vendor chunk boundaries so Base UI is no longer swallowed by the React matcher; route-only controls are deferred and initial JavaScript fell by 15.46 kB gzip (6.3%) after the dependency refresh.
+  - Added a production entry-bundle gate (240 KiB JavaScript and 22 KiB CSS gzip) to `make validate`, measured from the assets actually referenced by the built HTML.
+  - Dashboard build data now uses one query, build lists poll only while work is active, volatile build data keeps a five-second freshness window, and less volatile server state defaults to thirty seconds.
+  - TanStack Query cancellation now reaches build, log, and artifact requests, including abort checks between paginated log pages.
+  - Repository discovery now fetches independent source integrations concurrently and propagates cancellation through both integration and repository requests.
+  - Log-stream polling now shares the stream lifecycle abort signal, preventing stale fallback requests from surviving build or instance changes.
+  - React 19 Effect Events now keep global form and sidebar listeners current without mutating refs during render.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Updater runtime hotfix**:
+  - `oore update` now runs its synchronous SQLite backup step on a blocking worker, avoiding a nested Tokio runtime panic after a release download has been verified.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-readiness-consistent-onboarding-and-first-class-gitlab-6e925460f155
+- **Build-ready split runtime, consistent onboarding, and first-class GitLab**:
+  - Private-address daemon installs now keep a loopback companion listener for the embedded runner without adding a wildcard/public bind, so backend readiness and runner readiness agree.
+  - The dashboard and project/source flows now expose build-blocking runner state, preserve the required first-run action order, and avoid remote local-path dead ends.
+  - Shared UI tokens and core onboarding/source screens now use consistent shape, color, heading, and action hierarchy.
+  - GitLab.com and self-managed GitLab flows now provide split-proxy-safe OAuth/webhook guidance, hardened host validation, private checkout support, complete repository sync, and retry-safe webhook identity.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-readiness-consistent-onboarding-and-first-class-gitlab-6e925460f155
+- **Verified launchd service installation**:
+  - macOS service installation now retries modern `launchctl bootstrap`, requires `kickstart` and service lookup to succeed, and reports the real launchctl error instead of accepting the legacy `load` command's unreliable exit status.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+- **Atomic installer executable upgrades**:
+  - The installer now stages each executable beside its destination and atomically renames it into place, so reinstalling over a running macOS LaunchDaemon does not mutate its live executable inode and trigger `Killed: 9` during service replacement.
+  - Installer acceptance coverage asserts that replacement changes the destination inode while preserving executable permissions and content.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+- **Frontend Trusted Proxy pairing**:
+  - `oore frontend invite` now creates a short-lived, single-use pairing code for a ready Trusted Proxy backend. A frontend-only installer can exchange `OORE_FRONTEND_PAIRING_CODE` through the private, CIDR-restricted `/v1/frontend/pair` capability, save the backend proof, and generate a separate local HAProxy-to-`oore-web` proof.
+  - The split-role, installer, Mac Studio + NetBird + Warpgate, CLI, and OpenAPI documentation now describe pairing as the normal path while keeping manual proof files as an advanced fallback.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+- **Headless macOS backend service**:
+  - Backend-only installs now use a boot-time system LaunchDaemon running as the installing account, so SSH-only Mac build hosts do not require an active GUI login session.
+  - Reinstall and uninstall remove any legacy user LaunchAgent left by an earlier backend installation attempt.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+- **CI and release latency**:
+  - Rust validation reuses dependency artifacts, release-branch path filtering compares only the current push, Pages deployment runs independently from binary packaging, and macOS ARM64/x86_64 release binaries build in parallel.
+  - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+- **Installer explicit-role and timeout fix**:
+  - Explicit macOS `backend` and `frontend` roles are no longer overwritten by the simple all-in-one default.
+  - Release discovery and downloads now have bounded connection and transfer timeouts instead of hanging indefinitely on a broken network path.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+- **Split deployment reliability**:
+  - Frontend-only installs now reject occupied listen ports before changing service state and require both the auth-proxy proof and backend proof for Trusted Proxy identity forwarding.
+  - `oore-web status` verifies launcher health plus dependency-aware backend readiness through the real frontend proxy path, while the proxy now forwards `/readyz` alongside `/healthz` and `/v1/*`.
+  - `oore update` derives managed daemon and web addresses from launchd configuration, preserves custom private daemon addresses for unmanaged restarts, and verifies the real readiness endpoint before accepting an update or rollback.
+  - Linux uninstall now disables, stops, removes, and reloads the `oore-web` systemd user service instead of leaving a broken lingering unit.
+  - The Mac Studio + NetBird + Warpgate runbook now documents the deployed HAProxy topology, separate frontend/backend proofs, backend-owned owner initialization, and an unused loopback port for `oore-web`.
+  - Linear feature docs: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6 and https://linear.app/oorebuild/document/feature-backend-owned-setup-init-for-local-and-trusted-proxy-modes-e850cb76e746
+- Release automation now uses the configurable macOS runner with a `macos-latest` fallback for validation, autotagging, and release packaging, and bootstraps Bun plus both Rust macOS targets so an unavailable pre-provisioned self-hosted runner cannot block alpha delivery.
+  - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+- **Product trust hardening release**:
+  - Repository YAML now uses one strict parser across runner execution, daemon validation, and `oore pipeline validate`; repository YAML no longer accepts trigger/concurrency fields and artifact globs are safe workspace-relative patterns.
+  - Runner protocol v2 prevents old runners from claiming work and adds artifact reservation, upload, completion/abort, pending visibility, stale cleanup, required-artifact failure, and `.app` bundle packaging.
+  - Default macOS installation now installs and starts the loopback daemon and local web UI as launch-at-login services, opens the local web root for interactive installs, and relies on loopback local login instead of bootstrap tokens or `/setup` routing. Split and remote topology choices remain available through `scripts/install.sh --advanced`; `--no-open` and `OORE_OPEN_BROWSER` control browser opening.
+  - `oore doctor` now separates core runner requirements from repeatable Android, iOS, and macOS platform checks. Java, Android SDK, and Xcode checks are target-specific; signing and notarization are warnings rather than release-runner blockers; JSON statuses are explicit.
+  - Added liveness-only `/healthz` and dependency-aware `/readyz`; added verified `oore backup create|verify|restore`; and made `oore update` stage, back up, atomically replace, verify, and roll back installed releases while preserving managed service state.
+  - Validation now covers master/alpha/beta/stable, release-tooling paths, and only runs autotag after Validate succeeds for the exact pushed commit.
+  - Release smoke now exercises updater snapshot/install/rollback restoration, and build list/detail responses include project, pipeline, and runner display context for truthful operator UI.
+  - Quick Debug APK pipelines now explicitly run `flutter build apk --debug`, and generated defaults use Flutter's real Android, iOS, and macOS output paths.
+  - Pipeline creation preserves a successful create when a later signing request fails, then routes to a signing-only retry with the failed signing section expanded.
+  - Builds show project context globally and accept optional named project/pipeline/runner context from the backend; terminal details prioritize failure reasons, failed steps, final-log states, and status-appropriate artifact empty states.
+  - The hosted demo is explicitly sample-data, read-only UI: common build/project/pipeline mutations are visibly disabled and the API guard rejects all other mutations without returning fake success.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
+## 2026-05-22
+
+- **Frontend guided setup hints**:
+  - Builds empty state now spaces and aligns first-run actions consistently and explains the shortest path from source/project setup to the first build.
+  - Source setup screens now surface GitHub App access, GitLab PAT scopes, webhook secret placement, built-in CI variables, and Android/iOS signing project hints directly in the UI.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+- **Same-origin proxy instance URL resolution**:
+  - Web API hooks now resolve empty or `local` instance URLs to the current browser origin, so frontend-only/proxied deployments use the oore-web same-origin `/v1` proxy instead of silently disabling server-state queries.
+  - Sources, setup status, login, project creation, and admin data hooks now share the same API base resolution for local-proxy instances.
+  - Cleaned up the URL resolver to satisfy strict web linting in CI.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+- **Runtime version visibility and restart flag accuracy**:
+  - Backend health and `oore-web` health responses now expose the loaded runtime version/channel so split deployments can confirm which frontend bundle and daemon are actually serving requests.
+  - Instance preferences no longer hardcode `restart_required: true`; current supported preference changes apply without advertising a misleading pending restart.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+## 2026-05-21
+
+- **Release latest resolution sorting**:
+  - `oore-web update` and the installer now choose the highest semver-matching release for alpha/beta channels instead of trusting GitHub Releases list order.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+- **Remote auth mode preferences UI**:
+  - Preferences now represents Remote OIDC and Remote Trusted Proxy as distinct access states instead of treating every Remote setup as OIDC.
+  - Sources and source setup screens no longer default to Local Only while access policy is still loading, and their copy now follows the backend runtime mode instead of frontend-only assumptions.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+- **Web TypeScript release-build compatibility**:
+  - Kept the required `ignoreDeprecations` compiler option and restored it to the TypeScript-supported `5.0` value so release builds pass `tsc`.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+- **Backend-owned setup initialization for trusted proxy deployments**:
+  - Added `oore setup init --mode local|trusted-proxy` so backend-host setup can create the owner and complete setup without a browser bootstrap-token flow when the operator already knows the deployment mode.
+  - Backend and installer trusted-proxy setup now require a shared secret for direct Trusted Proxy initialization, store it in restrictive files for service use, and let `oore-web` inject the backend secret only on proxied API requests.
+  - `oore-web` now strips browser-supplied identity headers unless an upstream auth proxy proof header is present, preventing the frontend proxy from turning client headers into trusted backend identities.
+  - Installer health checks no longer mark private-interface installs as failed just because the host cannot reach its own advertised address; they continue with a warning and clearer next steps.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-backend-owned-setup-init-for-local-and-trusted-proxy-modes-e850cb76e746
+
+- **Public setup/auth/install docs IA cleanup**:
+  - Reframed public onboarding docs around backend-owned setup/auth with frontend clients kept dumb, and clarified the generic setup modes: Local Only, Remote OIDC, and Remote Trusted Proxy.
+  - Updated install, first-instance, hosted UI, public alpha, setup-state, and feedback docs to distinguish install roles from setup modes, hosted UI from hosted backend, and split frontend/backend from provider-specific examples.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
+- **Trusted-proxy sign-in UX**:
+  - The web app now treats configured Remote + Trusted Proxy instances as proxy-authenticated sessions, auto-exchanging the forwarded identity header for an Oore session from both the dashboard guard and login page.
+  - Trusted Proxy mode no longer falls through to Local Only or OIDC copy, and blocked Local Only access now points users back to daemon-host setup or their selected Remote auth mode instead of assuming OIDC.
+  - Feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+
+- **Frontend launcher update command**:
+  - Added `oore-web update` for frontend-only hosts so operators can update the browser-facing launcher and `web-dist` assets from the installed release channel without rerunning the installer.
+  - The command supports `--check`, `--force`, `--channel stable|beta|alpha`, and `--repo owner/name`, verifies the release checksum, and preserves installed `CHANNEL` / `GITHUB_REPO` metadata.
+  - Feature doc: https://linear.app/oorebuild/document/feature-oore-web-frontend-update-command-6b648f19a3f9
+
+## 2026-05-20
+
+- **Daemon launchd service management**:
+  - Implemented `oored install-service` and `oored uninstall-service` for macOS launchd user services.
+  - `install-service` now writes `~/Library/LaunchAgents/build.oore.oored.plist`, starts the service by default, keeps the daemon alive, supports custom `--listen`, `--state-file`, `--label`, repeatable `--env KEY=VALUE`, and `--no-start`.
+  - `uninstall-service` unloads/removes the service plist while leaving daemon data and logs untouched.
+  - Install and uninstall scripts now use the same Oore CI banner/summary treatment in interactive and non-interactive runs, making CI logs and copied terminal output easier to follow.
+  - Updated install, production deployment, clean reinstall, troubleshooting, and CLI docs so users can run persistent daemon setups without hand-writing launchd plists.
+  - Feature doc: https://linear.app/oorebuild/document/feature-oored-launchd-service-installuninstall-3878b499a450
+
+- **Guided split deployment installer**:
+  - Installer modes are now role-based: `auto`, `all`, `backend`, and `frontend`; legacy `full` still works as an alias for `all`.
+  - `backend` installs only the macOS daemon, CLI, and embedded runner from the backend archive; `all` keeps the prior single-host bundle with local web assets.
+  - Frontend-only installs now prompt for a generic reachable backend URL, keep `oore-web` loopback by default, configure `run`/`login` service behavior, and can enable systemd lingering for Linux service survival across logout/reboot.
+  - Non-interactive frontend-only installs now fail fast unless a backend URL was explicitly provided, preventing accidental proxies to `127.0.0.1`.
+  - `all` and `backend` macOS installs now accept `OORE_DAEMON_LISTEN`, `OORE_PUBLIC_URL`, `OORE_CORS_ORIGINS`, and `OORE_INSTALL_DAEMON_SERVICE`, with interactive prompts for the same values.
+  - Trusted-proxy setup now captures an initial owner email and rejects owner claims from a different forwarded identity, avoiding manual owner/admin edits in SQLite.
+  - Trusted-proxy setup UI now includes proxy presets: generic `x-oore-user-email`, Warpgate `x-warpgate-username`, and a custom editable header.
+  - Setup completion now promotes an existing matching user row to `owner` instead of ignoring it when the email already exists.
+  - Installer prompts now start after the Oore CI banner/welcome, use consistent question-block formatting for text and option prompts, and backend installs only ask External Access/CORS questions when direct browser-to-daemon API access is selected or preconfigured.
+  - Backend installs can now capture Trusted Proxy setup defaults (`OORE_SETUP_OWNER_EMAIL`, proxy preset, custom email header), pass them into the web setup wizard, and persist the selected daemon URL into `oore` CLI config so follow-up commands do not silently fall back to `127.0.0.1:8787`.
+  - Split/backend installs no longer block the terminal waiting for browser setup completion.
+  - Updated generic split role docs and kept the Mac Studio + NetBird + Warpgate guide as one provider-specific example.
+  - Documented the prerelease installer endpoints so alpha/beta testers use the matching installer script, not the stable production installer.
+  - Feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+
+## 2026-05-16
+
+- **Complexity optimization pass**:
+  - Backend retention cleanup now bulk-loads candidate build artifacts per project instead of issuing one artifact query per candidate build.
+  - Web log streaming now incrementally merges ordered log chunks instead of resorting the full log set on every SSE/poll append.
+  - Project detail, log viewer, and user settings render paths now reuse memoized lookups/counts for repeated derived data.
+  - Web TypeScript config keeps the supported deprecation suppression target for current `tsc` validation.
+  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+
 ## 2026-05-13
 
-- **Runner Flutter SDK preparation fix**:
-  - Runner plans now run `fvm install <version>` before `fvm use <version> --force` when a Flutter version is resolved from `.fvmrc`, `.oore.yaml`, or the UI pipeline config.
-  - Web log viewing now silently falls back to polling after an SSE disconnect instead of showing a persistent warning while logs continue loading normally.
-  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
-- **Runner checkout credential-file fix**:
-  - Branch checkout now uses `git init` + `git fetch` + `git checkout FETCH_HEAD` instead of `git clone ... .`, so runner-created credential files do not make the checkout directory fail as non-empty.
-  - Runner workspaces are cleared before each job starts to avoid stale failed-attempt files affecting retries.
-  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
-- **GitLab source setup and private checkout fixes**:
-  - Runner checkout now fetches GitLab HTTPS credentials from a runner-only assigned-job endpoint, so private GitLab repositories clone with the stored integration token instead of prompting for a username.
-  - GitLab integration setup now shows required Personal Access Token scopes, the exact webhook receiver URL, and a generated webhook secret before connecting.
-  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
-- **First-class Warpgate split-deployment operations**:
-  - Added `oore external-access enable-trusted-proxy` to configure public URL, allowed origins, trusted proxy CIDRs/header/shared secret, and switch the instance into `remote + trusted_proxy` mode without manual curl calls.
-  - Added `POST /v1/users/transfer-owner` and `oore users transfer-owner` so the owner role can be transferred to an active Warpgate user without editing SQLite.
-  - Installer now stops an existing `oore-web` service/process before replacing the frontend binary, avoiding `Text file busy` during frontend-only upgrades.
-  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
-- **Same-origin frontend proxy and Warpgate trusted-proxy hardening**:
-  - Fixed authenticated web hooks so an empty Backend URL is treated as the same-origin `oore-web` proxy instead of disabling Users, Preferences, projects, builds, runners, integrations, notifications, retention, and audit-log queries.
-  - Updated Preferences to reflect the active remote auth mode, including Trusted Proxy / Warpgate status instead of showing OIDC-only readiness text for trusted-proxy instances.
-  - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
-- **Frontend-only installer for split Warpgate deployments**:
+- **Frontend-only installer for split deployments**:
   - Added `OORE_INSTALL_MODE=frontend` to install only `oore-web` and prebuilt web assets on Linux or macOS hosts.
-  - Release automation now publishes `oore-web_<version>_<os>_<arch>.tar.gz` frontend-only assets alongside full macOS backend archives.
-  - Installer supports `OORE_WEB_BACKEND_URL` so a separate frontend host can proxy `/v1/*` to a Mac Studio daemon over NetBird.
-  - Docs now cover the split Mac Studio backend + Ubuntu frontend + Warpgate topology.
+  - Release automation now publishes `oore-web_<version>_<os>_<arch>.tar.gz` frontend-only assets alongside macOS backend archives.
+  - Installer supports `OORE_WEB_BACKEND_URL` so a separate frontend host can proxy `/v1/*` to a backend daemon over a private or controlled network path.
+  - Docs now cover split backend/frontend topology, with Mac Studio + NetBird + Warpgate as one provider-specific example.
   - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 ## 2026-05-05
 
-- **Project RBAC hardening from Codex scan** ([GitHub #88](https://github.com/devaryakjha/oore.build/issues/88), [#89](https://github.com/devaryakjha/oore.build/issues/89)):
+- **Project RBAC hardening from Codex scan** ([GitHub #88](https://github.com/oore-ci/oore.build/issues/88), [#89](https://github.com/oore-ci/oore.build/issues/89)):
   - `POST /v1/builds/{build_id}/cancel` now resolves the build project and requires `ProjectPermission::CancelBuild` before transitioning build state.
   - Scoped artifact token create/list/revoke routes now resolve artifact -> build -> project and require `ProjectPermission::ReadArtifacts` before minting or managing bearer download URLs.
   - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 ## 2026-04-15
 
-- **Security fixes from Codex scan** ([GitHub #83](https://github.com/devaryakjha/oore.build/issues/83), [#84](https://github.com/devaryakjha/oore.build/issues/84), [#85](https://github.com/devaryakjha/oore.build/issues/85), [#86](https://github.com/devaryakjha/oore.build/issues/86)):
+- **Security fixes from Codex scan** ([GitHub #83](https://github.com/oore-ci/oore.build/issues/83), [#84](https://github.com/oore-ci/oore.build/issues/84), [#85](https://github.com/oore-ci/oore.build/issues/85), [#86](https://github.com/oore-ci/oore.build/issues/86)):
   - Enforced configured trusted-proxy shared secrets with the `X-Oore-Trusted-Proxy-Secret` header for runtime trusted-proxy login and setup owner claim.
   - Scoped direct build/log/artifact read routes to project RBAC, including stream-token issuance and artifact download links.
   - Scoped direct pipeline and signing mutation routes to project RBAC before applying pipeline, Android signing, iOS signing, device registration, or sync changes.
@@ -129,8 +430,7 @@ Rules:
 
 ## 2026-03-18
 
-
-- **Doc improvements for early testers** ([#49](https://github.com/devaryakjha/oore.build/issues/49), [#44](https://github.com/devaryakjha/oore.build/issues/44), [#40](https://github.com/devaryakjha/oore.build/issues/40), [#48](https://github.com/devaryakjha/oore.build/issues/48), [#41](https://github.com/devaryakjha/oore.build/issues/41), [#42](https://github.com/devaryakjha/oore.build/issues/42), [#43](https://github.com/devaryakjha/oore.build/issues/43)):
+- **Doc improvements for early testers** ([#49](https://github.com/oore-ci/oore.build/issues/49), [#44](https://github.com/oore-ci/oore.build/issues/44), [#40](https://github.com/oore-ci/oore.build/issues/40), [#48](https://github.com/oore-ci/oore.build/issues/48), [#41](https://github.com/oore-ci/oore.build/issues/41), [#42](https://github.com/oore-ci/oore.build/issues/42), [#43](https://github.com/oore-ci/oore.build/issues/43)):
   - Added "Alpha Feedback Playbook" with 10-minute test flow and templates.
   - Added "Issue Report Checklist" page and linked from SUPPORT.md.
   - Added screenshots with modern `.webp` formatting to the Public Alpha guide.

@@ -3,10 +3,7 @@ import {
   demoNotificationChannels,
   demoNotificationDeliveries,
 } from '../data/notification-channels'
-import type {
-  NotificationChannel,
-  NotificationDelivery,
-} from '@/lib/types'
+import type { NotificationChannel, NotificationDelivery } from '@/lib/types'
 
 function now(): number {
   return Math.floor(Date.now() / 1000)
@@ -37,7 +34,8 @@ export const notificationHandlers = [
       events: (body.events as Array<string> | undefined) ?? [],
       has_url: !!(body.url as string),
       has_secret: !!(body.secret as string),
-      has_smtp_config: !!(body.smtp_config as Record<string, unknown> | undefined),
+      has_smtp_config: !!(body.smtp_config as
+        Record<string, unknown> | undefined),
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),
@@ -59,32 +57,35 @@ export const notificationHandlers = [
     return HttpResponse.json({ channel })
   }),
 
-  http.put('/v1/settings/notification-channels/:id', async ({ params, request }) => {
-    await delay(300)
-    const idx = channels.findIndex((c) => c.id === params.id)
-    if (idx === -1) {
-      return HttpResponse.json(
-        { error: 'not_found', message: 'Channel not found' },
-        { status: 404 },
-      )
-    }
-    const body = (await request.json()) as Record<string, unknown>
-    const existing = channels[idx]
+  http.put(
+    '/v1/settings/notification-channels/:id',
+    async ({ params, request }) => {
+      await delay(300)
+      const idx = channels.findIndex((c) => c.id === params.id)
+      if (idx === -1) {
+        return HttpResponse.json(
+          { error: 'not_found', message: 'Channel not found' },
+          { status: 404 },
+        )
+      }
+      const body = (await request.json()) as Record<string, unknown>
+      const existing = channels[idx]
 
-    const updated: NotificationChannel = {
-      ...existing,
-      name: (body.name as string | undefined) ?? existing.name,
-      enabled: (body.enabled as boolean | undefined) ?? existing.enabled,
-      events: (body.events as Array<string> | undefined) ?? existing.events,
-      has_url: body.url ? true : existing.has_url,
-      has_secret: body.secret ? true : existing.has_secret,
-      has_smtp_config: body.smtp_config ? true : existing.has_smtp_config,
-      updated_at: now(),
-    }
+      const updated: NotificationChannel = {
+        ...existing,
+        name: (body.name as string | undefined) ?? existing.name,
+        enabled: (body.enabled as boolean | undefined) ?? existing.enabled,
+        events: (body.events as Array<string> | undefined) ?? existing.events,
+        has_url: body.url ? true : existing.has_url,
+        has_secret: body.secret ? true : existing.has_secret,
+        has_smtp_config: body.smtp_config ? true : existing.has_smtp_config,
+        updated_at: now(),
+      }
 
-    channels = channels.map((c, i) => (i === idx ? updated : c))
-    return HttpResponse.json({ channel: updated })
-  }),
+      channels = channels.map((c, i) => (i === idx ? updated : c))
+      return HttpResponse.json({ channel: updated })
+    },
+  ),
 
   http.delete('/v1/settings/notification-channels/:id', async ({ params }) => {
     await delay(300)
@@ -100,17 +101,20 @@ export const notificationHandlers = [
     return HttpResponse.json({ deleted: true })
   }),
 
-  http.post('/v1/settings/notification-channels/:id/test', async ({ params }) => {
-    await delay(500)
-    const channel = channels.find((c) => c.id === params.id)
-    if (!channel) {
-      return HttpResponse.json(
-        { error: 'not_found', message: 'Channel not found' },
-        { status: 404 },
-      )
-    }
-    return HttpResponse.json({ success: true })
-  }),
+  http.post(
+    '/v1/settings/notification-channels/:id/test',
+    async ({ params }) => {
+      await delay(500)
+      const channel = channels.find((c) => c.id === params.id)
+      if (!channel) {
+        return HttpResponse.json(
+          { error: 'not_found', message: 'Channel not found' },
+          { status: 404 },
+        )
+      }
+      return HttpResponse.json({ success: true })
+    },
+  ),
 
   http.get(
     '/v1/settings/notification-channels/:id/deliveries',

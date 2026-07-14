@@ -23,6 +23,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 interface PipelineCardProps {
   pipeline: Pipeline
@@ -115,9 +116,14 @@ export default function PipelineCard({
           {/* Actions */}
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
             {canTriggerBuild ? (
-              <Button size="sm" onClick={() => setTriggerOpen(true)}>
-                <HugeiconsIcon icon={PlayIcon} size={14} />
-                Run
+              <Button
+                size="sm"
+                onClick={() => setTriggerOpen(true)}
+                disabled={isDemoMode}
+                title={isDemoMode ? READ_ONLY_REASON : undefined}
+              >
+                <HugeiconsIcon icon={PlayIcon} />
+                Run build
               </Button>
             ) : null}
             {canWrite ? (
@@ -128,11 +134,12 @@ export default function PipelineCard({
                   <Link
                     to="/projects/$projectId/pipelines/$pipelineId/edit"
                     params={{ projectId, pipelineId: pipeline.id }}
+                    search={{}}
                   />
                 }
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={Edit02Icon} size={14} />
+                <HugeiconsIcon icon={Edit02Icon} />
                 Edit
               </Button>
             ) : null}
@@ -141,7 +148,8 @@ export default function PipelineCard({
                 size="sm"
                 variant="outline"
                 onClick={handleToggle}
-                disabled={updateMutation.isPending}
+                disabled={updateMutation.isPending || isDemoMode}
+                title={isDemoMode ? READ_ONLY_REASON : undefined}
               >
                 {pipeline.enabled ? 'Disable' : 'Enable'}
               </Button>
@@ -157,7 +165,7 @@ export default function PipelineCard({
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Link01Icon} size={14} />
+              <HugeiconsIcon icon={Link01Icon} />
               Permalink
             </Button>
 
@@ -169,7 +177,6 @@ export default function PipelineCard({
             >
               <HugeiconsIcon
                 icon={detailsOpen ? ArrowDown01Icon : ArrowRight01Icon}
-                size={14}
               />
               Details
             </Button>

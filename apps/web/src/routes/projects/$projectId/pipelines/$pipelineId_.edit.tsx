@@ -28,14 +28,12 @@ import {
 import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useProject } from '@/hooks/use-projects'
 import {
-  defaultArtifactPatterns,
+  executionConfigFromForm,
   fileToBase64,
   fileToUtf8,
   hasCustomFallback,
   parseBundleIdsInput,
   parseCsv,
-  parseEnvVars,
-  parseMultiline,
   selectedPlatforms,
   toMultiline,
   trimToUndefined,
@@ -61,7 +59,26 @@ import PipelineForm from '@/components/pipeline-form'
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId_/edit',
 )({
-  staticData: { breadcrumbLabel: 'Edit Pipeline' },
+  staticData: {
+    breadcrumbLabel: 'Edit Pipeline',
+    breadcrumbParent: {
+      label: 'Pipeline',
+      to: '/projects/$projectId/pipelines/$pipelineId',
+    },
+  },
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    signing?: 'android' | 'ios'
+    signingError?: string
+  } => ({
+    signing:
+      search.signing === 'android' || search.signing === 'ios'
+        ? search.signing
+        : undefined,
+    signingError:
+      typeof search.signingError === 'string' ? search.signingError : undefined,
+  }),
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -69,8 +86,9 @@ export const Route = createFileRoute(
   component: EditPipelinePage,
 })
 
-function EditPipelinePage() {
+function useEditPipelinePageState() {
   const { projectId, pipelineId } = Route.useParams()
+  const { signing: retrySigning, signingError } = Route.useSearch()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
   const repoProviderQuery = useRepositoryProvider(
@@ -95,26 +113,15 @@ function EditPipelinePage() {
     : 'Edit Pipeline'
 
   if (isLoading || signingQuery.isLoading || iosSigningQuery.isLoading) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-96 w-full" />
-      </PageLayout>
-    )
+    return { status: 'loading' as const, label }
   }
 
   if (error || !data) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load pipeline: {error?.message ?? 'Not found'}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
+    return {
+      status: 'error' as const,
+      label,
+      message: error?.message ?? 'Not found',
+    }
   }
 
   const { pipeline } = data
@@ -216,18 +223,6 @@ function EditPipelinePage() {
         : undefined,
     }
 
-    const commands = values.enable_customization
-      ? {
-          pre_build: parseMultiline(values.pre_build_commands),
-          build: parseMultiline(values.build_commands),
-          post_build: parseMultiline(values.post_build_commands),
-        }
-      : { pre_build: [], build: [], post_build: [] }
-
-    const customPatterns = values.enable_customization
-      ? parseMultiline(values.artifact_patterns)
-      : []
-
     const payload: UpdatePipelineRequest = {
       name: values.name.trim(),
       config_path:
@@ -235,30 +230,7 @@ function EditPipelinePage() {
           ? values.config_path?.trim()
           : '.oore.yaml',
       config_path_explicit: values.config_mode === 'explicit',
-      execution_config: {
-        platforms,
-        flutter_version: values.flutter_version?.trim() || undefined,
-        commands,
-        platform_build_args: values.enable_customization
-          ? {
-              android: parseMultiline(values.android_build_args),
-              ios: parseMultiline(values.ios_build_args),
-              macos: parseMultiline(values.macos_build_args),
-            }
-          : { android: [], ios: [], macos: [] },
-        platform_commands: values.enable_customization
-          ? {
-              android: values.android_command_override?.trim() || undefined,
-              ios: values.ios_command_override?.trim() || undefined,
-              macos: values.macos_command_override?.trim() || undefined,
-            }
-          : {},
-        env: values.enable_customization ? parseEnvVars(values.env_vars) : [],
-        artifact_patterns:
-          customPatterns.length > 0
-            ? customPatterns
-            : defaultArtifactPatterns(platforms),
-      },
+      execution_config: executionConfigFromForm(values),
       trigger_config,
       concurrency,
     }
@@ -267,50 +239,52 @@ function EditPipelinePage() {
     let hasPayloadErrors = false
     const origSetErrors = (errors: Array<string>) => {
       hasPayloadErrors = true
-      setValidationErrors(errors)
+      setValidationErrors(() => errors)
     }
 
-    const signingPayload = await buildAndroidSigningPayload(
-      values,
-      releaseKeystoreFile,
-      debugKeystoreFile,
-      origSetErrors,
-    )
-    const iosSigningPayload = await buildIosSigningPayload(
-      values,
-      iosSigningFiles,
-      origSetErrors,
-    )
+    const [signingPayload, iosSigningPayload] = await Promise.all([
+      buildAndroidSigningPayload(
+        values,
+        releaseKeystoreFile,
+        debugKeystoreFile,
+        origSetErrors,
+      ),
+      buildIosSigningPayload(values, iosSigningFiles, origSetErrors),
+    ])
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- set via origSetErrors callback during payload construction
     if (hasPayloadErrors) {
       return
     }
 
     try {
-      await updateMutation.mutateAsync({
-        pipelineId: pipeline.id,
-        data: payload,
-      })
-      if (signingPayload) {
+      if (!retrySigning) {
+        await updateMutation.mutateAsync({
+          pipelineId: pipeline.id,
+          data: payload,
+        })
+      }
+      if (signingPayload && retrySigning !== 'ios') {
         await updateSigningMutation.mutateAsync({
           pipelineId: pipeline.id,
           data: signingPayload,
         })
       }
-      if (iosSigningPayload) {
+      if (iosSigningPayload && retrySigning !== 'android') {
         await updateIosSigningMutation.mutateAsync({
           pipelineId: pipeline.id,
           data: iosSigningPayload,
         })
       }
-      toast.success('Pipeline updated')
+      toast.success(retrySigning ? 'Signing updated' : 'Pipeline updated')
       void navigate({
         to: '/projects/$projectId/pipelines/$pipelineId',
         params: { projectId, pipelineId },
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
-      toast.error(`Failed to update pipeline: ${message}`)
+      toast.error(
+        `Failed to ${retrySigning ? 'update signing' : 'update pipeline'}: ${message}`,
+      )
     }
   }
 
@@ -512,20 +486,20 @@ function EditPipelinePage() {
       return null
     }
 
-    const provisioningProfiles: Array<{
-      bundle_id: string
-      profile_filename?: string
-      profile_base64?: string
-    }> = []
-    for (const bundleId of bundleIds) {
-      const profileFile = iosSigningFiles.profileFiles[bundleId]
-      if (!profileFile) continue
-      provisioningProfiles.push({
-        bundle_id: bundleId,
-        profile_filename: profileFile.name,
-        profile_base64: await fileToBase64(profileFile),
-      })
-    }
+    const provisioningProfiles = await Promise.all(
+      bundleIds.flatMap((bundleId) => {
+        const profileFile = iosSigningFiles.profileFiles[bundleId]
+        return profileFile
+          ? [
+              fileToBase64(profileFile).then((profileBase64) => ({
+                bundle_id: bundleId,
+                profile_filename: profileFile.name,
+                profile_base64: profileBase64,
+              })),
+            ]
+          : []
+      }),
+    )
 
     const apiPrivateKey = iosSigningFiles.apiKeyFile
       ? await fileToUtf8(iosSigningFiles.apiKeyFile)
@@ -602,16 +576,100 @@ function EditPipelinePage() {
     }
   }
 
+  return {
+    status: 'ready' as const,
+    deviceName,
+    deviceUdid,
+    formInitialValues,
+    handleRegisterDevice,
+    handleSubmit,
+    handleSyncIosSigning,
+    iosDevicesQuery,
+    iosSigningQuery,
+    label,
+    manualOnlyTriggers,
+    navigate,
+    pipeline,
+    pipelineId,
+    projectId,
+    registerIosDeviceMutation,
+    retrySigning,
+    setDeviceName,
+    setDeviceUdid,
+    signingError,
+    signingQuery,
+    syncIosSigningMutation,
+    updateIosSigningMutation,
+    updateMutation,
+    updateSigningMutation,
+    validationErrors,
+  }
+}
+
+function EditPipelinePage() {
+  const pageState = useEditPipelinePageState()
+
+  if (pageState.status === 'loading') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-96 w-full" />
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load pipeline: {pageState.message}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
+  }
+
+  const {
+    deviceName,
+    deviceUdid,
+    formInitialValues,
+    handleRegisterDevice,
+    handleSubmit,
+    handleSyncIosSigning,
+    iosDevicesQuery,
+    iosSigningQuery,
+    label,
+    manualOnlyTriggers,
+    navigate,
+    pipeline,
+    pipelineId,
+    projectId,
+    registerIosDeviceMutation,
+    retrySigning,
+    setDeviceName,
+    setDeviceUdid,
+    signingError,
+    signingQuery,
+    syncIosSigningMutation,
+    updateIosSigningMutation,
+    updateMutation,
+    updateSigningMutation,
+    validationErrors,
+  } = pageState
+
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Edit: ${pipeline.name}`}
-        back={{
-          to: `/projects/${projectId}/pipelines/${pipelineId}`,
-          label: 'Pipeline',
-        }}
-        description="Update pipeline configuration."
+        description={
+          retrySigning
+            ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`
+            : 'Update pipeline configuration.'
+        }
       />
       <div className="mx-auto max-w-4xl">
         <PipelineForm
@@ -628,13 +686,15 @@ function EditPipelinePage() {
               params: { projectId, pipelineId },
             })
           }
-          submitLabel="Save"
+          submitLabel={retrySigning ? `Retry ${retrySigning} signing` : 'Save'}
           isPending={
             updateMutation.isPending ||
             updateSigningMutation.isPending ||
             updateIosSigningMutation.isPending
           }
           validationErrors={validationErrors}
+          retrySigning={retrySigning}
+          signingError={signingError}
           signingData={signingQuery.data}
           iosSigningData={iosSigningQuery.data}
         >

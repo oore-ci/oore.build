@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use oore_contract::ApiError;
 use ring::hmac;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -442,7 +443,7 @@ pub async fn gitlab_webhook(
             )
         })?;
 
-    let event_uuid = headers
+    let mut event_uuid = headers
         .get("x-gitlab-event-uuid")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
@@ -500,22 +501,30 @@ pub async fn gitlab_webhook(
         )
     })?;
 
-    // Idempotency check
-    if !event_uuid.is_empty() {
-        let existing: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM integration_webhooks \
-             WHERE integration_id = ?1 AND provider_delivery_id = ?2",
-        )
-        .bind(&integration_id)
-        .bind(&event_uuid)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
+    if event_uuid.is_empty() {
+        let mut hasher = Sha256::new();
+        hasher.update(integration_id.as_bytes());
+        hasher.update([0]);
+        hasher.update(event_type.as_bytes());
+        hasher.update([0]);
+        hasher.update(&body);
+        event_uuid = format!("sha256:{}", hex::encode(hasher.finalize()));
+    }
 
-        if existing {
-            info!(event_uuid = %event_uuid, "duplicate GitLab webhook delivery, returning OK");
-            return Ok(Json(serde_json::json!({ "ok": true, "duplicate": true })));
-        }
+    // Idempotency check
+    let existing: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM integration_webhooks \
+         WHERE integration_id = ?1 AND provider_delivery_id = ?2",
+    )
+    .bind(&integration_id)
+    .bind(&event_uuid)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(false);
+
+    if existing {
+        info!(event_uuid = %event_uuid, "duplicate GitLab webhook delivery, returning OK");
+        return Ok(Json(serde_json::json!({ "ok": true, "duplicate": true })));
     }
 
     let now = now_unix();
@@ -540,11 +549,7 @@ pub async fn gitlab_webhook(
 
     // Store webhook record
     let webhook_id = Uuid::new_v4().to_string();
-    let delivery_id = if event_uuid.is_empty() {
-        webhook_id.clone()
-    } else {
-        event_uuid.clone()
-    };
+    let delivery_id = event_uuid.clone();
 
     sqlx::query(
         "INSERT INTO integration_webhooks (id, integration_id, provider_delivery_id, event_type, payload, status, received_at) \

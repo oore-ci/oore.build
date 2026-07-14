@@ -1,14 +1,14 @@
 ---
 status: implemented
-description: "Deploy Oore CI in production including launchd, reverse proxy, and TLS setup."
+description: 'Deploy Oore CI in production including launchd, reverse proxy, and TLS setup.'
 ---
 
 # Production Deployment
 
 Checklist and guidance for deploying Oore CI in a production environment.
 
-For an internal-only macOS rollout behind NetBird + Warpgate, see
-[Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate).
+For separate backend and frontend hosts, see [Split Backend and Frontend](/operations/split-roles).
+For one internal-only macOS rollout example behind NetBird + Warpgate, see [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate).
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ For an internal-only macOS rollout behind NetBird + Warpgate, see
 ### 1. Build from source
 
 ```bash
-git clone https://github.com/devaryakjha/oore.build.git
+git clone https://github.com/oore-ci/oore.build.git
 cd Oore CI
 cargo build --release -p oored
 cargo build --release -p oore
@@ -30,15 +30,24 @@ cargo build --release -p oore
 
 The release binaries are at `target/release/oored` and `target/release/oore`.
 
-### 2. Configure the daemon
+### 2. Install the daemon service
 
-Set environment variables:
+Keep the daemon bound to loopback and run it as a macOS launchd user service:
 
 ```bash
-export OORED_LISTEN_ADDR=127.0.0.1:8787
-export OORE_CORS_ORIGINS=https://ci.mycompany.com
-export RUST_LOG=info
+./target/release/oored install-service \
+  --listen 127.0.0.1:8787 \
+  --env OORE_PUBLIC_URL=https://ci.mycompany.com \
+  --env OORE_CORS_ORIGINS=https://ci.mycompany.com \
+  --env RUST_LOG=info
 ```
+
+If you installed release binaries with the installer, use `oored install-service`
+instead of `./target/release/oored install-service`.
+
+The service plist is written to
+`~/Library/LaunchAgents/build.oore.oored.plist`, and daemon logs are written to
+`~/.oore/logs/oored.log`.
 
 ### 3. Set up a reverse proxy
 
@@ -65,7 +74,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Warpgate-Username $http_x_warpgate_username;
+        proxy_set_header X-Oore-User-Email $http_x_oore_user_email;
     }
 
     location /healthz {
@@ -88,7 +97,7 @@ server {
 ./target/release/oore setup --daemon-url http://127.0.0.1:8787
 ```
 
-If your browser reaches the UI through an identity-aware proxy such as Warpgate, choose `Remote (Trusted Proxy / Warpgate)` during setup instead of OIDC.
+If your browser reaches the UI through an identity-aware proxy, choose `Remote (Trusted Proxy)` during setup instead of OIDC, enter the initial owner email, and configure the header your proxy forwards.
 
 ### 5. Configure artifact storage
 
@@ -99,6 +108,7 @@ For production, use S3 or R2 instead of local storage. See [Configure Storage](/
 ```bash
 curl https://ci.mycompany.com/v1/public/setup-status
 curl https://ci.mycompany.com/healthz
+launchctl print gui/$(id -u)/build.oore.oored
 ```
 
 ## Security hardening

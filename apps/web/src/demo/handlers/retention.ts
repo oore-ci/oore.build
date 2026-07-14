@@ -28,8 +28,7 @@ function effectivePolicy(projectId: string) {
       max_artifact_size_bytes:
         override.max_artifact_size_bytes ??
         globalPolicy.max_artifact_size_bytes,
-      cleanup_target:
-        override.cleanup_target ?? globalPolicy.cleanup_target,
+      cleanup_target: override.cleanup_target ?? globalPolicy.cleanup_target,
       keep_statuses: override.keep_statuses ?? globalPolicy.keep_statuses,
       dry_run: globalPolicy.dry_run,
       cleanup_interval_secs: globalPolicy.cleanup_interval_secs,
@@ -53,7 +52,7 @@ export const retentionHandlers = [
       ...globalPolicy,
       ...body,
       updated_at: now(),
-    } as RetentionPolicy
+    }
     return HttpResponse.json({ policy: globalPolicy })
   }),
 
@@ -77,7 +76,7 @@ export const retentionHandlers = [
       ...body,
       project_id: projectId,
       updated_at: now(),
-    } as ProjectRetentionOverride
+    }
 
     projectOverrides.set(projectId, override)
     return HttpResponse.json(effectivePolicy(projectId))

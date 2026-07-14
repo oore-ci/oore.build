@@ -8,6 +8,7 @@ use oore_contract::{
     ApiError, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest, CreatePipelineResponse,
     ListPipelinesResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
     TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
+    parse_repository_pipeline_yaml, validate_artifact_pattern, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -174,13 +175,8 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
     }
 
     for (idx, pattern) in cfg.artifact_patterns.iter().enumerate() {
-        let trimmed = pattern.trim();
-        let looks_like_ext_glob = trimmed.starts_with("*.") && trimmed.len() > 2;
-        let has_whitespace = trimmed.chars().any(char::is_whitespace);
-        if !looks_like_ext_glob || has_whitespace {
-            errors.push(format!(
-                "execution_config.artifact_patterns[{idx}] must be extension globs like '*.apk'"
-            ));
+        if let Err(error) = validate_artifact_pattern(pattern) {
+            errors.push(format!("execution_config.artifact_patterns[{idx}] {error}"));
         }
     }
 
@@ -239,6 +235,8 @@ fn validate_config_path(path: &str, explicit: bool) -> Vec<String> {
         } else {
             errors.push("config_path must not be empty".to_string());
         }
+    } else if let Err(error) = validate_repository_config_path(path) {
+        errors.push(format!("config_path {error}"));
     }
     errors
 }
@@ -988,6 +986,11 @@ pub async fn validate_pipeline(
 
     if let Some(ref cfg) = req.execution_config {
         errors.extend(validate_execution_config(cfg));
+    }
+    if let Some(ref yaml) = req.repository_yaml
+        && let Err(error) = parse_repository_pipeline_yaml(yaml)
+    {
+        errors.extend(error.lines().map(str::to_string));
     }
 
     let valid = errors.is_empty();

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Complete reference for the .oore.yaml pipeline configuration file format."
+description: 'Complete reference for the .oore.yaml pipeline configuration file format.'
 ---
 
 # .oore.yaml Reference
@@ -12,117 +12,85 @@ For a guide on writing this file, see [Write a Pipeline Config](/guides/projects
 ## Schema
 
 ```yaml
-version: 1                          # Required. Must be 1.
+version: 1 # Required. Must be 1.
 
-flutter_version: "3.24.0"           # Optional. Overridden by .fvmrc if present.
+flutter_version: '3.24.0' # Optional. Overridden by .fvmrc if present.
 
-platforms:                           # Required. At least one platform.
-  - android                          # Options: android, ios, macos
+platforms: # Required. At least one platform.
+  - android # Options: android, ios, macos
   - ios
 
-commands:                            # Required. Build command stages.
-  pre_build:                         # Optional. Runs before build.
+commands: # Required. Build command stages.
+  pre_build: # Optional. Runs before build.
     - flutter pub get
     - dart run build_runner build
-  build:                             # Required. Main build commands.
+  build: # Required. Main build commands.
     - flutter build apk --release
-  post_build:                        # Optional. Runs after successful build.
+  post_build: # Optional. Runs after successful build.
     - echo "Build complete"
 
-platform_build_args:                 # Optional. Per-platform build arguments.
+platform_build_args: # Optional. Per-platform build arguments.
   android:
-    extra_args: "--split-per-abi"
+    - '--split-per-abi'
   ios:
-    export_method: "ad-hoc"          # Options: ad-hoc, app-store, development, enterprise
+    - '--flavor=staging'
 
-platform_commands:                   # Optional. Override commands per platform.
-  android:
-    build:
-      - flutter build apk --release --split-per-abi
-  ios:
-    build:
-      - flutter build ipa --release --export-method ad-hoc
+platform_commands: # Optional. Override commands per platform.
+  android: flutter build apk --release --split-per-abi
+  ios: flutter build ipa --release
 
-env:                                 # Optional. Environment variables for builds.
+env: # Optional. Environment variables for builds.
   - key: JAVA_HOME
     value: /usr/local/opt/openjdk@17
 
-artifacts:                           # Optional. Artifact collection patterns.
+artifacts: # Optional. Artifact collection patterns.
   patterns:
-    - "**/*.apk"
-    - "**/*.ipa"
-
-triggers:                            # Optional. Webhook trigger configuration.
-  events:
-    - push                           # Options: push, pull_request
-    - pull_request
-  branches:
-    - main
-    - "release/*"                    # Supports glob patterns
-
-concurrency:                         # Optional. Concurrency controls.
-  max_concurrent: 1                  # Max simultaneous builds for this pipeline.
-  cancel_in_progress: true           # Cancel older builds when a new one starts.
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
 ```
 
 ## Field reference
 
 ### Top level
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `version` | `integer` | Yes | — | Schema version. Must be `1`. |
-| `flutter_version` | `string` | No | — | Flutter SDK version. Overridden by `.fvmrc` in repo root. |
-| `platforms` | `string[]` | Yes | — | Target platforms: `android`, `ios`, `macos`. |
-| `commands` | `object` | Yes | — | Build command stages. |
-| `platform_build_args` | `object` | No | — | Per-platform build arguments. |
-| `platform_commands` | `object` | No | — | Per-platform command overrides. |
-| `env` | `object[]` | No | `[]` | Environment variables. |
-| `artifacts` | `object` | No | — | Artifact collection config. |
-| `triggers` | `object` | No | — | Webhook trigger rules. |
-| `concurrency` | `object` | No | — | Concurrency controls. |
+| Field                 | Type       | Required | Default | Description                                               |
+| --------------------- | ---------- | -------- | ------- | --------------------------------------------------------- |
+| `version`             | `integer`  | Yes      | —       | Schema version. Must be `1`.                              |
+| `flutter_version`     | `string`   | No       | —       | Flutter SDK version. Overridden by `.fvmrc` in repo root. |
+| `platforms`           | `string[]` | Yes      | —       | Target platforms: `android`, `ios`, `macos`.              |
+| `commands`            | `object`   | Yes      | —       | Build command stages.                                     |
+| `platform_build_args` | `object`   | No       | —       | Per-platform build arguments.                             |
+| `platform_commands`   | `object`   | No       | —       | Per-platform command overrides.                           |
+| `env`                 | `object[]` | No       | `[]`    | Environment variables.                                    |
+| `artifacts`           | `object`   | No       | —       | Artifact collection config.                               |
 
 ### commands
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `pre_build` | `string[]` | No | Commands run before the main build |
-| `build` | `string[]` | Yes | Main build commands |
-| `post_build` | `string[]` | No | Commands run after a successful build |
+| Field        | Type       | Required | Description                           |
+| ------------ | ---------- | -------- | ------------------------------------- |
+| `pre_build`  | `string[]` | No       | Commands run before the main build    |
+| `build`      | `string[]` | Yes      | Main build commands                   |
+| `post_build` | `string[]` | No       | Commands run after a successful build |
 
 Commands are executed sequentially. If any command returns a non-zero exit code, the build fails and subsequent commands are skipped.
 
+To let developers choose a subset of platforms for a manual run, use `platform_commands` (or Oore's default platform commands) and leave `commands.build` empty. A shared `commands.build` list cannot be safely assigned to one platform, so partial runs reject that workflow instead of executing the wrong command.
+
 ### platform_build_args
 
-| Platform | Field | Type | Description |
-|---|---|---|---|
-| `android` | `extra_args` | `string` | Extra arguments passed to the Android build command |
-| `ios` | `export_method` | `string` | IPA export method: `ad-hoc`, `app-store`, `development`, `enterprise` |
+Each platform value is a string array appended to its default build command.
 
 ### env
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `key` | `string` | Yes | Environment variable name |
-| `value` | `string` | Yes | Environment variable value |
+| Field   | Type     | Required | Description                |
+| ------- | -------- | -------- | -------------------------- |
+| `key`   | `string` | Yes      | Environment variable name  |
+| `value` | `string` | Yes      | Environment variable value |
 
 ### artifacts.patterns
 
 An array of glob patterns matched against the build workspace. Matched files are collected as build artifacts.
-
-### triggers
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `events` | `string[]` | No | Trigger events: `push`, `pull_request` |
-| `branches` | `string[]` | No | Branch filters (supports glob patterns) |
-
-### concurrency
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `max_concurrent` | `integer` | No | `1` | Maximum simultaneous builds |
-| `cancel_in_progress` | `boolean` | No | `false` | Cancel running builds when a new one is triggered |
+Patterns are workspace-relative. Absolute paths, parent traversal, and symlink traversal are rejected. Filename-only patterns such as `*.apk` match anywhere in the workspace. Trigger and concurrency policy are configured on the pipeline through the UI/API; they are not repository YAML fields.
 
 ## Config resolution order
 

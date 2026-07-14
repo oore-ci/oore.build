@@ -6,8 +6,6 @@ import {
   getSetupStatus,
   getSetupSummary,
   setupLocalOwnerCreate,
-  setupOidcStart,
-  setupOidcVerify,
   setupPreferences,
   setupTrustedProxyClaimOwner,
   setupTrustedProxyConfigure,
@@ -15,11 +13,10 @@ import {
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
+import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
 
 function requireInstance(instance: Instance | null): string {
-  if (!instance)
-    throw new Error('No active instance. Select or add an instance first.')
-  return instance.url
+  return resolveRequiredInstanceApiBaseUrl(instance)
 }
 
 function useSetupStatusKey() {
@@ -66,44 +63,6 @@ export function useConfigureOidc() {
       sessionToken: string
       data: OidcConfigureRequest
     }) => configureOidc(requireInstance(instance), sessionToken, data),
-    onSuccess: (data) => {
-      if (data.session_expires_at) {
-        useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
-      }
-      void queryClient.invalidateQueries({ queryKey })
-    },
-  })
-}
-
-export function useSetupOidcStart() {
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      redirectUri,
-    }: {
-      sessionToken: string
-      redirectUri: string
-    }) => setupOidcStart(requireInstance(instance), sessionToken, redirectUri),
-  })
-}
-
-export function useSetupOidcVerify() {
-  const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
-
-  return useMutation({
-    mutationFn: ({
-      sessionToken,
-      code,
-      state,
-    }: {
-      sessionToken: string
-      code: string
-      state: string
-    }) => setupOidcVerify(requireInstance(instance), sessionToken, code, state),
     onSuccess: (data) => {
       if (data.session_expires_at) {
         useSetupStore.getState().setSessionExpiresAt(data.session_expires_at)
@@ -172,16 +131,19 @@ export function useSetupTrustedProxyConfigure() {
     mutationFn: ({
       sessionToken,
       userEmailHeader,
+      setupOwnerEmail,
       trustedProxyCidrs,
       sharedSecret,
     }: {
       sessionToken: string
       userEmailHeader?: string
+      setupOwnerEmail?: string
       trustedProxyCidrs: Array<string>
       sharedSecret?: string
     }) =>
       setupTrustedProxyConfigure(requireInstance(instance), sessionToken, {
         user_email_header: userEmailHeader,
+        setup_owner_email: setupOwnerEmail,
         trusted_proxy_cidrs: trustedProxyCidrs,
         shared_secret: sharedSecret,
       }),

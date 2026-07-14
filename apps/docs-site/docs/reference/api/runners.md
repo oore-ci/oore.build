@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for build runner registration and job management in Oore CI."
+description: 'API endpoints for build runner registration and job management in Oore CI.'
 ---
 
 # Runners API
@@ -28,10 +28,10 @@ POST /v1/runners/register
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `name` | `string` | No | Display name for the runner |
-| `capabilities` | `object` | No | Runner capabilities (platforms, tools) |
+| Field          | Type     | Required | Description                            |
+| -------------- | -------- | -------- | -------------------------------------- |
+| `name`         | `string` | No       | Display name for the runner            |
+| `capabilities` | `object` | No       | Runner capabilities (platforms, tools) |
 
 ### Response `200 OK`
 
@@ -76,11 +76,11 @@ GET /v1/runners
 
 ### Runner status values
 
-| Status | Description |
-|---|---|
-| `online` | Runner is healthy and accepting jobs |
-| `offline` | Runner hasn't sent a heartbeat recently |
-| `busy` | Runner is currently executing a build |
+| Status     | Description                                                |
+| ---------- | ---------------------------------------------------------- |
+| `online`   | Runner is healthy and accepting jobs                       |
+| `offline`  | Runner hasn't sent a heartbeat recently                    |
+| `busy`     | Runner is currently executing a build                      |
 | `draining` | Runner is finishing current work and won't accept new jobs |
 
 ---
@@ -135,20 +135,6 @@ Returns the claimed job details:
 ```
 
 If no jobs are available, returns `204 No Content`.
-
----
-
-## Get Checkout Auth {#get-checkout-auth}
-
-Runner fetches checkout credentials for its assigned job.
-
-```
-GET /v1/runners/{runner_id}/jobs/{job_id}/checkout-auth
-```
-
-**Authentication**: Runner token (Bearer)
-
-The response contains credentials only when the linked source requires them, such as a private GitLab repository connected with a Personal Access Token or OAuth token. Runners use these credentials for Git HTTPS checkout without writing them to build logs.
 
 ---
 

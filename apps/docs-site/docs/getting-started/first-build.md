@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Trigger and monitor your first Flutter build on Oore CI."
+description: 'Trigger and monitor your first Flutter build on Oore CI.'
 ---
 
 # Create Your First Build
@@ -17,7 +17,7 @@ This tutorial walks you through creating a project, configuring a pipeline, and 
 ## 1. Create a project
 
 1. Open the web UI at `https://ci.oore.build` (or your self-hosted UI)
-2. Sign in with your OIDC provider
+2. Sign in using the auth mode configured for your instance
 3. Click **New Project**
 4. Select your integration (GitHub or GitLab)
 5. Choose the repository containing your Flutter app
@@ -33,7 +33,7 @@ Add a `.oore.yaml` file to the root of your repository:
 
 ```yaml
 version: 1
-flutter_version: "3.24.0"
+flutter_version: '3.24.0'
 platforms:
   - android
 commands:
@@ -44,7 +44,7 @@ commands:
   post_build: []
 artifacts:
   patterns:
-    - "**/*.apk"
+    - '**/*.apk'
 ```
 
 Push the file to your repository. Oore CI reads this file at build time — no UI configuration needed.
@@ -75,7 +75,10 @@ You can trigger builds three ways:
 1. Open the project
 2. Click **Trigger Build**
 3. Select the pipeline and branch
-4. Click **Start Build**
+4. For a multi-platform pipeline, keep every platform selected or choose the platforms needed for this run
+5. Click **Start Build**
+
+The platform choice affects only that manual run. Automatic builds still run every platform configured by the pipeline, and a re-run keeps the original selection.
 
 ### Webhook trigger (automatic)
 
@@ -89,6 +92,7 @@ curl -X POST http://127.0.0.1:8787/v1/projects/{project_id}/builds \
   -H "Content-Type: application/json" \
   -d '{
     "pipeline_id": "<pipeline_id>",
+    "platforms": ["android"],
     "branch": "main"
   }'
 ```
@@ -103,17 +107,17 @@ When the build succeeds, artifacts (e.g., the `.apk` file) appear in the build d
 
 ## Build states
 
-| State | Meaning |
-|---|---|
-| `queued` | Waiting for a runner to pick up the job |
-| `scheduled` | Assigned to a runner, waiting to start |
-| `assigned` | Runner has claimed the job |
-| `running` | Build commands executing |
-| `succeeded` | Build completed successfully |
-| `failed` | Build commands returned a non-zero exit code |
-| `canceled` | Build was manually canceled |
-| `timed_out` | Build exceeded the time limit |
-| `expired` | Build sat in queue too long without being claimed |
+| State       | Meaning                                           |
+| ----------- | ------------------------------------------------- |
+| `queued`    | Waiting for a runner to pick up the job           |
+| `scheduled` | Assigned to a runner, waiting to start            |
+| `assigned`  | Runner has claimed the job                        |
+| `running`   | Build commands executing                          |
+| `succeeded` | Build completed successfully                      |
+| `failed`    | Build commands returned a non-zero exit code      |
+| `canceled`  | Build was manually canceled                       |
+| `timed_out` | Build exceeded the time limit                     |
+| `expired`   | Build sat in queue too long without being claimed |
 
 For the full state machine, see [Build States](/reference/build-states).
 

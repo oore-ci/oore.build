@@ -1,27 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type {
-  CreateLocalGitIntegrationRequest,
-  GitHubAppStartRequest,
-  GitLabAuthorizeRequest,
-  GitLabStartRequest,
-} from '@/lib/types'
+import type { GitLabAuthorizeRequest, GitLabStartRequest } from '@/lib/types'
 import {
   browseLocalGitDirectories,
-  createLocalGitIntegration,
   deleteIntegration,
-  deleteLocalGitIntegration,
   getIntegration,
-  githubAppComplete,
-  githubAppStart,
   gitlabAuthorize,
   gitlabStart,
   listInstallations,
   listIntegrationRepos,
   listIntegrations,
-  listLocalGitIntegrations,
   syncInstallations,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function useAuthToken(): string | null {
@@ -34,7 +25,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function useIntegrations(provider?: string) {
@@ -45,7 +36,7 @@ export function useIntegrations(provider?: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integrations', provider ?? 'all'],
     queryFn: () => listIntegrations(baseUrl!, token!, { provider }),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -57,7 +48,7 @@ export function useIntegration(id: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integration', id],
     queryFn: () => getIntegration(baseUrl!, token!, id),
-    enabled: baseUrl !== null && !!token && !!id,
+    enabled: !!baseUrl && !!token && !!id,
   })
 }
 
@@ -69,7 +60,7 @@ export function useInstallations(integrationId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'installations', integrationId],
     queryFn: () => listInstallations(baseUrl!, token!, integrationId),
-    enabled: baseUrl !== null && !!token && !!integrationId,
+    enabled: !!baseUrl && !!token && !!integrationId,
   })
 }
 
@@ -81,7 +72,7 @@ export function useIntegrationRepos(integrationId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integration-repos', integrationId],
     queryFn: () => listIntegrationRepos(baseUrl!, token!, integrationId),
-    enabled: baseUrl !== null && !!token && !!integrationId,
+    enabled: !!baseUrl && !!token && !!integrationId,
   })
 }
 
@@ -97,7 +88,7 @@ export function useRepositoryProvider(repositoryId?: string, enabled = true) {
       repositoryId ?? '__none__',
     ],
     queryFn: async () => {
-      if (baseUrl === null || !token || !repositoryId) return null
+      if (!baseUrl || !token || !repositoryId) return null
       const integrations = await listIntegrations(baseUrl, token)
 
       for (const integration of integrations.integrations) {
@@ -117,40 +108,7 @@ export function useRepositoryProvider(repositoryId?: string, enabled = true) {
 
       return null
     },
-    enabled: enabled && baseUrl !== null && !!token && !!repositoryId,
-  })
-}
-
-export function useGitHubAppStart() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-
-  return useMutation({
-    mutationFn: (data: GitHubAppStartRequest) => {
-      if (baseUrl === null || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return githubAppStart(baseUrl, token, data)
-    },
-  })
-}
-
-export function useGitHubAppComplete() {
-  const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (code: string) => {
-      if (baseUrl === null || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return githubAppComplete(baseUrl, token, { code })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-    },
+    enabled: enabled && !!baseUrl && !!token && !!repositoryId,
   })
 }
 
@@ -162,7 +120,7 @@ export function useSyncInstallations() {
 
   return useMutation({
     mutationFn: (integrationId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return syncInstallations(baseUrl, token, integrationId)
     },
@@ -190,7 +148,7 @@ export function useGitLabAuthorize() {
 
   return useMutation({
     mutationFn: (data: GitLabAuthorizeRequest) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return gitlabAuthorize(baseUrl, token, data)
     },
@@ -208,7 +166,7 @@ export function useGitLabStart() {
 
   return useMutation({
     mutationFn: (data: GitLabStartRequest) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return gitlabStart(baseUrl, token, data)
     },
@@ -228,48 +186,13 @@ export function useDeleteIntegration() {
 
   return useMutation({
     mutationFn: (id: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deleteIntegration(baseUrl, token, id)
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-    },
-  })
-}
-
-export function useLocalGitIntegrations(enabled = true) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
-    queryFn: () => listLocalGitIntegrations(baseUrl!, token!),
-    enabled: enabled && baseUrl !== null && !!token,
-  })
-}
-
-export function useCreateLocalGitIntegration() {
-  const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (data: CreateLocalGitIntegrationRequest) => {
-      if (baseUrl === null || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return createLocalGitIntegration(baseUrl, token, data)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
       })
     },
   })
@@ -287,29 +210,6 @@ export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
       path ?? '__default__',
     ],
     queryFn: () => browseLocalGitDirectories(baseUrl!, token!, path),
-    enabled: enabled && baseUrl !== null && !!token,
-  })
-}
-
-export function useDeleteLocalGitIntegration() {
-  const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useMutation({
-    mutationFn: (id: string) => {
-      if (baseUrl === null || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return deleteLocalGitIntegration(baseUrl, token, id)
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations'],
-      })
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'integrations', 'local-git'],
-      })
-    },
+    enabled: enabled && !!baseUrl && !!token,
   })
 }

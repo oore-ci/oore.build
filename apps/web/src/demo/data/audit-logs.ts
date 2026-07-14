@@ -290,7 +290,8 @@ export const demoAuditLogs: Array<AuditLogEntry> = [
     action: 'cleanup',
     resource_type: 'artifact',
     resource_id: null,
-    details: 'Retention cleanup: 1 build expired, 2 artifacts deleted (dry run)',
+    details:
+      'Retention cleanup: 1 build expired, 2 artifacts deleted (dry run)',
     created_at: ago(86400),
   },
   {

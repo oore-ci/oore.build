@@ -8,6 +8,7 @@ import {
 import InstanceSwitcher from '@/components/InstanceSwitcher'
 import NavMain from '@/components/nav-main'
 import NavUser from '@/components/nav-user'
+import RuntimeUpdateNotice from '@/components/runtime-update-notice'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -29,6 +30,7 @@ export default function AppSidebar(
         <NavMain />
       </SidebarContent>
       <SidebarFooter>
+        <RuntimeUpdateNotice />
         <NavUser />
       </SidebarFooter>
       <SidebarRail />

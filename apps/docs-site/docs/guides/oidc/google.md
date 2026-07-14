@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Set up Google Workspace OIDC authentication for Oore CI."
+description: 'Set up Google Workspace OIDC authentication for Oore CI.'
 ---
 
 # Google OIDC Setup
@@ -66,11 +66,11 @@ curl https://accounts.google.com/.well-known/openid-configuration | jq .issuer
 
 During setup (either web UI or CLI), enter:
 
-| Field | Value |
-|---|---|
-| **Issuer URL** | `https://accounts.google.com` |
-| **Client ID** | The client ID from step 1 (e.g., `123456789.apps.googleusercontent.com`) |
-| **Client secret** | The client secret from step 1 (e.g., `GOCSPX-...`) |
+| Field             | Value                                                                    |
+| ----------------- | ------------------------------------------------------------------------ |
+| **Issuer URL**    | `https://accounts.google.com`                                            |
+| **Client ID**     | The client ID from step 1 (e.g., `123456789.apps.googleusercontent.com`) |
+| **Client secret** | The client secret from step 1 (e.g., `GOCSPX-...`)                       |
 
 Oore CI will perform OIDC discovery against the issuer URL, verify the configuration, and store the credentials (the client secret is encrypted with AES-256-GCM).
 

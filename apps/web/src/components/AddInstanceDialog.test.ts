@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addInstanceSchema } from '@/components/AddInstanceDialog'
+import { addInstanceSchema } from '@/components/add-instance-schema'
 
 describe('addInstanceSchema', () => {
   it('allows local empty backend url', () => {

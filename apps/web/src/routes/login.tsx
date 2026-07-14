@@ -1,10 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useSetupStatus } from '@/hooks/use-setup'
+import { useTrustedProxyAutoLogin } from '@/hooks/use-trusted-proxy-auto-login'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
@@ -27,24 +28,28 @@ import { getLastAuthMetaForInstance, useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { resolveLoginFlow } from '@/lib/login-flow'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
 })
 
+const lastAuthTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
 function instanceHostname(url: string): string {
+  if (!url.trim()) return window.location.host
   try {
     return new URL(url).hostname
   } catch {
-    return url || 'local'
+    return url || window.location.host
   }
 }
 
 function formatLastAuthTime(epochSeconds: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(epochSeconds * 1000)
+  return lastAuthTimeFormatter.format(epochSeconds * 1000)
 }
 
 function formatAuthMethodLabel(
@@ -74,7 +79,7 @@ function resolveBackendHostname(url: string): string {
   }
 }
 
-function LoginPage() {
+function useLoginPageState() {
   const instance = useActiveInstance()
   const instances = useInstanceStore((s) => s.instances)
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
@@ -89,7 +94,6 @@ function LoginPage() {
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [loading, setLoading] = useState(false)
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? null
-  const remoteAuthMode = setupStatusQuery.data?.remote_auth_mode ?? null
   const [localEmail, setLocalEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [connectivityIssue, setConnectivityIssue] =
@@ -105,12 +109,17 @@ function LoginPage() {
     [instances, activeInstanceId],
   )
   const lastAuthMeta = instance ? getLastAuthMetaForInstance(instance.id) : null
+  const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-  const backendIsLoopback = instance
-    ? isLoopbackHostname(resolveBackendHostname(instance.url))
+  const backendIsLoopback = instanceApiBaseUrl
+    ? isLoopbackHostname(resolveBackendHostname(instanceApiBaseUrl))
     : false
   const loopbackLocalPath = uiIsLoopback && backendIsLoopback
-  const localLoginAvailable = runtimeMode != null && loopbackLocalPath
+  const loginFlow = setupStatusQuery.data
+    ? resolveLoginFlow(setupStatusQuery.data, loopbackLocalPath)
+    : null
+  const localLoginAvailable = loginFlow === 'local' && loopbackLocalPath
+  const trustedProxyLoginAvailable = loginFlow === 'trusted_proxy'
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
   useMountEffect(() => {
@@ -131,16 +140,18 @@ function LoginPage() {
     return unsub
   })
 
-  const handleLogin = async () => {
+  const handleLogin = useCallback(async () => {
     if (!instance) return
+    const baseUrl = resolveInstanceApiBaseUrl(instance)
+    if (!baseUrl) return
     setLoading(true)
     setError(null)
     setConnectivityIssue(null)
 
-    if (isMixedContentBlocked(window.location.origin, instance.url)) {
+    if (isMixedContentBlocked(window.location.origin, baseUrl)) {
       setConnectivityIssue(
         getConnectivityIssue(
-          instance.url,
+          baseUrl,
           new Error('mixed_content_blocked'),
           window.location.origin,
         ),
@@ -151,29 +162,30 @@ function LoginPage() {
     }
 
     try {
-      const status = await getSetupStatus(instance.url)
+      const status = await getSetupStatus(baseUrl)
       if (status.setup_mode && status.runtime_mode !== 'local') {
-        setError('Setup is not complete yet. Finish setup before signing in.')
+        void navigate({ to: '/setup' })
         setLoading(false)
         return
       }
       const localUi = isLoopbackHostname(window.location.hostname)
-      const localBackend = isLoopbackHostname(
-        resolveBackendHostname(instance.url),
-      )
+      const localBackend = isLoopbackHostname(resolveBackendHostname(baseUrl))
       const canUseLoopbackLocalLogin = localUi && localBackend
       if (status.runtime_mode === 'local' && !canUseLoopbackLocalLogin) {
         setError(
-          'Local Only sign-in is restricted to loopback access. Enable External Access on the host machine.',
+          'Local Only sign-in is restricted to loopback access. Finish setup from the daemon host, or switch this instance to Remote with your chosen auth method.',
         )
         setLoading(false)
         return
       }
 
-      const loginFlow = resolveLoginFlow(status, canUseLoopbackLocalLogin)
+      const resolvedLoginFlow = resolveLoginFlow(
+        status,
+        canUseLoopbackLocalLogin,
+      )
 
-      if (loginFlow === 'local') {
-        const response = await localLogin(instance.url, {
+      if (resolvedLoginFlow === 'local') {
+        const response = await localLogin(baseUrl, {
           email: localEmail.trim() || undefined,
         })
         if (!response.user.user_id || !response.user.role) {
@@ -196,8 +208,8 @@ function LoginPage() {
         return
       }
 
-      if (loginFlow === 'trusted_proxy') {
-        const response = await trustedProxyLogin(instance.url)
+      if (resolvedLoginFlow === 'trusted_proxy') {
+        const response = await trustedProxyLogin(baseUrl)
         if (!response.user.user_id || !response.user.role) {
           throw new Error('Incomplete user profile received from server')
         }
@@ -220,7 +232,7 @@ function LoginPage() {
 
       const callbackUrl = `${window.location.origin}/auth/callback`
       const res = await fetch(
-        `${instance.url}/v1/auth/oidc/start?redirect_uri=${encodeURIComponent(callbackUrl)}`,
+        `${baseUrl}/v1/auth/oidc/start?redirect_uri=${encodeURIComponent(callbackUrl)}`,
       )
 
       if (!res.ok) {
@@ -246,16 +258,16 @@ function LoginPage() {
       window.location.href = data.authorization_url
     } catch (e) {
       setConnectivityIssue(
-        getConnectivityIssue(instance.url, e, window.location.origin),
+        getConnectivityIssue(baseUrl, e, window.location.origin),
       )
       if (e instanceof ApiClientError) {
         if (e.code === 'local_login_loopback_required') {
           setError(
-            'Local Only sign-in is restricted to loopback access. Enable External Access on the host machine.',
+            'Local Only sign-in is restricted to loopback access. Finish setup from the daemon host, or switch this instance to Remote with your chosen auth method.',
           )
         } else if (e.code === 'mode_restricted') {
           setError(
-            'Local sign-in is unavailable until setup is complete in Local Only mode.',
+            'This sign-in method is not enabled for the active instance. Check the setup mode on the daemon host.',
           )
         } else if (e.code === 'external_access_https_required') {
           setError('External Access requires an HTTPS public URL.')
@@ -277,7 +289,7 @@ function LoginPage() {
           )
         } else if (e.code === 'trusted_proxy_identity_missing') {
           setError(
-            'Trusted proxy identity header is missing. Check Warpgate header forwarding.',
+            'Trusted proxy identity header is missing. Check proxy header forwarding.',
           )
         } else if (e.code === 'trusted_proxy_identity_invalid') {
           setError(
@@ -291,7 +303,66 @@ function LoginPage() {
       }
       setLoading(false)
     }
+  }, [instance, localEmail, navigate, setAuth])
+
+  useTrustedProxyAutoLogin({
+    enabled:
+      !!instance &&
+      !hasValidToken &&
+      !loading &&
+      setupStatusQuery.data?.is_configured === true &&
+      loginFlow === 'trusted_proxy',
+    instanceId: instance?.id ?? null,
+    onLogin: handleLogin,
+  })
+
+  return {
+    activeInstanceId,
+    connectivityIssue,
+    error,
+    handleLogin,
+    hostedUi,
+    instance,
+    instanceList,
+    lastAuthMeta,
+    loading,
+    localEmail,
+    localLoginAvailable,
+    localModeNetworkBlocked,
+    loginFlow,
+    runtimeMode,
+    setActiveInstance,
+    setLocalEmail,
+    setShowAddInstance,
+    setupStatusQuery,
+    showAddInstance,
+    trustedProxyLoginAvailable,
   }
+}
+
+function LoginPage() {
+  const {
+    activeInstanceId,
+    connectivityIssue,
+    error,
+    handleLogin,
+    hostedUi,
+    instance,
+    instanceList,
+    lastAuthMeta,
+    loading,
+    localEmail,
+    localLoginAvailable,
+    localModeNetworkBlocked,
+    loginFlow,
+    runtimeMode,
+    setActiveInstance,
+    setLocalEmail,
+    setShowAddInstance,
+    setupStatusQuery,
+    showAddInstance,
+    trustedProxyLoginAvailable,
+  } = useLoginPageState()
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -324,13 +395,15 @@ function LoginPage() {
                 Sign-in method
               </p>
               <p className="mt-1 text-sm font-medium">
-                {runtimeMode === 'local'
-                  ? 'Local Only'
-                  : localLoginAvailable
-                    ? 'Local (loopback)'
-                    : remoteAuthMode === 'trusted_proxy'
-                      ? 'Trusted Proxy'
-                      : 'OIDC'}
+                {loginFlow === 'local'
+                  ? runtimeMode === 'local'
+                    ? 'Local Only'
+                    : 'Local (loopback)'
+                  : loginFlow === 'trusted_proxy'
+                    ? 'Trusted Proxy'
+                    : loginFlow === 'oidc'
+                      ? 'OIDC'
+                      : 'Checking...'}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {lastAuthMeta
@@ -342,8 +415,19 @@ function LoginPage() {
             {runtimeMode === 'local' && localModeNetworkBlocked ? (
               <Alert variant="destructive">
                 <AlertDescription>
-                  Local Only sign-in is blocked for this network host. Enable
-                  External Access on the host machine, then sign in with OIDC.
+                  Local Only sign-in is blocked for this network host. Finish
+                  setup from the daemon host, or switch this instance to Remote
+                  with your chosen auth method.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {trustedProxyLoginAvailable ? (
+              <Alert>
+                <AlertDescription>
+                  Your upstream proxy has already authenticated this request.
+                  Continue to create an Oore session from the forwarded
+                  identity.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -409,22 +493,29 @@ function LoginPage() {
 
             <Button
               onClick={() => void handleLogin()}
-              disabled={loading || !instance || localModeNetworkBlocked}
+              disabled={
+                loading ||
+                !instance ||
+                localModeNetworkBlocked ||
+                setupStatusQuery.isLoading
+              }
               className="w-full"
             >
               {loading ? (
                 <>
                   <Spinner className="size-4" />
-                  {localLoginAvailable ? 'Signing in...' : 'Redirecting...'}
+                  {loginFlow === 'oidc' ? 'Redirecting...' : 'Signing in...'}
                 </>
-              ) : localLoginAvailable ? (
+              ) : loginFlow === 'local' ? (
                 localModeNetworkBlocked ? (
-                  'Enable External Access first'
+                  'Unavailable from this host'
                 ) : (
                   'Sign in locally'
                 )
-              ) : remoteAuthMode === 'trusted_proxy' ? (
-                'Sign in via Trusted Proxy'
+              ) : trustedProxyLoginAvailable ? (
+                'Continue with trusted proxy'
+              ) : setupStatusQuery.isLoading ? (
+                'Checking sign-in method...'
               ) : (
                 'Sign in with OIDC'
               )}
@@ -488,8 +579,8 @@ function LoginPage() {
               className="w-full"
               onClick={() => setShowAddInstance(true)}
             >
-              <HugeiconsIcon icon={Add01Icon} size={16} />
-              Add Another Instance
+              <HugeiconsIcon icon={Add01Icon} />
+              Add another instance
             </Button>
           </CardContent>
         </Card>

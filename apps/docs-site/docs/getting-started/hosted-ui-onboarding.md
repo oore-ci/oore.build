@@ -1,14 +1,15 @@
 ---
 status: implemented
-description: "Connect your self-hosted Oore CI backend to the hosted UI at ci.oore.build."
+description: 'Connect your self-hosted Oore CI backend to the hosted UI at ci.oore.build.'
 ---
 
 # Hosted UI Onboarding
 
-Use this guide after installing backend binaries to complete setup from `https://ci.oore.build`.
+Use this guide after installing backend binaries when you want to use `https://ci.oore.build` as the browser UI.
+The hosted UI is a static client. Your macOS `oored` backend still owns setup state, auth mode, sessions, data, builds, and signing keys.
 
 ::: warning Hosted UI reachability rule
-`https://ci.oore.build` can only connect to backends that are reachable over **HTTPS** from the public internet (or your browser network path).
+`https://ci.oore.build` can only connect to backends that are reachable over **HTTPS** from your browser network path.
 It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
 :::
 
@@ -17,6 +18,7 @@ It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
 Before opening the Hosted UI, verify your backend is reachable over HTTPS from your local machine (where you run the browser). Replace `YOUR_URL` with your actual backend URL.
 
 1. **Verify HTTPS connection**:
+
    ```bash
    # Should return HTTP 200/401/403, not a timeout or DNS error
    curl -I https://YOUR_URL/healthz
@@ -55,7 +57,7 @@ Keep this token ready for the setup wizard.
 
 ## 4. Choose your setup path
 
-### Option A: Backend already reachable over HTTPS (recommended for hosted UI)
+### Option A: Backend already reachable over HTTPS
 
 1. Open [ci.oore.build](https://ci.oore.build).
 2. Use **Add Instance**.
@@ -66,7 +68,7 @@ This can be a VPN-only HTTPS origin. It does not need to be public on the intern
 
 ### Option B: Backend is local-only (no public HTTPS endpoint)
 
-Choose one:
+Do not add `http://127.0.0.1:8787` to `ci.oore.build`. Choose one:
 
 1. **CLI-only setup**
    - Run:
@@ -74,7 +76,7 @@ Choose one:
      oore setup
      ```
 2. **Temporary tunnel**
-   - Expose your backend via Cloudflare Tunnel:
+   - Expose your backend through an HTTPS tunnel. For example:
      ```bash
      cloudflared tunnel --url http://127.0.0.1:8787
      ```
@@ -89,13 +91,16 @@ Choose one:
 
 ## 5. Complete setup
 
-Finish the setup wizard using either:
+Finish the setup wizard using one of the remote modes:
 
-- `Remote (OIDC)`, or
-- `Remote (Trusted Proxy / Warpgate)` if your HTTPS origin is already behind an identity-aware proxy
+- `Remote OIDC` if users should authenticate directly with an OIDC-compatible provider.
+- `Remote Trusted Proxy` if your HTTPS origin is already behind an identity-aware proxy that forwards user identity to Oore.
+
+Use `Local Only` only when the browser or CLI reaches the backend over loopback, not when you are using `ci.oore.build`.
 
 ## CORS and origin notes
 
+- The backend enforces CORS and auth; the hosted UI does not proxy or store your setup data.
 - Default CORS origins already include `https://ci.oore.build`.
 - If you set custom origins, include every UI origin you use via `OORE_CORS_ORIGINS`.
 - Keep hosted UI mode aligned with the platform contract: `ci.oore.build` is UI-only; your backend runs on your own macOS host.

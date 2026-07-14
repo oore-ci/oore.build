@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Load installer functions without running main or reaching the network.
+INSTALLER_LIB="$(mktemp)"
+trap 'rm -f "$INSTALLER_LIB"' EXIT
+sed '$d' "$ROOT_DIR/scripts/install.sh" > "$INSTALLER_LIB"
+# shellcheck disable=SC1090
+source "$INSTALLER_LIB"
+
+OORE_ADVANCED=0
+OORE_INSTALL_MODE=auto
+RELEASE_OS=darwin
+configure_install_mode
+[[ "$OORE_INSTALL_MODE" == "all" ]]
+
+OORE_INSTALL_MODE=backend
+configure_install_mode
+[[ "$OORE_INSTALL_MODE" == "backend" ]]
+
+OORE_DAEMON_LISTEN=""
+OORE_DAEMON_URL="http://127.0.0.1:8787"
+DAEMON_URL="$OORE_DAEMON_URL"
+OORE_INSTALL_DAEMON_SERVICE=""
+OORE_START_DAEMON=""
+configure_backend_install
+[[ "$OORE_DAEMON_LISTEN" == "127.0.0.1:8787" ]]
+[[ "$OORE_INSTALL_DAEMON_SERVICE" == "true" ]]
+[[ "$OORE_START_DAEMON" == "true" ]]
+
+OORE_LOCAL_WEB_MODE=""
+OORE_LOCAL_WEB_LISTEN=""
+configure_frontend_install
+[[ "$OORE_LOCAL_WEB_LISTEN" == "127.0.0.1:4173" ]]
+[[ "$OORE_LOCAL_WEB_MODE" == "login" ]]
+
+atomic_dir="$(mktemp -d)"
+printf 'old' > "$atomic_dir/oored"
+printf 'new' > "$atomic_dir/source"
+old_inode="$(ls -di "$atomic_dir/oored" | awk '{print $1}')"
+install_executable "$atomic_dir/source" "$atomic_dir/oored"
+new_inode="$(ls -di "$atomic_dir/oored" | awk '{print $1}')"
+[[ "$new_inode" != "$old_inode" ]]
+[[ -x "$atomic_dir/oored" ]]
+[[ "$(< "$atomic_dir/oored")" == "new" ]]
+rm -rf "$atomic_dir"
+
+service_call="$(mktemp)"
+service_bin_dir="$(mktemp -d)"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SERVICE_CALL"\n' > "$service_bin_dir/oored"
+chmod +x "$service_bin_dir/oored"
+export SERVICE_CALL="$service_call"
+OORE_INSTALL_MODE=backend
+OORE_DAEMON_LISTEN=100.64.0.10:8787
+OORE_PUBLIC_URL=""
+OORE_CORS_ORIGINS=""
+DAEMON_URL=http://100.64.0.10:8787
+DAEMON_LOG=/tmp/oored.log
+BIN_DIR="$service_bin_dir"
+sudo() { printf '%s\n' "$*" >> "$service_call"; }
+id() { [[ "${1:-}" == "-un" ]] && printf 'appbuilder\n' || command id "$@"; }
+curl_quick() { return 0; }
+install_daemon_service
+grep -q -- '^uninstall-service$' "$service_call"
+grep -q -- '/oored install-service --system --user appbuilder --listen 100.64.0.10:8787 --env HOME=' "$service_call"
+unset -f sudo id curl_quick
+rm -rf "$service_bin_dir"
+rm -f "$service_call"
+
+curl_args="$(mktemp)"
+OORE_CHANNEL=alpha
+OORE_VERSION=latest
+OORE_RELEASE_MANIFEST_URL=https://example.invalid/latest/alpha.json
+TMP_DIR="$(mktemp -d)"
+curl() {
+  printf '%s\n' "$*" > "$curl_args"
+  local previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == "--output" ]]; then
+      printf '{"schema_version":1,"channel":"alpha","tag":"v1.0.0-alpha.1"}\n' > "$argument"
+      break
+    fi
+    previous="$argument"
+  done
+}
+resolve_release_tag
+[[ "$RELEASE_TAG" == "v1.0.0-alpha.1" ]]
+grep -q -- '--connect-timeout 10 --max-time 60' "$curl_args"
+unset -f curl
+rm -rf "$TMP_DIR"
+rm -f "$curl_args"
+
+OORE_NONINTERACTIVE=1
+OORE_OPEN_BROWSER=""
+OORE_NO_OPEN=0
+! should_open_browser
+OORE_OPEN_BROWSER=true
+should_open_browser
+OORE_NO_OPEN=1
+! should_open_browser
+
+OORE_LOCAL_WEB_LISTEN="127.0.0.1:4173"
+is_local_web_healthy() { return 1; }
+lsof() { printf '4242\n'; }
+if port_error="$(preflight_local_web_listen 2>&1)"; then
+  echo "[install-acceptance] expected occupied listen preflight to fail" >&2
+  exit 1
+fi
+[[ "$port_error" == *"127.0.0.1:4173 is already in use"* ]]
+
+service_calls="$(mktemp)"
+trap 'rm -f "$INSTALLER_LIB" "$service_calls"' EXIT
+has_local_web_bundle() { return 0; }
+systemctl() { printf '%s\n' "$*" >> "$service_calls"; }
+if service_error="$(install_local_web_systemd_user_service 2>&1)"; then
+  echo "[install-acceptance] expected occupied listen service install to fail" >&2
+  exit 1
+fi
+[[ "$service_error" == *"127.0.0.1:4173 is already in use"* ]]
+[[ ! -s "$service_calls" ]]
+
+proof_dir="$(mktemp -d)"
+trap 'rm -f "$INSTALLER_LIB" "$service_calls"; rm -rf "$proof_dir"' EXIT
+printf 'backend-proof\n' > "$proof_dir/backend"
+OORE_INSTALL_ROOT="$proof_dir/install"
+OORE_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/backend"
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE=""
+ensure_frontend_secret_files
+[[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]
+[[ "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" != "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]
+[[ -s "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]
+[[ "$(tr -d '[:space:]' < "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE")" != "backend-proof" ]]
+
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/backend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected same proof path to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"must contain different values"* ]]
+
+printf 'frontend-proof\n' > "$proof_dir/frontend"
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$proof_dir/frontend"
+ensure_frontend_secret_files
+
+printf 'backend-proof\n' > "$proof_dir/frontend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected matching proof values to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"must contain different values"* ]]
+
+printf ' \tbackend-proof \n\n' > "$proof_dir/frontend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected proofs equal after trimming to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"must contain different values"* ]]
+
+printf ' \t\n' > "$proof_dir/frontend"
+if proof_error="$(ensure_frontend_secret_files 2>&1)"; then
+  echo "[install-acceptance] expected whitespace-only proof to fail" >&2
+  exit 1
+fi
+[[ "$proof_error" == *"empty after trimming whitespace"* ]]
+
+printf 'frontend-proof\n' > "$proof_dir/frontend"
+ensure_frontend_secret_files
+
+pair_curl_args="$(mktemp)"
+curl() {
+  local payload=""
+  payload="$(cat)"
+  [[ "$payload" == '{"code":"fp_test-code"}' ]] || return 1
+  printf '%s\n' "$*" > "$pair_curl_args"
+  printf '%s\n' '{"backend_proof":"paired-backend-proof","user_email_header":"x-forwarded-email"}'
+}
+OORE_WEB_BACKEND_URL="https://backend.example/"
+OORE_FRONTEND_PAIRING_CODE="fp_test-code"
+OORE_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET=""
+OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE=""
+pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
+[[ "$OORE_TRUSTED_PROXY_SHARED_SECRET" == "paired-backend-proof" ]]
+[[ "$OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER" == "x-forwarded-email" ]]
+[[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" ]]
+[[ "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" != "$OORE_TRUSTED_PROXY_SHARED_SECRET" ]]
+[[ -z "$OORE_FRONTEND_PAIRING_CODE" ]]
+grep -q -- 'https://backend.example/v1/frontend/pair' "$pair_curl_args"
+if grep -q -- 'fp_test-code' "$pair_curl_args"; then
+  echo '[install-acceptance] pairing code leaked into curl arguments' >&2
+  exit 1
+fi
+rm -f "$pair_curl_args"
+unset -f curl
+
+bash "$ROOT_DIR/scripts/uninstall-acceptance.sh"
+
+echo "[install-acceptance] passed"

@@ -1,7 +1,7 @@
 ---
 layout: home
 status: implemented
-description: "Documentation for Oore CI, a self-hosted Flutter-first mobile CI and internal app distribution platform."
+description: 'Documentation for Oore CI, a self-hosted Flutter-first mobile CI and internal app distribution platform.'
 hero:
   name: Oore CI
   text: Flutter-first mobile CI
@@ -12,7 +12,7 @@ hero:
       link: /getting-started/
     - theme: alt
       text: View on GitHub
-      link: https://github.com/devaryakjha/oore.build
+      link: https://github.com/oore-ci/oore.build
 
 features:
   - title: Self-Hosted CI
@@ -27,11 +27,12 @@ features:
 
 <div class="vp-doc">
 
-| I want to... | Start here |
-|---|---|
-| **Set up Oore CI for the first time** | [Getting Started](/getting-started/) |
-| **Configure my OIDC provider** | [OIDC Guides](/guides/oidc/) |
-| **Deploy on a Mac Studio behind VPN + Warpgate** | [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) |
-| **Look up an API endpoint or CLI flag** | [Reference](/reference/api/) |
+| I want to...                                         | Start here                                                                 |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| **Set up Oore CI for the first time**                | [Getting Started](/getting-started/)                                       |
+| **Configure my OIDC provider**                       | [OIDC Guides](/guides/oidc/)                                               |
+| **Split backend and web UI across hosts**            | [Split Backend and Frontend](/operations/split-roles)                      |
+| **Deploy on a Mac Studio behind NetBird + Warpgate** | [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) |
+| **Look up an API endpoint or CLI flag**              | [Reference](/reference/api/)                                               |
 
 </div>

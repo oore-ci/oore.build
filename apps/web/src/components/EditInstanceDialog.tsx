@@ -148,9 +148,11 @@ export default function EditInstanceDialog({
                       : ''
                   }
                   onClick={() => setValue('icon', entry.key)}
+                  aria-label={`Select ${entry.label} icon`}
+                  aria-pressed={selectedIcon === entry.key}
                   title={entry.label}
                 >
-                  <HugeiconsIcon icon={entry.icon} size={16} />
+                  <HugeiconsIcon icon={entry.icon} />
                 </Button>
               ))}
             </div>

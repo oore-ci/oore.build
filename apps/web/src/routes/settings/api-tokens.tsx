@@ -4,6 +4,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Add01Icon } from '@hugeicons/core-free-icons'
 
 import type { ApiTokenSummary, CreateApiTokenResponse } from '@/lib/types'
 import {
@@ -61,6 +63,7 @@ import {
 } from '@/components/ui/table'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import TokenCreatedDialog from '@/components/token-created-dialog'
 
 export const Route = createFileRoute('/settings/api-tokens')({
   staticData: { breadcrumbLabel: 'API Tokens' },
@@ -192,8 +195,7 @@ function CreateTokenDialog({
     const expiresAt =
       values.expiry === 'never'
         ? undefined
-        : Math.floor(Date.now() / 1000) +
-          Number(values.expiry) * 24 * 60 * 60
+        : Math.floor(Date.now() / 1000) + Number(values.expiry) * 24 * 60 * 60
 
     createMutation.mutate(
       {
@@ -327,72 +329,12 @@ function CreateTokenDialog({
                     Creating...
                   </>
                 ) : (
-                  'Create Token'
+                  'Create token'
                 )}
               </Button>
             </DialogFooter>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ── Token Created Dialog ────────────────────────────────────────
-
-interface TokenCreatedDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  response: CreateApiTokenResponse | null
-}
-
-function TokenCreatedDialog({
-  open,
-  onOpenChange,
-  response,
-}: TokenCreatedDialogProps) {
-  const [copied, setCopied] = useState(false)
-
-  function handleCopy() {
-    if (!response) return
-    void navigator.clipboard.writeText(response.token).then(() => {
-      setCopied(true)
-      toast.success('Token copied to clipboard')
-      setTimeout(() => setCopied(false), 2000)
-    })
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Token Created</DialogTitle>
-          <DialogDescription>
-            Make sure to copy your token now. You won&apos;t be able to see it
-            again.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-sm">
-              {response?.token}
-            </code>
-            <Button variant="outline" size="sm" onClick={handleCopy}>
-              {copied ? 'Copied' : 'Copy'}
-            </Button>
-          </div>
-
-          <Alert>
-            <AlertDescription>
-              This token will not be shown again. Store it in a secure location.
-            </AlertDescription>
-          </Alert>
-        </div>
-
-        <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
@@ -418,7 +360,7 @@ function ApiTokensPage() {
   ).length
 
   function handleTokenCreated(response: CreateApiTokenResponse) {
-    setCreatedResponse(response)
+    setCreatedResponse(() => response)
     setCreatedDialogOpen(true)
     toast.success('API token created')
   }
@@ -445,7 +387,10 @@ function ApiTokensPage() {
         description="Create and manage API tokens for programmatic access to your CI instance."
         actions={
           canWrite ? (
-            <Button onClick={() => setCreateOpen(true)}>Create Token</Button>
+            <Button onClick={() => setCreateOpen(true)}>
+              <HugeiconsIcon icon={Add01Icon} />
+              Create token
+            </Button>
           ) : undefined
         }
       />
@@ -524,7 +469,7 @@ function ApiTokensPage() {
           </CardHeader>
           <CardContent>
             {tokens.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 No API tokens yet. Create one to get started.
               </p>
             ) : (
@@ -603,7 +548,7 @@ function ApiTokensPage() {
       <TokenCreatedDialog
         open={createdDialogOpen}
         onOpenChange={(open) => {
-          setCreatedDialogOpen(open)
+          setCreatedDialogOpen(() => open)
           if (!open) setCreatedResponse(null)
         }}
         response={createdResponse}

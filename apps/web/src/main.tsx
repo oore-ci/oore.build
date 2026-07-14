@@ -26,6 +26,7 @@ declare module '@tanstack/react-router' {
   }
   interface StaticDataRouteOption {
     breadcrumbLabel?: string
+    breadcrumbParent?: { label: string; to: string }
   }
 }
 

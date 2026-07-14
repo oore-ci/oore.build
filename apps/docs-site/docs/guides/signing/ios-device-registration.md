@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Register iOS test devices for ad hoc distribution with Oore CI."
+description: 'Register iOS test devices for ad hoc distribution with Oore CI.'
 ---
 
 # Register iOS Test Devices

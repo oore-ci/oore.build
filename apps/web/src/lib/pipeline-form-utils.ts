@@ -1,4 +1,8 @@
-import type { BuildPlatform, Pipeline } from '@/lib/types'
+import type {
+  BuildPlatform,
+  Pipeline,
+  PipelineExecutionConfig,
+} from '@/lib/types'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 
 export function parseMultiline(raw?: string): Array<string> {
@@ -93,11 +97,47 @@ export function defaultArtifactPatterns(
   platforms: Array<BuildPlatform>,
 ): Array<string> {
   const patterns = new Set<string>()
-  if (platforms.includes('android')) patterns.add('*.apk')
-  if (platforms.includes('ios')) patterns.add('*.ipa')
-  if (platforms.includes('macos')) patterns.add('*.app')
-  if (patterns.size === 0) patterns.add('*.apk')
+  if (platforms.includes('android'))
+    patterns.add('build/app/outputs/flutter-apk/*.apk')
+  if (platforms.includes('ios')) patterns.add('build/ios/ipa/*.ipa')
+  if (platforms.includes('macos'))
+    patterns.add('build/macos/Build/Products/Release/*.app')
+  if (patterns.size === 0) patterns.add('build/app/outputs/flutter-apk/*.apk')
   return [...patterns]
+}
+
+export function executionConfigFromForm(
+  data: PipelineFormValues,
+): PipelineExecutionConfig {
+  const platforms = selectedPlatforms(data)
+  const artifactPatterns = parseMultiline(data.artifact_patterns)
+
+  return {
+    platforms,
+    flutter_version: trimToUndefined(data.flutter_version),
+    commands: data.enable_customization
+      ? {
+          pre_build: parseMultiline(data.pre_build_commands),
+          build: parseMultiline(data.build_commands),
+          post_build: parseMultiline(data.post_build_commands),
+        }
+      : { pre_build: [], build: [], post_build: [] },
+    platform_build_args: {
+      android: parseMultiline(data.android_build_args),
+      ios: parseMultiline(data.ios_build_args),
+      macos: parseMultiline(data.macos_build_args),
+    },
+    platform_commands: {
+      android: trimToUndefined(data.android_command_override),
+      ios: trimToUndefined(data.ios_command_override),
+      macos: trimToUndefined(data.macos_command_override),
+    },
+    env: parseEnvVars(data.env_vars),
+    artifact_patterns:
+      artifactPatterns.length > 0
+        ? artifactPatterns
+        : defaultArtifactPatterns(platforms),
+  }
 }
 
 export function trimToUndefined(value?: string): string | undefined {

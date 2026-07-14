@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure code signing and build a signed APK or IPA with Oore CI."
+description: 'Configure code signing and build a signed APK or IPA with Oore CI.'
 ---
 
 # Your First Signed Build

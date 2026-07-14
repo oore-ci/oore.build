@@ -3,32 +3,167 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and publish
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
+  deploy:
+    name: Deploy Pages
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and deploy Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+
+          pages_branch="stable"
+          if echo "$tag" | grep -q -- '-alpha\.'; then
+            pages_branch="alpha"
+          elif echo "$tag" | grep -q -- '-beta\.'; then
+            pages_branch="beta"
+          fi
+
+          export PAGES_PROJECT_SITE="oore"
+          export PAGES_PROJECT_DOCS="oore-docs"
+          export PAGES_PROJECT_WEB="oore-ci"
+          export PAGES_PROJECT_DEMO="oore-demo"
+          export PAGES_BRANCH="$pages_branch"
+          PAGES_COMMIT_HASH="$(git rev-list -n 1 "$tag")"
+          export PAGES_COMMIT_HASH
+          export PAGES_COMMIT_MESSAGE="$tag"
+          export WRANGLER="./node_modules/.bin/wrangler"
+
+          make build-web build-site build-docs
+
+          deploy_pages() {
+            local target="$1"
+            local attempt log_file delay
+            log_file="$(mktemp)"
+            trap 'rm -f "$log_file"' RETURN
+
+            for attempt in 1 2 3 4; do
+              if make "$target" 2>&1 | tee "$log_file"; then
+                return 0
+              fi
+
+              if ! grep -Eq '(HTTP status|status code:)[[:space:]]*5[0-9]{2}' "$log_file"; then
+                echo "${target} failed with a non-transient error; not retrying."
+                return 1
+              fi
+
+              if [ "$attempt" -eq 4 ]; then
+                echo "${target} still failed after ${attempt} attempts."
+                return 1
+              fi
+
+              delay=$((attempt * 15))
+              echo "${target} hit a transient Cloudflare API error; retrying in ${delay}s (${attempt}/4)."
+              sleep "$delay"
+            done
+          }
+
+          # Deploy serially so one release does not burst Cloudflare's Pages API.
+          deploy_pages deploy-site-only
+          deploy_pages deploy-docs-only
+          deploy_pages deploy-web-only
+
+          make build-demo
+          deploy_pages deploy-demo-only
+
+  rust:
+    name: Build Rust (${{ matrix.arch }})
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ matrix.target }}
+
+      - name: Build Rust
+        run: |
+          cargo build --release -p oored -p oore --target "${{ matrix.target }}"
+          mkdir -p dist/rust
+          cp "target/${{ matrix.target }}/release/oored" dist/rust/oored
+          cp "target/${{ matrix.target }}/release/oore" dist/rust/oore
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: rust-${{ matrix.arch }}
+          path: dist/rust
+          if-no-files-found: error
+
   release:
-    name: Build, deploy & publish
-    runs-on: [self-hosted, jarvis]
+    name: Build & publish assets
+    needs: rust
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: rust-arm64
+          path: dist/rust/arm64
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: rust-x86_64
+          path: dist/rust/x86_64
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Build web
         run: make build-web
-
-      - name: Cross-compile Rust
-        run: |
-          cargo build --release -p oored -p oore --target aarch64-apple-darwin
-          cargo build --release -p oored -p oore --target x86_64-apple-darwin
 
       - name: Compile standalone web server
         run: |
@@ -41,7 +176,7 @@ jobs:
       - name: Package release tarballs
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           ver="${tag#v}"
           mkdir -p "dist/releases/$tag"
 
@@ -56,15 +191,15 @@ jobs:
           mkdir -p "$stage_web_darwin_arm/bin" "$stage_web_darwin_x64/bin"
           mkdir -p "$stage_web_linux_arm/bin" "$stage_web_linux_x64/bin"
 
-          cp "target/aarch64-apple-darwin/release/oored" "$stage_arm/bin/oored"
-          cp "target/aarch64-apple-darwin/release/oore"  "$stage_arm/bin/oore"
+          cp "dist/rust/arm64/oored" "$stage_arm/bin/oored"
+          cp "dist/rust/arm64/oore"  "$stage_arm/bin/oore"
           cp "dist/oore-web-arm64" "$stage_arm/bin/oore-web"
           cp -R "apps/web/dist" "$stage_arm/web-dist"
           cp "LICENSE" "$stage_arm/LICENSE"
           printf '%s\n' "$ver" > "$stage_arm/VERSION"
 
-          cp "target/x86_64-apple-darwin/release/oored" "$stage_x64/bin/oored"
-          cp "target/x86_64-apple-darwin/release/oore"  "$stage_x64/bin/oore"
+          cp "dist/rust/x86_64/oored" "$stage_x64/bin/oored"
+          cp "dist/rust/x86_64/oore"  "$stage_x64/bin/oore"
           cp "dist/oore-web-x86_64" "$stage_x64/bin/oore-web"
           cp -R "apps/web/dist" "$stage_x64/web-dist"
           cp "LICENSE" "$stage_x64/LICENSE"
@@ -109,7 +244,7 @@ jobs:
       - name: Generate release notes
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
 
           channel="prod"
           if echo "$tag" | grep -q -- '-alpha\.'; then
@@ -150,69 +285,13 @@ jobs:
             echo
           } > "$out"
 
-      - name: Deploy to Cloudflare Pages
-        env:
-          CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-
-          channel="prod"
-          pages_branch="stable"
-          if echo "$tag" | grep -q -- '-alpha\.'; then
-            channel="alpha"
-            pages_branch="alpha"
-          elif echo "$tag" | grep -q -- '-beta\.'; then
-            channel="beta"
-            pages_branch="beta"
-          fi
-
-          export PAGES_PROJECT_SITE="oore"
-          export PAGES_PROJECT_DOCS="oore-docs"
-          export PAGES_PROJECT_WEB="oore-ci"
-          export PAGES_PROJECT_DEMO="oore-demo"
-          export PAGES_BRANCH="$pages_branch"
-          export PAGES_COMMIT_HASH="$(git rev-list -n 1 "$tag")"
-          export PAGES_COMMIT_MESSAGE="$tag"
-          export WRANGLER="./node_modules/.bin/wrangler"
-
-          echo "Deploy channel=$channel branch=$PAGES_BRANCH"
-
-          make build-site build-docs
-
-          # Deploy site, docs, web in parallel
-          status=0
-
-          make deploy-site-only &
-          pid_site=$!
-
-          make deploy-docs-only &
-          pid_docs=$!
-
-          make deploy-web-only &
-          pid_web=$!
-
-          wait "$pid_site" || status=$?
-          wait "$pid_docs" || status=$?
-          wait "$pid_web" || status=$?
-
-          if [ "$status" -ne 0 ]; then
-            echo "One or more Pages deploy commands failed." >&2
-            exit "$status"
-          fi
-
-          # Demo build intentionally overwrites apps/web/dist
-          make build-demo
-          make deploy-demo-only
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
 
           prerelease_flag=""
           if echo "$tag" | grep -q -- '-alpha\.'; then
@@ -234,3 +313,52 @@ jobs:
           fi
 
           gh release upload "$tag" "$dir"/*.tar.gz "$dir"/*.txt "$notes" --clobber
+
+  release-index:
+    name: Publish release index
+    needs: release
+    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate channel manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --slurp > dist/github-releases.json
+          make build-release-index
+
+      - name: Deploy release index
+        env:
+          CLOUDFLARE_ACCOUNT_ID: bf288a8d0e450c22157076593bc1f6be
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAGES_COMMIT_MESSAGE: ${{ env.RELEASE_TAG }}
+          WRANGLER: ./node_modules/.bin/wrangler
+        run: |
+          set -euo pipefail
+          PAGES_COMMIT_HASH="$(git rev-list -n 1 "$RELEASE_TAG")"
+          export PAGES_COMMIT_HASH
+          log_file="$(mktemp)"
+          trap 'rm -f "$log_file"' EXIT
+
+          for attempt in 1 2 3 4; do
+            if make deploy-release-index-only 2>&1 | tee "$log_file"; then
+              exit 0
+            fi
+            if ! grep -Eq '(HTTP status|status code:)[[:space:]]*5[0-9]{2}' "$log_file" || [ "$attempt" -eq 4 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done

@@ -3,7 +3,6 @@ import { useRouter } from '@tanstack/react-router'
 import type { InviteUserRequest, UpdateUserRoleRequest } from '@/lib/types'
 import {
   deleteUser,
-  getMe,
   inviteUser,
   listUsers,
   logout,
@@ -11,6 +10,7 @@ import {
   updateUserRole,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function useAuthToken(): string | null {
@@ -23,19 +23,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
-}
-
-export function useCurrentUser() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'me'],
-    queryFn: () => getMe(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
-  })
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function useUsers() {
@@ -46,7 +34,7 @@ export function useUsers() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'users'],
     queryFn: () => listUsers(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -58,7 +46,7 @@ export function useInviteUser() {
 
   return useMutation({
     mutationFn: (data: InviteUserRequest) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return inviteUser(baseUrl, token, data)
     },
@@ -84,7 +72,7 @@ export function useUpdateUserRole() {
       userId: string
       data: UpdateUserRoleRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updateUserRole(baseUrl, token, userId, data)
     },
@@ -104,7 +92,7 @@ export function useReEnableUser() {
 
   return useMutation({
     mutationFn: (userId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return reEnableUser(baseUrl, token, userId)
     },
@@ -124,7 +112,7 @@ export function useDeleteUser() {
 
   return useMutation({
     mutationFn: (userId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deleteUser(baseUrl, token, userId)
     },
@@ -145,7 +133,7 @@ export function useLogout() {
 
   return useMutation({
     mutationFn: () => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.resolve({ ok: true } as { ok: boolean })
       return logout(baseUrl, token)
     },

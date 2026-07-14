@@ -8,6 +8,7 @@ import {
   updateProject,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function useAuthToken(): string | null {
@@ -20,7 +21,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function useProjects(
@@ -39,7 +40,7 @@ export function useProjects(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'projects', params ?? {}],
     queryFn: () => listProjects(baseUrl!, token!, params),
-    enabled: enabled && baseUrl !== null && !!token,
+    enabled: enabled && !!baseUrl && !!token,
   })
 }
 
@@ -51,7 +52,7 @@ export function useProject(projectId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'project', projectId],
     queryFn: () => getProject(baseUrl!, token!, projectId),
-    enabled: baseUrl !== null && !!token && !!projectId,
+    enabled: !!baseUrl && !!token && !!projectId,
   })
 }
 
@@ -63,7 +64,7 @@ export function useCreateProject() {
 
   return useMutation({
     mutationFn: (data: CreateProjectRequest) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createProject(baseUrl, token, data)
     },
@@ -89,7 +90,7 @@ export function useUpdateProject() {
       projectId: string
       data: UpdateProjectRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updateProject(baseUrl, token, projectId, data)
     },
@@ -112,7 +113,7 @@ export function useDeleteProject() {
 
   return useMutation({
     mutationFn: (projectId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deleteProject(baseUrl, token, projectId)
     },

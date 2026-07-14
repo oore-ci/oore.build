@@ -10,6 +10,7 @@ import type {
 import {
   createPipeline,
   deletePipeline,
+  discoverRepositoryWorkflows,
   getPipeline,
   getPipelineAndroidSigning,
   getPipelineIosSigning,
@@ -23,6 +24,7 @@ import {
   validatePipeline,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function useAuthToken(): string | null {
@@ -35,7 +37,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function usePipelines(
@@ -56,7 +58,31 @@ export function usePipelines(
       params ?? {},
     ],
     queryFn: () => listPipelines(baseUrl!, token!, projectId, params),
-    enabled: enabled && baseUrl !== null && !!token && !!projectId,
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+  })
+}
+
+export function useRepositoryWorkflows(
+  projectId: string,
+  params?: { reference?: string; path?: string },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'repository-workflows',
+      projectId,
+      params ?? {},
+    ],
+    queryFn: () =>
+      discoverRepositoryWorkflows(baseUrl!, token!, projectId, params),
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+    staleTime: 30_000,
   })
 }
 
@@ -68,7 +94,7 @@ export function usePipeline(pipelineId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline', pipelineId],
     queryFn: () => getPipeline(baseUrl!, token!, pipelineId),
-    enabled: baseUrl !== null && !!token && !!pipelineId,
+    enabled: !!baseUrl && !!token && !!pipelineId,
   })
 }
 
@@ -86,7 +112,7 @@ export function useCreatePipeline() {
       projectId: string
       data: CreatePipelineRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createPipeline(baseUrl, token, projectId, data)
     },
@@ -112,7 +138,7 @@ export function useUpdatePipeline() {
       pipelineId: string
       data: UpdatePipelineRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updatePipeline(baseUrl, token, pipelineId, data)
     },
@@ -139,7 +165,7 @@ export function useDeletePipeline() {
 
   return useMutation({
     mutationFn: (pipelineId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return deletePipeline(baseUrl, token, pipelineId)
     },
@@ -157,7 +183,7 @@ export function useValidatePipeline() {
 
   return useMutation({
     mutationFn: (data: ValidatePipelineRequest) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return validatePipeline(baseUrl, token, data)
     },
@@ -176,7 +202,7 @@ export function usePipelineAndroidSigning(pipelineId: string) {
       pipelineId,
     ],
     queryFn: () => getPipelineAndroidSigning(baseUrl!, token!, pipelineId),
-    enabled: baseUrl !== null && !!token && !!pipelineId,
+    enabled: !!baseUrl && !!token && !!pipelineId,
   })
 }
 
@@ -194,7 +220,7 @@ export function useUpdatePipelineAndroidSigning() {
       pipelineId: string
       data: UpdatePipelineAndroidSigningRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updatePipelineAndroidSigning(baseUrl, token, pipelineId, data)
     },
@@ -225,7 +251,7 @@ export function usePipelineIosSigning(pipelineId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline-ios-signing', pipelineId],
     queryFn: () => getPipelineIosSigning(baseUrl!, token!, pipelineId),
-    enabled: baseUrl !== null && !!token && !!pipelineId,
+    enabled: !!baseUrl && !!token && !!pipelineId,
   })
 }
 
@@ -243,7 +269,7 @@ export function useUpdatePipelineIosSigning() {
       pipelineId: string
       data: UpdatePipelineIosSigningRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return updatePipelineIosSigning(baseUrl, token, pipelineId, data)
     },
@@ -285,7 +311,7 @@ export function usePipelineIosDevices(pipelineId: string) {
       pipelineId,
     ],
     queryFn: () => listPipelineIosDevices(baseUrl!, token!, pipelineId),
-    enabled: baseUrl !== null && !!token && !!pipelineId,
+    enabled: !!baseUrl && !!token && !!pipelineId,
   })
 }
 
@@ -303,7 +329,7 @@ export function useRegisterPipelineIosDevice() {
       pipelineId: string
       data: RegisterIosDeviceRequest
     }) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return registerPipelineIosDevice(baseUrl, token, pipelineId, data)
     },
@@ -334,7 +360,7 @@ export function useSyncPipelineIosSigning() {
 
   return useMutation({
     mutationFn: (pipelineId: string) => {
-      if (baseUrl === null || !token)
+      if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return syncPipelineIosSigning(baseUrl, token, pipelineId)
     },

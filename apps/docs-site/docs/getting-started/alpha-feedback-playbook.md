@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How to file actionable alpha feedback with the minimum evidence needed to reproduce and fix issues quickly."
+description: 'How to file actionable alpha feedback with the minimum evidence needed to reproduce and fix issues quickly.'
 ---
 
 # Alpha Feedback Playbook
@@ -11,7 +11,7 @@ Use this checklist when filing public alpha feedback so issues are reproducible 
 
 Try these steps to exercise the core "happy path" of Oore CI.
 
-1. **Install Oore**: Run `curl -fsSL https://oore.build/install | bash -s -- --channel alpha`.
+1. **Install Oore**: Run `curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash`.
 2. **Fresh Initialize**: Run `oored run` in one terminal and `oore setup` in another.
 3. **Connect a Repository**: Connect a GitHub/GitLab repo through the UI or via `oore projects create`.
 4. **Trigger Build**: Start a manual build from the web dashboard.
@@ -25,39 +25,47 @@ Try these steps to exercise the core "happy path" of Oore CI.
 
 ## Where to file
 
-- Product/setup/build problems: [Alpha Test Report template](https://github.com/devaryakjha/oore.build/issues/new?template=alpha_test_report.md)
-- Documentation clarity gaps: [Docs Feedback template](https://github.com/devaryakjha/oore.build/issues/new?template=docs_feedback.md)
-- Security issues: private disclosure via [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md)
+- Product/setup/build problems: [Alpha Test Report template](https://github.com/oore-ci/oore.build/issues/new?template=alpha_test_report.md)
+- Documentation clarity gaps: [Docs Feedback template](https://github.com/oore-ci/oore.build/issues/new?template=docs_feedback.md)
+- Security issues: private disclosure via [SECURITY.md](https://github.com/oore-ci/oore.build/blob/master/SECURITY.md)
 
 ## Feedback Template (Copy/Paste)
 
 Copy this snippet when opening an issue:
 
-```markdown
+````markdown
 ### What were you trying to do?
+
 <!-- e.g. First install, first build, webhook setup -->
 
 ### What happened?
+
 <!-- e.g. Build failed at checkout step with 403 error -->
 
 ### Environment Facts
+
 - **macOS Version**:
 - **Install Channel**: alpha/beta/stable
-- **Setup Path**: Local-only / Hosted UI
-- **OIDC Provider**: (if used)
+- **Setup Mode**: Local Only / Remote OIDC / Remote Trusted Proxy
+- **UI Path**: CLI / local frontend / hosted UI / split frontend
+- **OIDC Provider or Trusted Proxy**: (if used)
 
 ### Reproduction Steps
+
 1.
 2.
 3.
 
 ### CLI Diagnostics
+
 ```bash
 oore version
 oored version
 oore doctor --json
 ```
-```
+````
+
+````
 
 ## Required checklist
 
@@ -80,7 +88,7 @@ oore version
 oored version
 oore status --json
 oore doctor --json
-```
+````
 
 ### Build context
 

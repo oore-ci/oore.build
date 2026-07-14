@@ -58,10 +58,12 @@ export const setupHandlers = [
   http.post('/v1/setup/trusted-proxy/configure', async ({ request }) => {
     await delay(200)
     const body = (await request.json()) as {
+      setup_owner_email?: string
       shared_secret?: string
     }
     return HttpResponse.json({
       state: 'idp_configured',
+      setup_owner_email: body.setup_owner_email,
       has_shared_secret: !!body.shared_secret,
       configured_at: Math.floor(Date.now() / 1000),
       session_expires_at: 4102444800,

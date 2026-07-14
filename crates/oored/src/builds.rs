@@ -4,9 +4,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, Build, BuildDetailResponse, BuildEvent, BuildStatus, CancelBuildResponse,
-    ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, ListBuildsResponse,
-    PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
+    ApiError, Build, BuildContext, BuildDetailResponse, BuildEvent, BuildPlatform, BuildStatus,
+    CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse,
+    ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -32,6 +32,15 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
 
     let step_results_str: Option<String> = row.get("step_results");
     let step_results = step_results_str.and_then(|s| serde_json::from_str(&s).ok());
+    let context = BuildContext {
+        project_name: row.try_get("project_name").ok(),
+        pipeline_name: row.try_get("pipeline_name").ok(),
+        runner_name: row.try_get("runner_name").ok(),
+    };
+    let context = (context.project_name.is_some()
+        || context.pipeline_name.is_some()
+        || context.runner_name.is_some())
+    .then_some(context);
 
     Build {
         id: row.get("id"),
@@ -48,6 +57,7 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         source_build_id: row.get("source_build_id"),
         config_snapshot,
         runner_id: row.get("runner_id"),
+        context,
         step_results,
         exit_code: row.get("exit_code"),
         queued_at: row.get("queued_at"),
@@ -226,6 +236,42 @@ fn create_config_snapshot(
         "repo_url": repo_url,
         "captured_at": now_unix(),
     })
+}
+
+fn validate_selected_platforms(
+    requested: Option<Vec<BuildPlatform>>,
+    configured: &[BuildPlatform],
+) -> Result<Option<Vec<BuildPlatform>>, (StatusCode, Json<ApiError>)> {
+    let Some(requested) = requested else {
+        return Ok(None);
+    };
+    if requested.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Select at least one platform for this build.",
+        ));
+    }
+
+    let mut selected = Vec::with_capacity(requested.len());
+    for platform in configured {
+        if requested.contains(platform) {
+            selected.push(platform.clone());
+        }
+    }
+    let has_duplicate = requested
+        .iter()
+        .enumerate()
+        .any(|(index, platform)| requested[..index].contains(platform));
+    if has_duplicate || selected.len() != requested.len() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Selected platforms must be unique and configured on this pipeline.",
+        ));
+    }
+
+    Ok(Some(selected))
 }
 
 fn parse_execution_config(raw: &str) -> PipelineExecutionConfig {
@@ -446,11 +492,13 @@ pub async fn create_build(
     Path(project_id): Path<String>,
     Json(req): Json<CreateBuildRequest>,
 ) -> ApiResult<CreateBuildResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
 
     let effective = resolve_effective_project_role(
-        pool,
+        &pool,
         &auth.0.user_id,
         &auth.0.role,
         &project_id,
@@ -460,14 +508,14 @@ pub async fn create_build(
     require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
 
     let requested_branch = normalize_optional(req.branch);
-    let commit_sha = normalize_optional(req.commit_sha);
+    let mut commit_sha = normalize_optional(req.commit_sha);
     let trigger_ref = normalize_optional(req.trigger_ref);
 
     // Verify project exists and has source linkage.
     let project_row =
         sqlx::query("SELECT repository_id, default_branch FROM projects WHERE id = ?1")
             .bind(&project_id)
-            .fetch_optional(pool)
+            .fetch_optional(&pool)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to fetch project");
@@ -511,7 +559,7 @@ pub async fn create_build(
     )
     .bind(&req.pipeline_id)
     .bind(&project_id)
-    .fetch_optional(pool)
+    .fetch_optional(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch pipeline");
@@ -525,14 +573,30 @@ pub async fn create_build(
         .try_get("execution_config")
         .unwrap_or_else(|_| "{}".to_string());
     let execution_config = parse_execution_config(&execution_config_json);
+    let selected_platforms =
+        validate_selected_platforms(req.platforms, &execution_config.platforms)?;
     let concurrency_json: String = pipeline_row.get("concurrency");
     let concurrency: ConcurrencyPolicy =
         serde_json::from_str(&concurrency_json).unwrap_or_default();
 
+    if commit_sha.is_none() {
+        commit_sha = Some(
+            crate::integrations::resolve_branch_commit(
+                &pool,
+                &state.encryption_key,
+                repository_id
+                    .as_deref()
+                    .expect("repository linkage checked"),
+                branch.as_deref().expect("branch presence checked"),
+            )
+            .await?,
+        );
+    }
+
     // Apply cancel_previous policy
     if concurrency.cancel_previous {
         let canceled = apply_cancel_previous(
-            pool,
+            &pool,
             &req.pipeline_id,
             branch.as_deref(),
             Some(&auth.0.email),
@@ -562,7 +626,7 @@ pub async fn create_build(
          WHERE p.id = ?1",
     )
     .bind(&project_id)
-    .fetch_optional(pool)
+    .fetch_optional(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, project_id = %project_id, "failed to resolve project repository URL");
@@ -588,7 +652,7 @@ pub async fn create_build(
         ));
     }
 
-    let config_snapshot = create_config_snapshot(
+    let mut config_snapshot = create_config_snapshot(
         &config_path,
         config_path_explicit != 0,
         &execution_config,
@@ -597,10 +661,13 @@ pub async fn create_build(
         branch.as_deref(),
         repo_url.as_deref(),
     );
+    if let Some(selected_platforms) = selected_platforms {
+        config_snapshot["selected_platforms"] = serde_json::json!(selected_platforms);
+    }
 
     let snapshot_str = config_snapshot.to_string();
     insert_build_with_retry(
-        pool,
+        &pool,
         &BuildInsertBinds {
             build_id: &build_id,
             project_id: &project_id,
@@ -619,7 +686,7 @@ pub async fn create_build(
     )
     .await?;
 
-    let build_number = fetch_build_number(pool, &build_id).await?;
+    let build_number = fetch_build_number(&pool, &build_id).await?;
 
     // Insert initial build event
     sqlx::query(
@@ -630,7 +697,7 @@ pub async fn create_build(
     .bind(&build_id)
     .bind(&auth.0.email)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to insert initial build event");
@@ -646,7 +713,7 @@ pub async fn create_build(
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "build_created",
         "build",
@@ -677,6 +744,7 @@ pub async fn create_build(
         source_build_id: None,
         config_snapshot,
         runner_id: None,
+        context: None,
         step_results: None,
         exit_code: None,
         queued_at: now,
@@ -714,19 +782,19 @@ pub async fn list_builds(
     }
     if let Some(ref project_id) = params.project_id {
         bind_values.push(project_id.clone());
-        conditions.push(format!("project_id = ?{}", bind_values.len()));
+        conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
     }
     if let Some(ref pipeline_id) = params.pipeline_id {
         bind_values.push(pipeline_id.clone());
-        conditions.push(format!("pipeline_id = ?{}", bind_values.len()));
+        conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
     }
     if let Some(ref status) = params.status {
         bind_values.push(status.clone());
-        conditions.push(format!("status = ?{}", bind_values.len()));
+        conditions.push(format!("builds.status = ?{}", bind_values.len()));
     }
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());
-        conditions.push(format!("branch = ?{}", bind_values.len()));
+        conditions.push(format!("builds.branch = ?{}", bind_values.len()));
     }
 
     let where_clause = if conditions.is_empty() {
@@ -737,7 +805,12 @@ pub async fn list_builds(
 
     let count_query = format!("SELECT COUNT(*) FROM builds {where_clause}");
     let list_query = format!(
-        "SELECT * FROM builds {where_clause} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
+        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         {where_clause} ORDER BY builds.created_at DESC LIMIT ?{} OFFSET ?{}",
         bind_values.len() + 1,
         bind_values.len() + 2
     );
@@ -779,7 +852,14 @@ pub async fn get_build(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    let build_row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
+    let build_row = sqlx::query(
+        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         WHERE builds.id = ?1",
+    )
         .bind(&build_id)
         .fetch_optional(pool)
         .await
@@ -1067,6 +1147,7 @@ pub async fn rerun_build(
         source_build_id: Some(build_id),
         config_snapshot,
         runner_id: None,
+        context: None,
         step_results: None,
         exit_code: None,
         queued_at: now,
@@ -1302,6 +1383,7 @@ pub async fn trigger_build_from_webhook(
                 source_build_id: None,
                 config_snapshot,
                 runner_id: None,
+                context: None,
                 step_results: None,
                 exit_code: None,
                 queued_at: now,

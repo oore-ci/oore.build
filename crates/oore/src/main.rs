@@ -1,22 +1,26 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 use chrono::{Local, TimeZone};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use oore_contract::{
     ApiError, BootstrapTokenRecord, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse,
-    KeyStorageMode, ListBuildsResponse, ListRunnersResponse, LocalLoginRequest, LocalLoginResponse,
+    ListBuildsResponse, ListRunnersResponse, LocalLoginRequest, LocalLoginResponse,
     OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode,
     RuntimeMode, SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse,
     SetupOidcVerifyRequest, SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
-    TransferOwnerRequest, TransferOwnerResponse, UpdateExternalAccessNetworkSettingsRequest,
-    UpdateInstancePreferencesRequest, UpdateTrustedProxySettingsRequest, UserProfileResponse,
+    UserProfileResponse, parse_repository_pipeline_yaml,
 };
 use rand::RngCore;
+use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
+use ring::rand::{SecureRandom, SystemRandom};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
@@ -57,6 +61,7 @@ struct DoctorCheckResult {
 struct DoctorReport {
     checks: Vec<DoctorCheckResult>,
     missing_count: usize,
+    warning_count: usize,
 }
 
 #[derive(Debug, Parser)]
@@ -70,17 +75,123 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Setup(SetupArgs),
+    Frontend(FrontendArgs),
     Login(LoginArgs),
     Status(StatusArgs),
     Runner(RunnerArgs),
-    Users(UsersArgs),
-    ExternalAccess(ExternalAccessArgs),
     Config(ConfigArgs),
     Doctor(DoctorArgs),
+    Pipeline(PipelineArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
     Update(UpdateArgs),
+    /// Create, verify, or restore an encrypted-state backup
+    Backup(BackupArgs),
+}
+
+#[derive(Debug, Args)]
+struct FrontendArgs {
+    #[command(subcommand)]
+    command: FrontendSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum FrontendSubcommand {
+    /// Create a short-lived, single-use frontend pairing code.
+    Invite(FrontendInviteArgs),
+}
+
+#[derive(Debug, Args)]
+struct FrontendInviteArgs {
+    /// How long the pairing code remains valid.
+    #[arg(long, default_value = "10m")]
+    ttl: String,
+
+    /// Path to the setup database file.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+
+    /// Print machine-readable output.
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct BackupArgs {
+    #[command(subcommand)]
+    command: BackupSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BackupSubcommand {
+    /// Create a consistent SQLite snapshot and package it with the encryption key.
+    Create(BackupCreateArgs),
+    /// Verify a backup manifest, checksums, and SQLite integrity.
+    Verify(BackupVerifyArgs),
+    /// Atomically restore a verified backup while the daemon is stopped.
+    Restore(BackupRestoreArgs),
+}
+
+#[derive(Debug, Args)]
+struct BackupCreateArgs {
+    /// Destination .tar.gz file.
+    #[arg(long)]
+    output: PathBuf,
+    /// Path to the SQLite state file.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct BackupVerifyArgs {
+    /// Backup .tar.gz file.
+    #[arg(long)]
+    input: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct BackupRestoreArgs {
+    /// Backup .tar.gz file.
+    #[arg(long)]
+    input: PathBuf,
+    /// Path to the SQLite state file to restore.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct BackupManifest {
+    format: String,
+    created_at: i64,
+    files: HashMap<String, String>,
+}
+
+#[derive(Debug, Args)]
+struct PipelineArgs {
+    #[command(subcommand)]
+    command: PipelineSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PipelineSubcommand {
+    /// Validate repository pipeline YAML using the runner's schema.
+    Validate(PipelineValidateArgs),
+}
+
+#[derive(Debug, Args)]
+struct PipelineValidateArgs {
+    /// Repository pipeline file to validate.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+}
+
+fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
+    let raw = fs::read_to_string(&args.path)
+        .with_context(|| format!("failed to read {}", args.path.display()))?;
+    parse_repository_pipeline_yaml(&raw).map_err(anyhow::Error::msg)?;
+    println!("{} is valid", args.path.display());
+    Ok(())
 }
 
 #[derive(Debug, Args)]
@@ -103,15 +214,15 @@ struct UpdateArgs {
     /// GitHub repository in `owner/name` format
     ///
     /// If not specified, this defaults to the installed GITHUB_REPO file (if available) or
-    /// `devaryakjha/oore.build`.
+    /// `oore-ci/oore.build`.
     #[arg(long, env = "OORE_GITHUB_REPO")]
     repo: Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct SetupArgs {
-    #[arg(long, env = "OORE_DAEMON_URL", default_value = "http://127.0.0.1:8787")]
-    daemon_url: String,
+    #[arg(long, env = "OORE_DAEMON_URL")]
+    daemon_url: Option<String>,
 
     #[command(subcommand)]
     command: Option<SetupSubcommand>,
@@ -119,11 +230,60 @@ struct SetupArgs {
 
 #[derive(Debug, Subcommand)]
 enum SetupSubcommand {
+    /// Initialize setup directly on the backend host
+    Init(SetupInitArgs),
     /// Generate a bootstrap token for web UI setup
     Token(SetupTokenArgs),
     /// Alias for 'token' (deprecated, use 'token' instead)
     #[command(hide = true)]
     Open(SetupTokenArgs),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SetupInitMode {
+    /// Loopback-only local mode; creates the local owner and completes setup.
+    Local,
+    /// Remote mode where an upstream trusted proxy authenticates users.
+    TrustedProxy,
+}
+
+#[derive(Debug, Args)]
+struct SetupInitArgs {
+    /// Setup mode to initialize.
+    #[arg(long, value_enum)]
+    mode: SetupInitMode,
+
+    /// Initial owner email.
+    #[arg(long)]
+    owner_email: String,
+
+    /// Trusted proxy identity header. Required only for trusted-proxy mode.
+    #[arg(long, default_value = "x-oore-user-email")]
+    user_email_header: String,
+
+    /// Trusted proxy peer CIDR. Repeat for multiple frontend/proxy networks.
+    #[arg(long = "trusted-proxy-cidr")]
+    trusted_proxy_cidrs: Vec<String>,
+
+    /// Shared secret expected from the trusted proxy/oore-web hop.
+    #[arg(long, env = "OORE_TRUSTED_PROXY_SHARED_SECRET")]
+    shared_secret: Option<String>,
+
+    /// File containing the shared secret expected from the trusted proxy/oore-web hop.
+    #[arg(long, env = "OORE_TRUSTED_PROXY_SHARED_SECRET_FILE")]
+    shared_secret_file: Option<String>,
+
+    /// Path to the setup database file.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+
+    /// Re-initialize an incomplete setup. Refuses to change a ready instance.
+    #[arg(long, default_value = "false")]
+    force: bool,
+
+    /// Print machine-readable output.
+    #[arg(long, default_value = "false")]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -181,6 +341,10 @@ enum RunnerSubcommand {
     Register(RunnerRegisterArgs),
     /// Start the runner daemon (poll for jobs, execute builds)
     Start(RunnerStartArgs),
+    /// Install and start the runner in the logged-in macOS user session
+    InstallService(RunnerServiceArgs),
+    /// Stop and remove the managed macOS runner service
+    UninstallService,
 }
 
 #[derive(Debug, Args)]
@@ -206,90 +370,19 @@ struct RunnerStartArgs {
     config: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct RunnerServiceArgs {
+    /// Path to runner config file
+    #[arg(long, default_value = "~/.oore/runner.json")]
+    config: Option<String>,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct RunnerConfig {
     runner_id: String,
     runner_token: String,
     daemon_url: String,
     name: String,
-}
-
-#[derive(Debug, Args)]
-struct UsersArgs {
-    #[command(subcommand)]
-    command: UsersSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-enum UsersSubcommand {
-    /// Transfer the singleton owner role to an existing active user
-    TransferOwner(TransferOwnerArgs),
-}
-
-#[derive(Debug, Args)]
-struct TransferOwnerArgs {
-    /// Daemon URL (loaded from config if not specified)
-    #[arg(long, env = "OORE_DAEMON_URL")]
-    daemon_url: Option<String>,
-
-    /// Session token for the current owner.
-    /// If omitted, falls back to OORE_SESSION_TOKEN or stored CLI config.
-    #[arg(long, env = "OORE_SESSION_TOKEN")]
-    token: Option<String>,
-
-    /// Email of the active user who should become owner
-    #[arg(long)]
-    email: String,
-
-    #[arg(long, default_value = "false")]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct ExternalAccessArgs {
-    #[command(subcommand)]
-    command: ExternalAccessSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-enum ExternalAccessSubcommand {
-    /// Configure remote trusted-proxy mode for a Warpgate/reverse-proxy deployment
-    EnableTrustedProxy(EnableTrustedProxyArgs),
-}
-
-#[derive(Debug, Args)]
-struct EnableTrustedProxyArgs {
-    /// Daemon URL (loaded from config if not specified)
-    #[arg(long, env = "OORE_DAEMON_URL")]
-    daemon_url: Option<String>,
-
-    /// Session token for an owner/admin user.
-    /// If omitted, falls back to OORE_SESSION_TOKEN or stored CLI config.
-    #[arg(long, env = "OORE_SESSION_TOKEN")]
-    token: Option<String>,
-
-    /// Public HTTPS URL that users open in the browser, e.g. https://oore.example.com
-    #[arg(long)]
-    public_url: String,
-
-    /// Allowed browser origin. May be passed multiple times. Defaults to --public-url.
-    #[arg(long = "allowed-origin")]
-    allowed_origins: Vec<String>,
-
-    /// Trusted proxy CIDR. May be passed multiple times, e.g. 100.107.126.166/32.
-    #[arg(long = "proxy-cidr")]
-    trusted_proxy_cidrs: Vec<String>,
-
-    /// Header set by the reverse proxy with the authenticated user's email
-    #[arg(long, default_value = "x-warpgate-username")]
-    user_email_header: String,
-
-    /// Optional shared secret expected from the reverse proxy
-    #[arg(long)]
-    shared_secret: Option<String>,
-
-    #[arg(long, default_value = "false")]
-    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -319,6 +412,21 @@ struct ConfigGetArgs {
 struct DoctorArgs {
     #[arg(long, default_value = "false")]
     json: bool,
+
+    /// Check requirements for a build platform. Repeat for multiple platforms.
+    #[arg(long, value_enum)]
+    platform: Vec<DoctorPlatform>,
+
+    /// Check Android, iOS, and macOS requirements.
+    #[arg(long, conflicts_with = "platform")]
+    all: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DoctorPlatform {
+    Android,
+    Ios,
+    Macos,
 }
 
 fn parse_ttl(raw: &str) -> anyhow::Result<Duration> {
@@ -506,6 +614,8 @@ CREATE TABLE IF NOT EXISTS setup_state (
 )
 "#;
 
+const TRUSTED_PROXY_SHARED_SECRET_HEADER: &str = "x-oore-trusted-proxy-secret";
+
 async fn connect_db(path: &PathBuf) -> anyhow::Result<SqlitePool> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -551,6 +661,168 @@ fn str_to_setup_state(s: &str) -> anyhow::Result<SetupState> {
         "ready" => Ok(SetupState::Ready),
         other => anyhow::bail!("unknown setup state: {other}"),
     }
+}
+
+struct SingleNonce(Option<[u8; NONCE_LEN]>);
+
+impl NonceSequence for SingleNonce {
+    fn advance(&mut self) -> Result<Nonce, ring::error::Unspecified> {
+        let bytes = self.0.take().ok_or(ring::error::Unspecified)?;
+        Ok(Nonce::assume_unique_for_key(bytes))
+    }
+}
+
+fn resolve_encryption_key_path() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = std::env::var("OORE_ENCRYPTION_KEY_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+
+    if let Ok(data_dir) = std::env::var("OORED_DATA_DIR")
+        && !data_dir.trim().is_empty()
+    {
+        return Ok(PathBuf::from(data_dir.trim()).join("encryption.key"));
+    }
+    if let Ok(data_dir) = std::env::var("OORE_DATA_DIR")
+        && !data_dir.trim().is_empty()
+    {
+        return Ok(PathBuf::from(data_dir.trim()).join("encryption.key"));
+    }
+
+    let data_dir =
+        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
+    Ok(data_dir.join("oore").join("encryption.key"))
+}
+
+fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
+    let path = resolve_encryption_key_path()?;
+    if path.exists() {
+        let key = fs::read(&path)
+            .with_context(|| format!("failed to read encryption key: {}", path.display()))?;
+        if key.len() != 32 {
+            anyhow::bail!(
+                "encryption key at {} has invalid length: expected 32 bytes, got {}",
+                path.display(),
+                key.len()
+            );
+        }
+        return Ok(key);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+
+    let rng = SystemRandom::new();
+    let mut key = vec![0u8; 32];
+    rng.fill(&mut key)
+        .map_err(|_| anyhow::anyhow!("failed to generate encryption key"))?;
+    fs::write(&path, &key)
+        .with_context(|| format!("failed to write encryption key: {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+    }
+    Ok(key)
+}
+
+fn encrypt_secret(plaintext: &str, key: &[u8]) -> anyhow::Result<String> {
+    let rng = SystemRandom::new();
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    rng.fill(&mut nonce_bytes)
+        .map_err(|_| anyhow::anyhow!("failed to generate encryption nonce"))?;
+
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| anyhow::anyhow!("invalid encryption key"))?;
+    let mut sealing_key = aead::SealingKey::new(unbound_key, SingleNonce(Some(nonce_bytes)));
+    let mut in_out = plaintext.as_bytes().to_vec();
+    sealing_key
+        .seal_in_place_append_tag(Aad::empty(), &mut in_out)
+        .map_err(|_| anyhow::anyhow!("encryption failed"))?;
+
+    let mut out = Vec::with_capacity(NONCE_LEN + in_out.len());
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&in_out);
+    Ok(BASE64.encode(out))
+}
+
+fn normalize_email(raw: &str) -> anyhow::Result<String> {
+    let email = raw.trim().to_lowercase();
+    if email.is_empty() || email.len() > 256 || !email.contains('@') {
+        anyhow::bail!("owner email must be a valid email address");
+    }
+    Ok(email)
+}
+
+fn normalize_header_name(raw: &str) -> anyhow::Result<String> {
+    let header = raw.trim().to_ascii_lowercase();
+    let valid = !header.is_empty()
+        && header.len() <= 128
+        && header.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '!' | '#'
+                        | '$'
+                        | '%'
+                        | '&'
+                        | '\''
+                        | '*'
+                        | '+'
+                        | '-'
+                        | '.'
+                        | '^'
+                        | '_'
+                        | '`'
+                        | '|'
+                        | '~'
+                )
+        });
+    if !valid {
+        anyhow::bail!("trusted proxy user email header is invalid");
+    }
+    Ok(header)
+}
+
+fn trusted_proxy_subject_for_email(email: &str) -> String {
+    format!("trusted-proxy::{}", email.trim().to_lowercase())
+}
+
+fn local_subject_for_email(email: &str) -> String {
+    format!("local::{}", email.trim().to_lowercase())
+}
+
+fn resolve_secret_value(
+    value: Option<&str>,
+    file: Option<&str>,
+    label: &str,
+) -> anyhow::Result<Option<String>> {
+    if let Some(value) = value {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    let Some(file) = file else {
+        return Ok(None);
+    };
+    let file = file.trim();
+    if file.is_empty() {
+        return Ok(None);
+    }
+    let secret =
+        fs::read_to_string(file).with_context(|| format!("failed to read {label} file: {file}"))?;
+    let secret = secret.trim();
+    if secret.is_empty() {
+        anyhow::bail!("{label} file is empty: {file}");
+    }
+    Ok(Some(secret.to_string()))
 }
 
 async fn load_state(pool: &SqlitePool) -> anyhow::Result<Option<SetupStateFile>> {
@@ -798,6 +1070,348 @@ async fn generate_bootstrap_token(
     Ok(plaintext_token)
 }
 
+fn normalize_trusted_proxy_cidrs(values: Vec<String>) -> anyhow::Result<Vec<String>> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let cidr = trimmed
+            .parse::<ipnet::IpNet>()
+            .with_context(|| format!("invalid trusted proxy CIDR: {trimmed}"))?;
+        let canonical = cidr.to_string();
+        if !normalized.iter().any(|existing| existing == &canonical) {
+            normalized.push(canonical);
+        }
+    }
+    Ok(normalized)
+}
+
+async fn persist_instance_preferences(
+    pool: &SqlitePool,
+    runtime_mode: RuntimeMode,
+    remote_auth_mode: RemoteAuthMode,
+    now: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, remote_auth_mode, updated_by, created_at, updated_at)
+         VALUES (1, 'file', ?1, ?2, NULL, ?3, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            key_storage_mode = excluded.key_storage_mode,
+            runtime_mode = excluded.runtime_mode,
+            remote_auth_mode = excluded.remote_auth_mode,
+            updated_at = excluded.updated_at",
+    )
+    .bind(runtime_mode.to_string())
+    .bind(remote_auth_mode.to_string())
+    .bind(now)
+    .execute(pool)
+    .await
+    .context("failed to save instance preferences")?;
+    Ok(())
+}
+
+async fn ensure_setup_init_schema(pool: &SqlitePool) -> anyhow::Result<()> {
+    for table in ["instance_preferences", "trusted_proxy_settings", "users"] {
+        let exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1",
+        )
+        .bind(table)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("failed to inspect database schema for {table}"))?;
+        if exists.is_none() {
+            anyhow::bail!(
+                "setup database is not migrated yet (missing table: {table}). Start `oored run` once, then rerun `oore setup init`."
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn persist_trusted_proxy_settings(
+    pool: &SqlitePool,
+    owner_email: &str,
+    user_email_header: &str,
+    trusted_proxy_cidrs: &[String],
+    encrypted_shared_secret: Option<&str>,
+    now: i64,
+) -> anyhow::Result<()> {
+    let cidrs_json = serde_json::to_string(trusted_proxy_cidrs)
+        .context("failed to serialize trusted proxy CIDRs")?;
+    sqlx::query(
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, NULL, ?5, ?5)
+         ON CONFLICT(id) DO UPDATE SET
+            user_email_header = excluded.user_email_header,
+            setup_owner_email = excluded.setup_owner_email,
+            trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
+            encrypted_shared_secret = excluded.encrypted_shared_secret,
+            updated_at = excluded.updated_at",
+    )
+    .bind(user_email_header)
+    .bind(owner_email)
+    .bind(cidrs_json)
+    .bind(encrypted_shared_secret)
+    .bind(now)
+    .execute(pool)
+    .await
+    .context("failed to save trusted proxy settings")?;
+    Ok(())
+}
+
+async fn upsert_owner_user(
+    pool: &SqlitePool,
+    owner_email: &str,
+    subject: &str,
+    now: i64,
+) -> anyhow::Result<()> {
+    let user_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'owner', 'active', ?5, ?5)
+         ON CONFLICT(email) DO UPDATE SET
+            oidc_subject = excluded.oidc_subject,
+            display_name = excluded.display_name,
+            role = 'owner',
+            status = 'active',
+            updated_at = excluded.updated_at",
+    )
+    .bind(&user_id)
+    .bind(owner_email)
+    .bind(subject)
+    .bind(owner_email)
+    .bind(now)
+    .execute(pool)
+    .await
+    .context("failed to create owner user")?;
+    Ok(())
+}
+
+async fn handle_setup_init(args: SetupInitArgs) -> anyhow::Result<()> {
+    let db_path = resolve_db_path(args.state_file.as_deref())?;
+    let pool = connect_db(&db_path).await?;
+    let mut state = load_or_create_state(&pool).await?;
+
+    if state.setup_state == SetupState::Ready {
+        anyhow::bail!("setup is already complete; refusing to change a ready instance");
+    }
+    if !args.force
+        && !matches!(
+            state.setup_state,
+            SetupState::Uninitialized | SetupState::BootstrapPending
+        )
+    {
+        anyhow::bail!(
+            "setup is already in {} state; pass --force to re-initialize before owner creation",
+            state_label(state.setup_state)
+        );
+    }
+
+    let owner_email = normalize_email(&args.owner_email)?;
+    let now = now_epoch_secs();
+    ensure_setup_init_schema(&pool).await?;
+
+    let (runtime_mode, remote_auth_mode, owner_subject) = match args.mode {
+        SetupInitMode::Local => (
+            RuntimeMode::Local,
+            RemoteAuthMode::Oidc,
+            local_subject_for_email(&owner_email),
+        ),
+        SetupInitMode::TrustedProxy => (
+            RuntimeMode::Remote,
+            RemoteAuthMode::TrustedProxy,
+            trusted_proxy_subject_for_email(&owner_email),
+        ),
+    };
+
+    persist_instance_preferences(&pool, runtime_mode, remote_auth_mode, now).await?;
+
+    let mut trusted_proxy_cidrs = Vec::new();
+    let mut user_email_header = None;
+    let mut has_shared_secret = false;
+    if args.mode == SetupInitMode::TrustedProxy {
+        let header = normalize_header_name(&args.user_email_header)?;
+        let cidrs = normalize_trusted_proxy_cidrs(args.trusted_proxy_cidrs)?;
+        let shared_secret = resolve_secret_value(
+            args.shared_secret.as_deref(),
+            args.shared_secret_file.as_deref(),
+            "trusted proxy shared secret",
+        )?
+        .context(
+            "trusted-proxy setup init requires a shared secret; pass --shared-secret-file or set OORE_TRUSTED_PROXY_SHARED_SECRET_FILE",
+        )?;
+        let key = load_or_generate_encryption_key()?;
+        let encrypted_shared_secret = Some(encrypt_secret(&shared_secret, &key)?);
+        has_shared_secret = encrypted_shared_secret.is_some();
+        persist_trusted_proxy_settings(
+            &pool,
+            &owner_email,
+            &header,
+            &cidrs,
+            encrypted_shared_secret.as_deref(),
+            now,
+        )
+        .await?;
+        trusted_proxy_cidrs = cidrs;
+        user_email_header = Some(header);
+    }
+
+    state.owner = Some(oore_contract::OwnerRecord {
+        email: owner_email.clone(),
+        oidc_subject: Some(owner_subject.clone()),
+        created_at: now,
+    });
+    upsert_owner_user(&pool, &owner_email, &owner_subject, now).await?;
+    state.setup_state = SetupState::Ready;
+    state.setup_session = None;
+    state.bootstrap_token = None;
+    state.updated_at = now;
+    save_state(&pool, &state).await?;
+
+    if args.json {
+        let output = serde_json::json!({
+            "ok": true,
+            "state": "ready",
+            "mode": match args.mode {
+                SetupInitMode::Local => "local",
+                SetupInitMode::TrustedProxy => "trusted_proxy",
+            },
+            "owner_email": owner_email,
+            "database": db_path.display().to_string(),
+            "instance_id": state.instance_id,
+            "trusted_proxy": {
+                "user_email_header": user_email_header,
+                "trusted_proxy_cidrs": trusted_proxy_cidrs,
+                "has_shared_secret": has_shared_secret,
+                "shared_secret_header": TRUSTED_PROXY_SHARED_SECRET_HEADER,
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    println!("Setup initialized.");
+    println!();
+    println!("State:    ready");
+    println!("Instance: {}", state.instance_id);
+    println!("Owner:    {}", owner_email);
+    println!("DB:       {}", db_path.display());
+    match args.mode {
+        SetupInitMode::Local => {
+            println!("Mode:     local");
+            println!();
+            println!("Local login is available only from loopback.");
+        }
+        SetupInitMode::TrustedProxy => {
+            println!("Mode:     remote trusted-proxy");
+            println!(
+                "Header:   {}",
+                user_email_header.as_deref().unwrap_or("x-oore-user-email")
+            );
+            if trusted_proxy_cidrs.is_empty() {
+                println!("Peers:    loopback only");
+            } else {
+                println!("Peers:    {}", trusted_proxy_cidrs.join(", "));
+            }
+            println!(
+                "Secret:   {}",
+                if has_shared_secret {
+                    "configured"
+                } else {
+                    "not configured"
+                }
+            );
+            if has_shared_secret {
+                println!("Proxy must forward: {}", TRUSTED_PROXY_SHARED_SECRET_HEADER);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_frontend_invite(args: FrontendInviteArgs) -> anyhow::Result<()> {
+    let ttl = parse_ttl(&args.ttl)?;
+    if ttl.is_zero() || ttl > Duration::from_secs(60 * 60) {
+        anyhow::bail!("frontend pairing ttl must be between 1 second and 1 hour");
+    }
+
+    let db_path = resolve_db_path(args.state_file.as_deref())?;
+    let pool = connect_db(&db_path).await?;
+    let configured: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM trusted_proxy_settings \
+         WHERE id = 1 AND encrypted_shared_secret IS NOT NULL LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .context("trusted-proxy setup is not migrated; update and start oored before pairing")?;
+    if configured.is_none() {
+        anyhow::bail!("frontend pairing requires a configured Trusted Proxy backend");
+    }
+
+    let mut token_bytes = [0u8; 24];
+    rand::rngs::OsRng.fill_bytes(&mut token_bytes);
+    let code = format!("fp_{}", URL_SAFE_NO_PAD.encode(token_bytes));
+    let token_hash = hex::encode(Sha256::digest(code.as_bytes()));
+    let now = now_epoch_secs();
+    let expires_at = now + ttl.as_secs() as i64;
+    let invite_id = uuid::Uuid::new_v4().to_string();
+
+    let mut transaction = pool.begin().await?;
+    sqlx::query("UPDATE frontend_pairing_invites SET consumed_at = ?1 WHERE consumed_at IS NULL")
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .context("failed to revoke previous frontend pairing invites")?;
+    sqlx::query(
+        "INSERT INTO frontend_pairing_invites (id, token_hash, expires_at, consumed_at, created_at) \
+         VALUES (?1, ?2, ?3, NULL, ?4)",
+    )
+    .bind(&invite_id)
+    .bind(token_hash)
+    .bind(expires_at)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .context("failed to create frontend pairing invite; update and start oored first")?;
+    let audit_details = serde_json::json!({
+        "source": "local_cli",
+        "expires_at": expires_at,
+    })
+    .to_string();
+    sqlx::query(
+        "INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, details, created_at) \
+         VALUES (NULL, 'frontend_pairing_invite_created', 'frontend_pairing_invite', ?1, ?2, ?3)",
+    )
+    .bind(&invite_id)
+    .bind(audit_details)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .context("failed to audit frontend pairing invite")?;
+    transaction.commit().await?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "code": code,
+                "expires_at": expires_at,
+                "single_use": true,
+            })
+        );
+    } else {
+        println!(
+            "Frontend pairing code (single-use, expires in {}):",
+            args.ttl
+        );
+        println!("{code}");
+    }
+    Ok(())
+}
+
 async fn handle_setup_token(args: SetupTokenArgs, daemon_url: &str) -> anyhow::Result<()> {
     let ttl = parse_ttl(&args.ttl)?;
 
@@ -808,7 +1422,10 @@ async fn handle_setup_token(args: SetupTokenArgs, daemon_url: &str) -> anyhow::R
     let pool = connect_db(&db_path).await?;
     let mut state = load_or_create_state(&pool).await?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("failed to build HTTP client")?;
     let daemon_status = fetch_setup_status(&client, daemon_url).await;
     if let Ok(status) = &daemon_status {
         if status.instance_id != state.instance_id {
@@ -1061,77 +1678,6 @@ async fn fetch_user_profile(
     )
 }
 
-fn require_session_token(cli_value: Option<&str>, action: &str) -> anyhow::Result<String> {
-    resolve_session_token(cli_value)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "{action} requires a session token. Run `oore login`, import one with `oore login --token <token>`, or pass --token."
-        )
-    })
-}
-
-async fn api_put_json<T>(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    token: &str,
-    path: &str,
-    body: &T,
-) -> anyhow::Result<serde_json::Value>
-where
-    T: serde::Serialize + ?Sized,
-{
-    let url = format!("{}{}", daemon_url.trim_end_matches('/'), path);
-    let response = client
-        .put(&url)
-        .bearer_auth(token)
-        .json(body)
-        .send()
-        .await
-        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
-
-    if response.status().is_success() {
-        return response
-            .json()
-            .await
-            .with_context(|| format!("failed to parse {path} response"));
-    }
-
-    let status = response.status();
-    let msg = extract_error_message(response).await;
-    anyhow::bail!("{} failed (HTTP {}): {}", path, status.as_u16(), msg)
-}
-
-async fn api_post_json<T, U>(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    token: &str,
-    path: &str,
-    body: &T,
-) -> anyhow::Result<U>
-where
-    T: serde::Serialize + ?Sized,
-    U: serde::de::DeserializeOwned,
-{
-    let url = format!("{}{}", daemon_url.trim_end_matches('/'), path);
-    let response = client
-        .post(&url)
-        .bearer_auth(token)
-        .json(body)
-        .send()
-        .await
-        .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
-
-    if response.status().is_success() {
-        return response
-            .json()
-            .await
-            .with_context(|| format!("failed to parse {path} response"));
-    }
-
-    let status = response.status();
-    let msg = extract_error_message(response).await;
-    anyhow::bail!("{} failed (HTTP {}): {}", path, status.as_u16(), msg)
-}
-
 async fn fetch_build_list(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -1256,10 +1802,100 @@ Use OORE_SETUP_STATE_FILE or --state-file to point at the daemon setup DB and re
 }
 
 async fn handle_setup_interactive(daemon_url: &str) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .context("failed to build HTTP client")?;
 
     println!("oore setup — interactive instance configuration");
     println!();
+
+    let mode_choice = dialoguer::Select::new()
+        .with_prompt("What kind of setup do you want?")
+        .default(0)
+        .item("Local Only - loopback-only owner login, no external auth")
+        .item("Remote Trusted Proxy - an upstream proxy provides user identity")
+        .item("Remote OIDC - users sign in with an identity provider")
+        .item("Generate a web setup token")
+        .interact()
+        .context("failed to read setup mode")?;
+
+    match mode_choice {
+        0 => {
+            let owner_email: String = dialoguer::Input::new()
+                .with_prompt("Owner email")
+                .default("owner@local".to_string())
+                .interact_text()
+                .context("failed to read owner email")?;
+            return handle_setup_init(SetupInitArgs {
+                mode: SetupInitMode::Local,
+                owner_email,
+                user_email_header: "x-oore-user-email".to_string(),
+                trusted_proxy_cidrs: Vec::new(),
+                shared_secret: None,
+                shared_secret_file: None,
+                state_file: None,
+                force: false,
+                json: false,
+            })
+            .await;
+        }
+        1 => {
+            let owner_email: String = dialoguer::Input::new()
+                .with_prompt("Initial owner email")
+                .interact_text()
+                .context("failed to read owner email")?;
+            let user_email_header: String = dialoguer::Input::new()
+                .with_prompt("Trusted proxy user email header")
+                .default("x-oore-user-email".to_string())
+                .interact_text()
+                .context("failed to read trusted proxy header")?;
+            let cidrs_raw: String = dialoguer::Input::new()
+                .with_prompt("Trusted proxy CIDRs (comma-separated, leave blank for loopback only)")
+                .allow_empty(true)
+                .interact_text()
+                .context("failed to read trusted proxy CIDRs")?;
+            let shared_secret: String = dialoguer::Password::new()
+                .with_prompt("Shared secret injected by proxy/oore-web (recommended)")
+                .allow_empty_password(true)
+                .interact()
+                .context("failed to read trusted proxy shared secret")?;
+            let trusted_proxy_cidrs = cidrs_raw
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect();
+            return handle_setup_init(SetupInitArgs {
+                mode: SetupInitMode::TrustedProxy,
+                owner_email,
+                user_email_header,
+                trusted_proxy_cidrs,
+                shared_secret: if shared_secret.trim().is_empty() {
+                    None
+                } else {
+                    Some(shared_secret)
+                },
+                shared_secret_file: None,
+                state_file: None,
+                force: false,
+                json: false,
+            })
+            .await;
+        }
+        3 => {
+            return handle_setup_token(
+                SetupTokenArgs {
+                    ttl: "15m".to_string(),
+                    json: false,
+                    state_file: None,
+                },
+                daemon_url,
+            )
+            .await;
+        }
+        _ => {}
+    }
 
     // ── Step 0: Check daemon connectivity and get current state ──
 
@@ -1698,125 +2334,6 @@ async fn handle_login(args: LoginArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_transfer_owner(args: TransferOwnerArgs) -> anyhow::Result<()> {
-    let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
-    let token = require_session_token(args.token.as_deref(), "owner transfer")?;
-    let client = reqwest::Client::new();
-
-    let response: TransferOwnerResponse = api_post_json(
-        &client,
-        &daemon_url,
-        &token,
-        "/v1/users/transfer-owner",
-        &TransferOwnerRequest { email: args.email },
-    )
-    .await?;
-
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
-    }
-
-    println!("Owner transferred.");
-    println!(
-        "Previous owner: {} ({})",
-        response.previous_owner.email, response.previous_owner.role
-    );
-    println!(
-        "New owner:      {} ({})",
-        response.owner.email, response.owner.role
-    );
-    println!(
-        "Existing sessions for both users were revoked; sign in again to pick up the new role."
-    );
-    Ok(())
-}
-
-async fn handle_enable_trusted_proxy(args: EnableTrustedProxyArgs) -> anyhow::Result<()> {
-    let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
-    let token = require_session_token(args.token.as_deref(), "trusted-proxy configuration")?;
-    let client = reqwest::Client::new();
-
-    if args.trusted_proxy_cidrs.is_empty() {
-        anyhow::bail!(
-            "at least one --proxy-cidr is required, e.g. --proxy-cidr 100.107.126.166/32"
-        );
-    }
-
-    let public_url = args.public_url.trim().trim_end_matches('/').to_string();
-    if public_url.is_empty() {
-        anyhow::bail!("--public-url cannot be empty");
-    }
-    let allowed_origins = if args.allowed_origins.is_empty() {
-        vec![public_url.clone()]
-    } else {
-        args.allowed_origins
-            .into_iter()
-            .map(|origin| origin.trim().trim_end_matches('/').to_string())
-            .filter(|origin| !origin.is_empty())
-            .collect::<Vec<_>>()
-    };
-    if allowed_origins.is_empty() {
-        anyhow::bail!("at least one allowed origin is required");
-    }
-
-    let network = api_put_json(
-        &client,
-        &daemon_url,
-        &token,
-        "/v1/settings/external-access/network",
-        &UpdateExternalAccessNetworkSettingsRequest {
-            public_url: Some(public_url.clone()),
-            allowed_origins: allowed_origins.clone(),
-        },
-    )
-    .await?;
-
-    let trusted_proxy = api_put_json(
-        &client,
-        &daemon_url,
-        &token,
-        "/v1/settings/external-access/trusted-proxy",
-        &UpdateTrustedProxySettingsRequest {
-            user_email_header: Some(args.user_email_header),
-            trusted_proxy_cidrs: args.trusted_proxy_cidrs,
-            shared_secret: args.shared_secret,
-        },
-    )
-    .await?;
-
-    let preferences = api_put_json(
-        &client,
-        &daemon_url,
-        &token,
-        "/v1/settings/preferences",
-        &UpdateInstancePreferencesRequest {
-            key_storage_mode: KeyStorageMode::File,
-            runtime_mode: Some(RuntimeMode::Remote),
-            remote_auth_mode: Some(RemoteAuthMode::TrustedProxy),
-        },
-    )
-    .await?;
-
-    if args.json {
-        let output = serde_json::json!({
-            "network": network,
-            "trusted_proxy": trusted_proxy,
-            "preferences": preferences,
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
-        return Ok(());
-    }
-
-    println!("Trusted-proxy external access configured.");
-    println!("Public URL:      {}", public_url);
-    println!("Allowed origins: {}", allowed_origins.join(", "));
-    println!("Remote auth:     trusted_proxy");
-    println!("Key storage:     file");
-    println!("Restart oored if the response indicates restart_required.");
-    Ok(())
-}
-
 async fn handle_status(args: StatusArgs) -> anyhow::Result<()> {
     let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
     let client = reqwest::Client::new();
@@ -2017,22 +2534,7 @@ async fn handle_runner_register(args: RunnerRegisterArgs) -> anyhow::Result<()> 
 }
 
 async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
-    let config_path = args
-        .config
-        .map(|p| {
-            if let Some(stripped) = p.strip_prefix("~/") {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(stripped)
-            } else {
-                PathBuf::from(p)
-            }
-        })
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".oore/runner.json")
-        });
+    let config_path = runner_config_path(args.config)?;
 
     let config: RunnerConfig = serde_json::from_str(
         &fs::read_to_string(&config_path)
@@ -2049,6 +2551,16 @@ async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
     };
 
     oore_runner::run_runner_forever(shared_cfg, Some(daemon_url)).await
+}
+
+fn runner_config_path(value: Option<String>) -> anyhow::Result<PathBuf> {
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    Ok(match value {
+        Some(path) if path == "~" => home,
+        Some(path) if path.starts_with("~/") => home.join(&path[2..]),
+        Some(path) => PathBuf::from(path),
+        None => home.join(".oore/runner.json"),
+    })
 }
 
 fn config_key_supported(key: &str) -> bool {
@@ -2109,7 +2621,12 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
     command_output(cmd, args)
         .and_then(|out| {
             if out.status.success() {
-                String::from_utf8(out.stdout).ok()
+                let output = if out.stdout.is_empty() {
+                    out.stderr
+                } else {
+                    out.stdout
+                };
+                String::from_utf8(output).ok()
             } else {
                 None
             }
@@ -2117,26 +2634,115 @@ fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
         .and_then(|s| s.lines().next().map(|line| line.trim().to_string()))
 }
 
+fn doctor_check(
+    name: &str,
+    status: &str,
+    detail: Option<String>,
+    install_hint: Option<&str>,
+) -> DoctorCheckResult {
+    DoctorCheckResult {
+        name: name.to_string(),
+        status: status.to_string(),
+        detail,
+        install_hint: install_hint.map(str::to_string),
+    }
+}
+
+fn doctor_has_platform(args: &DoctorArgs, platform: DoctorPlatform) -> bool {
+    args.all || args.platform.contains(&platform)
+}
+
+fn android_sdk_root() -> Option<PathBuf> {
+    ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .into_iter()
+        .find_map(|key| {
+            std::env::var_os(key)
+                .map(PathBuf::from)
+                .filter(|path| path.is_dir())
+        })
+}
+
+fn add_xcode_checks(checks: &mut Vec<DoctorCheckResult>) {
+    if std::env::consts::OS != "macos" {
+        checks.push(doctor_check(
+            "xcode",
+            "missing",
+            Some("iOS and macOS builds require a macOS runner".to_string()),
+            Some("run this job on macOS with Xcode installed"),
+        ));
+        return;
+    }
+
+    let developer_dir =
+        command_version("xcode-select", &["-p"]).filter(|path| Path::new(path).is_dir());
+    let xcode_version = command_version("xcodebuild", &["-version"]);
+    if let (Some(developer_dir), Some(xcode_version)) = (developer_dir, xcode_version) {
+        checks.push(doctor_check(
+            "xcode",
+            "ok",
+            Some(format!("{} ({})", xcode_version, developer_dir)),
+            None,
+        ));
+    } else {
+        checks.push(doctor_check(
+            "xcode",
+            "missing",
+            None,
+            Some("install Xcode, then run: sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer"),
+        ));
+    }
+}
+
+fn add_signing_warnings(checks: &mut Vec<DoctorCheckResult>) {
+    let codesign = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
+    match codesign {
+        Some(output) if output.status.success() => {
+            let output = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if output.contains("0 valid identities found") {
+                checks.push(doctor_check(
+                    "codesign_identity",
+                    "warning",
+                    Some("0 valid identities found".to_string()),
+                    Some("import an Apple development or distribution certificate before signing"),
+                ));
+            } else {
+                checks.push(doctor_check(
+                    "codesign_identity",
+                    "ok",
+                    Some("signing identity available".to_string()),
+                    None,
+                ));
+            }
+        }
+        _ => checks.push(doctor_check(
+            "codesign_identity",
+            "warning",
+            None,
+            Some("import an Apple development or distribution certificate before signing"),
+        )),
+    }
+
+    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
+        checks.push(doctor_check("notarytool", "ok", Some(version), None));
+    } else {
+        checks.push(doctor_check(
+            "notarytool",
+            "warning",
+            None,
+            Some("install a current Xcode version before notarizing macOS apps"),
+        ));
+    }
+}
+
 fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
-    let base_checks: [(&str, &[&str], &str); 6] = [
+    let base_checks: [(&str, &[&str], &str); 3] = [
         ("git", &["--version"], "brew install git"),
-        (
-            "rustc",
-            &["--version"],
-            "curl https://sh.rustup.rs -sSf | sh",
-        ),
-        (
-            "cargo",
-            &["--version"],
-            "curl https://sh.rustup.rs -sSf | sh",
-        ),
-        (
-            "bun",
-            &["--version"],
-            "curl -fsSL https://bun.sh/install | bash",
-        ),
         (
             "fvm",
             &["--version"],
@@ -2151,109 +2757,87 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
 
     for (name, command_args, install_hint) in base_checks {
         if let Some(version) = command_version(name, command_args) {
-            checks.push(DoctorCheckResult {
-                name: name.to_string(),
-                status: "ok".to_string(),
-                detail: Some(version),
-                install_hint: None,
-            });
+            checks.push(doctor_check(name, "ok", Some(version), None));
         } else {
-            checks.push(DoctorCheckResult {
-                name: name.to_string(),
-                status: "missing".to_string(),
-                detail: None,
-                install_hint: Some(install_hint.to_string()),
-            });
+            checks.push(doctor_check(name, "missing", None, Some(install_hint)));
         }
     }
 
-    let xcode_ready = command_version("xcodebuild", &["-version"]).is_some()
-        && command_version("xcode-select", &["-p"]).is_some();
-    checks.push(if xcode_ready {
-        DoctorCheckResult {
-            name: "xcode_cli".to_string(),
-            status: "ok".to_string(),
-            detail: Some("xcodebuild + xcode-select configured".to_string()),
-            install_hint: None,
+    if doctor_has_platform(&args, DoctorPlatform::Android) {
+        if let Some(version) = command_version("java", &["-version"]) {
+            checks.push(doctor_check("java", "ok", Some(version), None));
+        } else {
+            checks.push(doctor_check(
+                "java",
+                "missing",
+                None,
+                Some("install a supported JDK and set JAVA_HOME"),
+            ));
         }
-    } else {
-        DoctorCheckResult {
-            name: "xcode_cli".to_string(),
-            status: "missing".to_string(),
-            detail: None,
-            install_hint: Some(
-                "install/configure Xcode CLI tools: xcode-select --install".to_string(),
-            ),
-        }
-    });
 
-    let codesign_check = command_output("security", &["find-identity", "-v", "-p", "codesigning"]);
-    match codesign_check {
-        Some(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let merged = format!("{stdout}\n{stderr}");
-            if merged.contains("0 valid identities found") {
-                checks.push(DoctorCheckResult {
-                    name: "codesign_identity".to_string(),
-                    status: "missing".to_string(),
-                    detail: Some("0 valid identities found".to_string()),
-                    install_hint: Some(
-                        "import a Developer/Application certificate into Keychain Access"
-                            .to_string(),
-                    ),
-                });
+        if let Some(sdk_root) = android_sdk_root() {
+            let adb = sdk_root.join("platform-tools/adb");
+            if adb.is_file() {
+                checks.push(doctor_check(
+                    "android_sdk",
+                    "ok",
+                    Some(sdk_root.display().to_string()),
+                    None,
+                ));
             } else {
-                let identity_count = merged
-                    .lines()
-                    .filter(|line| line.contains('"') && line.contains(") "))
-                    .count();
-                checks.push(DoctorCheckResult {
-                    name: "codesign_identity".to_string(),
-                    status: "ok".to_string(),
-                    detail: Some(format!("{identity_count} identity entries available")),
-                    install_hint: None,
-                });
+                checks.push(doctor_check(
+                    "android_sdk",
+                    "missing",
+                    Some(sdk_root.display().to_string()),
+                    Some("install Android SDK Platform-Tools in this SDK"),
+                ));
             }
+        } else {
+            checks.push(doctor_check(
+                "android_sdk",
+                "missing",
+                None,
+                Some("install Android Studio, then set ANDROID_HOME to its SDK directory"),
+            ));
         }
-        _ => {
-            checks.push(DoctorCheckResult {
-                name: "codesign_identity".to_string(),
-                status: "missing".to_string(),
-                detail: None,
-                install_hint: Some(
-                    "run `security find-identity -v -p codesigning` and import required certificates"
-                        .to_string(),
-                ),
-            });
-        }
+    } else {
+        checks.push(doctor_check(
+            "android",
+            "skipped",
+            Some("run `oore doctor --platform android` for Android checks".to_string()),
+            None,
+        ));
     }
 
-    if let Some(version) = command_version("xcrun", &["notarytool", "--version"]) {
-        checks.push(DoctorCheckResult {
-            name: "notarytool".to_string(),
-            status: "ok".to_string(),
-            detail: Some(version),
-            install_hint: None,
-        });
+    let apple_selected = doctor_has_platform(&args, DoctorPlatform::Ios)
+        || doctor_has_platform(&args, DoctorPlatform::Macos);
+    if apple_selected {
+        add_xcode_checks(&mut checks);
+        add_signing_warnings(&mut checks);
     } else {
-        checks.push(DoctorCheckResult {
-            name: "notarytool".to_string(),
-            status: "missing".to_string(),
-            detail: None,
-            install_hint: Some(
-                "install/update Xcode CLT and verify with `xcrun notarytool --version`".to_string(),
+        checks.push(doctor_check(
+            "apple_platforms",
+            "skipped",
+            Some(
+                "run `oore doctor --platform ios` or `--platform macos` for Xcode checks"
+                    .to_string(),
             ),
-        });
+            None,
+        ));
     }
 
     let missing_count = checks
         .iter()
         .filter(|check| check.status == "missing")
         .count();
+    let warning_count = checks
+        .iter()
+        .filter(|check| check.status == "warning")
+        .count();
     let report = DoctorReport {
         checks,
         missing_count,
+        warning_count,
     };
 
     if args.json {
@@ -2261,24 +2845,20 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     } else {
         println!("oore doctor -- environment checks");
         for check in &report.checks {
-            if check.status == "ok" {
-                println!(
-                    "  [ok] {:<18} {}",
-                    check.name,
-                    check.detail.as_deref().unwrap_or("")
-                );
-            } else {
-                println!(
-                    "  [missing] {:<18} install: {}",
-                    check.name,
-                    check.install_hint.as_deref().unwrap_or("")
-                );
-            }
+            let detail = check
+                .detail
+                .as_deref()
+                .or(check.install_hint.as_deref())
+                .unwrap_or("");
+            println!("  [{}] {:<18} {}", check.status, check.name, detail);
         }
         if report.missing_count == 0 {
-            println!("All required tools are installed.");
+            println!("All selected required checks passed.");
         } else {
-            println!("{} issue(s) found.", report.missing_count);
+            println!("{} required issue(s) found.", report.missing_count);
+        }
+        if report.warning_count > 0 {
+            println!("{} optional warning(s) found.", report.warning_count);
         }
     }
 
@@ -2297,7 +2877,9 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
 
 // ── Self-update helpers ──────────────────────────────────────────
 
-const DEFAULT_GITHUB_REPO: &str = "devaryakjha/oore.build";
+const DEFAULT_GITHUB_REPO: &str = "oore-ci/oore.build";
+const LEGACY_GITHUB_REPO: &str = "devaryakjha/oore.build";
+const DEFAULT_RELEASE_INDEX_BASE_URL: &str = "https://releases.oore.build";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReleaseChannel {
@@ -2323,28 +2905,15 @@ impl ReleaseChannel {
             other => anyhow::bail!("invalid channel '{other}', expected: stable|beta|alpha"),
         }
     }
-
-    fn tag_marker(self) -> Option<&'static str> {
-        match self {
-            Self::Stable => None,
-            Self::Alpha => Some("-alpha."),
-            Self::Beta => Some("-beta."),
-        }
-    }
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
-    assets: Vec<GitHubAsset>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
+struct ReleaseManifest {
+    schema_version: u32,
+    channel: String,
+    version: String,
+    tag: String,
+    download_base_url: String,
 }
 
 fn read_trimmed_file(path: &Path) -> Option<String> {
@@ -2379,22 +2948,19 @@ fn read_installed_channel(install_root: &Path) -> Option<ReleaseChannel> {
 }
 
 fn read_installed_repo(install_root: &Path) -> Option<String> {
-    read_trimmed_file(&install_root.join("GITHUB_REPO"))
+    read_trimmed_file(&install_root.join("GITHUB_REPO")).map(|repo| normalize_github_repo(&repo))
 }
 
-fn github_token() -> Option<String> {
-    for key in ["OORE_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(val) = std::env::var(key) {
-            let trimmed = val.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
+fn normalize_github_repo(repo: &str) -> String {
+    let repo = repo.trim();
+    if repo == LEGACY_GITHUB_REPO {
+        DEFAULT_GITHUB_REPO.to_string()
+    } else {
+        repo.to_string()
     }
-    None
 }
 
-fn github_client() -> anyhow::Result<reqwest::Client> {
+fn http_client() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(format!("oore/{}/update", env!("CARGO_PKG_VERSION")))
         .build()
@@ -2405,83 +2971,54 @@ async fn fetch_latest_release(
     client: &reqwest::Client,
     repo: &str,
     channel: ReleaseChannel,
-) -> anyhow::Result<GitHubRelease> {
-    if !repo.contains('/') {
-        anyhow::bail!("invalid GitHub repo '{repo}', expected: owner/name");
-    }
-
-    let token = github_token();
-    let base = format!("https://api.github.com/repos/{repo}");
-
-    let mut req = match channel {
-        ReleaseChannel::Stable => client.get(format!("{base}/releases/latest")),
-        ReleaseChannel::Alpha | ReleaseChannel::Beta => {
-            client.get(format!("{base}/releases?per_page=100"))
-        }
-    };
-
-    req = req
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
-
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-
-    if channel == ReleaseChannel::Stable {
-        let rel: GitHubRelease = req
-            .send()
-            .await
-            .context("failed to fetch latest stable release")?
-            .error_for_status()
-            .context("latest stable release request failed")?
-            .json()
-            .await
-            .context("failed to parse latest stable release JSON")?;
-
-        if rel.draft {
-            anyhow::bail!("latest stable release is a draft (tag: {})", rel.tag_name);
-        }
-        if rel.prerelease {
-            anyhow::bail!(
-                "latest stable release is marked prerelease (tag: {}), refusing to use it for stable channel",
-                rel.tag_name
-            );
-        }
-
-        return Ok(rel);
-    }
-
-    let list: Vec<GitHubRelease> = req
+) -> anyhow::Result<ReleaseManifest> {
+    let base = std::env::var("OORE_RELEASE_INDEX_BASE_URL")
+        .unwrap_or_else(|_| DEFAULT_RELEASE_INDEX_BASE_URL.to_string());
+    let url = format!(
+        "{}/latest/{}.json",
+        base.trim_end_matches('/'),
+        channel.as_str()
+    );
+    let release: ReleaseManifest = client
+        .get(&url)
+        .header("Accept", "application/json")
         .send()
         .await
-        .context("failed to fetch release list")?
-        .error_for_status()
-        .context("release list request failed")?
-        .json()
-        .await
-        .context("failed to parse release list JSON")?;
-
-    let marker = channel.tag_marker().context("missing tag marker")?;
-    let rel = list
-        .into_iter()
-        .find(|r| !r.draft && r.prerelease && r.tag_name.contains(marker))
         .with_context(|| {
             format!(
-                "no {channel} release found in {repo}",
+                "failed to fetch {channel} release index",
                 channel = channel.as_str()
             )
-        })?;
-    Ok(rel)
+        })?
+        .error_for_status()
+        .with_context(|| format!("release index request failed: {url}"))?
+        .json()
+        .await
+        .context("failed to parse release index JSON")?;
+    if release.schema_version != 1 || release.channel != channel.as_str() {
+        anyhow::bail!(
+            "invalid {} release index response from {url}",
+            channel.as_str()
+        );
+    }
+    if release.tag.trim_start_matches('v') != release.version {
+        anyhow::bail!(
+            "release index tag and version do not match: {}",
+            release.tag
+        );
+    }
+    let expected_download_base = format!(
+        "https://github.com/{repo}/releases/download/{}",
+        release.tag
+    );
+    if release.download_base_url.trim_end_matches('/') != expected_download_base {
+        anyhow::bail!("release index asset source does not match GitHub repo {repo}");
+    }
+    Ok(release)
 }
 
-fn find_asset_url(release: &GitHubRelease, name: &str) -> anyhow::Result<String> {
-    release
-        .assets
-        .iter()
-        .find(|a| a.name == name)
-        .map(|a| a.browser_download_url.clone())
-        .with_context(|| format!("release {} is missing asset {name}", release.tag_name))
+fn find_asset_url(release: &ReleaseManifest, name: &str) -> String {
+    format!("{}/{name}", release.download_base_url.trim_end_matches('/'))
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
@@ -2554,61 +3091,124 @@ fn parse_checksum(text: &str, filename: &str) -> anyhow::Result<String> {
     anyhow::bail!("checksum not found for {filename} in checksums.txt")
 }
 
-/// Check if the daemon is reachable on 127.0.0.1:8787.
-async fn check_daemon_running(client: &reqwest::Client) -> bool {
-    client
-        .get("http://127.0.0.1:8787/healthz")
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
+fn endpoint_url(base_url: &str, path: &str) -> String {
+    format!("{}{}", base_url.trim_end_matches('/'), path)
+}
+
+/// Check whether the daemon is reachable at its configured address.
+async fn check_daemon_running(client: &reqwest::Client, daemon_url: &str) -> bool {
+    endpoint_is_healthy(client, &endpoint_url(daemon_url, "/healthz")).await
+}
+
+fn lsof_name_matches_socket(name: &str, listen: SocketAddr) -> bool {
+    let name = name.strip_prefix("TCP ").unwrap_or(name);
+    let name = name.strip_suffix(" (LISTEN)").unwrap_or(name);
+    if name == listen.to_string() {
+        return true;
+    }
+    listen.ip().is_unspecified() && name == format!("*:{}", listen.port())
+}
+
+fn oored_listener_pids(lsof_fields: &str, listen: SocketAddr) -> Vec<i32> {
+    let mut pid = None;
+    let mut command_is_oored = false;
+    let mut matches = Vec::new();
+
+    for field in lsof_fields.lines() {
+        match field.as_bytes().first() {
+            Some(b'p') => {
+                pid = field[1..].parse().ok();
+                command_is_oored = false;
+            }
+            Some(b'c') => command_is_oored = field.get(1..) == Some("oored"),
+            Some(b'n') if command_is_oored && lsof_name_matches_socket(&field[1..], listen) => {
+                if let Some(pid) = pid
+                    && !matches.contains(&pid)
+                {
+                    matches.push(pid);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    matches
+}
+
+fn process_is_oored(pid: i32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            let command = String::from_utf8(output.stdout).ok()?;
+            Path::new(command.trim())
+                .file_name()
+                .map(|name| name == "oored")
+        })
         .unwrap_or(false)
 }
 
+fn terminate_oored(pid: i32) -> bool {
+    if !process_is_oored(pid) {
+        return false;
+    }
+    unsafe { libc::kill(pid, 0) == 0 && libc::kill(pid, libc::SIGTERM) == 0 }
+}
+
 /// Stop the daemon using PID file first, then lsof fallback (mirrors uninstall.sh).
-fn stop_daemon(install_root: &Path) -> anyhow::Result<()> {
+fn stop_daemon(install_root: &Path, listen: &str) -> anyhow::Result<()> {
     let pid_file = install_root.join("oored.pid");
+    let mut stopped = false;
 
     // Try PID file first
     if pid_file.exists() {
         if let Ok(contents) = fs::read_to_string(&pid_file)
             && let Ok(pid) = contents.trim().parse::<i32>()
+            && terminate_oored(pid)
         {
-            // Check if process exists (kill -0)
-            unsafe {
-                if libc::kill(pid, 0) == 0 {
-                    libc::kill(pid, libc::SIGTERM);
-                    std::thread::sleep(Duration::from_secs(1));
-                }
-            }
+            stopped = true;
         }
         let _ = fs::remove_file(&pid_file);
     }
 
-    // lsof fallback: kill anything still listening on port 8787
+    let listen = listen
+        .parse::<SocketAddr>()
+        .with_context(|| format!("invalid daemon listen address: {listen}"))?;
+
+    // Ask by port, then filter the structured output by exact address and command.
     if let Ok(output) = std::process::Command::new("lsof")
-        .args(["-nP", "-iTCP:8787", "-sTCP:LISTEN", "-t"])
+        .args([
+            "-nP",
+            "-a",
+            &format!("-iTCP:{}", listen.port()),
+            "-sTCP:LISTEN",
+            "-Fpcn",
+        ])
         .output()
         && output.status.success()
     {
-        let pids = String::from_utf8_lossy(&output.stdout);
-        for pid_str in pids.split_whitespace() {
-            if let Ok(pid) = pid_str.parse::<i32>() {
-                unsafe {
-                    libc::kill(pid, libc::SIGTERM);
-                }
+        for pid in oored_listener_pids(&String::from_utf8_lossy(&output.stdout), listen) {
+            if terminate_oored(pid) {
+                stopped = true;
             }
         }
-        if !pids.trim().is_empty() {
-            std::thread::sleep(Duration::from_secs(1));
-        }
+    }
+    if stopped {
+        std::thread::sleep(Duration::from_secs(1));
     }
 
     Ok(())
 }
 
 /// Restart the daemon and verify it becomes healthy.
-async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow::Result<()> {
+async fn restart_daemon(
+    install_root: &Path,
+    listen: &str,
+    daemon_url: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
     let bin_dir = install_root.join("bin");
     let oored_bin = bin_dir.join("oored");
     let log_path = install_root.join("logs").join("oored.log");
@@ -2626,7 +3226,7 @@ async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow
         .with_context(|| format!("failed to open log file: {}", log_path.display()))?;
 
     let child = std::process::Command::new(&oored_bin)
-        .args(["run", "--listen", "127.0.0.1:8787"])
+        .args(["run", "--listen", listen])
         .stdout(log_file.try_clone()?)
         .stderr(log_file)
         .stdin(std::process::Stdio::null())
@@ -2639,7 +3239,7 @@ async fn restart_daemon(install_root: &Path, client: &reqwest::Client) -> anyhow
     // Poll healthz up to 15 seconds
     for _ in 0..15 {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if check_daemon_running(client).await {
+        if check_daemon_running(client, daemon_url).await {
             return Ok(());
         }
     }
@@ -2658,8 +3258,880 @@ fn set_executable(path: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("failed to set permissions on {}", path.display()))
 }
 
+const BACKUP_DATABASE_FILE: &str = "oore.db";
+const BACKUP_KEY_FILE: &str = "encryption.key";
+const BACKUP_MANIFEST_FILE: &str = "manifest.json";
+
+fn resolve_key_path() -> anyhow::Result<PathBuf> {
+    Ok(resolve_data_dir()?.join(BACKUP_KEY_FILE))
+}
+
+fn set_private_permissions(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).with_context(|| {
+            format!(
+                "failed to set restrictive permissions on {}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn snapshot_sqlite_path(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    use std::str::FromStr;
+
+    let source_url = format!("sqlite://{}?mode=rw", source.display());
+    let options = SqliteConnectOptions::from_str(&source_url)
+        .with_context(|| format!("failed to open SQLite database {}", source.display()))?;
+    let destination = destination.display().to_string().replace('\'', "''");
+    let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+    runtime.block_on(async move {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .context("failed to connect to SQLite database")?;
+        sqlx::query(&format!("VACUUM INTO '{destination}'"))
+            .execute(&pool)
+            .await
+            .context("failed to create a consistent SQLite snapshot")?;
+        pool.close().await;
+        Ok::<(), anyhow::Error>(())
+    })
+}
+
+fn sqlite_integrity_check(path: &Path) -> anyhow::Result<()> {
+    use std::str::FromStr;
+
+    let source_url = format!("sqlite://{}?mode=ro", path.display());
+    let options = SqliteConnectOptions::from_str(&source_url)
+        .with_context(|| format!("failed to open SQLite snapshot {}", path.display()))?;
+    let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+    runtime.block_on(async move {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .context("failed to connect to SQLite snapshot")?;
+        let result: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .context("failed to run SQLite integrity check")?;
+        pool.close().await;
+        if result != "ok" {
+            anyhow::bail!("SQLite integrity check failed: {result}");
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+}
+
+fn unpack_backup(input: &Path, destination: &Path) -> anyhow::Result<BackupManifest> {
+    let file = fs::File::open(input)
+        .with_context(|| format!("failed to open backup {}", input.display()))?;
+    let decoder = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let mut found = HashMap::new();
+
+    for entry in archive.entries().context("failed to read backup archive")? {
+        let mut entry = entry.context("failed to read backup entry")?;
+        let path = entry.path().context("invalid backup entry path")?;
+        let name = path
+            .to_str()
+            .context("backup entry path is not UTF-8")?
+            .to_string();
+        if !matches!(
+            name.as_str(),
+            BACKUP_DATABASE_FILE | BACKUP_KEY_FILE | BACKUP_MANIFEST_FILE
+        ) || path.components().count() != 1
+        {
+            anyhow::bail!("backup contains unsupported path: {name}");
+        }
+        if found.insert(name.clone(), ()).is_some() {
+            anyhow::bail!("backup contains duplicate path: {name}");
+        }
+        entry
+            .unpack(destination.join(&name))
+            .with_context(|| format!("failed to unpack backup entry {name}"))?;
+    }
+
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE, BACKUP_MANIFEST_FILE] {
+        if !found.contains_key(name) {
+            anyhow::bail!("backup is missing {name}");
+        }
+    }
+
+    let manifest = serde_json::from_slice::<BackupManifest>(
+        &fs::read(destination.join(BACKUP_MANIFEST_FILE))
+            .context("failed to read backup manifest")?,
+    )
+    .context("failed to parse backup manifest")?;
+    if manifest.format != "oore-backup-v1" {
+        anyhow::bail!("unsupported backup format: {}", manifest.format);
+    }
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE] {
+        let expected = manifest
+            .files
+            .get(name)
+            .with_context(|| format!("backup manifest is missing checksum for {name}"))?;
+        let actual = hex::encode(Sha256::digest(
+            fs::read(destination.join(name))
+                .with_context(|| format!("failed to read backup {name}"))?,
+        ));
+        if expected != &actual {
+            anyhow::bail!("backup checksum mismatch for {name}");
+        }
+    }
+
+    let key = fs::read(destination.join(BACKUP_KEY_FILE)).context("failed to read backup key")?;
+    if key.len() != 32 {
+        anyhow::bail!("backup encryption key has invalid length");
+    }
+    sqlite_integrity_check(&destination.join(BACKUP_DATABASE_FILE))?;
+    Ok(manifest)
+}
+
+fn backup_create(args: BackupCreateArgs) -> anyhow::Result<()> {
+    let database = resolve_db_path(args.state_file.as_deref())?;
+    let key = resolve_key_path()?;
+    if !database.is_file() {
+        anyhow::bail!("database does not exist: {}", database.display());
+    }
+    if !key.is_file() {
+        anyhow::bail!("encryption key does not exist: {}", key.display());
+    }
+    if args.output.exists() {
+        anyhow::bail!(
+            "backup destination already exists: {}",
+            args.output.display()
+        );
+    }
+    let parent = args
+        .output
+        .parent()
+        .context("backup output must have a parent directory")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create backup directory {}", parent.display()))?;
+
+    let stage =
+        tempfile::tempdir_in(parent).context("failed to create backup staging directory")?;
+    let snapshot = stage.path().join(BACKUP_DATABASE_FILE);
+    snapshot_sqlite_path(&database, &snapshot)?;
+    let staged_key = stage.path().join(BACKUP_KEY_FILE);
+    fs::copy(&key, &staged_key).context("failed to copy encryption key into backup")?;
+    set_private_permissions(&staged_key)?;
+
+    let mut files = HashMap::new();
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE] {
+        files.insert(
+            name.to_string(),
+            hex::encode(Sha256::digest(fs::read(stage.path().join(name))?)),
+        );
+    }
+    let manifest = BackupManifest {
+        format: "oore-backup-v1".to_string(),
+        created_at: now_epoch_secs(),
+        files,
+    };
+    fs::write(
+        stage.path().join(BACKUP_MANIFEST_FILE),
+        serde_json::to_vec_pretty(&manifest).context("failed to serialize backup manifest")?,
+    )
+    .context("failed to write backup manifest")?;
+
+    let temp_output = parent.join(format!(
+        ".{}.tmp",
+        args.output
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    ));
+    let file = fs::File::create(&temp_output)
+        .with_context(|| format!("failed to create backup {}", temp_output.display()))?;
+    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE, BACKUP_MANIFEST_FILE] {
+        archive
+            .append_path_with_name(stage.path().join(name), name)
+            .with_context(|| format!("failed to add {name} to backup"))?;
+    }
+    archive
+        .finish()
+        .context("failed to finish backup archive")?;
+    let encoder = archive
+        .into_inner()
+        .context("failed to finalize backup archive")?;
+    encoder
+        .finish()
+        .context("failed to finalize backup compression")?;
+    set_private_permissions(&temp_output)?;
+    fs::rename(&temp_output, &args.output)
+        .with_context(|| format!("failed to publish backup {}", args.output.display()))?;
+    println!("Created backup: {}", args.output.display());
+    Ok(())
+}
+
+fn backup_verify(args: BackupVerifyArgs) -> anyhow::Result<()> {
+    let stage = tempfile::tempdir().context("failed to create backup verification directory")?;
+    let manifest = unpack_backup(&args.input, stage.path())?;
+    println!(
+        "Backup verified: {} (created {})",
+        args.input.display(),
+        manifest.created_at
+    );
+    Ok(())
+}
+
+fn database_is_open(path: &Path) -> bool {
+    std::process::Command::new("lsof")
+        .args(["-t", "--", &path.display().to_string()])
+        .output()
+        .map(|output| output.status.success() && !output.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+fn backup_restore(args: BackupRestoreArgs) -> anyhow::Result<()> {
+    let client = http_client()?;
+    let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
+    let daemon_url = resolve_daemon_url(None)?;
+    if runtime.block_on(check_daemon_running(&client, &daemon_url)) {
+        anyhow::bail!(
+            "refusing restore while oored is running; stop the managed service or daemon first"
+        );
+    }
+
+    let database = resolve_db_path(args.state_file.as_deref())?;
+    if database_is_open(&database) {
+        anyhow::bail!(
+            "refusing restore while the state database is open; stop the managed or unmanaged oored process first"
+        );
+    }
+    let stage = tempfile::tempdir().context("failed to create restore staging directory")?;
+    unpack_backup(&args.input, stage.path())?;
+    let key = resolve_key_path()?;
+    for path in [&database, &key] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create restore directory {}", parent.display())
+            })?;
+        }
+    }
+
+    let nonce = now_epoch_secs();
+    let database_old = database.with_extension(format!("restore-{nonce}.old"));
+    let key_old = key.with_extension(format!("restore-{nonce}.old"));
+    let database_new = database.with_extension(format!("restore-{nonce}.new"));
+    let key_new = key.with_extension(format!("restore-{nonce}.new"));
+    fs::copy(stage.path().join(BACKUP_DATABASE_FILE), &database_new)?;
+    fs::copy(stage.path().join(BACKUP_KEY_FILE), &key_new)?;
+    set_private_permissions(&key_new)?;
+
+    let rollback = || -> anyhow::Result<()> {
+        if database_old.exists() {
+            fs::rename(&database_old, &database)?;
+        }
+        if key_old.exists() {
+            fs::rename(&key_old, &key)?;
+        }
+        Ok(())
+    };
+    if database.exists() {
+        fs::rename(&database, &database_old)?;
+    }
+    if key.exists() {
+        fs::rename(&key, &key_old)?;
+    }
+    let result = (|| -> anyhow::Result<()> {
+        fs::rename(&database_new, &database)?;
+        fs::rename(&key_new, &key)?;
+        set_private_permissions(&key)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&database);
+        let _ = fs::remove_file(&key);
+        rollback().context("restore failed and rollback failed")?;
+        return Err(error);
+    }
+    let _ = fs::remove_file(database_old);
+    let _ = fs::remove_file(key_old);
+    println!("Restored backup: {}", args.input.display());
+    Ok(())
+}
+
+const DAEMON_SERVICE_LABEL: &str = "build.oore.oored";
+const WEB_SERVICE_LABEL: &str = "build.oore.oore-web";
+const RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
+
+fn launchd_xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn render_runner_launch_agent(
+    executable: &Path,
+    config: &Path,
+    home: &Path,
+    log_path: &Path,
+    path: &str,
+) -> String {
+    let values = [
+        executable.display().to_string(),
+        "runner".to_string(),
+        "start".to_string(),
+        "--config".to_string(),
+        config.display().to_string(),
+    ];
+    let arguments = values
+        .iter()
+        .map(|value| format!("        <string>{}</string>", launchd_xml_escape(value)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{RUNNER_SERVICE_LABEL}</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>ProgramArguments</key>
+    <array>
+{arguments}
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{}</string>
+        <key>PATH</key>
+        <string>{}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{}</string>
+    <key>StandardErrorPath</key>
+    <string>{}</string>
+</dict>
+</plist>
+"#,
+        launchd_xml_escape(&home.display().to_string()),
+        launchd_xml_escape(path),
+        launchd_xml_escape(&log_path.display().to_string()),
+        launchd_xml_escape(&log_path.display().to_string()),
+    )
+}
+
+fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
+    let output = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .context("failed to determine current user id")?;
+    if !output.status.success() {
+        anyhow::bail!("failed to determine current user id");
+    }
+    let uid = String::from_utf8(output.stdout)
+        .context("current user id was not valid UTF-8")?
+        .trim()
+        .to_string();
+    Ok((
+        format!("gui/{uid}"),
+        format!("gui/{uid}/{RUNNER_SERVICE_LABEL}"),
+    ))
+}
+
+fn handle_runner_install_service(args: RunnerServiceArgs) -> anyhow::Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("managed runner service installation is supported on macOS only");
+    }
+
+    let config = runner_config_path(args.config)?;
+    if !config.is_file() {
+        anyhow::bail!(
+            "runner is not registered; run `oore runner register` before installing the service"
+        );
+    }
+
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    let logs = home.join(".oore/logs");
+    let log_path = logs.join("oore-runner.log");
+    let plist = launch_agent_plist(RUNNER_SERVICE_LABEL)?;
+    let executable = std::env::current_exe().context("failed to locate the oore executable")?;
+    let path = std::env::var("PATH").unwrap_or_else(|_| {
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+    });
+
+    fs::create_dir_all(&logs)?;
+    fs::create_dir_all(
+        plist
+            .parent()
+            .context("runner plist has no parent directory")?,
+    )?;
+    fs::write(
+        &plist,
+        render_runner_launch_agent(&executable, &config, &home, &log_path, &path),
+    )?;
+
+    let lint = std::process::Command::new("plutil")
+        .args(["-lint", &plist.display().to_string()])
+        .status()
+        .context("failed to validate runner service plist")?;
+    if !lint.success() {
+        anyhow::bail!("runner service plist is invalid: {}", plist.display());
+    }
+
+    let (domain, service) = current_user_launchd_domain()?;
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &service])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let bootstrap = std::process::Command::new("launchctl")
+        .args(["bootstrap", &domain, &plist.display().to_string()])
+        .status()
+        .context("failed to start runner service")?;
+    if bootstrap.success() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", &service])
+            .status();
+        println!("Installed and started runner service: {RUNNER_SERVICE_LABEL}");
+    } else {
+        println!("Installed runner service: {RUNNER_SERVICE_LABEL}");
+        println!("The runner will start at the next interactive macOS login.");
+    }
+    println!("Plist: {}", plist.display());
+    println!("Logs:  {}", log_path.display());
+    println!(
+        "iOS signing runs here because Apple Keychain access requires a logged-in macOS session."
+    );
+    Ok(())
+}
+
+fn handle_runner_uninstall_service() -> anyhow::Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("managed runner service removal is supported on macOS only");
+    }
+    let plist = launch_agent_plist(RUNNER_SERVICE_LABEL)?;
+    let (_, service) = current_user_launchd_domain()?;
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &service])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if plist.exists() {
+        fs::remove_file(&plist)?;
+    }
+    println!("Removed runner service: {RUNNER_SERVICE_LABEL}");
+    Ok(())
+}
+
+fn launch_agent_plist(label: &str) -> anyhow::Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .context("could not determine home directory")?
+        .join("Library/LaunchAgents")
+        .join(format!("{label}.plist")))
+}
+
+fn managed_service_plist(label: &str) -> anyhow::Result<(PathBuf, bool)> {
+    let system_plist = PathBuf::from("/Library/LaunchDaemons").join(format!("{label}.plist"));
+    if system_plist.is_file() {
+        return Ok((system_plist, true));
+    }
+    Ok((launch_agent_plist(label)?, false))
+}
+
+fn url_from_socket_address(address: SocketAddr) -> String {
+    let ip = match address.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    format!("http://{}", SocketAddr::new(ip, address.port()))
+}
+
+fn url_from_listen_address(listen: &str) -> anyhow::Result<String> {
+    let listen = listen.trim();
+    if listen.is_empty() {
+        anyhow::bail!("service listen address is empty");
+    }
+    if let Ok(address) = listen.parse::<SocketAddr>() {
+        return Ok(url_from_socket_address(address));
+    }
+
+    let url = url::Url::parse(listen)
+        .or_else(|_| url::Url::parse(&format!("http://{listen}")))
+        .with_context(|| format!("invalid service listen address: {listen}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("unsupported service URL scheme: {}", url.scheme());
+    }
+    let host = url
+        .host_str()
+        .context("service listen URL is missing a host")?;
+    let port = url.port().unwrap_or(80);
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(url_from_socket_address(SocketAddr::new(ip, port)));
+    }
+    Ok(format!("http://{host}:{port}"))
+}
+
+fn daemon_url_from_listen_address(listen: &str) -> anyhow::Result<String> {
+    let address = listen
+        .trim()
+        .parse::<SocketAddr>()
+        .with_context(|| format!("invalid daemon listen address: {listen}"))?;
+    Ok(url_from_socket_address(address))
+}
+
+fn daemon_listen_address_from_url(daemon_url: &str) -> anyhow::Result<String> {
+    let url =
+        url::Url::parse(daemon_url).with_context(|| format!("invalid daemon URL: {daemon_url}"))?;
+    if url.scheme() != "http" {
+        anyhow::bail!("unmanaged daemon URL must use http: {daemon_url}");
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        anyhow::bail!(
+            "unmanaged daemon URL must not include a path, query, or fragment: {daemon_url}"
+        );
+    }
+    let host = url
+        .host_str()
+        .context("unmanaged daemon URL is missing a host")?;
+    let ip = if host.eq_ignore_ascii_case("localhost") {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    } else {
+        host.parse::<IpAddr>()
+            .with_context(|| format!("unmanaged daemon URL must use an IP address: {daemon_url}"))?
+    };
+    let port = url
+        .port_or_known_default()
+        .context("unmanaged daemon URL is missing a port")?;
+    Ok(SocketAddr::new(ip, port).to_string())
+}
+
+fn plist_program_arguments(plist: &Path) -> anyhow::Result<Vec<String>> {
+    let output = std::process::Command::new("plutil")
+        .args(["-extract", "ProgramArguments", "json", "-o", "-"])
+        .arg(plist)
+        .output()
+        .with_context(|| format!("failed to read launchd plist {}", plist.display()))?;
+    if !output.status.success() {
+        anyhow::bail!("failed to read ProgramArguments from {}", plist.display());
+    }
+    serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("invalid ProgramArguments in {}", plist.display()))
+}
+
+fn listen_address_from_program_arguments(program_args: &[String]) -> anyhow::Result<String> {
+    for (index, arg) in program_args.iter().enumerate() {
+        if arg == "--listen" {
+            return program_args
+                .get(index + 1)
+                .filter(|value| !value.trim().is_empty())
+                .cloned()
+                .context("--listen has no value");
+        }
+        if let Some(value) = arg.strip_prefix("--listen=")
+            && !value.trim().is_empty()
+        {
+            return Ok(value.to_string());
+        }
+    }
+    anyhow::bail!("service ProgramArguments do not include --listen")
+}
+
+fn managed_service_listen_address(label: &str) -> anyhow::Result<String> {
+    let (plist, _) = managed_service_plist(label)?;
+    if !plist.is_file() {
+        anyhow::bail!("managed service plist is missing: {}", plist.display());
+    }
+    let program_args = plist_program_arguments(&plist)?;
+    listen_address_from_program_arguments(&program_args)
+        .with_context(|| format!("failed to find listen address in {}", plist.display()))
+}
+
+fn launchd_service_loaded(label: &str) -> bool {
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    let Ok((_, system)) = managed_service_plist(label) else {
+        return false;
+    };
+    let service = if system {
+        format!("system/{label}")
+    } else {
+        let Ok(uid) = std::process::Command::new("id").arg("-u").output() else {
+            return false;
+        };
+        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        format!("gui/{uid}/{label}")
+    };
+    std::process::Command::new("launchctl")
+        .args(["print", &service])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("managed service restart is supported on macOS only");
+    }
+    let (plist, system) = managed_service_plist(label)?;
+    if !plist.is_file() {
+        anyhow::bail!("managed service plist is missing: {}", plist.display());
+    }
+    let (service, domain) = if system {
+        (format!("system/{label}"), "system".to_string())
+    } else {
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .context("failed to determine current user id")?;
+        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        (format!("gui/{uid}/{label}"), format!("gui/{uid}"))
+    };
+    let command = if system { "sudo" } else { "launchctl" };
+    let prefix: &[&str] = if system { &["-n", "launchctl"] } else { &[] };
+    let mut bootout = std::process::Command::new(command);
+    bootout.args(prefix).args(["bootout", &service]);
+    let _ = run_command_with_timeout(&mut bootout, "launchd bootout", Duration::from_secs(15))?;
+
+    let mut bootstrap = std::process::Command::new(command);
+    bootstrap
+        .args(prefix)
+        .args(["bootstrap", &domain, &plist.display().to_string()]);
+    let status =
+        run_command_with_timeout(&mut bootstrap, "launchd bootstrap", Duration::from_secs(15))?;
+    if !status.success() {
+        anyhow::bail!("failed to bootstrap managed service {label}");
+    }
+    let mut kickstart = std::process::Command::new(command);
+    kickstart.args(prefix).args(["kickstart", "-k", &service]);
+    let _ = run_command_with_timeout(&mut kickstart, "launchd kickstart", Duration::from_secs(15))?;
+    Ok(())
+}
+
+fn run_command_with_timeout(
+    command: &mut std::process::Command,
+    description: &str,
+    timeout: Duration,
+) -> anyhow::Result<std::process::ExitStatus> {
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to start {description}"))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("failed to wait for {description}"))?
+        {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!(
+                "{description} timed out after {} seconds",
+                timeout.as_secs()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn authorize_system_service_restart() -> anyhow::Result<()> {
+    println!("\nAdministrator access is required to restart Oore's macOS system service.");
+    println!("Your password is requested by sudo and is not stored by Oore.");
+    let status = std::process::Command::new("sudo")
+        .arg("-v")
+        .status()
+        .context("failed to request administrator access")?;
+    if !status.success() {
+        anyhow::bail!("administrator access was not granted; installed files were not changed");
+    }
+    Ok(())
+}
+
+async fn endpoint_is_healthy(client: &reqwest::Client, url: &str) -> bool {
+    client
+        .get(url)
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn wait_for_endpoint(client: &reqwest::Client, url: &str, name: &str) -> anyhow::Result<()> {
+    for _ in 0..15 {
+        if endpoint_is_healthy(client, url).await {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    anyhow::bail!("{name} failed its readiness check: {url}")
+}
+
+fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result<()> {
+    for relative in [
+        "bin/oore",
+        "bin/oored",
+        "bin/oore-web",
+        "VERSION",
+        "CHANNEL",
+        "GITHUB_REPO",
+        "LICENSE",
+    ] {
+        let source = install_root.join(relative);
+        if source.is_file() {
+            let destination = snapshot.join(relative);
+            fs::create_dir_all(destination.parent().expect("snapshot file parent"))?;
+            fs::copy(&source, &destination)?;
+        }
+    }
+    let web = install_root.join("web-dist");
+    if web.is_dir() {
+        copy_dir_recursive(&web, &snapshot.join("web-dist"))?;
+    }
+    Ok(())
+}
+
+fn atomic_replace_file(source: &Path, destination: &Path, executable: bool) -> anyhow::Result<()> {
+    let parent = destination
+        .parent()
+        .context("release destination has no parent")?;
+    fs::create_dir_all(parent)?;
+    let next = parent.join(format!(
+        ".{}.update-{}",
+        destination
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        std::process::id()
+    ));
+    fs::copy(source, &next)
+        .with_context(|| format!("failed to stage {}", destination.display()))?;
+    if executable {
+        set_executable(&next)?;
+    }
+    fs::rename(&next, destination)
+        .with_context(|| format!("failed to atomically replace {}", destination.display()))?;
+    Ok(())
+}
+
+fn atomic_replace_directory(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    let parent = destination
+        .parent()
+        .context("release destination has no parent")?;
+    let stem = destination
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let next = parent.join(format!(".{stem}.update-{}", std::process::id()));
+    let old = parent.join(format!(".{stem}.previous-{}", std::process::id()));
+    if next.exists() {
+        fs::remove_dir_all(&next)?;
+    }
+    copy_dir_recursive(source, &next)?;
+    if destination.exists() {
+        fs::rename(destination, &old)?;
+    }
+    if let Err(error) = fs::rename(&next, destination) {
+        if old.exists() {
+            let _ = fs::rename(&old, destination);
+        }
+        return Err(error)
+            .with_context(|| format!("failed to atomically replace {}", destination.display()));
+    }
+    if old.exists() {
+        fs::remove_dir_all(old)?;
+    }
+    Ok(())
+}
+
+fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result<()> {
+    for relative in [
+        "bin/oore",
+        "bin/oored",
+        "bin/oore-web",
+        "VERSION",
+        "CHANNEL",
+        "GITHUB_REPO",
+        "LICENSE",
+    ] {
+        let source = snapshot.join(relative);
+        let destination = install_root.join(relative);
+        if source.is_file() {
+            atomic_replace_file(&source, &destination, relative.starts_with("bin/"))?;
+        } else if destination.exists() {
+            fs::remove_file(destination)?;
+        }
+    }
+    let source = snapshot.join("web-dist");
+    let destination = install_root.join("web-dist");
+    if source.is_dir() {
+        atomic_replace_directory(&source, &destination)?;
+    } else if destination.exists() {
+        fs::remove_dir_all(destination)?;
+    }
+    Ok(())
+}
+
+fn install_staged_release(
+    stage: &Path,
+    install_root: &Path,
+    channel: ReleaseChannel,
+    repo: &str,
+) -> anyhow::Result<()> {
+    for (relative, executable) in [
+        ("bin/oore", true),
+        ("bin/oored", true),
+        ("bin/oore-web", true),
+        ("VERSION", false),
+    ] {
+        let source = stage.join(relative);
+        if source.is_file() {
+            atomic_replace_file(&source, &install_root.join(relative), executable)?;
+        }
+    }
+    let web = stage.join("web-dist");
+    if web.is_dir() {
+        atomic_replace_directory(&web, &install_root.join("web-dist"))?;
+    }
+    let license = stage.join("LICENSE");
+    if license.is_file() {
+        atomic_replace_file(&license, &install_root.join("LICENSE"), false)?;
+    }
+    fs::write(install_root.join("CHANNEL"), channel.as_str())?;
+    fs::write(install_root.join("GITHUB_REPO"), repo)?;
+    Ok(())
+}
+
+async fn run_blocking_update_step<F, T>(operation: F) -> anyhow::Result<T>
+where
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .context("blocking update step failed")?
+}
+
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
+    // Web-triggered backend updates replace the release atomically, then let
+    // launchd KeepAlive restart this daemon after the API process exits.
+    let defer_daemon_restart = std::env::var_os("OORE_UPDATE_DEFER_DAEMON_RESTART").is_some();
 
     let current_str = read_trimmed_file(&install_root.join("VERSION"))
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
@@ -2668,6 +4140,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let repo = args
         .repo
         .clone()
+        .map(|repo| normalize_github_repo(&repo))
         .or_else(|| read_installed_repo(&install_root))
         .unwrap_or_else(|| DEFAULT_GITHUB_REPO.to_string());
 
@@ -2679,19 +4152,19 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         infer_channel_from_version(&current)
     };
 
-    let client = github_client()?;
+    let client = http_client()?;
 
     // 1. Fetch latest release metadata for the selected channel
     let rel = fetch_latest_release(&client, &repo, channel).await?;
-    let latest_str = rel.tag_name.trim().trim_start_matches('v').to_string();
+    let latest_str = rel.version.clone();
     let latest = parse_semver_loose(&latest_str)
-        .with_context(|| format!("invalid version in release tag: {}", rel.tag_name))?;
+        .with_context(|| format!("invalid version in release tag: {}", rel.tag))?;
 
     // 2. Compare versions
     println!("Channel:         {}", channel.as_str());
     println!("GitHub repo:     {repo}");
     println!("Current version: {current}");
-    println!("Latest version:  {latest} ({})", rel.tag_name);
+    println!("Latest version:  {latest} ({})", rel.tag);
 
     if current >= latest && !args.force {
         println!("Already up to date.");
@@ -2713,8 +4186,8 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let arch = release_arch()?;
     let archive_filename = format!("oore_{latest_str}_darwin_{arch}.tar.gz");
     let checksums_filename = format!("oore_{latest_str}_checksums.txt");
-    let archive_url = find_asset_url(&rel, &archive_filename)?;
-    let checksums_url = find_asset_url(&rel, &checksums_filename)?;
+    let archive_url = find_asset_url(&rel, &archive_filename);
+    let checksums_url = find_asset_url(&rel, &checksums_filename);
 
     println!("Downloading {archive_filename}...");
 
@@ -2758,7 +4231,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     }
     println!("Checksum verified (SHA-256).");
 
-    // 7. Extract tar.gz into tempdir
+    // 7. Extract outside the install then stage the verified release inside it.
     let tmpdir = tempfile::tempdir().context("failed to create temporary directory")?;
     let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
     let mut archive = tar::Archive::new(decoder);
@@ -2766,14 +4239,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         .unpack(tmpdir.path())
         .context("failed to extract archive")?;
 
-    // 8. Verify expected files exist
+    // 8. Verify expected files exist.
     let extracted_bin = tmpdir.path().join("bin");
     let extracted_oore = extracted_bin.join("oore");
     let extracted_oored = extracted_bin.join("oored");
-    let extracted_oore_web = extracted_bin.join("oore-web");
     let extracted_version = tmpdir.path().join("VERSION");
-    let extracted_license = tmpdir.path().join("LICENSE");
-    let extracted_web_dist = tmpdir.path().join("web-dist");
 
     if !extracted_oore.exists() {
         anyhow::bail!("archive missing bin/oore");
@@ -2785,58 +4255,133 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         anyhow::bail!("archive missing VERSION");
     }
 
-    // 9. Stop daemon if running
-    let daemon_was_running = check_daemon_running(&client).await;
-    if daemon_was_running {
+    // Keep both a restorable release snapshot and a consistent data backup before
+    // touching the installed files. The staging directory is inside the install
+    // root so the final renames stay on one filesystem.
+    fs::create_dir_all(&install_root)
+        .with_context(|| format!("failed to create install root {}", install_root.display()))?;
+    let update_stage = tempfile::Builder::new()
+        .prefix(".update-")
+        .tempdir_in(&install_root)
+        .context("failed to create update staging directory")?;
+    let staged_release = update_stage.path().join("release");
+    copy_dir_recursive(tmpdir.path(), &staged_release)?;
+    let previous_release = update_stage.path().join("previous");
+    copy_release_snapshot(&install_root, &previous_release)?;
+
+    let backup_dir = install_root.join("backups");
+    let backup_path = backup_dir.join(format!(
+        "pre-update-{}-{}.tar.gz",
+        current,
+        now_epoch_secs()
+    ));
+    let backup_output = backup_path.clone();
+    run_blocking_update_step(move || {
+        backup_create(BackupCreateArgs {
+            output: backup_output,
+            state_file: None,
+        })
+    })
+    .await?;
+    println!("Created pre-update backup: {}", backup_path.display());
+
+    // 9. Preserve running service state. The managed service plist is the source
+    // of truth for its address; unmanaged daemons use the persisted CLI URL.
+    let daemon_is_managed = launchd_service_loaded(DAEMON_SERVICE_LABEL);
+    let managed_daemon_listen = daemon_is_managed
+        .then(|| managed_service_listen_address(DAEMON_SERVICE_LABEL))
+        .transpose()?;
+    let daemon_url = match managed_daemon_listen.as_deref() {
+        Some(listen) => daemon_url_from_listen_address(listen)?,
+        None => resolve_daemon_url(None)?,
+    };
+    let daemon_was_running = check_daemon_running(&client, &daemon_url).await;
+    let unmanaged_daemon_listen = if daemon_was_running && !daemon_is_managed {
+        Some(daemon_listen_address_from_url(&daemon_url)?)
+    } else {
+        None
+    };
+    let daemon_should_be_running = daemon_is_managed || daemon_was_running;
+    let daemon_ready_url = endpoint_url(&daemon_url, "/readyz");
+
+    let web_is_managed = launchd_service_loaded(WEB_SERVICE_LABEL);
+    let web_ready_url = web_is_managed
+        .then(|| -> anyhow::Result<String> {
+            let listen = managed_service_listen_address(WEB_SERVICE_LABEL)?;
+            Ok(endpoint_url(
+                &url_from_listen_address(&listen)?,
+                "/__oore_web_healthz",
+            ))
+        })
+        .transpose()?;
+    let web_was_running = match web_ready_url.as_deref() {
+        Some(url) => endpoint_is_healthy(&client, url).await,
+        None => false,
+    };
+
+    let system_service_restart_required = (!defer_daemon_restart
+        && daemon_is_managed
+        && managed_service_plist(DAEMON_SERVICE_LABEL)?.1)
+        || (web_is_managed && managed_service_plist(WEB_SERVICE_LABEL)?.1);
+    if system_service_restart_required {
+        authorize_system_service_restart()?;
+    }
+
+    if let Some(listen) = &unmanaged_daemon_listen {
         println!("oored daemon is running. Stopping before update...");
-        stop_daemon(&install_root)?;
+        stop_daemon(&install_root, listen)?;
     }
 
-    // 10. Copy binaries + assets into install root
-    let bin_dir = install_root.join("bin");
-    fs::create_dir_all(&bin_dir).context("failed to create bin directory")?;
-
-    fs::copy(&extracted_oore, bin_dir.join("oore")).context("failed to copy oore binary")?;
-    fs::copy(&extracted_oored, bin_dir.join("oored")).context("failed to copy oored binary")?;
-
-    if extracted_oore_web.exists() {
-        fs::copy(&extracted_oore_web, bin_dir.join("oore-web"))
-            .context("failed to copy oore-web binary")?;
-        set_executable(&bin_dir.join("oore-web"))?;
-    }
-
-    if extracted_web_dist.is_dir() {
-        let dst = install_root.join("web-dist");
-        if dst.exists() {
-            fs::remove_dir_all(&dst)
-                .with_context(|| format!("failed to remove {}", dst.display()))?;
+    // 10. Atomically install the staged release and only retain it if every
+    // readiness check succeeds. On any failure, restore the prior release.
+    let update_result = async {
+        install_staged_release(&staged_release, &install_root, channel, &repo)?;
+        if daemon_is_managed && !defer_daemon_restart {
+            restart_launchd_service(DAEMON_SERVICE_LABEL)?;
+        } else if let Some(listen) = &unmanaged_daemon_listen {
+            restart_daemon(&install_root, listen, &daemon_url, &client).await?;
         }
-        copy_dir_recursive(&extracted_web_dist, &dst).context("failed to copy web-dist")?;
+        if daemon_should_be_running && !defer_daemon_restart {
+            wait_for_endpoint(&client, &daemon_ready_url, "oored").await?;
+        }
+        if web_is_managed {
+            restart_launchd_service(WEB_SERVICE_LABEL)?;
+        } else if web_was_running {
+            anyhow::bail!("refusing to replace an unmanaged local web process; install it as the launchd service first");
+        }
+        if let Some(url) = &web_ready_url {
+            wait_for_endpoint(&client, url, "oore-web").await?;
+        }
+        Ok::<(), anyhow::Error>(())
     }
-
-    fs::copy(&extracted_version, install_root.join("VERSION"))
-        .context("failed to copy VERSION file")?;
-    fs::write(install_root.join("CHANNEL"), channel.as_str())
-        .context("failed to write CHANNEL file")?;
-    fs::write(install_root.join("GITHUB_REPO"), &repo)
-        .context("failed to write GITHUB_REPO file")?;
-
-    if extracted_license.exists() {
-        fs::copy(&extracted_license, install_root.join("LICENSE"))
-            .context("failed to copy LICENSE")?;
+    .await;
+    if let Err(error) = update_result {
+        eprintln!("Update failed; restoring the previous release...");
+        let rollback = async {
+            restore_release_snapshot(&install_root, &previous_release)?;
+            if daemon_is_managed && !defer_daemon_restart {
+                restart_launchd_service(DAEMON_SERVICE_LABEL)?;
+            } else if let Some(listen) = &unmanaged_daemon_listen {
+                restart_daemon(&install_root, listen, &daemon_url, &client).await?;
+            }
+            if daemon_should_be_running && !defer_daemon_restart {
+                wait_for_endpoint(&client, &daemon_ready_url, "rollback oored").await?;
+            }
+            if web_is_managed {
+                restart_launchd_service(WEB_SERVICE_LABEL)?;
+            }
+            if let Some(url) = &web_ready_url {
+                wait_for_endpoint(&client, url, "rollback oore-web").await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if let Err(rollback_error) = rollback {
+            return Err(error.context(format!("rollback also failed: {rollback_error}")));
+        }
+        return Err(error);
     }
-
-    set_executable(&bin_dir.join("oore"))?;
-    set_executable(&bin_dir.join("oored"))?;
-
     println!("Updated to version {latest}.");
-
-    // 11. Restart daemon if it was running
-    if daemon_was_running {
-        println!("Restarting oored daemon...");
-        restart_daemon(&install_root, &client).await?;
-        println!("Daemon restarted successfully.");
-    }
 
     // 12. Note about current process
     if current != latest {
@@ -2854,15 +4399,29 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Setup(setup) => match setup.command {
-            Some(SetupSubcommand::Token(args) | SetupSubcommand::Open(args)) => {
+            Some(SetupSubcommand::Init(args)) => {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_setup_token(args, &setup.daemon_url))?;
+                runtime.block_on(handle_setup_init(args))?;
+            }
+            Some(SetupSubcommand::Token(args) | SetupSubcommand::Open(args)) => {
+                let daemon_url = resolve_daemon_url(setup.daemon_url.as_deref())?;
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(handle_setup_token(args, &daemon_url))?;
             }
             None => {
+                let daemon_url = resolve_daemon_url(setup.daemon_url.as_deref())?;
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_setup_interactive(&setup.daemon_url))?;
+                runtime.block_on(handle_setup_interactive(&daemon_url))?;
+            }
+        },
+        Commands::Frontend(frontend) => match frontend.command {
+            FrontendSubcommand::Invite(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(handle_frontend_invite(args))?;
             }
         },
         Commands::Login(args) => {
@@ -2886,20 +4445,8 @@ fn main() -> anyhow::Result<()> {
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_start(args))?;
             }
-        },
-        Commands::Users(users) => match users.command {
-            UsersSubcommand::TransferOwner(args) => {
-                let runtime =
-                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_transfer_owner(args))?;
-            }
-        },
-        Commands::ExternalAccess(external_access) => match external_access.command {
-            ExternalAccessSubcommand::EnableTrustedProxy(args) => {
-                let runtime =
-                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_enable_trusted_proxy(args))?;
-            }
+            RunnerSubcommand::InstallService(args) => handle_runner_install_service(args)?,
+            RunnerSubcommand::UninstallService => handle_runner_uninstall_service()?,
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
@@ -2926,6 +4473,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor(args) => {
             run_doctor_checks(args)?;
         }
+        Commands::Pipeline(pipeline) => match pipeline.command {
+            PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
+        },
         Commands::Version => {
             let install_root = resolve_install_root()?;
             if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {
@@ -2939,7 +4489,184 @@ fn main() -> anyhow::Result<()> {
                 tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
             runtime.block_on(handle_update(args))?;
         }
+        Commands::Backup(args) => match args.command {
+            BackupSubcommand::Create(args) => backup_create(args)?,
+            BackupSubcommand::Verify(args) => backup_verify(args)?,
+            BackupSubcommand::Restore(args) => backup_restore(args)?,
+        },
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runner_service_is_scoped_to_the_aqua_login_session() {
+        let plist = render_runner_launch_agent(
+            Path::new("/Users/me/.oore/bin/oore"),
+            Path::new("/Users/me/.oore/runner.json"),
+            Path::new("/Users/me"),
+            Path::new("/Users/me/.oore/logs/oore-runner.log"),
+            "/usr/bin:/bin",
+        );
+
+        assert!(plist.contains("<string>build.oore.oore-runner</string>"));
+        assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
+        assert!(plist.contains("<string>/Users/me/.oore/bin/oore</string>"));
+        assert!(plist.contains("<string>runner</string>\n        <string>start</string>"));
+        assert!(plist.contains("<string>/Users/me/.oore/runner.json</string>"));
+    }
+
+    #[test]
+    fn runner_service_escapes_launchd_values() {
+        let plist = render_runner_launch_agent(
+            Path::new("/Users/a&b/oore"),
+            Path::new("/Users/a&b/runner.json"),
+            Path::new("/Users/a&b"),
+            Path::new("/Users/a&b/runner.log"),
+            "/usr/bin:/a&b",
+        );
+
+        assert!(plist.contains("/Users/a&amp;b/oore"));
+        assert!(plist.contains("/usr/bin:/a&amp;b"));
+    }
+
+    #[test]
+    fn command_timeout_stops_stalled_service_commands() {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 1"]);
+
+        let error = run_command_with_timeout(
+            &mut command,
+            "test service command",
+            Duration::from_millis(20),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn blocking_update_step_can_run_runtime_backed_backup_work() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let value = runtime
+            .block_on(run_blocking_update_step(|| {
+                let nested = tokio::runtime::Runtime::new()?;
+                nested.block_on(async { Ok::<_, anyhow::Error>(42) })
+            }))
+            .unwrap();
+
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn legacy_release_repository_is_normalized() {
+        assert_eq!(
+            normalize_github_repo(LEGACY_GITHUB_REPO),
+            DEFAULT_GITHUB_REPO
+        );
+        assert_eq!(
+            normalize_github_repo(DEFAULT_GITHUB_REPO),
+            DEFAULT_GITHUB_REPO
+        );
+    }
+
+    #[test]
+    fn update_rollback_restores_previous_release() {
+        let temp = tempfile::tempdir().unwrap();
+        let install = temp.path().join("install");
+        let stage = temp.path().join("stage");
+        let snapshot = temp.path().join("snapshot");
+
+        for root in [&install, &stage] {
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::create_dir_all(root.join("web-dist")).unwrap();
+        }
+        fs::write(install.join("bin/oore"), "old-binary").unwrap();
+        fs::write(install.join("VERSION"), "1.0.0").unwrap();
+        fs::write(install.join("web-dist/index.html"), "old-web").unwrap();
+        fs::write(stage.join("bin/oore"), "new-binary").unwrap();
+        fs::write(stage.join("VERSION"), "2.0.0").unwrap();
+        fs::write(stage.join("web-dist/index.html"), "new-web").unwrap();
+
+        copy_release_snapshot(&install, &snapshot).unwrap();
+        install_staged_release(&stage, &install, ReleaseChannel::Stable, "oorebuild/oore").unwrap();
+        assert_eq!(
+            fs::read_to_string(install.join("VERSION")).unwrap(),
+            "2.0.0"
+        );
+
+        restore_release_snapshot(&install, &snapshot).unwrap();
+        assert_eq!(
+            fs::read_to_string(install.join("bin/oore")).unwrap(),
+            "old-binary"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("VERSION")).unwrap(),
+            "1.0.0"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("web-dist/index.html")).unwrap(),
+            "old-web"
+        );
+    }
+
+    #[test]
+    fn managed_daemon_uses_the_plist_listen_address() {
+        let program_args = vec![
+            "/Users/me/.oore/bin/oored".to_string(),
+            "run".to_string(),
+            "--listen".to_string(),
+            "10.23.0.8:9876".to_string(),
+        ];
+
+        let listen = listen_address_from_program_arguments(&program_args).unwrap();
+        assert_eq!(listen, "10.23.0.8:9876");
+        assert_eq!(
+            daemon_url_from_listen_address(&listen).unwrap(),
+            "http://10.23.0.8:9876"
+        );
+    }
+
+    #[test]
+    fn readiness_url_uses_a_reachable_wildcard_bind_address() {
+        assert_eq!(
+            url_from_listen_address("0.0.0.0:9876").unwrap(),
+            "http://127.0.0.1:9876"
+        );
+        assert_eq!(
+            url_from_listen_address("http://web.internal:4174/ignored").unwrap(),
+            "http://web.internal:4174"
+        );
+        assert_eq!(
+            daemon_listen_address_from_url("http://10.23.0.8:9876").unwrap(),
+            "10.23.0.8:9876"
+        );
+    }
+
+    #[test]
+    fn lsof_fallback_only_selects_oored_on_the_exact_socket() {
+        let fields = "\
+p101\n\
+coored\n\
+n10.23.0.9:9876\n\
+p102\n\
+cother\n\
+n10.23.0.8:9876\n\
+p103\n\
+coored\n\
+n10.23.0.8:9876\n";
+
+        assert_eq!(
+            oored_listener_pids(fields, "10.23.0.8:9876".parse().unwrap()),
+            vec![103]
+        );
+        assert_eq!(
+            oored_listener_pids("p104\ncoored\nn*:9876\n", "0.0.0.0:9876".parse().unwrap()),
+            vec![104]
+        );
+    }
 }
