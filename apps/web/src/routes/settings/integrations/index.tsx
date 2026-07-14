@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Delete02Icon,
   InformationCircleIcon,
-  LinkSquare02Icon,
+  Link04Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 import { useMountEffect } from '@/hooks/use-mount-effect'
@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import SetupHint from '@/components/setup-hint'
 import { Skeleton } from '@/components/ui/skeleton'
 
 export const Route = createFileRoute('/settings/integrations/')({
@@ -53,9 +54,13 @@ export const Route = createFileRoute('/settings/integrations/')({
 function IntegrationsPage() {
   const search = useSearch({ from: '/settings/integrations/' })
   const { data, isLoading, error } = useIntegrations()
-  const { data: preferences } = useInstancePreferences()
+  const {
+    data: preferences,
+    isLoading: preferencesLoading,
+    error: preferencesError,
+  } = useInstancePreferences()
   const deleteMutation = useDeleteIntegration()
-  const runtimeMode = preferences?.preferences.runtime_mode ?? 'local'
+  const runtimeMode = preferences?.preferences.runtime_mode
   const remoteEnabled = runtimeMode === 'remote'
 
   useMountEffect(() => {
@@ -86,7 +91,21 @@ function IntegrationsPage() {
         description="Source connections used to discover repositories and trigger builds."
       />
 
-      {!remoteEnabled ? (
+      {preferencesLoading ? (
+        <Card>
+          <CardContent className="space-y-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-2/3" />
+          </CardContent>
+        </Card>
+      ) : preferencesError ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Failed to load access policy: {preferencesError.message}
+          </AlertDescription>
+        </Alert>
+      ) : !remoteEnabled ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
@@ -95,64 +114,93 @@ function IntegrationsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Source connections (GitHub/GitLab) are available only when
-              External Access is enabled. In Local Only mode, choose a local
-              directory during project creation.
+              Source connections (GitHub/GitLab) are available only when the
+              backend is in Remote mode. In Local Only mode, choose a local
+              repository during project creation.
             </p>
+            <SetupHint
+              title="Local only path"
+              items={[
+                'Use Projects to create a project from a repository path available on the runner host.',
+                'Switch to Remote mode only when browser users or external webhooks need to reach the backend.',
+              ]}
+            />
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 render={<Link to="/settings/preferences" />}
                 nativeButton={false}
               >
-                Open Preferences
+                Open preferences
               </Button>
               <Button render={<Link to="/projects" />} nativeButton={false}>
-                Go To Projects
+                Go to projects
               </Button>
             </div>
           </CardContent>
         </Card>
       ) : (
         <section className="grid gap-4 md:grid-cols-2">
-          <Card>
+          <Card className="h-full">
             <CardHeader>
               <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 GitHub Source
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="flex flex-1 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
                 Create and install a GitHub App to enable repository discovery
                 and webhook events.
               </p>
+              <SetupHint
+                title="What GitHub will ask for"
+                items={[
+                  'Repository contents and metadata read access for checkout and repository discovery.',
+                  'Pull request read access plus statuses/checks write access for CI feedback.',
+                  'Webhook events for pushes and pull requests.',
+                ]}
+              />
               <Button
+                className="mt-auto self-start"
                 render={<Link to="/settings/integrations/github" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+                <HugeiconsIcon icon={Link04Icon} />
                 Connect GitHub
               </Button>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="h-full">
             <CardHeader>
               <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 GitLab Source
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="flex flex-1 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
-                Connect gitlab.com or self-managed GitLab through OAuth or
-                personal access token.
+                Connect GitLab.com or a self-managed GitLab host through a
+                personal access token or OAuth application.
               </p>
+              <SetupHint
+                title="Personal access token scopes"
+                items={[
+                  <span>
+                    Use <code>read_user</code>, <code>read_api</code>, and{' '}
+                    <code>read_repository</code>.
+                  </span>,
+                  <span>
+                    Avoid full <code>api</code> unless a future GitLab write
+                    feature explicitly needs it.
+                  </span>,
+                ]}
+              />
               <Button
-                variant="outline"
+                className="mt-auto self-start"
                 render={<Link to="/settings/integrations/gitlab" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+                <HugeiconsIcon icon={Link04Icon} />
                 Connect GitLab
               </Button>
             </CardContent>
@@ -160,19 +208,19 @@ function IntegrationsPage() {
         </section>
       )}
 
-      {!remoteEnabled ? (
+      {!preferencesLoading && !preferencesError && !remoteEnabled ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             Access mode is <code>local only</code>. GitHub/GitLab sources are
-            disabled until External Access is enabled from Preferences. Local
-            directories are selected in project creation.
+            disabled until the backend is switched to Remote mode from
+            Preferences. Local repositories are selected in project creation.
           </AlertDescription>
         </Alert>
       ) : null}
 
       {isLoading ? (
-        <Card>
+        <Card size="sm">
           <CardContent className="space-y-3">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -190,7 +238,7 @@ function IntegrationsPage() {
       ) : null}
 
       {!isLoading && !error && remoteEnabled ? (
-        <Card>
+        <Card size="sm">
           <CardHeader>
             <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
               Connected Sources
@@ -198,8 +246,8 @@ function IntegrationsPage() {
           </CardHeader>
           <CardContent>
             {integrations.length === 0 ? (
-              <p className="py-6 text-sm text-muted-foreground">
-                No sources connected yet.
+              <p className="text-sm text-muted-foreground">
+                No connected sources yet. Connect GitHub or GitLab above.
               </p>
             ) : (
               <div className="space-y-3">
@@ -209,7 +257,7 @@ function IntegrationsPage() {
                 {integrations.map((integration) => (
                   <div
                     key={integration.id}
-                    className="group flex items-start justify-between gap-3 border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5"
+                    className="group flex flex-col border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
                   >
                     <Link
                       to="/settings/integrations/$integrationId"
@@ -253,12 +301,12 @@ function IntegrationsPage() {
                       </div>
                     </Link>
 
-                    <div className="p-4 pl-0">
+                    <div className="p-4 pt-0 sm:pl-0 sm:pt-4">
                       <AlertDialog>
                         <AlertDialogTrigger
                           render={
                             <Button variant="ghost" size="sm">
-                              <HugeiconsIcon icon={Delete02Icon} size={16} />
+                              <HugeiconsIcon icon={Delete02Icon} />
                               Disconnect
                             </Button>
                           }

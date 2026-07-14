@@ -1,87 +1,80 @@
 ---
 status: implemented
-description: "Connect GitLab repositories to Oore CI for webhook-triggered builds."
+description: 'Connect GitLab repositories to Oore CI for webhook-triggered builds.'
 ---
 
 # Connect GitLab
 
-This guide covers connecting a GitLab instance to Oore CI for repository access and webhook-triggered builds.
+This guide covers GitLab.com and self-managed GitLab sources, including private repository checkout and webhook-triggered builds.
 
 ## What you need
 
 - **Role**: owner or admin
 - A running Oore CI instance in `ready` state
 - A [GitLab](https://about.gitlab.com/) account (self-hosted or gitlab.com)
-- Permission to create project webhooks in GitLab
-- Either a Personal Access Token with `api` and `read_repository` scopes, or permission to create OAuth applications in your GitLab instance
+- A GitLab personal access token, or permission to create an OAuth application
 
-## Personal Access Token mode
+## Steps
 
-Use this mode for self-managed/internal GitLab instances when you want the quickest setup.
+## Choose an authentication method
 
-1. In GitLab, create a Personal Access Token with:
-   - `api`: lets Oore list accessible projects and read integration metadata
-   - `read_repository`: lets Oore runners clone private repositories over HTTPS
-2. In Oore, go to **Settings > Integrations > Connect GitLab**.
-3. Enter the GitLab host URL and token.
-4. Copy the displayed webhook URL and generated webhook secret. You need both when configuring GitLab webhooks.
+Use a personal access token for the shortest setup, especially for an internal self-managed instance. Create the token with `read_user`, `read_api`, and `read_repository`. Oore encrypts the token and uses it for repository discovery and private checkout.
 
-## OAuth application mode
+Use OAuth when your organization manages applications centrally. The Oore form shows the exact HTTPS callback URL to register. Select `read_api` and `read_repository`; full write-capable `api` access is not required.
 
-### 1. Create a GitLab OAuth application
+## Connect GitLab
 
-1. In GitLab, go to **Admin Area > Applications** (for instance-wide) or **User Settings > Applications** (for personal)
-2. Create a new application:
-   - **Name**: `Oore CI`
-   - **Redirect URI**: `http://127.0.0.1:8787/v1/integrations/gitlab/callback`
-   - **Scopes**: `api`, `read_repository`
-   - **Confidential**: Yes
-3. Save and copy the **Application ID** and **Secret**
+1. In the web UI, open **Sources** and choose **Connect GitLab**.
+2. Enter the root origin, such as `https://gitlab.com` or `https://gitlab.example.com`. Do not append `/api/v4` or a group path.
+3. Choose **Personal Access Token** or **OAuth Application** and follow the inline fields.
+4. Copy the generated webhook secret before saving the source.
+5. For OAuth, register the callback URL shown by Oore, save the source, then choose **Authorize on GitLab** from its details page.
 
-For GitLab OAuth documentation, see [GitLab OAuth 2.0 provider](https://docs.gitlab.com/api/oauth2/).
+Oore returns OAuth callbacks through the browser-facing Oore URL. In split deployments this is the AWS frontend/proxy URL, not the private macOS daemon address.
 
-### 2. Start the integration in Oore CI
+## Verify repository discovery
 
-1. In the web UI, go to **Settings > Integrations**
-2. Click **Connect GitLab**
-3. Enter your GitLab host URL (e.g., `https://gitlab.com` or your self-hosted URL)
-4. Enter the Application ID and Secret from step 1
+Open the source details page and choose **Sync GitLab projects**. Oore follows GitLab pagination, so project inventories larger than 100 are included. Repositories no longer visible to the GitLab account are removed from the source inventory.
 
-### 3. Authorize
-
-Oore CI redirects you to GitLab to authorize the OAuth application. After authorization, GitLab redirects back and Oore CI stores the credentials.
-
-### 4. Verify
-
-Go to **Projects > New Project** and confirm your GitLab repositories appear in the source selection dropdown.
+Go to **Projects**, create a project, and confirm the repository picker identifies the GitLab host as well as the project path.
 
 ## Webhook configuration
 
 When you create a project from a GitLab repository, Oore CI needs webhooks for automatic build triggers. Configure the webhook in your GitLab project:
 
 1. In GitLab, go to **Project Settings > Webhooks**
-2. Add a webhook:
-   - **URL**: `<your public Oore URL>/v1/webhooks/gitlab`
-   - **Trigger**: Push events
-   - **Secret token**: use the webhook secret shown in Oore
+2. Add a webhook using the values shown on the GitLab source screen:
+   - **URL**: `https://<your-oore-frontend>/v1/webhooks/gitlab`
+   - **Trigger**: Push events, Merge request events
+   - **Secret token**: the generated secret copied while connecting the source
 3. Click **Add webhook**
+
+The URL must be reachable by GitLab. In a split deployment, the frontend proxy forwards this path to the private backend. Oore derives a stable delivery identity when older/self-managed GitLab versions omit `X-Gitlab-Event-UUID`, so retries do not create duplicate builds.
+
+## Private repository checkout
+
+Runners fetch private GitLab repositories through an authenticated Oore checkout proxy. The stored GitLab token is decrypted only by the backend and is not written to build snapshots or logs.
+
+Private submodules are not yet proxied. A build can clone public submodules normally, but a private GitLab submodule currently needs its own runner-visible credentials. Oore deliberately does not apply one integration token to every repository on the GitLab host.
+
+OAuth access tokens are not refreshed automatically yet. If GitLab expires or revokes the token, re-authorize the source from its details page.
 
 ## Removing the integration
 
 1. Go to **Settings > Integrations** in Oore CI
-2. Click the GitLab integration
-3. Click **Delete**
+2. Open the GitLab source
+3. Click **Disconnect**
 
 Also revoke the OAuth application in GitLab if no longer needed.
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/integrations/gitlab/start` | Begin GitLab OAuth flow |
-| `POST` | `/v1/integrations/gitlab/authorize` | Complete authorization |
-| `GET` | `/v1/integrations/{id}/repositories` | List accessible repositories |
-| `DELETE` | `/v1/integrations/{id}` | Remove integration |
+| Method   | Path                                 | Description                  |
+| -------- | ------------------------------------ | ---------------------------- |
+| `POST`   | `/v1/integrations/gitlab/start`      | Begin GitLab OAuth flow      |
+| `POST`   | `/v1/integrations/gitlab/authorize`  | Complete authorization       |
+| `GET`    | `/v1/integrations/{id}/repositories` | List accessible repositories |
+| `DELETE` | `/v1/integrations/{id}`              | Remove integration           |
 
 ## Reference
 

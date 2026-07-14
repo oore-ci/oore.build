@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How the Oore CI web UI manages connections to multiple backend instances."
+description: 'How the Oore CI web UI manages connections to multiple backend instances.'
 ---
 
 # Multi-Instance Architecture
@@ -23,12 +23,12 @@ Rather than signing in and out of different URLs, the web UI maintains simultane
 
 The UI maintains a list of connected instances in the browser's `localStorage`. Each instance record contains:
 
-| Field | Description |
-|---|---|
-| `id` | Auto-generated UUID |
-| `label` | User-chosen display name |
-| `url` | Backend daemon URL |
-| `addedAt` | Timestamp |
+| Field     | Description              |
+| --------- | ------------------------ |
+| `id`      | Auto-generated UUID      |
+| `label`   | User-chosen display name |
+| `url`     | Backend daemon URL       |
+| `addedAt` | Timestamp                |
 
 ### Session isolation
 

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Connect a GitHub App to Oore CI for automatic webhook-triggered builds."
+description: 'Connect a GitHub App to Oore CI for automatic webhook-triggered builds.'
 ---
 
 # Connect GitHub
@@ -16,7 +16,7 @@ This tutorial walks you through connecting a GitHub account to your Oore CI inst
 ## 1. Start the GitHub integration
 
 1. Open the Oore CI web UI at `https://ci.oore.build` (or your self-hosted UI)
-2. Sign in with your OIDC provider
+2. Sign in using the auth mode configured for your instance
 3. Navigate to **Settings** and select **Integrations**
 4. Click **Connect GitHub**
 
@@ -52,6 +52,7 @@ Trigger a test:
 3. The build should move from `queued` to `running` within a few seconds
 
 If the build stays in `queued`, check that the embedded runner is active:
+
 - Navigate to **Settings > Runners** and verify a runner is online
 - If using `OORED_RUNNER_MODE=external`, start a runner with `oore runner start`
 

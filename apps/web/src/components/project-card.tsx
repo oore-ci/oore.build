@@ -7,6 +7,7 @@ import { getStatusVariant } from '@/lib/status-variants'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import RepositoryAvatar from '@/components/repository-avatar'
 
 interface ProjectCardProps {
   project: Project
@@ -22,27 +23,37 @@ export default function ProjectCard({
   onTriggerBuild,
 }: ProjectCardProps) {
   return (
-    <Card className="group relative">
-      <CardContent className="space-y-3">
+    <Card className="group relative h-full">
+      <CardContent className="flex h-full flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <Link
-              to="/projects/$projectId"
-              params={{ projectId: project.id }}
-              className="text-sm font-semibold hover:underline"
-            >
-              {project.name}
-            </Link>
-            {project.description ? (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {project.description}
-              </p>
+          <div className="flex min-w-0 items-center gap-3">
+            {project.repository_full_name ? (
+              <RepositoryAvatar
+                fullName={project.repository_full_name}
+                avatarUrl={project.repository_avatar_url}
+              />
             ) : null}
+            <div className="min-w-0">
+              <Link
+                to="/projects/$projectId"
+                params={{ projectId: project.id }}
+                className="text-sm font-semibold hover:underline"
+              >
+                {project.name}
+              </Link>
+              {project.description ? (
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {project.description}
+                </p>
+              ) : null}
+            </div>
           </div>
           <Button
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
+            aria-label={`Open settings for ${project.name}`}
+            title={`Open settings for ${project.name}`}
             render={
               <Link
                 to="/projects/$projectId"
@@ -51,7 +62,7 @@ export default function ProjectCard({
             }
             nativeButton={false}
           >
-            <HugeiconsIcon icon={Setting07Icon} size={14} />
+            <HugeiconsIcon icon={Setting07Icon} />
           </Button>
         </div>
 
@@ -76,11 +87,11 @@ export default function ProjectCard({
         <Button
           size="sm"
           variant="outline"
-          className="w-full"
+          className="mt-auto w-full"
           onClick={() => onTriggerBuild(project.id)}
         >
-          <HugeiconsIcon icon={PlayIcon} size={14} />
-          Run
+          <HugeiconsIcon icon={PlayIcon} />
+          Run build
         </Button>
       </CardContent>
     </Card>

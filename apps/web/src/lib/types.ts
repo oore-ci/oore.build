@@ -91,12 +91,14 @@ export interface SetupPreferencesResponse {
 
 export interface SetupTrustedProxyConfigureRequest {
   user_email_header?: string
+  setup_owner_email?: string
   trusted_proxy_cidrs: Array<string>
   shared_secret?: string
 }
 
 export interface SetupTrustedProxyConfigureResponse {
   state: SetupState
+  setup_owner_email?: string
   has_shared_secret: boolean
   configured_at: number
   session_expires_at?: number
@@ -196,6 +198,24 @@ export interface LogoutResponse {
   ok: boolean
 }
 
+export interface RuntimeUpdateStatus {
+  phase: 'idle' | 'updating' | 'restarting' | 'failed'
+  error?: string | null
+  managed_service: boolean
+}
+
+export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
+  version: string
+  latest_version: string
+  channel: string
+  github_repo: string
+  update_available: boolean
+  release_name: string
+  release_notes: string
+  release_url: string
+  changelog_url: string
+}
+
 // ── Structured API error ────────────────────────────────────────
 
 export interface ApiError {
@@ -209,10 +229,7 @@ export interface ApiError {
 export type ScmProvider = 'github' | 'gitlab' | 'local_git'
 
 export type IntegrationAuthMode =
-  | 'github_app'
-  | 'oauth_app'
-  | 'personal_token'
-  | 'local_path'
+  'github_app' | 'oauth_app' | 'personal_token' | 'local_path'
 
 export type IntegrationStatus = 'active' | 'inactive' | 'error'
 
@@ -246,6 +263,7 @@ export interface IntegrationRepository {
   full_name: string
   default_branch?: string
   is_private: boolean
+  avatar_url?: string
   created_at: number
   updated_at: number
 }
@@ -408,6 +426,8 @@ export interface Build {
   source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
+  /** Optional display context supplied by newer backend responses. */
+  context?: BuildContext
   step_results?: Array<StepResult>
   exit_code?: number
   queued_at: number
@@ -415,6 +435,12 @@ export interface Build {
   finished_at?: number
   created_at: number
   updated_at: number
+}
+
+export interface BuildContext {
+  project_name?: string
+  pipeline_name?: string
+  runner_name?: string
 }
 
 export interface BuildEvent {
@@ -429,6 +455,7 @@ export interface BuildEvent {
 
 export interface CreateBuildRequest {
   pipeline_id: string
+  platforms?: Array<BuildPlatform>
   branch?: string
   commit_sha?: string
   trigger_ref?: string
@@ -678,6 +705,8 @@ export interface Project {
   name: string
   description?: string
   repository_id?: string
+  repository_full_name?: string
+  repository_avatar_url?: string
   settings: Record<string, unknown>
   default_branch?: string
   created_by: string
@@ -760,6 +789,31 @@ export interface PipelineExecutionConfig {
   platform_commands?: PlatformBuildCommands
   env?: Array<PipelineEnvVar>
   artifact_patterns: Array<string>
+}
+
+export interface RepositoryWorkflowExecutionPreview {
+  platforms: Array<BuildPlatform>
+  flutter_version?: string
+  commands: PipelineCommandStages
+  platform_build_args: PlatformBuildArgs
+  platform_commands: PlatformBuildCommands
+  env_keys: Array<string>
+  artifact_patterns: Array<string>
+}
+
+export interface RepositoryWorkflowPreview {
+  path: string
+  valid: boolean
+  errors: Array<string>
+  execution?: RepositoryWorkflowExecutionPreview
+}
+
+export interface DiscoverRepositoryWorkflowsResponse {
+  project_id: string
+  provider: 'github' | 'gitlab' | 'local_git'
+  reference: string
+  workflows: Array<RepositoryWorkflowPreview>
+  truncated: boolean
 }
 
 export interface Pipeline {

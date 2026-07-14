@@ -12,18 +12,23 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
-import { useGitHubAppStart } from '@/hooks/use-integrations'
+import { usePreviewGitHubAppSetup } from '@/hooks/use-authorization-start'
 import { PageMeta } from '@/lib/seo'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import SetupHint from '@/components/setup-hint'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/github')({
-  staticData: { breadcrumbLabel: 'GitHub' },
+  staticData: {
+    breadcrumbLabel: 'GitHub',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -33,11 +38,12 @@ export const Route = createFileRoute('/settings/integrations/github')({
 
 function GitHubSetupPage() {
   const instance = useActiveInstance()
-  const startMutation = useGitHubAppStart()
-  const { data: preferences } = useInstancePreferences()
+  const startMutation = usePreviewGitHubAppSetup()
+  const { data: preferences, isLoading: preferencesLoading } =
+    useInstancePreferences()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
 
-  const backendUrl = instance?.url ?? ''
+  const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
   const redirectUrl = `${window.location.origin}/settings/integrations`
 
@@ -62,7 +68,6 @@ function GitHubSetupPage() {
       <PageHeader
         title="Connect GitHub Source"
         description="Generate and install a GitHub App source for repository access and webhook delivery."
-        back={{ to: '/settings/integrations', label: 'Sources' }}
       />
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -77,18 +82,30 @@ function GitHubSetupPage() {
               oore creates a GitHub App manifest, redirects you to GitHub, then
               returns here after install.
             </p>
+            <SetupHint
+              title="Generated GitHub App access"
+              items={[
+                'Repository contents, metadata, and pull requests are read-only.',
+                'Statuses and checks are writable so builds can report CI feedback.',
+                'Webhook events are push, pull_request, check_run, and check_suite.',
+              ]}
+            />
             <Button
               onClick={handleConnect}
-              disabled={startMutation.isPending || !remoteEnabled}
+              disabled={
+                startMutation.isPending || preferencesLoading || !remoteEnabled
+              }
             >
-              <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-              {!remoteEnabled
-                ? 'External Access Required'
-                : startMutation.isPending
-                  ? 'Starting...'
-                  : 'Create GitHub App'}
+              <HugeiconsIcon icon={LinkSquare02Icon} />
+              {preferencesLoading
+                ? 'Checking access...'
+                : !remoteEnabled
+                  ? 'External access required'
+                  : startMutation.isPending
+                    ? 'Starting...'
+                    : 'Create GitHub app'}
               {!startMutation.isPending ? (
-                <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+                <HugeiconsIcon icon={ArrowRight01Icon} />
               ) : null}
             </Button>
           </CardContent>
@@ -130,7 +147,7 @@ function GitHubSetupPage() {
         <AlertDescription>
           {remoteEnabled
             ? 'After GitHub installation, you will return to Sources with the connection status updated.'
-            : 'GitHub source connections are disabled in Local Only mode. Enable External Access in Preferences to continue.'}
+            : 'GitHub source connections require the backend to be in Remote mode. Update access policy in Preferences to continue.'}
         </AlertDescription>
       </Alert>
     </PageLayout>

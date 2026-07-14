@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure build pipelines using .oore.yaml in your repository."
+description: 'Configure build pipelines using .oore.yaml in your repository.'
 ---
 
 # Write a Pipeline Config (.oore.yaml)
@@ -16,7 +16,7 @@ The `.oore.yaml` file defines how Oore CI builds your Flutter application. Place
 
 ```yaml
 version: 1
-flutter_version: "3.24.0"
+flutter_version: '3.24.0'
 platforms:
   - android
 commands:
@@ -27,7 +27,7 @@ commands:
   post_build: []
 artifacts:
   patterns:
-    - "**/*.apk"
+    - 'build/app/outputs/flutter-apk/*.apk'
 ```
 
 ## Full schema
@@ -36,23 +36,23 @@ For the complete `.oore.yaml` schema reference, see [.oore.yaml Reference](/refe
 
 ### Top-level fields
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `version` | `integer` | Yes | Schema version (must be `1`) |
-| `flutter_version` | `string` | No | Flutter version to use. Overridden by `.fvmrc` if present. |
-| `platforms` | `string[]` | Yes | Target platforms: `android`, `ios`, `macos` |
-| `commands` | `object` | Yes | Build command stages |
-| `artifacts` | `object` | No | Artifact collection patterns |
+| Field             | Type       | Required | Description                                                |
+| ----------------- | ---------- | -------- | ---------------------------------------------------------- |
+| `version`         | `integer`  | Yes      | Schema version (must be `1`)                               |
+| `flutter_version` | `string`   | No       | Flutter version to use. Overridden by `.fvmrc` if present. |
+| `platforms`       | `string[]` | Yes      | Target platforms: `android`, `ios`, `macos`                |
+| `commands`        | `object`   | Yes      | Build command stages                                       |
+| `artifacts`       | `object`   | No       | Artifact collection patterns                               |
 
 ### Commands
 
 Commands are executed in three stages:
 
-| Stage | When it runs | Typical use |
-|---|---|---|
-| `pre_build` | Before the main build | `flutter pub get`, code generation |
-| `build` | Main build step | `flutter build apk`, `flutter build ipa` |
-| `post_build` | After a successful build | Testing, additional processing |
+| Stage        | When it runs             | Typical use                              |
+| ------------ | ------------------------ | ---------------------------------------- |
+| `pre_build`  | Before the main build    | `flutter pub get`, code generation       |
+| `build`      | Main build step          | `flutter build apk`, `flutter build ipa` |
+| `post_build` | After a successful build | Testing, additional processing           |
 
 Each stage is a list of shell commands executed sequentially. If any command returns a non-zero exit code, the build fails.
 
@@ -61,9 +61,9 @@ Each stage is a list of shell commands executed sequentially. If any command ret
 ```yaml
 platform_build_args:
   android:
-    extra_args: "--split-per-abi"
+    - '--split-per-abi'
   ios:
-    export_method: "ad-hoc"
+    - '--flavor=staging'
 ```
 
 ### Platform-specific commands
@@ -72,12 +72,8 @@ Override the default build command per platform:
 
 ```yaml
 platform_commands:
-  android:
-    build:
-      - flutter build apk --release --split-per-abi
-  ios:
-    build:
-      - flutter build ipa --release --export-method ad-hoc
+  android: flutter build apk --release --split-per-abi
+  ios: flutter build ipa --release
 ```
 
 ### Environment variables
@@ -95,38 +91,18 @@ env:
 ```yaml
 artifacts:
   patterns:
-    - "**/*.apk"
-    - "**/*.ipa"
-    - "**/*.app.zip"
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
+    - 'build/macos/Build/Products/Release/*.app'
 ```
 
-Glob patterns are matched against the build output directory.
-
-### Trigger configuration
-
-```yaml
-triggers:
-  events:
-    - push
-    - pull_request
-  branches:
-    - main
-    - "release/*"
-```
-
-### Concurrency
-
-```yaml
-concurrency:
-  max_concurrent: 1
-  cancel_in_progress: true
-```
+Glob patterns are matched against workspace-relative paths. Filename-only patterns such as `*.apk` still match anywhere. Configure triggers and concurrency in the pipeline UI/API, not in repository YAML.
 
 ## Multi-platform example
 
 ```yaml
 version: 1
-flutter_version: "3.24.0"
+flutter_version: '3.24.0'
 platforms:
   - android
   - ios
@@ -140,16 +116,11 @@ commands:
   post_build: []
 platform_build_args:
   android:
-    extra_args: "--split-per-abi"
+    extra_args: '--split-per-abi'
 artifacts:
   patterns:
-    - "**/*.apk"
-    - "**/*.ipa"
-triggers:
-  events:
-    - push
-  branches:
-    - main
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
 ```
 
 ## Config resolution
@@ -169,11 +140,8 @@ For Flutter version resolution:
 
 ## Validation
 
-Validate a pipeline config before creating a build:
+Validate a pipeline config locally with the same parser used by the runner:
 
 ```bash
-curl -X POST http://127.0.0.1:8787/v1/pipelines/validate \
-  -H "Authorization: Bearer <session_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"config": "<yaml content>"}'
+oore pipeline validate .oore.yaml
 ```

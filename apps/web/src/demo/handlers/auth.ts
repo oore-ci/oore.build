@@ -9,6 +9,29 @@ import {
   ago,
 } from '../seed'
 
+function safeDemoRedirectUri(requestUrl: string): string {
+  const request = new URL(requestUrl)
+  const fallback = new URL('/auth/callback', request.origin)
+  const requestedValue = safeRedirectParam(
+    request.searchParams.get('redirect_uri'),
+  )
+  if (!requestedValue) return fallback.toString()
+
+  try {
+    const requested = new URL(requestedValue, request.origin)
+    return requested.origin === request.origin &&
+      requested.pathname === '/auth/callback'
+      ? requested.toString()
+      : fallback.toString()
+  } catch {
+    return fallback.toString()
+  }
+}
+
+function safeRedirectParam(value: string | null): string | null {
+  return value?.trim() || null
+}
+
 export const authHandlers = [
   http.get('/v1/users/me', async () => {
     await delay(100)
@@ -33,8 +56,7 @@ export const authHandlers = [
   // OIDC login flow — returns a callback URL pointing back to our own origin
   http.get('/v1/auth/oidc/start', async ({ request }) => {
     await delay(200)
-    const url = new URL(request.url)
-    const redirectUri = url.searchParams.get('redirect_uri') ?? '/auth/callback'
+    const redirectUri = safeDemoRedirectUri(request.url)
     return HttpResponse.json({
       authorization_url: `${redirectUri}?code=demo-code&state=demo-state`,
       state: 'demo-state',
@@ -76,7 +98,7 @@ export const authHandlers = [
       expires_at: DEMO_AUTH_EXPIRES_AT,
       user: {
         email: DEMO_USER_EMAIL,
-        oidc_subject: `warpgate::${DEMO_USER_EMAIL}`,
+        oidc_subject: `trusted-proxy::${DEMO_USER_EMAIL}`,
         user_id: DEMO_USER_ID,
         role: DEMO_USER_ROLE,
       },

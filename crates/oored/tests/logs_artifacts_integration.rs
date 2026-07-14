@@ -179,7 +179,48 @@ async fn full_scaffold() -> (
     (app, pool, session_token, runner_id, runner_token, build_id)
 }
 
+async fn complete_artifact(
+    app: &axum::Router,
+    runner_id: &str,
+    runner_token: &str,
+    build_id: &str,
+    artifact_id: &str,
+) {
+    let (status, _) = json_request(
+        app,
+        "POST",
+        &format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts/{artifact_id}/complete"),
+        runner_token,
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 // ── Log ingestion tests ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_build_list_and_detail_include_display_context() {
+    let (app, _pool, session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+
+    let (status, list) = json_request(&app, "GET", "/v1/builds", &session_token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let build = &list["builds"][0];
+    assert_eq!(build["context"]["project_name"], "Test Project");
+    assert_eq!(build["context"]["pipeline_name"], "Default");
+    assert_eq!(build["context"]["runner_name"], "test-runner");
+
+    let (status, detail) = json_request(
+        &app,
+        "GET",
+        &format!("/v1/builds/{build_id}"),
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["build"]["context"], build["context"]);
+}
 
 #[tokio::test]
 async fn test_append_build_logs() {
@@ -470,6 +511,7 @@ async fn test_non_member_cannot_read_build_logs_or_artifacts() {
     assert_eq!(resp.status(), StatusCode::OK);
     let artifact_json = body_json(resp.into_body()).await;
     let artifact_id = artifact_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
 
     let (status, owner_token_json) = json_request(
         &app,
@@ -653,6 +695,7 @@ async fn test_create_artifact() {
     assert!(artifact["build_id"].as_str().is_some());
     // upload_url should be empty when S3 is not configured
     assert_eq!(json["upload_url"].as_str().unwrap(), "");
+    assert_eq!(artifact["state"].as_str(), Some("pending"));
 }
 
 #[tokio::test]
@@ -762,6 +805,7 @@ async fn test_create_artifact_checksum_dedup() {
     assert_eq!(resp.status(), StatusCode::OK);
     let first_json = body_json(resp.into_body()).await;
     let first_id = first_json["artifact"]["id"].as_str().unwrap().to_string();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, &first_id).await;
 
     let body = serde_json::json!({
         "name": "release-copy.apk",
@@ -834,6 +878,15 @@ async fn test_list_artifacts() {
 
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp.into_body()).await;
+        complete_artifact(
+            &app,
+            &runner_id,
+            &runner_token,
+            &build_id,
+            json["artifact"]["id"].as_str().unwrap(),
+        )
+        .await;
     }
 
     // List artifacts
@@ -906,6 +959,7 @@ async fn test_download_link_no_storage() {
     assert_eq!(resp.status(), StatusCode::OK);
     let create_json = body_json(resp.into_body()).await;
     let artifact_id = create_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
 
     // Request download link — should fail because S3 is not configured
     let req = Request::builder()
@@ -998,6 +1052,15 @@ async fn test_full_log_and_artifact_flow() {
 
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let artifact_json = body_json(resp.into_body()).await;
+    complete_artifact(
+        &app,
+        &runner_id,
+        &runner_token,
+        &build_id,
+        artifact_json["artifact"]["id"].as_str().unwrap(),
+    )
+    .await;
 
     // 3. Operator fetches logs
     let req = Request::builder()

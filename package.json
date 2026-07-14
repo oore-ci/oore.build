@@ -5,16 +5,20 @@
     "apps/*"
   ],
   "devDependencies": {
-    "wrangler": "4.65.0"
+    "wrangler": "4.110.0"
   },
   "scripts": {
     "dev:web": "cd apps/web && bun run dev",
     "dev:docs": "cd apps/docs-site && bun run docs:dev",
     "dev:site": "cd apps/site && bun run dev",
     "build:web": "cd apps/web && bun run build",
+    "bundle:check": "cd apps/web && bun run bundle:check",
     "build:docs": "cd apps/docs-site && bun run docs:build",
     "build:site": "cd apps/site && bun run build",
     "docs:check": "bash tools/docs-check.sh",
-    "ui:init": "bash tools/ui-init.sh"
+    "ui:init": "bash tools/ui-init.sh",
+    "ui:diff": "bash tools/update-shadcn.sh --diff",
+    "ui:update": "bash tools/update-shadcn.sh --apply",
+    "deps:update": "bash tools/update-dependencies.sh"
   }
 }

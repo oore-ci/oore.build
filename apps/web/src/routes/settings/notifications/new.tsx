@@ -1,14 +1,11 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
+import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
 
-import type {
-  NotificationChannelType,
-  SmtpConfig,
-  SmtpTlsMode,
-} from '@/lib/types'
+import type { SmtpConfig } from '@/lib/types'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -41,7 +38,13 @@ import {
 import { getApiErrorMessage } from '@/lib/api'
 
 export const Route = createFileRoute('/settings/notifications/new')({
-  staticData: { breadcrumbLabel: 'New Channel' },
+  staticData: {
+    breadcrumbLabel: 'New Channel',
+    breadcrumbParent: {
+      label: 'Notifications',
+      to: '/settings/notifications',
+    },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -82,7 +85,197 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-function NewNotificationChannelPage() {
+function NotificationChannelFields({
+  channelType,
+  form,
+  isEmail,
+}: {
+  channelType: FormValues['channel_type']
+  form: UseFormReturn<FormValues>
+  isEmail: boolean
+}) {
+  if (!isEmail) {
+    return (
+      <>
+        <FormField
+          control={form.control}
+          name="url"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                {channelType === 'mattermost'
+                  ? 'Incoming Webhook URL'
+                  : 'Webhook URL'}
+              </FormLabel>
+              <FormControl>
+                <Input
+                  type="url"
+                  placeholder={
+                    channelType === 'mattermost'
+                      ? 'https://mattermost.example.com/hooks/...'
+                      : 'https://example.com/webhook'
+                  }
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {channelType === 'webhook' ? (
+          <FormField
+            control={form.control}
+            name="secret"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>HMAC Secret (optional)</FormLabel>
+                <FormControl>
+                  <Input
+                    type="password"
+                    placeholder="Used to sign payloads with X-Oore-Signature header"
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  If set, each request includes an{' '}
+                  <code className="text-xs">X-Oore-Signature</code> header with
+                  an HMAC-SHA256 signature.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ) : null}
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="smtp_host"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>SMTP Host</FormLabel>
+              <FormControl>
+                <Input placeholder="smtp.example.com" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="smtp_port"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Port</FormLabel>
+              <FormControl>
+                <Input type="number" placeholder="587" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="smtp_username"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Username</FormLabel>
+              <FormControl>
+                <Input placeholder="user@example.com" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="smtp_password"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <Input type="password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <FormField
+        control={form.control}
+        name="smtp_tls_mode"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>TLS Mode</FormLabel>
+            <Select
+              value={field.value}
+              onValueChange={(value) => field.onChange(value)}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select TLS mode" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value="start_tls">STARTTLS (port 587)</SelectItem>
+                <SelectItem value="tls">Implicit TLS (port 465)</SelectItem>
+                <SelectItem value="none">None (unencrypted)</SelectItem>
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="smtp_from_address"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>From Address</FormLabel>
+            <FormControl>
+              <Input type="email" placeholder="ci@example.com" {...field} />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="smtp_recipients"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Recipients</FormLabel>
+            <FormControl>
+              <Textarea
+                placeholder="alice@example.com, bob@example.com"
+                rows={3}
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Comma-separated list of email addresses.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </>
+  )
+}
+
+function useNewNotificationChannelPageState() {
   const navigate = useNavigate()
   const createMutation = useCreateNotificationChannel()
 
@@ -115,18 +308,40 @@ function NewNotificationChannelPage() {
       return
     }
     if (isEmail) {
-      if (!values.smtp_host) { form.setError('smtp_host', { message: 'SMTP host is required' }); return }
+      if (!values.smtp_host) {
+        form.setError('smtp_host', { message: 'SMTP host is required' })
+        return
+      }
       const port = Number(values.smtp_port)
-      if (!port || port < 1 || port > 65535) { form.setError('smtp_port', { message: 'Port must be 1-65535' }); return }
-      if (!values.smtp_username) { form.setError('smtp_username', { message: 'Username is required' }); return }
-      if (!values.smtp_password) { form.setError('smtp_password', { message: 'Password is required' }); return }
-      if (!values.smtp_from_address?.includes('@')) { form.setError('smtp_from_address', { message: 'Valid email address required' }); return }
-      if (!values.smtp_recipients?.trim()) { form.setError('smtp_recipients', { message: 'At least one recipient required' }); return }
+      if (!port || port < 1 || port > 65535) {
+        form.setError('smtp_port', { message: 'Port must be 1-65535' })
+        return
+      }
+      if (!values.smtp_username) {
+        form.setError('smtp_username', { message: 'Username is required' })
+        return
+      }
+      if (!values.smtp_password) {
+        form.setError('smtp_password', { message: 'Password is required' })
+        return
+      }
+      if (!values.smtp_from_address?.includes('@')) {
+        form.setError('smtp_from_address', {
+          message: 'Valid email address required',
+        })
+        return
+      }
+      if (!values.smtp_recipients?.trim()) {
+        form.setError('smtp_recipients', {
+          message: 'At least one recipient required',
+        })
+        return
+      }
     }
 
     const base = {
       name: values.name,
-      channel_type: values.channel_type as NotificationChannelType,
+      channel_type: values.channel_type,
       events: values.events,
       enabled: true,
     }
@@ -142,7 +357,7 @@ function NewNotificationChannelPage() {
         port: Number(values.smtp_port),
         username: values.smtp_username!,
         password: values.smtp_password!,
-        tls_mode: (values.smtp_tls_mode ?? 'start_tls') as SmtpTlsMode,
+        tls_mode: (values.smtp_tls_mode ?? 'start_tls'),
         from_address: values.smtp_from_address!,
         recipients,
       }
@@ -179,13 +394,20 @@ function NewNotificationChannelPage() {
     }
   }
 
+  return { channelType, createMutation, form, isEmail, navigate, onSubmit }
+}
+
+function NewNotificationChannelPage() {
+  const pageState = useNewNotificationChannelPageState()
+  const { channelType, createMutation, form, isEmail, navigate, onSubmit } =
+    pageState
+
   return (
     <PageLayout width="wide">
       <PageMeta title="New Notification Channel" noindex />
       <PageHeader
         title="New Notification Channel"
         description="Configure a notification channel to receive build and runner status updates."
-        back={{ to: '/settings/notifications', label: 'Notifications' }}
       />
 
       <Card>
@@ -247,207 +469,11 @@ function NewNotificationChannelPage() {
                 )}
               />
 
-              {/* Webhook / Mattermost fields */}
-              {!isEmail ? (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="url"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          {channelType === 'mattermost'
-                            ? 'Incoming Webhook URL'
-                            : 'Webhook URL'}
-                        </FormLabel>
-                        <FormControl>
-                          <Input
-                            type="url"
-                            placeholder={
-                              channelType === 'mattermost'
-                                ? 'https://mattermost.example.com/hooks/...'
-                                : 'https://example.com/webhook'
-                            }
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {channelType === 'webhook' ? (
-                    <FormField
-                      control={form.control}
-                      name="secret"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>HMAC Secret (optional)</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="password"
-                              placeholder="Used to sign payloads with X-Oore-Signature header"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            If set, each request includes an{' '}
-                            <code className="text-xs">X-Oore-Signature</code>{' '}
-                            header with an HMAC-SHA256 signature.
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : null}
-                </>
-              ) : null}
-
-              {/* Email (SMTP) fields */}
-              {isEmail ? (
-                <>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="smtp_host"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>SMTP Host</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="smtp.example.com"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="smtp_port"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Port</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              placeholder="587"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="smtp_username"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Username</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="user@example.com"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="smtp_password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Password</FormLabel>
-                          <FormControl>
-                            <Input type="password" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <FormField
-                    control={form.control}
-                    name="smtp_tls_mode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>TLS Mode</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={(value) => field.onChange(value)}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select TLS mode" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="start_tls">
-                              STARTTLS (port 587)
-                            </SelectItem>
-                            <SelectItem value="tls">
-                              Implicit TLS (port 465)
-                            </SelectItem>
-                            <SelectItem value="none">
-                              None (unencrypted)
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="smtp_from_address"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>From Address</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="email"
-                            placeholder="ci@example.com"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="smtp_recipients"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Recipients</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder="alice@example.com, bob@example.com"
-                            rows={3}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Comma-separated list of email addresses.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              ) : null}
+              <NotificationChannelFields
+                channelType={channelType}
+                form={form}
+                isEmail={isEmail}
+              />
 
               <FormField
                 control={form.control}
@@ -499,7 +525,7 @@ function NewNotificationChannelPage() {
 
               <div className="flex gap-2 pt-2">
                 <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? 'Creating...' : 'Create Channel'}
+                  {createMutation.isPending ? 'Creating...' : 'Create channel'}
                 </Button>
                 <Button
                   type="button"

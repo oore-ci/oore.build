@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for oore config key/value management."
+description: 'CLI reference for oore config key/value management.'
 ---
 
 # oore config
@@ -16,9 +16,9 @@ oore config get <key>
 
 ## Supported keys (alpha tranche)
 
-| Key | Meaning |
-|-----|---------|
-| `daemon_url` | Default daemon URL |
+| Key             | Meaning                                              |
+| --------------- | ---------------------------------------------------- |
+| `daemon_url`    | Default daemon URL                                   |
 | `session_token` | Default session token for authenticated CLI commands |
 
 Unsupported keys fail with exit code `2`.

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Add additional Oore CI backend instances to the web UI."
+description: 'Add additional Oore CI backend instances to the web UI.'
 ---
 
 # Connect to Multiple Backends
@@ -29,12 +29,12 @@ The UI validates the connection by checking `GET /v1/public/setup-status` on the
 
 Instance records are stored in your browser's `localStorage`:
 
-| Field | Description |
-|---|---|
-| `id` | Auto-generated UUID |
-| `label` | Your display name for the instance |
-| `url` | Backend URL |
-| `addedAt` | Timestamp when added |
+| Field     | Description                        |
+| --------- | ---------------------------------- |
+| `id`      | Auto-generated UUID                |
+| `label`   | Your display name for the instance |
+| `url`     | Backend URL                        |
+| `addedAt` | Timestamp when added               |
 
 No instance data is shared between backends or sent to other instances.
 

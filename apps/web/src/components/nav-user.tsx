@@ -136,6 +136,7 @@ export default function NavUser() {
               render={
                 <a
                   href="https://docs.oore.build"
+                  aria-label="Open Oore documentation"
                   target="_blank"
                   rel="noopener noreferrer"
                 />

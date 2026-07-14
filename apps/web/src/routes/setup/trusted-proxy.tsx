@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -16,6 +15,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   useSetupStatus,
   useSetupTrustedProxyConfigure,
 } from '@/hooks/use-setup'
@@ -25,9 +31,21 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
+import { loadTrustedProxySetupPrefill } from '@/lib/setup-prefill'
 import { useSetupStore } from '@/stores/setup-store'
+import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
+
+const trustedProxyPresetSchema = z.enum(['generic', 'warpgate', 'custom'])
+type TrustedProxyPreset = z.infer<typeof trustedProxyPresetSchema>
+
+const presetHeaders: Record<Exclude<TrustedProxyPreset, 'custom'>, string> = {
+  generic: 'x-oore-user-email',
+  warpgate: 'x-warpgate-username',
+}
 
 const trustedProxySchema = z.object({
+  proxyPreset: trustedProxyPresetSchema,
+  ownerEmail: z.email('Enter a valid owner email'),
   userEmailHeader: z.string().min(1, 'Header name is required'),
   trustedProxyCidrs: z.string().optional(),
   sharedSecret: z.string().optional(),
@@ -71,17 +89,30 @@ function generateSharedSecret(): string {
   )
 }
 
+function headerForPreset(preset: TrustedProxyPreset): string | undefined {
+  return preset === 'custom' ? undefined : presetHeaders[preset]
+}
+
 function SetupTrustedProxyStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
+  const setupInstanceId = useSetupStore((s) => s.instanceId)
   const configureMutation = useSetupTrustedProxyConfigure()
   const { data: status } = useSetupStatus()
+  const prefill = loadTrustedProxySetupPrefill(setupInstanceId)
+  const prefillPreset = prefill?.proxyPreset ?? 'generic'
+  const prefillHeader =
+    prefill?.userEmailHeader ??
+    headerForPreset(prefillPreset) ??
+    presetHeaders.generic
 
   const form = useForm<TrustedProxyForm>({
     resolver: zodResolver(trustedProxySchema),
     defaultValues: {
-      userEmailHeader: 'x-warpgate-username',
+      proxyPreset: prefillPreset,
+      ownerEmail: prefill?.ownerEmail ?? '',
+      userEmailHeader: prefillHeader,
       trustedProxyCidrs: '',
       sharedSecret: '',
     },
@@ -92,21 +123,12 @@ function SetupTrustedProxyStep() {
     setCurrentStep(2)
   })
 
-  const proxyGuardDone = useRef(false)
-  if (status && !proxyGuardDone.current) {
-    proxyGuardDone.current = true
-    if (
-      status.runtime_mode !== 'remote' ||
-      status.remote_auth_mode !== 'trusted_proxy'
-    ) {
-      queueMicrotask(() => void navigate({ to: '/setup/mode' }))
-    }
-  }
+  useSetupModeGuard(status, 'trusted_proxy')
 
   const errorMessage = configureMutation.error
     ? getApiErrorMessage(configureMutation.error, {
         invalid_input:
-          'Trusted proxy settings are invalid. Check header name and CIDR values.',
+          'Trusted proxy settings are invalid. Check owner email, header name, and CIDR values.',
         mode_restricted:
           'Switch setup mode to Remote (Trusted Proxy) before configuring this step.',
         session_expired:
@@ -123,6 +145,7 @@ function SetupTrustedProxyStep() {
       {
         sessionToken,
         userEmailHeader: values.userEmailHeader.trim(),
+        setupOwnerEmail: values.ownerEmail.trim().toLowerCase(),
         trustedProxyCidrs: parseCidrs(values.trustedProxyCidrs),
         sharedSecret: values.sharedSecret?.trim() || undefined,
       },
@@ -140,12 +163,78 @@ function SetupTrustedProxyStep() {
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Trusted Proxy Configuration</h2>
         <p className="text-sm text-muted-foreground">
-          Configure how Oore reads identity headers forwarded by Warpgate.
+          Configure how Oore reads identity headers forwarded by your
+          authentication proxy.
         </p>
       </div>
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <FormField
+            control={form.control}
+            name="ownerEmail"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Initial owner email</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    type="email"
+                    placeholder="owner@example.com"
+                    autoComplete="email"
+                    disabled={configureMutation.isPending}
+                  />
+                </FormControl>
+                <p className="text-xs text-muted-foreground">
+                  The first owner claim must arrive from this same
+                  proxy-authenticated email.
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="proxyPreset"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Proxy preset</FormLabel>
+                <FormControl>
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) => {
+                      const preset = value as TrustedProxyPreset
+                      field.onChange(preset)
+                      const header = headerForPreset(preset)
+                      if (header) {
+                        form.setValue('userEmailHeader', header, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        })
+                      }
+                    }}
+                    disabled={configureMutation.isPending}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose proxy" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="generic">Generic proxy</SelectItem>
+                      <SelectItem value="warpgate">Warpgate</SelectItem>
+                      <SelectItem value="custom">Custom header</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </FormControl>
+                <p className="text-xs text-muted-foreground">
+                  Warpgate uses <code>x-warpgate-username</code>. Generic uses{' '}
+                  <code>x-oore-user-email</code>.
+                </p>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <FormField
             control={form.control}
             name="userEmailHeader"
@@ -155,7 +244,22 @@ function SetupTrustedProxyStep() {
                 <FormControl>
                   <Input
                     {...field}
-                    placeholder="x-warpgate-username"
+                    placeholder="x-oore-user-email"
+                    onChange={(event) => {
+                      const nextHeader = event.target.value
+                      field.onChange(nextHeader)
+                      const currentPreset = form.getValues('proxyPreset')
+                      const presetHeader = headerForPreset(currentPreset)
+                      if (
+                        presetHeader &&
+                        nextHeader.trim().toLowerCase() !== presetHeader
+                      ) {
+                        form.setValue('proxyPreset', 'custom', {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        })
+                      }
+                    }}
                     disabled={configureMutation.isPending}
                   />
                 </FormControl>
@@ -178,8 +282,7 @@ function SetupTrustedProxyStep() {
                   />
                 </FormControl>
                 <p className="text-xs text-muted-foreground">
-                  Leave empty when Warpgate runs on the same host as oored
-                  (loopback trust).
+                  Leave empty when the proxy reaches oored over loopback.
                 </p>
                 <FormMessage />
               </FormItem>
@@ -234,7 +337,7 @@ function SetupTrustedProxyStep() {
             className="w-full"
             disabled={configureMutation.isPending}
           >
-            {configureMutation.isPending ? 'Saving...' : 'Continue to Owner'}
+            {configureMutation.isPending ? 'Saving...' : 'Continue to owner'}
           </Button>
         </form>
       </Form>

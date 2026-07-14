@@ -103,6 +103,93 @@ pub(crate) async fn require_remote_mode(
     Ok(())
 }
 
+pub(crate) async fn resolve_branch_commit(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    repository_id: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
+                inst.external_id AS installation_external_id, r.external_id AS repository_external_id, \
+                r.full_name, r.html_url \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.status = 'active'",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to load source revision target");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load the linked repository",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "source_unresolvable",
+            "The linked source is unavailable; reconnect it before triggering a build",
+        )
+    })?;
+
+    let provider: String = row.get("provider");
+    let integration_id: String = row.get("integration_id");
+    match provider.as_str() {
+        "local_git" => {
+            let path: Option<String> = row.get("html_url");
+            local_git::resolve_branch_commit(
+                path.as_deref().ok_or_else(|| {
+                    api_err(
+                        StatusCode::CONFLICT,
+                        "source_unresolvable",
+                        "The linked local repository path is missing",
+                    )
+                })?,
+                branch,
+            )
+            .await
+        }
+        "github" => {
+            let installation_id: String = row.get("installation_external_id");
+            let full_name: String = row.get("full_name");
+            github::resolve_branch_commit(
+                pool,
+                encryption_key,
+                &integration_id,
+                &installation_id,
+                &full_name,
+                branch,
+            )
+            .await
+        }
+        "gitlab" => {
+            let host_url: String = row.get("host_url");
+            let auth_mode: String = row.get("auth_mode");
+            let repository_external_id: String = row.get("repository_external_id");
+            gitlab::resolve_branch_commit(
+                pool,
+                encryption_key,
+                &integration_id,
+                &host_url,
+                &auth_mode,
+                &repository_external_id,
+                branch,
+            )
+            .await
+        }
+        _ => Err(api_err(
+            StatusCode::CONFLICT,
+            "unsupported_provider",
+            "The linked source provider cannot resolve branch revisions",
+        )),
+    }
+}
+
 // ── Row conversion helpers ──────────────────────────────────────
 
 pub fn row_to_integration(row: &sqlx::sqlite::SqliteRow) -> Integration {
@@ -140,6 +227,7 @@ pub fn row_to_repository(row: &sqlx::sqlite::SqliteRow) -> IntegrationRepository
         full_name: row.get("full_name"),
         default_branch: row.get("default_branch"),
         is_private: row.get::<i32, _>("is_private") != 0,
+        avatar_url: row.get("avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }

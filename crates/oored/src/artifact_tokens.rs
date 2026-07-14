@@ -61,7 +61,7 @@ async fn load_artifact_access(
         "SELECT a.expires_at, b.project_id \
          FROM artifacts a \
          JOIN builds b ON b.id = a.build_id \
-         WHERE a.id = ?1",
+         WHERE a.id = ?1 AND a.state = 'available'",
     )
     .bind(artifact_id)
     .fetch_optional(pool)
@@ -134,6 +134,7 @@ pub async fn validate_download_token(
          FROM artifact_download_tokens t \
          JOIN artifacts a ON a.id = t.artifact_id \
          WHERE t.token_hash = ?1 \
+           AND a.state = 'available' \
            AND t.revoked_at IS NULL \
            AND t.expires_at > ?2 \
            AND (t.single_use = 0 OR t.used_at IS NULL)",

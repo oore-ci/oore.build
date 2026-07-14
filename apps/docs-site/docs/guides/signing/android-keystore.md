@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Upload and manage Android keystores for signing builds in Oore CI."
+description: 'Upload and manage Android keystores for signing builds in Oore CI.'
 ---
 
 # Generate an Android Keystore
@@ -25,11 +25,11 @@ keytool -genkey -v -keystore my-release-key.jks \
 
 You'll be prompted for:
 
-| Prompt | Description |
-|---|---|
-| **Keystore password** | Password to protect the keystore file |
-| **Key password** | Password for the specific key (can be same as keystore password) |
-| **Name/organization fields** | Certificate identity information |
+| Prompt                       | Description                                                      |
+| ---------------------------- | ---------------------------------------------------------------- |
+| **Keystore password**        | Password to protect the keystore file                            |
+| **Key password**             | Password for the specific key (can be same as keystore password) |
+| **Name/organization fields** | Certificate identity information                                 |
 
 ::: warning
 Store your keystore file and passwords securely. If lost, you cannot update apps signed with this key on the Play Store. Google recommends using [Play App Signing](https://developer.android.com/studio/publish/app-signing#app-signing-google-play) for production apps.

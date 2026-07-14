@@ -33,7 +33,7 @@ fn local_subject_for_email(email: &str) -> String {
 }
 
 fn trusted_proxy_subject_for_email(email: &str) -> String {
-    format!("warpgate::{}", email.trim().to_lowercase())
+    format!("trusted-proxy::{}", email.trim().to_lowercase())
 }
 
 /// Pending OIDC authorization request stored in memory while the user is
@@ -43,6 +43,7 @@ pub struct PendingAuth {
     pub nonce: Nonce,
     pub redirect_uri: String,
     pub created_at: i64,
+    pub setup_session_hash: Option<String>,
 }
 
 /// Query parameters returned by the IdP on the callback redirect.
@@ -101,18 +102,6 @@ async fn auto_complete_local_setup_if_needed(
         oidc_subject: Some(owner_subject.clone()),
         created_at: owner_created_at,
     });
-    state_file.setup_state = SetupState::Ready;
-    state_file.setup_session = None;
-    state_file.updated_at = now;
-
-    store.save(state_file).await.map_err(|e| {
-        error!(error = %e, "failed to save setup state during local auto-bootstrap");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to finalize local setup",
-        )
-    })?;
 
     let user_id_seed = Uuid::new_v4().to_string();
     let pool = store.pool();
@@ -165,6 +154,19 @@ async fn auto_complete_local_setup_if_needed(
         Some("auto-bootstrap on first local login"),
     )
     .await;
+
+    state_file.setup_state = SetupState::Ready;
+    state_file.setup_session = None;
+    state_file.updated_at = now;
+
+    store.save(state_file).await.map_err(|e| {
+        error!(error = %e, "failed to save setup state during local auto-bootstrap");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to finalize local setup",
+        )
+    })?;
 
     info!(
         email = %owner_email,
@@ -374,6 +376,7 @@ pub async fn oidc_start(
                 nonce,
                 redirect_uri,
                 created_at: now,
+                setup_session_hash: None,
             },
         );
     }
@@ -416,6 +419,14 @@ pub async fn oidc_callback(
             StatusCode::BAD_REQUEST,
             "auth_expired",
             "OIDC authorization request has expired",
+        ));
+    }
+
+    if pending.setup_session_hash.is_some() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_state",
+            "OIDC state belongs to a setup flow",
         ));
     }
 
@@ -932,8 +943,8 @@ pub async fn local_login(
 /// `POST /v1/auth/trusted-proxy/login`
 ///
 /// Creates a session for the identity asserted by a trusted upstream proxy
-/// (for example, Warpgate). This endpoint is only available in Remote mode
-/// when remote auth mode is configured to trusted_proxy.
+/// This endpoint is only available in Remote mode when remote auth mode is
+/// configured to trusted_proxy.
 pub async fn trusted_proxy_login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,

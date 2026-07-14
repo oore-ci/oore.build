@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How Oore CI generates signed download links for build artifacts."
+description: 'How Oore CI generates signed download links for build artifacts.'
 ---
 
 # Artifact Access Model
@@ -11,11 +11,11 @@ How Oore CI stores, secures, and serves build artifacts.
 
 Oore CI supports three artifact storage backends:
 
-| Backend | Description | Best for |
-|---------|-------------|----------|
-| `local` | Files stored on the daemon's filesystem | Development, single-machine setups |
-| `s3` | Amazon S3 or S3-compatible storage | Production deployments |
-| `r2` | Cloudflare R2 | Production deployments with Cloudflare |
+| Backend | Description                             | Best for                               |
+| ------- | --------------------------------------- | -------------------------------------- |
+| `local` | Files stored on the daemon's filesystem | Development, single-machine setups     |
+| `s3`    | Amazon S3 or S3-compatible storage      | Production deployments                 |
+| `r2`    | Cloudflare R2                           | Production deployments with Cloudflare |
 
 Configure storage via the [Settings API](/reference/api/settings#update-artifact-storage) or the web UI. See the [Configure Storage guide](/guides/artifacts/configure-storage) for step-by-step instructions.
 
@@ -35,7 +35,12 @@ When a runner produces a build artifact:
    - Maximum file size: 512 MiB
    - The upload URL is single-use and time-limited
 
-4. **Daemon records the artifact** with its storage location and metadata
+4. **Runner finalizes the reservation**
+   - `POST .../artifacts/{artifact_id}/complete` makes the artifact available
+   - `POST .../artifacts/{artifact_id}/abort` records a failed upload
+   - Pending and failed artifacts are not listed or downloadable
+
+Declared artifact patterns are part of build success: an empty pattern list requires no artifact, while a non-empty list must produce at least one finalized artifact. Missing matches and upload/finalization failures fail the build.
 
 ## Download flow
 
@@ -59,14 +64,15 @@ When a user wants to download an artifact:
 
 Signed URLs are the core security mechanism for artifact access:
 
-| Property | Upload | Download |
-|----------|--------|----------|
-| **TTL** | 30 minutes | 15 minutes |
-| **Auth required to generate** | Runner token | User session + `builds:read` |
-| **URL reusable** | No (single-use for S3) | Until expiry |
-| **Accessible without session** | Yes (presigned) | Yes (presigned) |
+| Property                       | Upload                 | Download                     |
+| ------------------------------ | ---------------------- | ---------------------------- |
+| **TTL**                        | 30 minutes             | 15 minutes                   |
+| **Auth required to generate**  | Runner token           | User session + `builds:read` |
+| **URL reusable**               | No (single-use for S3) | Until expiry                 |
+| **Accessible without session** | Yes (presigned)        | Yes (presigned)              |
 
 The presigned URL model means:
+
 - **No credentials in URLs**: S3 access keys are never exposed to runners or users
 - **Time-limited access**: URLs expire, preventing stale links from being shared indefinitely
 - **No proxy bottleneck**: Downloads go directly to S3/R2, not through the daemon

@@ -18,7 +18,6 @@ export const DEMO_USER_ID = 'usr-demo-owner-001'
 export const DEMO_USER_EMAIL = 'alex@oore.build'
 export const DEMO_USER_ROLE = 'owner' as const
 export const DEMO_OIDC_SUBJECT = 'demo-oidc-subject-001'
-export const DEMO_USER_AVATAR = undefined
 
 export const DEMO_AUTH_TOKEN = 'demo-session-token-static'
 // Year 2099 — never expires during demo use

@@ -6,6 +6,7 @@ import type {
   UpdateArtifactStorageSettingsRequest,
   UpdateExternalAccessNetworkSettingsRequest,
   UpdateInstancePreferencesRequest,
+  UpdateTrustedProxySettingsRequest,
 } from '@/lib/types'
 import {
   configureExternalAccessOidc,
@@ -18,9 +19,11 @@ import {
   testOidcConnection,
   updateArtifactStorageSettings,
   updateExternalAccessNetworkSettings,
+  updateExternalAccessTrustedProxySettings,
   updateInstancePreferences,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 function useAuthToken(): string | null {
@@ -33,7 +36,7 @@ function useAuthToken(): string | null {
 
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
-  return instance?.url ?? null
+  return resolveInstanceApiBaseUrl(instance)
 }
 
 export function useArtifactStorageSettings() {
@@ -44,7 +47,7 @@ export function useArtifactStorageSettings() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifact-storage-settings'],
     queryFn: () => getArtifactStorageSettings(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -56,7 +59,7 @@ export function useUpdateArtifactStorageSettings() {
 
   return useMutation({
     mutationFn: (data: UpdateArtifactStorageSettingsRequest) => {
-      if (baseUrl === null || !token) {
+      if (!baseUrl || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateArtifactStorageSettings(baseUrl, token, data)
@@ -77,7 +80,7 @@ export function useInstancePreferences() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'instance-preferences'],
     queryFn: () => getInstancePreferences(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -89,7 +92,7 @@ export function useUpdateInstancePreferences() {
 
   return useMutation({
     mutationFn: (data: UpdateInstancePreferencesRequest) => {
-      if (baseUrl === null || !token) {
+      if (!baseUrl || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateInstancePreferences(baseUrl, token, data)
@@ -113,7 +116,7 @@ export function useExternalAccessOidc() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-oidc'],
     queryFn: () => getExternalAccessOidc(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -125,7 +128,7 @@ export function useConfigureExternalAccessOidc() {
 
   return useMutation({
     mutationFn: (data: ConfigureExternalAccessOidcRequest) => {
-      if (baseUrl === null || !token) {
+      if (!baseUrl || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return configureExternalAccessOidc(baseUrl, token, data)
@@ -147,7 +150,7 @@ export function useTestOidcConnection() {
 
   return useMutation({
     mutationFn: (data: TestOidcConnectionRequest) => {
-      if (baseUrl === null || !token) {
+      if (!baseUrl || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return testOidcConnection(baseUrl, token, data)
@@ -163,7 +166,7 @@ export function useExternalAccessPreflight() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
     queryFn: () => getExternalAccessPreflight(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -175,19 +178,7 @@ export function useExternalAccessNetworkSettings() {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
     queryFn: () => getExternalAccessNetworkSettings(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
-  })
-}
-
-export function useExternalAccessTrustedProxySettings() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'external-access-trusted-proxy'],
-    queryFn: () => getExternalAccessTrustedProxySettings(baseUrl!, token!),
-    enabled: baseUrl !== null && !!token,
+    enabled: !!baseUrl && !!token,
   })
 }
 
@@ -199,7 +190,7 @@ export function useUpdateExternalAccessNetworkSettings() {
 
   return useMutation({
     mutationFn: (data: UpdateExternalAccessNetworkSettingsRequest) => {
-      if (baseUrl === null || !token) {
+      if (!baseUrl || !token) {
         return Promise.reject(new Error('Not authenticated'))
       }
       return updateExternalAccessNetworkSettings(baseUrl, token, data)
@@ -210,6 +201,42 @@ export function useUpdateExternalAccessNetworkSettings() {
           instance?.id ?? '__none__',
           'external-access-network-settings',
         ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
+      })
+    },
+  })
+}
+
+export function useExternalAccessTrustedProxySettings() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'external-access-trusted-proxy'],
+    queryFn: () => getExternalAccessTrustedProxySettings(baseUrl!, token!),
+    enabled: !!baseUrl && !!token,
+  })
+}
+
+export function useUpdateExternalAccessTrustedProxySettings() {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (data: UpdateTrustedProxySettingsRequest) => {
+      if (!baseUrl || !token) {
+        return Promise.reject(new Error('Not authenticated'))
+      }
+      return updateExternalAccessTrustedProxySettings(baseUrl, token, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'external-access-trusted-proxy'],
       })
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],

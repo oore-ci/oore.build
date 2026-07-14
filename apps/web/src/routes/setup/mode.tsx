@@ -88,8 +88,6 @@ function SetupModeStep() {
     setCurrentStep(1)
   })
 
-
-
   const errorMessage = setupModeMutation.error
     ? getApiErrorMessage(setupModeMutation.error, {
         invalid_state: 'Setup mode cannot be changed after owner creation.',
@@ -166,7 +164,7 @@ function SetupModeStep() {
                       </SelectItem>
                       <SelectItem value="remote_oidc">Remote (OIDC)</SelectItem>
                       <SelectItem value="remote_trusted">
-                        Remote (Trusted Proxy / Warpgate)
+                        Remote (Trusted Proxy)
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -176,7 +174,7 @@ function SetupModeStep() {
                     ? 'Best for solo developers. Only accessible from this machine \u2014 no external auth needed.'
                     : field.value === 'remote_oidc'
                       ? 'Best for teams. Users authenticate via an identity provider (Google, Okta, etc.).'
-                      : 'Best for zero-trust setups. A reverse proxy (e.g., Warpgate) handles authentication.'}
+                      : 'Best when an upstream authentication proxy handles identity.'}
                 </p>
                 <FormMessage />
               </FormItem>

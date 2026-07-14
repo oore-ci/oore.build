@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
@@ -17,10 +16,10 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import {
   useSetupLocalOwnerCreate,
-  useSetupOidcStart,
   useSetupStatus,
   useSetupTrustedProxyClaimOwner,
 } from '@/hooks/use-setup'
+import { useSetupOidcVerificationStart } from '@/hooks/use-authorization-start'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { useSetupStore } from '@/stores/setup-store'
 import {
@@ -28,9 +27,10 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
+import { useOwnerStepTransition } from '@/hooks/use-setup-route-transitions'
 
 const localOwnerSchema = z.object({
-  email: z.string().email('Enter a valid email address'),
+  email: z.email('Enter a valid email address'),
 })
 
 type LocalOwnerForm = z.infer<typeof localOwnerSchema>
@@ -93,10 +93,11 @@ function OwnerStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
-  const startOidcMutation = useSetupOidcStart()
+  const startOidcMutation = useSetupOidcVerificationStart()
   const localOwnerMutation = useSetupLocalOwnerCreate()
   const trustedProxyClaimMutation = useSetupTrustedProxyClaimOwner()
   const { data: status } = useSetupStatus()
+  useOwnerStepTransition(status)
 
   const localOwnerForm = useForm<LocalOwnerForm>({
     resolver: zodResolver(localOwnerSchema),
@@ -123,23 +124,15 @@ function OwnerStep() {
         trusted_proxy_peer_not_allowed:
           'This request did not come from a trusted proxy peer.',
         trusted_proxy_identity_missing:
-          'Trusted proxy identity header is missing. Check Warpgate header forwarding.',
+          'Trusted proxy identity header is missing. Check proxy header forwarding.',
         trusted_proxy_identity_invalid:
           'Trusted proxy identity header must contain an email address.',
+        trusted_proxy_owner_email_mismatch:
+          'The proxy-authenticated email does not match the configured initial owner email.',
         mode_restricted:
           'Switch setup mode to Remote (Trusted Proxy) before claiming owner.',
       })
     : null
-
-  const ownerStepDone = useRef(false)
-  if (status && !ownerStepDone.current) {
-    ownerStepDone.current = true
-    setCurrentStep(status.runtime_mode === 'local' ? 2 : 3)
-    if (status.state === 'owner_created') {
-      setCurrentStep(status.runtime_mode === 'local' ? 3 : 4)
-      queueMicrotask(() => void navigate({ to: '/setup/complete' }))
-    }
-  }
 
   if (!status) {
     return (
@@ -154,7 +147,7 @@ function OwnerStep() {
     status.runtime_mode === 'remote' &&
     status.remote_auth_mode === 'trusted_proxy'
 
-  const handleStartOidc = useCallback(() => {
+  function handleStartOidc() {
     if (!sessionToken) return
 
     const redirectUri = `${window.location.origin}/auth/callback`
@@ -165,7 +158,6 @@ function OwnerStep() {
           try {
             sessionStorage.setItem('oore_oidc_state', data.state)
             sessionStorage.setItem('oore_oidc_flow', 'setup_owner')
-            sessionStorage.setItem('oore_setup_session_token', sessionToken)
           } catch {
             // ignore
           }
@@ -173,7 +165,7 @@ function OwnerStep() {
         },
       },
     )
-  }, [sessionToken, startOidcMutation])
+  }
 
   function handleCreateLocalOwner(data: LocalOwnerForm) {
     if (!sessionToken) return
@@ -191,7 +183,7 @@ function OwnerStep() {
     )
   }
 
-  const handleClaimTrustedProxyOwner = useCallback(() => {
+  function handleClaimTrustedProxyOwner() {
     if (!sessionToken) return
     trustedProxyClaimMutation.mutate(
       { sessionToken },
@@ -202,12 +194,12 @@ function OwnerStep() {
         },
       },
     )
-  }, [sessionToken, trustedProxyClaimMutation, setCurrentStep, navigate])
+  }
 
-  const handleRestartFromToken = useCallback(() => {
+  function handleRestartFromToken() {
     useSetupStore.getState().reset()
     void navigate({ to: '/setup' })
-  }, [navigate])
+  }
 
   return (
     <div className="space-y-4">
@@ -218,7 +210,7 @@ function OwnerStep() {
           {isLocalMode
             ? 'Create a local owner account to finish setup without OIDC.'
             : isTrustedProxyMode
-              ? 'Confirm owner identity from your trusted proxy (Warpgate).'
+              ? 'Confirm owner identity from your trusted proxy.'
               : "Authenticate with your OIDC provider to verify your identity. Your email and OIDC subject will be extracted from the provider's ID token."}
         </p>
       </div>
@@ -261,7 +253,7 @@ function OwnerStep() {
             >
               {localOwnerMutation.isPending
                 ? 'Creating owner...'
-                : 'Create Local Owner'}
+                : 'Create local owner'}
             </Button>
           </form>
         </Form>
@@ -281,7 +273,7 @@ function OwnerStep() {
           >
             {trustedProxyClaimMutation.isPending
               ? 'Claiming owner...'
-              : 'Confirm Owner from Trusted Proxy'}
+              : 'Confirm owner from trusted proxy'}
           </Button>
 
           <Button
@@ -289,7 +281,7 @@ function OwnerStep() {
             onClick={() => void navigate({ to: '/setup/trusted-proxy' })}
             className="w-full"
           >
-            Back to Trusted Proxy Settings
+            Back to trusted proxy settings
           </Button>
         </>
       ) : (
@@ -319,7 +311,7 @@ function OwnerStep() {
           >
             {startOidcMutation.isPending
               ? 'Redirecting...'
-              : 'Authenticate with OIDC Provider'}
+              : 'Authenticate with OIDC provider'}
           </Button>
 
           <Button
@@ -327,7 +319,7 @@ function OwnerStep() {
             onClick={() => void navigate({ to: '/setup/oidc' })}
             className="w-full"
           >
-            Back to OIDC Settings
+            Back to OIDC settings
           </Button>
         </>
       )}
@@ -337,7 +329,7 @@ function OwnerStep() {
         onClick={handleRestartFromToken}
         className="w-full"
       >
-        Restart from Token Step
+        Restart from token step
       </Button>
     </div>
   )

@@ -13,8 +13,6 @@ import type {
   CreateApiTokenResponse,
   CreateBuildRequest,
   CreateBuildResponse,
-  CreateLocalGitIntegrationRequest,
-  CreateLocalGitIntegrationResponse,
   CreateNotificationChannelRequest,
   CreatePipelineRequest,
   CreatePipelineResponse,
@@ -23,12 +21,10 @@ import type {
   CreateScopedDownloadTokenRequest,
   CreateScopedDownloadTokenResponse,
   DeleteNotificationChannelResponse,
-  EffectiveProjectRetentionResponse,
+  DiscoverRepositoryWorkflowsResponse,
   ExternalAccessNetworkSettingsResponse,
   ExternalAccessPreflightResponse,
   GetExternalAccessOidcResponse,
-  GitHubAppCompleteRequest,
-  GitHubAppCompleteResponse,
   GitHubAppStartRequest,
   GitHubAppStartResponse,
   GitLabAuthorizeRequest,
@@ -40,7 +36,6 @@ import type {
   InviteUserRequest,
   InviteUserResponse,
   ListApiTokensResponse,
-  ListArtifactDownloadTokensResponse,
   ListArtifactsResponse,
   ListAuditLogsResponse,
   ListBuildsResponse,
@@ -71,6 +66,7 @@ import type {
   RetentionCleanupSummaryResponse,
   RetentionPolicyResponse,
   RevokeApiTokenResponse,
+  RuntimeUpdateStatus,
   SetupCompleteResponse,
   SetupLocalOwnerCreateResponse,
   SetupOidcStartResponse,
@@ -96,17 +92,17 @@ import type {
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
-  UpdateProjectRetentionOverrideRequest,
   UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
   UpdateTrustedProxySettingsRequest,
   UpdateUserRoleRequest,
   UpdateUserRoleResponse,
-  UserProfileResponse,
   ValidatePipelineRequest,
   ValidatePipelineResponse,
 } from '@/lib/types'
+import { READ_ONLY_REASON, isDemoMutationBlocked } from '@/lib/demo-mode'
+import { isLoopbackUrl } from '@/lib/connectivity'
 
 // ── Error class ─────────────────────────────────────────────────
 
@@ -124,6 +120,8 @@ export class ApiClientError extends Error {
   }
 }
 
+type RequestOptions = Pick<RequestInit, 'signal'>
+
 // ── Fetch wrapper ───────────────────────────────────────────────
 
 async function request<T>(
@@ -132,6 +130,12 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const method = (options.method ?? 'GET').toUpperCase()
+  if (isDemoMutationBlocked(method, path)) {
+    throw new ApiClientError(403, {
+      error: READ_ONLY_REASON,
+      code: 'demo_read_only',
+    })
+  }
   // Only set Content-Type on requests with a body. GET/HEAD without it
   // avoids triggering CORS preflight (important for tunneled backends).
   const headers: Record<string, string> = {
@@ -231,7 +235,6 @@ export function setupOidcStart(
 
 export function setupOidcVerify(
   baseUrl: string,
-  sessionToken: string,
   code: string,
   state: string,
 ): Promise<SetupOidcVerifyResponse> {
@@ -240,7 +243,6 @@ export function setupOidcVerify(
     '/v1/setup/owner/verify-oidc',
     {
       method: 'POST',
-      headers: authHeaders(sessionToken),
       body: JSON.stringify({ code, state }),
     },
   )
@@ -325,11 +327,21 @@ export function getSetupSummary(
 
 // ── User management API ─────────────────────────────────────────
 
-export function getMe(
+export function getBackendUpdateStatus(
   baseUrl: string,
   token: string,
-): Promise<UserProfileResponse> {
-  return request<UserProfileResponse>(baseUrl, '/v1/users/me', {
+): Promise<RuntimeUpdateStatus> {
+  return request<RuntimeUpdateStatus>(baseUrl, '/v1/system/update', {
+    headers: authHeaders(token),
+  })
+}
+
+export function startBackendUpdate(
+  baseUrl: string,
+  token: string,
+): Promise<RuntimeUpdateStatus> {
+  return request<RuntimeUpdateStatus>(baseUrl, '/v1/system/update', {
+    method: 'POST',
     headers: authHeaders(token),
   })
 }
@@ -424,6 +436,7 @@ export function listIntegrations(
   baseUrl: string,
   token: string,
   params?: { provider?: string; limit?: number; offset?: number },
+  options?: RequestOptions,
 ): Promise<ListIntegrationsResponse> {
   const query = new URLSearchParams()
   if (params?.provider) query.set('provider', params.provider)
@@ -433,7 +446,7 @@ export function listIntegrations(
   return request<ListIntegrationsResponse>(
     baseUrl,
     `/v1/integrations${qs ? `?${qs}` : ''}`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -462,11 +475,12 @@ export function listIntegrationRepos(
   baseUrl: string,
   token: string,
   integrationId: string,
+  options?: RequestOptions,
 ): Promise<ListRepositoriesResponse> {
   return request<ListRepositoriesResponse>(
     baseUrl,
     `/v1/integrations/${integrationId}/repositories`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -478,22 +492,6 @@ export function githubAppStart(
   return request<GitHubAppStartResponse>(
     baseUrl,
     '/v1/integrations/github/start',
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
-}
-
-export function githubAppComplete(
-  baseUrl: string,
-  token: string,
-  data: GitHubAppCompleteRequest,
-): Promise<GitHubAppCompleteResponse> {
-  return request<GitHubAppCompleteResponse>(
-    baseUrl,
-    '/v1/integrations/github/complete',
     {
       method: 'POST',
       headers: authHeaders(token),
@@ -562,22 +560,6 @@ export function gitlabAuthorize(
   )
 }
 
-export function createLocalGitIntegration(
-  baseUrl: string,
-  token: string,
-  data: CreateLocalGitIntegrationRequest,
-): Promise<CreateLocalGitIntegrationResponse> {
-  return request<CreateLocalGitIntegrationResponse>(
-    baseUrl,
-    '/v1/integrations/local-git',
-    {
-      method: 'POST',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
-}
-
 export function browseLocalGitDirectories(
   baseUrl: string,
   token: string,
@@ -597,30 +579,6 @@ export function browseLocalGitDirectories(
   })
 }
 
-export function listLocalGitIntegrations(
-  baseUrl: string,
-  token: string,
-): Promise<ListIntegrationsResponse> {
-  return request<ListIntegrationsResponse>(
-    baseUrl,
-    '/v1/integrations/local-git',
-    {
-      headers: authHeaders(token),
-    },
-  )
-}
-
-export function deleteLocalGitIntegration(
-  baseUrl: string,
-  token: string,
-  id: string,
-): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(baseUrl, `/v1/integrations/local-git/${id}`, {
-    method: 'DELETE',
-    headers: authHeaders(token),
-  })
-}
-
 // ── Runner API ─────────────────────────────────────────────────
 
 export function listRunners(
@@ -628,16 +586,6 @@ export function listRunners(
   token: string,
 ): Promise<ListRunnersResponse> {
   return request<ListRunnersResponse>(baseUrl, '/v1/runners', {
-    headers: authHeaders(token),
-  })
-}
-
-export function getRunner(
-  baseUrl: string,
-  token: string,
-  runnerId: string,
-): Promise<UpdateRunnerResponse> {
-  return request<UpdateRunnerResponse>(baseUrl, `/v1/runners/${runnerId}`, {
     headers: authHeaders(token),
   })
 }
@@ -859,6 +807,7 @@ export function listBuilds(
     limit?: number
     offset?: number
   },
+  options?: RequestOptions,
 ): Promise<ListBuildsResponse> {
   const query = new URLSearchParams()
   if (params?.project_id) query.set('project_id', params.project_id)
@@ -871,7 +820,7 @@ export function listBuilds(
   return request<ListBuildsResponse>(
     baseUrl,
     `/v1/builds${qs ? `?${qs}` : ''}`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -879,9 +828,11 @@ export function getBuild(
   baseUrl: string,
   token: string,
   buildId: string,
+  options?: RequestOptions,
 ): Promise<BuildDetailResponse> {
   return request<BuildDetailResponse>(baseUrl, `/v1/builds/${buildId}`, {
     headers: authHeaders(token),
+    signal: options?.signal,
   })
 }
 
@@ -928,6 +879,7 @@ export function getBuildLogs(
   token: string,
   buildId: string,
   params?: { after_sequence?: number; limit?: number },
+  options?: RequestOptions,
 ): Promise<BuildLogsResponse> {
   const query = new URLSearchParams()
   if (params?.after_sequence != null)
@@ -937,21 +889,38 @@ export function getBuildLogs(
   return request<BuildLogsResponse>(
     baseUrl,
     `/v1/builds/${buildId}/logs${qs ? `?${qs}` : ''}`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
 // ── Artifact API ────────────────────────────────────────────
 
+function useInstanceOrigin(baseUrl: string, downloadUrl: string): string {
+  if (!isLoopbackUrl(downloadUrl)) return downloadUrl
+
+  try {
+    const download = new URL(downloadUrl)
+    const instance = new URL(baseUrl)
+    if (download.origin === instance.origin) return downloadUrl
+    return new URL(
+      `${download.pathname}${download.search}${download.hash}`,
+      instance,
+    ).toString()
+  } catch {
+    return downloadUrl
+  }
+}
+
 export function listArtifacts(
   baseUrl: string,
   token: string,
   buildId: string,
+  options?: RequestOptions,
 ): Promise<ListArtifactsResponse> {
   return request<ListArtifactsResponse>(
     baseUrl,
     `/v1/builds/${buildId}/artifacts`,
-    { headers: authHeaders(token) },
+    { headers: authHeaders(token), signal: options?.signal },
   )
 }
 
@@ -964,7 +933,10 @@ export function getArtifactDownloadLink(
     baseUrl,
     `/v1/artifacts/${artifactId}/download-link`,
     { method: 'POST', headers: authHeaders(token) },
-  )
+  ).then((response) => ({
+    ...response,
+    download_url: useInstanceOrigin(baseUrl, response.download_url),
+  }))
 }
 
 export function createScopedDownloadToken(
@@ -981,31 +953,10 @@ export function createScopedDownloadToken(
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },
-  )
-}
-
-export function listScopedDownloadTokens(
-  baseUrl: string,
-  token: string,
-  artifactId: string,
-): Promise<ListArtifactDownloadTokensResponse> {
-  return request<ListArtifactDownloadTokensResponse>(
-    baseUrl,
-    `/v1/artifacts/${artifactId}/scoped-tokens`,
-    { headers: authHeaders(token) },
-  )
-}
-
-export function revokeScopedDownloadToken(
-  baseUrl: string,
-  token: string,
-  tokenId: string,
-): Promise<{ revoked: boolean }> {
-  return request<{ revoked: boolean }>(
-    baseUrl,
-    `/v1/artifact-tokens/${tokenId}`,
-    { method: 'DELETE', headers: authHeaders(token) },
-  )
+  ).then((response) => ({
+    ...response,
+    download_url: useInstanceOrigin(baseUrl, response.download_url),
+  }))
 }
 
 // ── Project API ─────────────────────────────────────────────────
@@ -1067,6 +1018,12 @@ export async function deleteProject(
   token: string,
   projectId: string,
 ): Promise<void> {
+  if (isDemoMutationBlocked('DELETE', `/v1/projects/${projectId}`)) {
+    throw new ApiClientError(403, {
+      error: READ_ONLY_REASON,
+      code: 'demo_read_only',
+    })
+  }
   const res = await fetch(`${baseUrl}/v1/projects/${projectId}`, {
     method: 'DELETE',
     headers: {
@@ -1103,6 +1060,23 @@ export function listPipelines(
   return request<ListPipelinesResponse>(
     baseUrl,
     `/v1/projects/${projectId}/pipelines${qs ? `?${qs}` : ''}`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function discoverRepositoryWorkflows(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  params?: { reference?: string; path?: string },
+): Promise<DiscoverRepositoryWorkflowsResponse> {
+  const query = new URLSearchParams()
+  if (params?.reference) query.set('ref', params.reference)
+  if (params?.path) query.set('path', params.path)
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return request<DiscoverRepositoryWorkflowsResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/repository-workflows${suffix}`,
     { headers: authHeaders(token) },
   )
 }
@@ -1158,6 +1132,12 @@ export async function deletePipeline(
   token: string,
   pipelineId: string,
 ): Promise<void> {
+  if (isDemoMutationBlocked('DELETE', `/v1/pipelines/${pipelineId}`)) {
+    throw new ApiClientError(403, {
+      error: READ_ONLY_REASON,
+      code: 'demo_read_only',
+    })
+  }
   const res = await fetch(`${baseUrl}/v1/pipelines/${pipelineId}`, {
     method: 'DELETE',
     headers: {
@@ -1323,18 +1303,6 @@ export function createNotificationChannel(
   )
 }
 
-export function getNotificationChannel(
-  baseUrl: string,
-  token: string,
-  id: string,
-): Promise<NotificationChannelResponse> {
-  return request<NotificationChannelResponse>(
-    baseUrl,
-    `/v1/settings/notification-channels/${id}`,
-    { headers: authHeaders(token) },
-  )
-}
-
 export function updateNotificationChannel(
   baseUrl: string,
   token: string,
@@ -1425,50 +1393,6 @@ export function getRetentionLastCleanup(
     baseUrl,
     '/v1/settings/retention/last-cleanup',
     { headers: authHeaders(token) },
-  )
-}
-
-export function getProjectRetention(
-  baseUrl: string,
-  token: string,
-  projectId: string,
-): Promise<EffectiveProjectRetentionResponse> {
-  return request<EffectiveProjectRetentionResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}/retention`,
-    { headers: authHeaders(token) },
-  )
-}
-
-export function updateProjectRetention(
-  baseUrl: string,
-  token: string,
-  projectId: string,
-  data: UpdateProjectRetentionOverrideRequest,
-): Promise<EffectiveProjectRetentionResponse> {
-  return request<EffectiveProjectRetentionResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}/retention`,
-    {
-      method: 'PUT',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
-  )
-}
-
-export async function deleteProjectRetention(
-  baseUrl: string,
-  token: string,
-  projectId: string,
-): Promise<EffectiveProjectRetentionResponse> {
-  return request<EffectiveProjectRetentionResponse>(
-    baseUrl,
-    `/v1/projects/${projectId}/retention`,
-    {
-      method: 'DELETE',
-      headers: authHeaders(token),
-    },
   )
 }
 

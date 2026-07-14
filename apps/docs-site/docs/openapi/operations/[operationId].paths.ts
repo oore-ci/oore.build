@@ -1,5 +1,5 @@
-import { usePaths } from "vitepress-openapi";
-import spec from "../../public/openapi.json" with { type: "json" };
+import { usePaths } from 'vitepress-openapi'
+import spec from '../../public/openapi.json' with { type: 'json' }
 
 export default {
   paths() {
@@ -10,6 +10,6 @@ export default {
           operationId,
           pageTitle: `${summary} - Oore CI API`,
         },
-      }));
+      }))
   },
-};
+}

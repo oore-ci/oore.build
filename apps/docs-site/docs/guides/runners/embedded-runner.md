@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure the embedded build runner that ships with the Oore CI daemon."
+description: 'Configure the embedded build runner that ships with the Oore CI daemon.'
 ---
 
 # Embedded Runner
@@ -16,6 +16,8 @@ When `oored run` starts without `OORED_RUNNER_MODE=external`, the daemon:
 3. Build logs stream directly within the same process
 4. Artifacts are handled locally
 
+If the daemon is bound to a specific private address, `oored` also binds the same port on loopback so the embedded runner can heartbeat and claim work without exposing a wildcard listener.
+
 ## When to use
 
 The embedded runner is appropriate for:
@@ -29,6 +31,8 @@ The embedded runner is appropriate for:
 1. Go to **Settings > Runners** in the web UI
 2. An embedded runner should appear as `online`
 3. Trigger a test build — it should move from `queued` to `running` within seconds
+
+If the runner shows `offline` with a last heartbeat of `never`, verify `http://127.0.0.1:<daemon-port>/readyz` on the Mac and inspect the daemon log before creating projects or pipelines.
 
 ## Switching to external mode
 

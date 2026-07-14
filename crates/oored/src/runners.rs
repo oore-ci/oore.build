@@ -5,9 +5,9 @@ use axum::extract::{FromRequestParts, Path, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use oore_contract::{
-    ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobResponse, ClaimedJob,
-    JobStatusResponse, ListRunnersResponse, RegisterRunnerRequest, RegisterRunnerResponse, Runner,
-    RunnerCheckoutAuth, RunnerCheckoutAuthResponse, RunnerHeartbeatRequest, RunnerStatus,
+    ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobRequest, ClaimJobResponse,
+    ClaimedJob, JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION,
+    RegisterRunnerRequest, RegisterRunnerResponse, Runner, RunnerHeartbeatRequest, RunnerStatus,
     UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
 };
 use sqlx::Row;
@@ -268,12 +268,23 @@ pub async fn claim_job(
     State(state): State<Arc<AppState>>,
     Path(runner_id): Path<String>,
     runner_auth: RunnerAuth,
+    Json(req): Json<ClaimJobRequest>,
 ) -> ApiResult<ClaimJobResponse> {
     if runner_auth.runner_id != runner_id {
         return Err(api_err(
             StatusCode::FORBIDDEN,
             "runner_mismatch",
             "Runner token does not match the requested runner ID",
+        ));
+    }
+    if req.protocol_version != RUNNER_PROTOCOL_VERSION {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "runner_protocol_mismatch",
+            format!(
+                "Runner protocol {} is unsupported; expected {}",
+                req.protocol_version, RUNNER_PROTOCOL_VERSION
+            ),
         ));
     }
 
@@ -304,10 +315,45 @@ pub async fn claim_job(
     let pipeline_id: String = build_row.get("pipeline_id");
     let build_number: i64 = build_row.get("build_number");
     let config_snapshot_str: String = build_row.get("config_snapshot");
-    let config_snapshot: serde_json::Value =
+    let mut config_snapshot: serde_json::Value =
         serde_json::from_str(&config_snapshot_str).unwrap_or_default();
     let commit_sha: Option<String> = build_row.get("commit_sha");
     let branch: Option<String> = build_row.get("branch");
+
+    let source_row = sqlx::query(
+        "SELECT i.provider, r.full_name \
+         FROM projects p \
+         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE p.id = ?1",
+    )
+    .bind(&project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to resolve runner checkout source");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve checkout",
+        )
+    })?;
+    if let Some(source) = source_row
+        && source.get::<String, _>("provider") == "gitlab"
+        && let Some(snapshot) = config_snapshot.as_object_mut()
+    {
+        let full_name: String = source.get("full_name");
+        let encoded_name = full_name
+            .split('/')
+            .map(|part| urlencoding::encode(part).into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        snapshot.insert(
+            "checkout_proxy_path".to_string(),
+            format!("/v1/runners/{runner_id}/jobs/{build_id}/gitlab/{encoded_name}.git").into(),
+        );
+    }
 
     let actor_str = format!("runner:{runner_id}");
 
@@ -384,92 +430,6 @@ pub async fn claim_job(
             branch,
             lease_expires_at,
         }),
-    }))
-}
-
-/// `GET /v1/runners/{runner_id}/jobs/{job_id}/checkout-auth` — checkout credentials for assigned job.
-pub async fn get_checkout_auth(
-    State(state): State<Arc<AppState>>,
-    Path((runner_id, job_id)): Path<(String, String)>,
-    runner_auth: RunnerAuth,
-) -> ApiResult<RunnerCheckoutAuthResponse> {
-    if runner_auth.runner_id != runner_id {
-        return Err(api_err(
-            StatusCode::FORBIDDEN,
-            "runner_mismatch",
-            "Runner token does not match the requested runner ID",
-        ));
-    }
-
-    let store = state.store.lock().await;
-    let pool = store.pool();
-
-    let row = sqlx::query(
-        "SELECT b.runner_id, i.provider, i.auth_mode, inst.account_name, c.encrypted_value \
-         FROM builds b \
-         JOIN projects p ON p.id = b.project_id \
-         JOIN integration_repositories r ON r.id = p.repository_id \
-         JOIN integration_installations inst ON inst.id = r.installation_id \
-         JOIN integrations i ON i.id = inst.integration_id \
-         LEFT JOIN integration_credentials c ON c.integration_id = i.id AND c.credential_type = 'access_token' \
-         WHERE b.id = ?1",
-    )
-    .bind(&job_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, job_id = %job_id, "failed to fetch checkout auth metadata");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to fetch checkout credentials",
-        )
-    })?
-    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
-
-    let assigned_runner_id: Option<String> = row.get("runner_id");
-    if assigned_runner_id.as_deref() != Some(&runner_id) {
-        return Err(api_err(
-            StatusCode::FORBIDDEN,
-            "runner_mismatch",
-            "This build is not assigned to your runner",
-        ));
-    }
-
-    let provider: String = row.get("provider");
-    if provider != "gitlab" {
-        return Ok(Json(RunnerCheckoutAuthResponse { auth: None }));
-    }
-
-    let encrypted_value: Option<String> = row.get("encrypted_value");
-    let encrypted_value = encrypted_value.ok_or_else(|| {
-        api_err(
-            StatusCode::CONFLICT,
-            "missing_checkout_credentials",
-            "GitLab access token is missing; reconnect the GitLab integration",
-        )
-    })?;
-
-    let password =
-        crate::crypto::decrypt(&encrypted_value, &state.encryption_key).map_err(|e| {
-            error!(error = %e, job_id = %job_id, "failed to decrypt GitLab checkout token");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "encryption_error",
-                "Failed to decrypt checkout credentials",
-            )
-        })?;
-
-    let auth_mode: String = row.get("auth_mode");
-    let account_name: String = row.get("account_name");
-    let username = if auth_mode == "oauth_app" {
-        "oauth2".to_string()
-    } else {
-        account_name
-    };
-
-    Ok(Json(RunnerCheckoutAuthResponse {
-        auth: Some(RunnerCheckoutAuth { username, password }),
     }))
 }
 

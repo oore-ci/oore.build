@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -8,6 +8,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
+  Folder02Icon,
   InformationCircleIcon,
   Link04Icon,
 } from '@hugeicons/core-free-icons'
@@ -28,6 +29,14 @@ import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
   Table,
   TableBody,
   TableCell,
@@ -37,6 +46,8 @@ import {
 } from '@/components/ui/table'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import RepositoryAvatar from '@/components/repository-avatar'
+import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
@@ -84,20 +95,18 @@ function ProjectsListPage() {
   const projectsLoading = isLoading || integrationsQuery.isLoading
   const projectsError = error ?? integrationsQuery.error
 
-  const openCreateRef = useRef(false)
-  if (
+  const openCreateFromSearch =
     search.openCreate === '1' &&
     !projectsLoading &&
     !projectsError &&
-    canWriteProjects &&
-    !openCreateRef.current
-  ) {
-    openCreateRef.current = true
-    // Schedule state update for after render completes
-    queueMicrotask(() => {
-      setCreateOpen(true)
+    canWriteProjects
+  const isCreateOpen = createOpen || openCreateFromSearch
+
+  function handleCreateOpenChange(open: boolean) {
+    setCreateOpen(() => open)
+    if (!open && search.openCreate === '1') {
       void navigate({ to: '/projects', search: {}, replace: true })
-    })
+    }
   }
 
   return (
@@ -108,9 +117,13 @@ function ProjectsListPage() {
         description="Repository and pipeline entry points for your build system."
         actions={
           projects.length > 0 && canWriteProjects ? (
-            <Button onClick={() => setCreateOpen(true)}>
-              <HugeiconsIcon icon={Add01Icon} size={16} />
-              New Project
+            <Button
+              onClick={() => setCreateOpen(true)}
+              disabled={isDemoMode}
+              title={isDemoMode ? READ_ONLY_REASON : undefined}
+            >
+              <HugeiconsIcon icon={Add01Icon} />
+              New project
             </Button>
           ) : undefined
         }
@@ -136,51 +149,53 @@ function ProjectsListPage() {
       ) : null}
 
       {!projectsLoading && !projectsError && projects.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Create Your First Project
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
+        <Empty className="border bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={Folder02Icon} />
+            </EmptyMedia>
+            <EmptyTitle>Create your first project</EmptyTitle>
+            <EmptyDescription>
               {runtimeMode === 'local'
                 ? 'Choose a local Git repository to create your first project.'
                 : noConnectedSources
-                  ? 'Create a project from a local repository path, or connect a source to pick from synced repositories.'
+                  ? 'Connect a source before creating your first remote project.'
                   : 'Create a project from a connected source repository to define pipelines and start builds.'}
-            </p>
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              {canWriteProjects ? (
-                <Button onClick={() => setCreateOpen(true)}>
-                  <HugeiconsIcon icon={Add01Icon} size={16} />
-                  Create Project
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Ask an owner/admin/developer to create the first project.
-                </p>
-              )}
-
               {runtimeMode === 'remote' && noConnectedSources ? (
                 canWriteIntegrations ? (
                   <Button
-                    variant="outline"
                     render={<Link to={integrationConnectTo} />}
                     nativeButton={false}
                   >
-                    <HugeiconsIcon icon={Link04Icon} size={16} />
-                    Connect Source
+                    <HugeiconsIcon icon={Link04Icon} />
+                    Connect source
                   </Button>
                 ) : (
                   <p className="text-xs text-muted-foreground">
                     Ask an owner/admin to connect a source.
                   </p>
                 )
-              ) : null}
+              ) : canWriteProjects ? (
+                <Button
+                  onClick={() => setCreateOpen(true)}
+                  disabled={isDemoMode}
+                  title={isDemoMode ? READ_ONLY_REASON : undefined}
+                >
+                  <HugeiconsIcon icon={Add01Icon} />
+                  Create project
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Ask an owner/admin/developer to create the first project.
+                </p>
+              )}
             </div>
-          </CardContent>
-        </Card>
+          </EmptyContent>
+        </Empty>
       ) : null}
 
       {!projectsLoading && !projectsError && projects.length > 0 ? (
@@ -229,13 +244,22 @@ function ProjectsListPage() {
                     }}
                   >
                     <TableCell>
-                      <div>
-                        <p className="font-medium group-hover:underline">
-                          {project.name}
-                        </p>
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          {project.id.slice(0, 8)}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        {project.repository_full_name ? (
+                          <RepositoryAvatar
+                            fullName={project.repository_full_name}
+                            avatarUrl={project.repository_avatar_url}
+                          />
+                        ) : null}
+                        <div>
+                          <p className="font-medium group-hover:underline">
+                            {project.name}
+                          </p>
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            {project.repository_full_name ??
+                              project.id.slice(0, 8)}
+                          </p>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
@@ -255,7 +279,10 @@ function ProjectsListPage() {
         </Card>
       ) : null}
 
-      <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateProjectDialog
+        open={isCreateOpen}
+        onOpenChange={handleCreateOpenChange}
+      />
     </PageLayout>
   )
 }

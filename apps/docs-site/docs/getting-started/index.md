@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Learn what Oore CI is and how its components work together to provide self-hosted Flutter CI."
+description: 'Learn what Oore CI is and how its components work together to provide self-hosted Flutter CI.'
 ---
 
 # What is Oore CI?
@@ -11,11 +11,11 @@ Oore CI is a self-hosted, Flutter-first mobile CI and internal app distribution 
 
 Oore CI has three components:
 
-| Component | What it does |
-|---|---|
-| **oored** (daemon) | Runs on your Mac. Serves the API, manages builds, stores state in SQLite. |
-| **oore** (CLI) | Operator tool for setup, runner management, and diagnostics. |
-| **Web UI** | React app for triggering builds, managing projects, and distributing artifacts. Hosted at `ci.oore.build` or self-hosted alongside the daemon. |
+| Component          | What it does                                                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **oored** (daemon) | Runs on your Mac. Serves the API, manages builds, stores state in SQLite.                                                                                                                          |
+| **oore** (CLI)     | Operator tool for setup, runner management, and diagnostics.                                                                                                                                       |
+| **Web UI**         | React client for setup, triggering builds, managing projects, and distributing artifacts. Hosted at `ci.oore.build` or self-hosted; the backend still owns setup, auth, data, and build execution. |
 
 The web UI connects to your daemon over HTTPS. Your source code and signing keys stay on your hardware.
 
@@ -25,7 +25,7 @@ The web UI connects to your daemon over HTTPS. Your source code and signing keys
 - Sign Android builds with your keystore
 - Sign iOS builds with certificates and provisioning profiles (manual or App Store Connect API)
 - Distribute build artifacts to your team via signed download links
-- Authenticate users with **any OIDC provider** (Google, Okta, Azure AD, Auth0, Keycloak)
+- Authenticate users with **Local Only**, **Remote OIDC**, or **Remote Trusted Proxy** modes
 - Control access with **role-based permissions** (owner, admin, developer, QA viewer)
 - Connect **GitHub** and **GitLab** repositories with webhook-triggered builds
 - Configure pipelines with a **YAML file** in your repo or through the UI
@@ -36,8 +36,8 @@ Follow these pages in order to get your first instance running:
 
 1. [**Prerequisites**](/getting-started/prerequisites) — check your system meets the requirements
 2. [**Install**](/getting-started/install) — install release binaries via `curl -fsSL https://oore.build/install | bash`
-3. [**Hosted UI Onboarding**](/getting-started/hosted-ui-onboarding) — connect your backend to `ci.oore.build`
-4. [**Set Up Your Instance**](/getting-started/first-instance) — run the setup wizard and connect your identity provider
+3. [**Set Up Your Instance**](/getting-started/first-instance) — choose Local Only, Remote OIDC, or Remote Trusted Proxy
+4. [**Hosted UI Onboarding**](/getting-started/hosted-ui-onboarding) — connect an HTTPS-reachable backend to `ci.oore.build`
 
 If you’re new, start with: [**Public Alpha (v0.1.x)**](/getting-started/public-alpha) (common blockers + fastest paths).
 

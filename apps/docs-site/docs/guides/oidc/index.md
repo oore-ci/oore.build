@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure OpenID Connect authentication for Oore CI with any OIDC-compatible identity provider."
+description: 'Configure OpenID Connect authentication for Oore CI with any OIDC-compatible identity provider.'
 ---
 
 # Configure OIDC Authentication
@@ -19,11 +19,11 @@ In Remote mode, OIDC is the default (`remote_auth_mode=oidc`). For local-first o
 
 During setup, you provide three values:
 
-| Value | Example | Where to get it |
-|---|---|---|
-| **Issuer URL** | `https://accounts.google.com` | Your provider's OIDC documentation |
-| **Client ID** | `123456.apps.googleusercontent.com` | Created when you register an OAuth app |
-| **Client secret** | `GOCSPX-...` | Created with the OAuth app (optional for some providers) |
+| Value             | Example                             | Where to get it                                          |
+| ----------------- | ----------------------------------- | -------------------------------------------------------- |
+| **Issuer URL**    | `https://accounts.google.com`       | Your provider's OIDC documentation                       |
+| **Client ID**     | `123456.apps.googleusercontent.com` | Created when you register an OAuth app                   |
+| **Client secret** | `GOCSPX-...`                        | Created with the OAuth app (optional for some providers) |
 
 Oore CI uses the issuer URL to discover endpoints automatically via the [OpenID Connect Discovery](https://openid.net/specs/openid-connect-discovery-1_0.html) protocol. It fetches `{issuer_url}/.well-known/openid-configuration` to find the authorization, token, and JWKS endpoints.
 
@@ -41,13 +41,13 @@ Oore CI requests these scopes during authentication:
 
 When creating your OAuth application, add these redirect URIs:
 
-| Context | Redirect URI |
-|---|---|
-| Hosted UI (ci.oore.build) | `https://ci.oore.build/auth/callback` |
-| Local launcher (`oore-web`) | `http://127.0.0.1:4173/auth/callback` |
-| Local dev UI | `http://localhost:3000/auth/callback` |
-| Custom domain | `https://your-domain.com/auth/callback` |
-| CLI loopback | `http://localhost:*` (dynamic port shown by CLI) |
+| Context                     | Redirect URI                                     |
+| --------------------------- | ------------------------------------------------ |
+| Hosted UI (ci.oore.build)   | `https://ci.oore.build/auth/callback`            |
+| Local launcher (`oore-web`) | `http://127.0.0.1:4173/auth/callback`            |
+| Local dev UI                | `http://localhost:3000/auth/callback`            |
+| Custom domain               | `https://your-domain.com/auth/callback`          |
+| CLI loopback                | `http://localhost:*` (dynamic port shown by CLI) |
 
 ::: tip
 Both setup and regular sign-in use the same `/auth/callback` path. You only need one redirect URI per origin.
@@ -63,13 +63,13 @@ The setup wizard displays the exact redirect URI to configure based on how you a
 
 Follow the guide for your identity provider:
 
-| Provider | Guide |
-|---|---|
-| Google Workspace / Cloud Identity | [Google OIDC setup](/guides/oidc/google) |
-| Okta | [Okta OIDC setup](/guides/oidc/okta) |
-| Azure AD / Entra ID | [Azure AD OIDC setup](/guides/oidc/azure-ad) |
-| Auth0 | [Auth0 OIDC setup](/guides/oidc/auth0) |
-| Keycloak | [Keycloak OIDC setup](/guides/oidc/keycloak) |
+| Provider                          | Guide                                        |
+| --------------------------------- | -------------------------------------------- |
+| Google Workspace / Cloud Identity | [Google OIDC setup](/guides/oidc/google)     |
+| Okta                              | [Okta OIDC setup](/guides/oidc/okta)         |
+| Azure AD / Entra ID               | [Azure AD OIDC setup](/guides/oidc/azure-ad) |
+| Auth0                             | [Auth0 OIDC setup](/guides/oidc/auth0)       |
+| Keycloak                          | [Keycloak OIDC setup](/guides/oidc/keycloak) |
 
 Any provider that supports [OpenID Connect Discovery](https://openid.net/specs/openid-connect-discovery-1_0.html) will work. If your provider isn't listed above, use the general configuration steps:
 

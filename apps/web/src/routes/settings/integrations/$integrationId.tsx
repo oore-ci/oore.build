@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Copy01Icon,
   Delete02Icon,
   InformationCircleIcon,
   LinkSquare02Icon,
@@ -14,7 +15,6 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import {
   useDeleteIntegration,
@@ -25,6 +25,8 @@ import {
   useSyncInstallations,
 } from '@/hooks/use-integrations'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
+import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
+import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -48,13 +50,16 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import type { Integration } from '@/lib/types'
+import { IntegrationInventory } from './integration-inventory'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
-  staticData: { breadcrumbLabel: 'Details' },
+  staticData: {
+    breadcrumbLabel: 'Details',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   validateSearch: (
     search: Record<string, unknown>,
   ): { installed?: string; gitlab?: string } => ({
@@ -74,6 +79,7 @@ function humanizeAuthMode(mode: string): string {
     github_app: 'GitHub App',
     oauth_app: 'OAuth App',
     pat: 'Personal Access Token',
+    personal_token: 'Personal Access Token',
   }
   return (
     labels[mode] ??
@@ -81,26 +87,124 @@ function humanizeAuthMode(mode: string): string {
   )
 }
 
-function IntegrationDetailPage() {
+function IntegrationConnectionDetails({
+  gitLabWebhookUrl,
+  integration,
+  lastWebhookAt,
+}: {
+  gitLabWebhookUrl: string
+  integration: Integration
+  lastWebhookAt: number | undefined
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          Connection details
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableBody>
+            <TableRow>
+              <TableCell className="w-56 text-muted-foreground">
+                Provider
+              </TableCell>
+              <TableCell>{integration.provider}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted-foreground">Host URL</TableCell>
+              <TableCell>{integration.host_url}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted-foreground">Auth mode</TableCell>
+              <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
+            </TableRow>
+            {integration.provider === 'gitlab' ? (
+              <>
+                <TableRow>
+                  <TableCell className="text-muted-foreground">
+                    Webhook URL
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <code className="font-mono text-xs">
+                        {gitLabWebhookUrl}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Copy GitLab webhook URL"
+                        title="Copy GitLab webhook URL"
+                        onClick={() => {
+                          void navigator.clipboard
+                            .writeText(gitLabWebhookUrl)
+                            .then(
+                              () => toast.success('Webhook URL copied'),
+                              () => toast.error('Could not copy webhook URL'),
+                            )
+                        }}
+                      >
+                        <HugeiconsIcon icon={Copy01Icon} />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-muted-foreground">
+                    Last webhook delivery
+                  </TableCell>
+                  <TableCell>
+                    {lastWebhookAt
+                      ? new Date(lastWebhookAt * 1000).toLocaleString()
+                      : 'Waiting for a test delivery'}
+                  </TableCell>
+                </TableRow>
+              </>
+            ) : null}
+            {integration.app_id ? (
+              <TableRow>
+                <TableCell className="text-muted-foreground">App ID</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {integration.app_id}
+                </TableCell>
+              </TableRow>
+            ) : null}
+            <TableRow>
+              <TableCell className="text-muted-foreground">Created</TableCell>
+              <TableCell>
+                {new Date(integration.created_at * 1000).toLocaleString()}
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function useIntegrationDetailPageState() {
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
   const navigate = useNavigate()
 
   const { data: detail, isLoading, error } = useIntegration(integrationId)
+  const { data: networkSettings } = useExternalAccessNetworkSettings()
   const { data: installationsData } = useInstallations(integrationId)
   const { data: reposData } = useIntegrationRepos(integrationId)
   const syncMutation = useSyncInstallations()
   const deleteMutation = useDeleteIntegration()
   const gitlabAuthorizeMutation = useGitLabAuthorize()
 
-  const setLabel = useBreadcrumbStore((s) => s.setLabel)
-
   const label =
     detail?.integration.display_name ??
     detail?.integration.provider ??
     'Source Details'
 
-  useBreadcrumbLabel(setLabel, '/settings/integrations/$integrationId', detail?.integration.display_name ?? detail?.integration.provider)
+  useBreadcrumbLabel(
+    '/settings/integrations/$integrationId',
+    detail?.integration.display_name ?? detail?.integration.provider,
+  )
 
   useMountEffect(() => {
     if (search.installed === 'true') {
@@ -149,9 +253,68 @@ function IntegrationDetailPage() {
   }
 
   if (isLoading) {
+    return { status: 'loading' as const, label }
+  }
+
+  if (error) {
+    return { status: 'error' as const, label, message: error.message }
+  }
+
+  if (!detail) return { status: 'missing' as const }
+
+  const { integration } = detail
+  const installations = installationsData?.installations ?? []
+  const repositories = reposData?.repositories ?? []
+  const providerLabel = integration.provider === 'gitlab' ? 'GitLab' : 'GitHub'
+  const sourceDescription =
+    integration.provider === 'gitlab'
+      ? `GitLab source at ${integration.host_url}. Authorize, then sync projects to make them available in Oore.`
+      : 'GitHub App installation and repository link state for this source connection.'
+  const installationsLabel =
+    integration.provider === 'gitlab' ? 'GitLab accounts' : 'Installations'
+  const repositoriesLabel =
+    integration.provider === 'gitlab' ? 'GitLab projects' : 'Repositories'
+  const syncLabel =
+    integration.provider === 'gitlab'
+      ? 'Sync GitLab projects'
+      : 'Sync installations'
+  const { webhookUrl: gitLabWebhookUrl } = gitLabPublicEndpoints(
+    networkSettings?.settings.public_url,
+    window.location.origin,
+  )
+  const canSyncInstallations =
+    integration.provider === 'github' || integration.provider === 'gitlab'
+
+  return {
+    status: 'ready' as const,
+    canSyncInstallations,
+    deleteMutation,
+    detail,
+    gitLabWebhookUrl,
+    gitlabAuthorizeMutation,
+    handleDisconnect,
+    handleSync,
+    installations,
+    installationsLabel,
+    integration,
+    integrationId,
+    label,
+    providerLabel,
+    repositories,
+    repositoriesLabel,
+    sourceDescription,
+    syncLabel,
+    syncMutation,
+  }
+}
+
+function IntegrationDetailPage() {
+  const pageState = useIntegrationDetailPageState()
+
+  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
-        <PageMeta title={label} noindex />
+        <PageMeta title={pageState.label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-56 w-full" />
@@ -159,41 +322,54 @@ function IntegrationDetailPage() {
     )
   }
 
-  if (error) {
+  if (pageState.status === 'error') {
     return (
       <PageLayout width="wide">
-        <PageMeta title={label} noindex />
+        <PageMeta title={pageState.label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Failed to load source: {error.message}
+            Failed to load source: {pageState.message}
           </AlertDescription>
         </Alert>
       </PageLayout>
     )
   }
 
-  if (!detail) return null
+  if (pageState.status === 'missing') return null
 
-  const { integration } = detail
-  const installations = installationsData?.installations ?? []
-  const repositories = reposData?.repositories ?? []
-  const canSyncInstallations =
-    integration.provider === 'github' || integration.provider === 'gitlab'
+  const {
+    canSyncInstallations,
+    detail,
+    gitLabWebhookUrl,
+    gitlabAuthorizeMutation,
+    handleDisconnect,
+    handleSync,
+    installations,
+    installationsLabel,
+    integration,
+    integrationId,
+    label,
+    providerLabel,
+    repositories,
+    repositoriesLabel,
+    sourceDescription,
+    syncLabel,
+    syncMutation,
+  } = pageState
 
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
       <PageHeader
         title={integration.display_name ?? integration.provider}
-        back={{ to: '/settings/integrations', label: 'Sources' }}
-        description="Installation and repository link state for this source connection."
+        description={sourceDescription}
         meta={
           <>
             <Badge variant={getIntegrationStatusVariant(integration.status)}>
               {integration.status}
             </Badge>
-            <Badge variant="outline">{integration.provider}</Badge>
+            <Badge variant="outline">{providerLabel}</Badge>
             <span className="font-mono">{integration.id.slice(0, 8)}</span>
           </>
         }
@@ -241,53 +417,24 @@ function IntegrationDetailPage() {
         </Card>
       </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Connection details
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="w-56 text-muted-foreground">
-                  Provider
-                </TableCell>
-                <TableCell>{integration.provider}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">
-                  Host URL
-                </TableCell>
-                <TableCell>{integration.host_url}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted-foreground">
-                  Auth mode
-                </TableCell>
-                <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
-              </TableRow>
-              {integration.app_id ? (
-                <TableRow>
-                  <TableCell className="text-muted-foreground">
-                    App ID
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {integration.app_id}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-              <TableRow>
-                <TableCell className="text-muted-foreground">Created</TableCell>
-                <TableCell>
-                  {new Date(integration.created_at * 1000).toLocaleString()}
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <IntegrationConnectionDetails
+        gitLabWebhookUrl={gitLabWebhookUrl}
+        integration={integration}
+        lastWebhookAt={detail.last_webhook_at}
+      />
+
+      {integration.provider === 'gitlab' && !detail.last_webhook_at ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Webhook readiness is pending. In GitLab, add the copied URL and
+            secret to each project, enable Push events, then send a test
+            delivery. If it fails, confirm the backend URL is reachable from
+            GitLab and that the secret still matches before refreshing this
+            page. Reconnect the source if the saved secret has changed.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -300,12 +447,19 @@ function IntegrationDetailPage() {
           integration.auth_mode === 'oauth_app' &&
           integration.status === 'inactive' ? (
             <Button
-              variant="outline"
               onClick={() =>
-                gitlabAuthorizeMutation.mutate({
-                  integration_id: integrationId,
-                  redirect_url: window.location.href,
-                })
+                gitlabAuthorizeMutation.mutate(
+                  {
+                    integration_id: integrationId,
+                    redirect_url: window.location.href,
+                  },
+                  {
+                    onError: (authorizationError) =>
+                      toast.error(
+                        `GitLab authorization failed: ${authorizationError.message}`,
+                      ),
+                  },
+                )
               }
               disabled={gitlabAuthorizeMutation.isPending}
             >
@@ -326,16 +480,35 @@ function IntegrationDetailPage() {
                       ? `https://github.com/apps/${integration.app_slug}/installations/select_target`
                       : `https://github.com/apps/${integration.app_slug}/installations/new`
                   }
+                  aria-label="Manage this source on GitHub"
                   target="_blank"
                   rel="noopener noreferrer"
                 />
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Setting07Icon} size={16} />
+              <HugeiconsIcon icon={Setting07Icon} />
               {installations.length > 0
                 ? 'Manage on GitHub'
                 : 'Install on GitHub'}
+            </Button>
+          ) : null}
+
+          {integration.provider === 'gitlab' ? (
+            <Button
+              variant="outline"
+              render={
+                <a
+                  href={integration.host_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open GitLab in a new tab"
+                />
+              }
+              nativeButton={false}
+            >
+              <HugeiconsIcon icon={Setting07Icon} />
+              Open GitLab
             </Button>
           ) : null}
 
@@ -345,8 +518,8 @@ function IntegrationDetailPage() {
               onClick={handleSync}
               disabled={syncMutation.isPending}
             >
-              <HugeiconsIcon icon={Refresh01Icon} size={16} />
-              {syncMutation.isPending ? 'Syncing...' : 'Sync Installations'}
+              <HugeiconsIcon icon={Refresh01Icon} />
+              {syncMutation.isPending ? 'Syncing...' : syncLabel}
             </Button>
           ) : null}
 
@@ -354,7 +527,7 @@ function IntegrationDetailPage() {
             <AlertDialogTrigger
               render={
                 <Button variant="destructive">
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                  <HugeiconsIcon icon={Delete02Icon} />
                   Disconnect
                 </Button>
               }
@@ -378,86 +551,13 @@ function IntegrationDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Installations ({installations.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {installations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No installations yet
-              {integration.provider === 'github' && integration.app_slug
-                ? ' - install your GitHub App to get started.'
-                : '.'}
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>External ID</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {installations.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell>{inst.account_name}</TableCell>
-                    <TableCell>{inst.account_type ?? '—'}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {inst.external_id}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Repositories ({repositories.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {repositories.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No repositories synced yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Repository</TableHead>
-                  <TableHead>Default branch</TableHead>
-                  <TableHead>Visibility</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {repositories.map((repo) => (
-                  <TableRow key={repo.id}>
-                    <TableCell>{repo.full_name}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {repo.default_branch ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={repo.is_private ? 'secondary' : 'outline'}
-                      >
-                        {repo.is_private ? 'private' : 'public'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <IntegrationInventory
+        installations={installations}
+        installationsLabel={installationsLabel}
+        integration={integration}
+        repositories={repositories}
+        repositoriesLabel={repositoriesLabel}
+      />
     </PageLayout>
   )
 }

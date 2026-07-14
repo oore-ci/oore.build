@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for first-run Oore CI instance setup and configuration."
+description: 'API endpoints for first-run Oore CI instance setup and configuration.'
 ---
 
 # Setup API
@@ -32,12 +32,12 @@ GET /v1/public/setup-status
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `instance_id` | `string` | UUID of this Oore CI instance |
-| `state` | `string` | Current setup state: `uninitialized`, `bootstrap_pending`, `idp_configured`, `owner_created`, or `ready` |
-| `setup_mode` | `boolean` | `true` when setup is not yet complete |
-| `is_configured` | `boolean` | `true` when state is `ready` |
+| Field           | Type      | Description                                                                                              |
+| --------------- | --------- | -------------------------------------------------------------------------------------------------------- |
+| `instance_id`   | `string`  | UUID of this Oore CI instance                                                                            |
+| `state`         | `string`  | Current setup state: `uninitialized`, `bootstrap_pending`, `idp_configured`, `owner_created`, or `ready` |
+| `setup_mode`    | `boolean` | `true` when setup is not yet complete                                                                    |
+| `is_configured` | `boolean` | `true` when state is `ready`                                                                             |
 
 ### Example
 
@@ -67,9 +67,9 @@ POST /v1/setup/bootstrap-token/verify
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `token` | `string` | Yes | Plaintext bootstrap token (64 hex characters) |
+| Field   | Type     | Required | Description                                   |
+| ------- | -------- | -------- | --------------------------------------------- |
+| `token` | `string` | Yes      | Plaintext bootstrap token (64 hex characters) |
 
 ### Response `200 OK`
 
@@ -80,21 +80,21 @@ POST /v1/setup/bootstrap-token/verify
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `session_token` | `string` | Setup session token for authenticating subsequent requests |
-| `expires_at` | `integer` | Session expiry as Unix epoch (seconds). Initial TTL is 30 minutes; renewed on each authenticated request. |
+| Field           | Type      | Description                                                                                               |
+| --------------- | --------- | --------------------------------------------------------------------------------------------------------- |
+| `session_token` | `string`  | Setup session token for authenticating subsequent requests                                                |
+| `expires_at`    | `integer` | Session expiry as Unix epoch (seconds). Initial TTL is 30 minutes; renewed on each authenticated request. |
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 401 | `invalid_token` | Bootstrap token hash does not match |
-| 409 | `already_configured` | Setup is already complete |
-| 410 | `token_consumed` | Bootstrap token has already been used |
-| 410 | `token_expired` | Bootstrap token TTL has elapsed |
-| 429 | `too_many_attempts` | 5 or more failed verification attempts |
-| 500 | `no_bootstrap_token` | No bootstrap token has been generated |
+| Status | Code                 | Description                            |
+| ------ | -------------------- | -------------------------------------- |
+| 401    | `invalid_token`      | Bootstrap token hash does not match    |
+| 409    | `already_configured` | Setup is already complete              |
+| 410    | `token_consumed`     | Bootstrap token has already been used  |
+| 410    | `token_expired`      | Bootstrap token TTL has elapsed        |
+| 429    | `too_many_attempts`  | 5 or more failed verification attempts |
+| 500    | `no_bootstrap_token` | No bootstrap token has been generated  |
 
 ### Example
 
@@ -137,13 +137,13 @@ POST /v1/setup/preferences
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Owner has already been created |
+| Status | Code                 | Description                       |
+| ------ | -------------------- | --------------------------------- |
+| 401    | `missing_auth`       | Authorization header not provided |
+| 401    | `invalid_session`    | Setup session token is invalid    |
+| 401    | `session_expired`    | Setup session has expired         |
+| 409    | `already_configured` | Setup is already complete         |
+| 409    | `invalid_state`      | Owner has already been created    |
 
 ---
 
@@ -169,11 +169,11 @@ POST /v1/setup/oidc/configure
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `issuer_url` | `string` | Yes | OIDC issuer URL (must support `/.well-known/openid-configuration`) |
-| `client_id` | `string` | Yes | OAuth 2.0 client ID from your identity provider |
-| `client_secret` | `string` | No | OAuth 2.0 client secret (encrypted at rest if provided) |
+| Field           | Type     | Required | Description                                                        |
+| --------------- | -------- | -------- | ------------------------------------------------------------------ |
+| `issuer_url`    | `string` | Yes      | OIDC issuer URL (must support `/.well-known/openid-configuration`) |
+| `client_id`     | `string` | Yes      | OAuth 2.0 client ID from your identity provider                    |
+| `client_secret` | `string` | No       | OAuth 2.0 client secret (encrypted at rest if provided)            |
 
 ### Response `200 OK`
 
@@ -185,24 +185,24 @@ POST /v1/setup/oidc/configure
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `state` | `string` | New setup state (`idp_configured`) |
-| `discovered_issuer` | `string` | Issuer URL as returned by the OIDC discovery document |
-| `session_expires_at` | `integer \| null` | Updated session expiry (sliding window) |
+| Field                | Type              | Description                                           |
+| -------------------- | ----------------- | ----------------------------------------------------- |
+| `state`              | `string`          | New setup state (`idp_configured`)                    |
+| `discovered_issuer`  | `string`          | Issuer URL as returned by the OIDC discovery document |
+| `session_expires_at` | `integer \| null` | Updated session expiry (sliding window)               |
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Request body validation failed |
-| 400 | `oidc_discovery_failed` | Could not fetch or parse the OIDC discovery document |
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Not in `bootstrap_pending` or `idp_configured` state |
-| 500 | `encryption_error` | Failed to encrypt client secret |
+| Status | Code                    | Description                                          |
+| ------ | ----------------------- | ---------------------------------------------------- |
+| 400    | `invalid_input`         | Request body validation failed                       |
+| 400    | `oidc_discovery_failed` | Could not fetch or parse the OIDC discovery document |
+| 401    | `missing_auth`          | Authorization header not provided                    |
+| 401    | `invalid_session`       | Setup session token is invalid                       |
+| 401    | `session_expired`       | Setup session has expired                            |
+| 409    | `already_configured`    | Setup is already complete                            |
+| 409    | `invalid_state`         | Not in `bootstrap_pending` or `idp_configured` state |
+| 500    | `encryption_error`      | Failed to encrypt client secret                      |
 
 ### Example
 
@@ -233,23 +233,28 @@ POST /v1/setup/trusted-proxy/configure
 
 ```json
 {
-  "user_email_header": "x-warpgate-username",
+  "setup_owner_email": "owner@example.com",
+  "user_email_header": "x-oore-user-email",
   "trusted_proxy_cidrs": [],
   "shared_secret": "optional-shared-secret"
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `user_email_header` | `string` | No | Header containing the authenticated user email. Defaults to `x-warpgate-username`. |
-| `trusted_proxy_cidrs` | `string[]` | No | Optional allowlist of proxy source CIDRs. |
-| `shared_secret` | `string` | No | Optional write-only shared secret for defense in depth. When configured, the proxy must send it in `X-Oore-Trusted-Proxy-Secret`. |
+| Field                 | Type       | Required | Description                                                                                                                       |
+| --------------------- | ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `setup_owner_email`   | `string`   | No       | Expected initial owner email. When set, the trusted-proxy owner claim must come from this same email.                             |
+| `user_email_header`   | `string`   | No       | Header containing the authenticated user email. Defaults to `x-oore-user-email`.                                                  |
+| `trusted_proxy_cidrs` | `string[]` | No       | Optional allowlist of proxy source CIDRs.                                                                                         |
+| `shared_secret`       | `string`   | No       | Optional write-only shared secret for defense in depth. When configured, the proxy must send it in `X-Oore-Trusted-Proxy-Secret`. |
+
+The web setup wizard includes proxy presets that pre-fill `user_email_header`: `Generic proxy` uses `x-oore-user-email`, `Warpgate` uses `x-warpgate-username`, and `Custom header` keeps the field editable. API callers should send the final header name directly.
 
 ### Response `200 OK`
 
 ```json
 {
   "state": "idp_configured",
+  "setup_owner_email": "owner@example.com",
   "has_shared_secret": true,
   "configured_at": 1738800000,
   "session_expires_at": 1738801800
@@ -258,15 +263,15 @@ POST /v1/setup/trusted-proxy/configure
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Header name, CIDR list, or shared secret is invalid |
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 403 | `mode_restricted` | Instance is not in remote trusted-proxy setup mode |
-| 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Owner has already been created |
+| Status | Code                 | Description                                                      |
+| ------ | -------------------- | ---------------------------------------------------------------- |
+| 400    | `invalid_input`      | Owner email, header name, CIDR list, or shared secret is invalid |
+| 401    | `missing_auth`       | Authorization header not provided                                |
+| 401    | `invalid_session`    | Setup session token is invalid                                   |
+| 401    | `session_expired`    | Setup session has expired                                        |
+| 403    | `mode_restricted`    | Instance is not in remote trusted-proxy setup mode               |
+| 409    | `already_configured` | Setup is already complete                                        |
+| 409    | `invalid_state`      | Owner has already been created                                   |
 
 ---
 
@@ -290,9 +295,9 @@ POST /v1/setup/owner/start-oidc
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `redirect_uri` | `string` | Yes | URI where the IdP should redirect after authentication |
+| Field          | Type     | Required | Description                                            |
+| -------------- | -------- | -------- | ------------------------------------------------------ |
+| `redirect_uri` | `string` | Yes      | URI where the IdP should redirect after authentication |
 
 ### Response `200 OK`
 
@@ -303,25 +308,25 @@ POST /v1/setup/owner/start-oidc
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
+| Field               | Type     | Description                                    |
+| ------------------- | -------- | ---------------------------------------------- |
 | `authorization_url` | `string` | Full authorization URL to redirect the user to |
-| `state` | `string` | CSRF state token for validating the callback |
+| `state`             | `string` | CSRF state token for validating the callback   |
 
 The daemon generates a PKCE challenge (S256), CSRF state token, and nonce internally. The PKCE verifier and nonce are stored server-side, keyed by the state value. Pending auth entries expire after 10 minutes.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_redirect_uri` | The redirect URI is malformed |
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Not in `idp_configured` state |
-| 429 | `too_many_pending` | Too many pending auth requests (limit: 1000) |
-| 502 | `oidc_discovery_error` | Failed to perform OIDC discovery |
+| Status | Code                   | Description                                  |
+| ------ | ---------------------- | -------------------------------------------- |
+| 400    | `invalid_redirect_uri` | The redirect URI is malformed                |
+| 401    | `missing_auth`         | Authorization header not provided            |
+| 401    | `invalid_session`      | Setup session token is invalid               |
+| 401    | `session_expired`      | Setup session has expired                    |
+| 409    | `already_configured`   | Setup is already complete                    |
+| 409    | `invalid_state`        | Not in `idp_configured` state                |
+| 429    | `too_many_pending`     | Too many pending auth requests (limit: 1000) |
+| 502    | `oidc_discovery_error` | Failed to perform OIDC discovery             |
 
 ### Example
 
@@ -336,7 +341,7 @@ curl -X POST http://127.0.0.1:8787/v1/setup/owner/start-oidc \
 
 ## Claim Owner From Trusted Proxy {#claim-owner-from-trusted-proxy}
 
-Create the owner record from the identity asserted by the trusted upstream proxy.
+Create the owner record from the identity asserted by the trusted upstream proxy. When `setup_owner_email` was configured, the asserted email must match it.
 
 ```
 POST /v1/setup/owner/claim-trusted-proxy
@@ -353,7 +358,7 @@ None.
 By default, the request must include:
 
 ```text
-X-Warpgate-Username: owner@example.com
+X-Oore-User-Email: owner@example.com
 ```
 
 If a trusted-proxy shared secret is configured, the request must also include:
@@ -374,19 +379,20 @@ X-Oore-Trusted-Proxy-Secret: configured-shared-secret
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 401 | `trusted_proxy_shared_secret_missing` | Trusted proxy shared secret header is required but missing |
-| 401 | `trusted_proxy_shared_secret_invalid` | Trusted proxy shared secret header does not match |
-| 403 | `mode_restricted` | Instance is not in trusted-proxy setup mode |
-| 403 | `trusted_proxy_peer_not_allowed` | Request did not come from a trusted proxy peer |
-| 401 | `trusted_proxy_identity_missing` | Trusted proxy identity header is missing |
-| 401 | `trusted_proxy_identity_invalid` | Trusted proxy identity header is not a valid email |
-| 409 | `trusted_proxy_not_configured` | Trusted proxy settings have not been configured yet |
-| 409 | `invalid_state` | Not in `idp_configured` state |
+| Status | Code                                  | Description                                                            |
+| ------ | ------------------------------------- | ---------------------------------------------------------------------- |
+| 401    | `missing_auth`                        | Authorization header not provided                                      |
+| 401    | `invalid_session`                     | Setup session token is invalid                                         |
+| 401    | `session_expired`                     | Setup session has expired                                              |
+| 401    | `trusted_proxy_shared_secret_missing` | Trusted proxy shared secret header is required but missing             |
+| 401    | `trusted_proxy_shared_secret_invalid` | Trusted proxy shared secret header does not match                      |
+| 403    | `mode_restricted`                     | Instance is not in trusted-proxy setup mode                            |
+| 403    | `trusted_proxy_peer_not_allowed`      | Request did not come from a trusted proxy peer                         |
+| 403    | `trusted_proxy_owner_email_mismatch`  | Trusted proxy identity does not match the configured setup owner email |
+| 401    | `trusted_proxy_identity_missing`      | Trusted proxy identity header is missing                               |
+| 401    | `trusted_proxy_identity_invalid`      | Trusted proxy identity header is not a valid email                     |
+| 409    | `trusted_proxy_not_configured`        | Trusted proxy settings have not been configured yet                    |
+| 409    | `invalid_state`                       | Not in `idp_configured` state                                          |
 
 ---
 
@@ -420,14 +426,14 @@ POST /v1/setup/local-owner/create
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Email is invalid |
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 403 | `mode_restricted` | Local owner creation is only available in local mode |
-| 409 | `invalid_state` | Not in the local owner-creation state |
+| Status | Code              | Description                                          |
+| ------ | ----------------- | ---------------------------------------------------- |
+| 400    | `invalid_input`   | Email is invalid                                     |
+| 401    | `missing_auth`    | Authorization header not provided                    |
+| 401    | `invalid_session` | Setup session token is invalid                       |
+| 401    | `session_expired` | Setup session has expired                            |
+| 403    | `mode_restricted` | Local owner creation is only available in local mode |
+| 409    | `invalid_state`   | Not in the local owner-creation state                |
 
 ---
 
@@ -452,10 +458,10 @@ POST /v1/setup/owner/verify-oidc
 }
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `code` | `string` | Yes | Authorization code from the IdP callback |
-| `state` | `string` | Yes | CSRF state token from the IdP callback (must match the value from start-oidc) |
+| Field   | Type     | Required | Description                                                                   |
+| ------- | -------- | -------- | ----------------------------------------------------------------------------- |
+| `code`  | `string` | Yes      | Authorization code from the IdP callback                                      |
+| `state` | `string` | Yes      | CSRF state token from the IdP callback (must match the value from start-oidc) |
 
 ### Response `200 OK`
 
@@ -468,31 +474,31 @@ POST /v1/setup/owner/verify-oidc
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `state` | `string` | New setup state (`owner_created`) |
-| `owner_email` | `string` | Email address extracted from the ID token |
-| `oidc_subject` | `string` | OIDC subject identifier from the ID token |
-| `session_expires_at` | `integer \| null` | Updated session expiry (sliding window) |
+| Field                | Type              | Description                               |
+| -------------------- | ----------------- | ----------------------------------------- |
+| `state`              | `string`          | New setup state (`owner_created`)         |
+| `owner_email`        | `string`          | Email address extracted from the ID token |
+| `oidc_subject`       | `string`          | OIDC subject identifier from the ID token |
+| `session_expires_at` | `integer \| null` | Updated session expiry (sliding window)   |
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_state` | Unknown or expired OIDC state parameter |
-| 400 | `auth_expired` | OIDC authorization request has expired (10-minute TTL) |
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Not in `idp_configured` state |
-| 500 | `decryption_error` | Failed to decrypt stored client secret |
-| 500 | `store_error` | Database operation failed |
-| 502 | `oidc_discovery_error` | Failed to perform OIDC discovery |
-| 502 | `token_exchange_error` | Failed to exchange authorization code for tokens |
-| 502 | `missing_id_token` | IdP did not return an ID token |
-| 502 | `id_token_verification_error` | ID token signature or claims verification failed |
-| 502 | `missing_email` | ID token does not contain an email claim |
+| Status | Code                          | Description                                            |
+| ------ | ----------------------------- | ------------------------------------------------------ |
+| 400    | `invalid_state`               | Unknown or expired OIDC state parameter                |
+| 400    | `auth_expired`                | OIDC authorization request has expired (10-minute TTL) |
+| 401    | `missing_auth`                | Authorization header not provided                      |
+| 401    | `invalid_session`             | Setup session token is invalid                         |
+| 401    | `session_expired`             | Setup session has expired                              |
+| 409    | `already_configured`          | Setup is already complete                              |
+| 409    | `invalid_state`               | Not in `idp_configured` state                          |
+| 500    | `decryption_error`            | Failed to decrypt stored client secret                 |
+| 500    | `store_error`                 | Database operation failed                              |
+| 502    | `oidc_discovery_error`        | Failed to perform OIDC discovery                       |
+| 502    | `token_exchange_error`        | Failed to exchange authorization code for tokens       |
+| 502    | `missing_id_token`            | IdP did not return an ID token                         |
+| 502    | `id_token_verification_error` | ID token signature or claims verification failed       |
+| 502    | `missing_email`               | ID token does not contain an email claim               |
 
 ### Example
 
@@ -533,20 +539,20 @@ None.
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `state` | `string` | Final setup state (`ready`) |
+| Field         | Type     | Description                     |
+| ------------- | -------- | ------------------------------- |
+| `state`       | `string` | Final setup state (`ready`)     |
 | `instance_id` | `string` | UUID of the configured instance |
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Setup session token is invalid |
-| 401 | `session_expired` | Setup session has expired |
-| 409 | `already_configured` | Setup is already complete |
-| 409 | `invalid_state` | Not in `owner_created` state |
+| Status | Code                 | Description                       |
+| ------ | -------------------- | --------------------------------- |
+| 401    | `missing_auth`       | Authorization header not provided |
+| 401    | `invalid_session`    | Setup session token is invalid    |
+| 401    | `session_expired`    | Setup session has expired         |
+| 409    | `already_configured` | Setup is already complete         |
+| 409    | `invalid_state`      | Not in `owner_created` state      |
 
 ### Example
 

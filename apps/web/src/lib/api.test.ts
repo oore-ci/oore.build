@@ -4,13 +4,17 @@ import {
   completeSetup,
   configureExternalAccessOidc,
   configureOidc,
+  createScopedDownloadToken,
   createPipeline,
+  discoverRepositoryWorkflows,
   getApiErrorMessage,
+  getArtifactDownloadLink,
   getArtifactStorageSettings,
   getExternalAccessOidc,
   getInstancePreferences,
   getPipeline,
   getSetupStatus,
+  listBuilds,
   listPipelines,
   listRunners,
   testOidcConnection,
@@ -138,6 +142,66 @@ describe('getSetupStatus', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'https://ci.example.com/v1/public/setup-status',
       { headers: {} },
+    )
+  })
+})
+
+describe('query cancellation', () => {
+  it('passes the TanStack signal through build requests', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, { builds: [], total: 0 }))
+
+    await listBuilds('https://ci.example.com', 'token', undefined, {
+      signal: controller.signal,
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/builds',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer token' },
+        signal: controller.signal,
+      }),
+    )
+  })
+})
+
+describe('artifact download links', () => {
+  it('replaces the daemon loopback fallback with the reachable instance origin', async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          download_url: 'http://127.0.0.1:8787/v1/artifacts/download/direct',
+          expires_at: 1,
+        }),
+      )
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          id: 'share-1',
+          download_url: 'http://127.0.0.1:8787/v1/artifacts/dl/scoped',
+          token: 'scoped',
+          prefix: 'scoped',
+          expires_at: 1,
+          single_use: false,
+        }),
+      )
+
+    const direct = await getArtifactDownloadLink(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+    )
+    const scoped = await createScopedDownloadToken(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+      {},
+    )
+
+    expect(direct.download_url).toBe(
+      'https://oore.example.com/v1/artifacts/download/direct',
+    )
+    expect(scoped.download_url).toBe(
+      'https://oore.example.com/v1/artifacts/dl/scoped',
     )
   })
 })
@@ -365,7 +429,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'local',
-        restart_required: true,
+        restart_required: false,
         updated_at: 123,
       },
     }
@@ -392,7 +456,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'remote',
-        restart_required: true,
+        restart_required: false,
       },
     }
     mockFetch.mockReturnValue(mockJsonResponse(200, payload))
@@ -556,6 +620,34 @@ describe('external access oidc api', () => {
 })
 
 describe('pipeline api', () => {
+  it('discovers repository workflows at an encoded ref and path', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, {
+        project_id: 'proj-1',
+        provider: 'gitlab',
+        reference: 'feature/mobile',
+        workflows: [],
+        truncated: false,
+      }),
+    )
+
+    await discoverRepositoryWorkflows(
+      'https://ci.example.com',
+      'session-token',
+      'proj-1',
+      { reference: 'feature/mobile', path: '.oore/android release.yaml' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/proj-1/repository-workflows?ref=feature%2Fmobile&path=.oore%2Fandroid+release.yaml',
+      {
+        headers: {
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+  })
+
   it('calls POST /v1/projects/{project_id}/pipelines with execution config fields', async () => {
     const payload = {
       pipeline: {
