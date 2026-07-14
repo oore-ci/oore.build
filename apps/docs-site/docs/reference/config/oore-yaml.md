@@ -74,6 +74,8 @@ artifacts: # Optional. Artifact collection patterns.
 
 Commands are executed sequentially. If any command returns a non-zero exit code, the build fails and subsequent commands are skipped.
 
+To let developers choose a subset of platforms for a manual run, use `platform_commands` (or Oore's default platform commands) and leave `commands.build` empty. A shared `commands.build` list cannot be safely assigned to one platform, so partial runs reject that workflow instead of executing the wrong command.
+
 ### platform_build_args
 
 Each platform value is a string array appended to its default build command.

@@ -455,6 +455,7 @@ export interface BuildEvent {
 
 export interface CreateBuildRequest {
   pipeline_id: string
+  platforms?: Array<BuildPlatform>
   branch?: string
   commit_sha?: string
   trigger_ref?: string

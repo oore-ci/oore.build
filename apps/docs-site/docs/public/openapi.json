@@ -6882,6 +6882,13 @@
           "pipeline_id": {
             "type": "string"
           },
+          "platforms": {
+            "type": ["array", "null"],
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Optional one-run platform selection. Omitted builds every platform configured by the pipeline."
+          },
           "trigger_ref": {
             "type": ["string", "null"]
           }

@@ -14,6 +14,11 @@ Rules:
 
 ## 2026-07-15
 
+- **Combined pipelines with per-run platform selection**:
+  - Manual builds can select any non-empty subset of a multi-platform pipeline without changing its saved configuration. The choice is validated by the backend, stored in the build snapshot, and preserved by re-runs; webhook builds continue to run every configured platform.
+  - Repository-owned workflows keep file-first behavior. Partial runs filter default or `platform_commands` entries and explicitly reject shared `commands.build` lists that cannot be mapped safely to a platform.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-per-run-platform-selection-for-combined-pipelines-b34e810fd79b
+
 - **Reliable iOS runner session and local artifact delivery**:
   - `oore runner install-service` now installs a persistent macOS LaunchAgent in the logged-in Aqua session, where Apple permits non-interactive access to imported signing keys. `oore runner uninstall-service` removes it. This replaces unsupported iOS signing from a system LaunchDaemon or background login session while preserving a separately managed `oored` backend.
   - If Keychain Services rejects signing because a runner is outside that session, the build error now names the supported service command instead of ending at macOS's opaque `errSecInternalComponent` message.

@@ -1937,6 +1937,43 @@ fn load_ui_execution_config(
     normalize_execution_config(parsed)
 }
 
+fn apply_run_platform_selection(
+    mut config: PipelineExecutionConfig,
+    snapshot: &serde_json::Value,
+) -> anyhow::Result<PipelineExecutionConfig> {
+    let Some(raw) = snapshot.get("selected_platforms") else {
+        return Ok(config);
+    };
+    if raw.is_null() {
+        return Ok(config);
+    }
+
+    let selected: Vec<BuildPlatform> = serde_json::from_value(raw.clone())
+        .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}"))?;
+    if selected.is_empty() {
+        anyhow::bail!("selected_platforms must include at least one target");
+    }
+    let has_duplicate = selected
+        .iter()
+        .enumerate()
+        .any(|(index, platform)| selected[..index].contains(platform));
+    if has_duplicate
+        || selected
+            .iter()
+            .any(|platform| !config.platforms.contains(platform))
+    {
+        anyhow::bail!("selected_platforms must be unique and configured by the workflow");
+    }
+    if selected.len() < config.platforms.len() && !config.commands.build.is_empty() {
+        anyhow::bail!(
+            "Per-run platform selection requires platform_commands or default platform commands; shared commands.build cannot be filtered safely"
+        );
+    }
+
+    config.platforms = selected;
+    Ok(config)
+}
+
 fn resolve_execution_plan(
     workspace: &Path,
     snapshot: &serde_json::Value,
@@ -1990,6 +2027,7 @@ fn resolve_execution_plan(
         let file_config = parse_repo_config_file(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
+        let file_config = apply_run_platform_selection(file_config, snapshot)?;
         let resolved_flutter_version = fvmrc_version
             .clone()
             .or_else(|| file_config.flutter_version.clone());
@@ -2010,7 +2048,7 @@ fn resolve_execution_plan(
         });
     }
 
-    let fallback = load_ui_execution_config(snapshot)?;
+    let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
     let resolved_flutter_version = fvmrc_version.or_else(|| fallback.flutter_version.clone());
     let mut stage_commands = materialize_stage_commands(&fallback, true);
     if let Some(version) = resolved_flutter_version {
@@ -4373,6 +4411,59 @@ mod tests {
                 "flutter build macos --release".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn per_run_platform_selection_filters_repository_platform_commands() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join(".oore.yml"),
+            "version: 1\nplatforms: [android, ios]\nplatform_commands:\n  android: flutter build apk --release --target lib/main_adhoc.dart\n  ios: flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart\nartifacts:\n  patterns: [\"build/**/*.apk\", \"build/**/*.ipa\"]\n",
+        )
+        .expect("write combined workflow");
+        let snapshot = serde_json::json!({
+            "config_path_explicit": true,
+            "config_path": ".oore.yml",
+            "selected_platforms": ["ios"],
+            "ui_execution_config": {
+                "platforms": ["android", "ios"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": ["build/**/*.apk", "build/**/*.ipa"]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
+        assert_eq!(
+            plan.stage_commands.build,
+            vec![
+                "flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart"
+                    .to_string()
+            ]
+        );
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn per_run_platform_selection_rejects_shared_build_commands() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join(".oore.yml"),
+            "version: 1\nplatforms: [android, ios]\ncommands:\n  build: [\"flutter build ipa --release\"]\nartifacts:\n  patterns: [\"build/**/*.ipa\"]\n",
+        )
+        .expect("write workflow");
+        let snapshot = serde_json::json!({
+            "config_path_explicit": true,
+            "config_path": ".oore.yml",
+            "selected_platforms": ["ios"]
+        });
+
+        let error = resolve_execution_plan(&workspace, &snapshot).expect_err("must reject");
+        assert!(
+            error
+                .to_string()
+                .contains("shared commands.build cannot be filtered safely")
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]

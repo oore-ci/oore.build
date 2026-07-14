@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
+import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import z from 'zod'
 import { toast } from 'sonner'
@@ -10,6 +11,7 @@ import { usePipelines } from '@/hooks/use-pipelines'
 import { useProjects } from '@/hooks/use-projects'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -37,11 +39,19 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
+import type { BuildPlatform } from '@/lib/types'
+
+const platformLabels: Record<BuildPlatform, string> = {
+  android: 'Android',
+  ios: 'iOS',
+  macos: 'macOS',
+}
 
 const triggerBuildSchema = z
   .object({
     project_id: z.string().optional(),
     pipeline_id: z.string().optional(),
+    platforms: z.array(z.enum(['android', 'ios', 'macos'])),
     branch: z.string().optional(),
     commit_sha: z.string().optional(),
   })
@@ -58,6 +68,67 @@ const triggerBuildSchema = z
   })
 
 type TriggerBuildForm = z.infer<typeof triggerBuildSchema>
+
+function PlatformSelectionField({
+  form,
+  platforms,
+}: {
+  form: UseFormReturn<TriggerBuildForm>
+  platforms: Array<BuildPlatform>
+}) {
+  if (platforms.length < 2) return null
+
+  return (
+    <FormField
+      control={form.control}
+      name="platforms"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>Platforms for this run</FormLabel>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {platforms.map((platform) => (
+              <label
+                key={platform}
+                className="flex items-center gap-2 border border-border px-3 py-2 text-sm"
+              >
+                <Checkbox
+                  checked={
+                    field.value.length === 0 ||
+                    field.value.includes(platform)
+                  }
+                  onCheckedChange={(checked) => {
+                    const current =
+                      field.value.length === 0 ? platforms : field.value
+                    const next = checked
+                      ? [...current, platform].filter(
+                          (value, index, values) =>
+                            values.indexOf(value) === index,
+                        )
+                      : current.filter((value) => value !== platform)
+                    if (next.length === 0) {
+                      form.setError('platforms', {
+                        message: 'Select at least one platform for this build',
+                      })
+                      return
+                    }
+                    form.clearErrors('platforms')
+                    field.onChange(next)
+                  }}
+                />
+                {platformLabels[platform]}
+              </label>
+            ))}
+          </div>
+          <FormDescription>
+            Applies to this build only. Automatic builds still run every
+            configured platform.
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
 
 interface TriggerBuildDialogProps {
   open: boolean
@@ -78,10 +149,12 @@ function defaults(
   defaultPipelineId?: string,
   defaultBranch?: string,
   firstProjectId?: string,
+  platforms: Array<BuildPlatform> = [],
 ): TriggerBuildForm {
   return {
     project_id: fixedProjectId ?? firstProjectId ?? '',
     pipeline_id: fixedPipelineId ?? defaultPipelineId ?? '',
+    platforms,
     branch: defaultBranch ?? '',
     commit_sha: '',
   }
@@ -133,7 +206,7 @@ function useTriggerBuildDialogState({
   const pipelinesQuery = usePipelines(
     projectId,
     { limit: 200 },
-    { enabled: open && !fixedPipelineId && !!projectId },
+    { enabled: open && !!projectId },
   )
   const pipelines = useMemo(
     () => pipelinesQuery.data?.pipelines ?? [],
@@ -148,6 +221,15 @@ function useTriggerBuildDialogState({
     () => Object.fromEntries(pipelines.map((p) => [p.id, p.name])),
     [pipelines],
   )
+  const selectedPipelineId = fixedPipelineId ?? form.watch('pipeline_id') ?? ''
+  const selectedPipeline = useMemo(
+    () => pipelines.find((pipeline) => pipeline.id === selectedPipelineId),
+    [pipelines, selectedPipelineId],
+  )
+  const availablePlatforms = useMemo(
+    () => selectedPipeline?.execution_config.platforms ?? [],
+    [selectedPipeline],
+  )
 
   // Auto-select pipeline when project changes
   useMountEffect(() => {
@@ -155,6 +237,7 @@ function useTriggerBuildDialogState({
       if (name !== 'project_id') return
       if (fixedPipelineId) return
       form.setValue('pipeline_id', '', { shouldDirty: false })
+      form.setValue('platforms', [], { shouldDirty: false })
     })
     return () => subscription.unsubscribe()
   })
@@ -181,7 +264,6 @@ function useTriggerBuildDialogState({
       form.setError('pipeline_id', { message: 'Pipeline is required' })
       return
     }
-
     const branch = data.branch?.trim() || undefined
     const commitSha = data.commit_sha?.trim() || undefined
 
@@ -193,6 +275,12 @@ function useTriggerBuildDialogState({
           branch,
           commit_sha: commitSha,
           trigger_ref: branch,
+          platforms:
+            availablePlatforms.length > 1
+              ? data.platforms.length > 0
+                ? data.platforms
+                : availablePlatforms
+              : undefined,
         },
       },
       {
@@ -238,6 +326,7 @@ function useTriggerBuildDialogState({
     pipelineItems,
     pipelines,
     pipelinesQuery,
+    availablePlatforms,
     projectId,
     projectItems,
     projects,
@@ -266,6 +355,7 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
     pipelineItems,
     pipelines,
     pipelinesQuery,
+    availablePlatforms,
     projectId,
     projectItems,
     projects,
@@ -286,6 +376,7 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
               defaultPipelineId,
               defaultBranch,
               !fixedProjectId ? projects[0]?.id : undefined,
+              availablePlatforms,
             ),
           )
         }
@@ -354,7 +445,17 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
                     <FormLabel>Pipeline</FormLabel>
                     <Select
                       value={field.value ?? ''}
-                      onValueChange={field.onChange}
+                      onValueChange={(value) => {
+                        field.onChange(value)
+                        const pipeline = pipelines.find(
+                          (candidate) => candidate.id === value,
+                        )
+                        form.setValue(
+                          'platforms',
+                          pipeline?.execution_config.platforms ?? [],
+                          { shouldDirty: false },
+                        )
+                      }}
                       disabled={!projectId || pipelinesQuery.isLoading}
                       items={pipelineItems}
                     >
@@ -391,6 +492,11 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
                 </p>
               </div>
             )}
+
+            <PlatformSelectionField
+              form={form}
+              platforms={availablePlatforms}
+            />
 
             <FormField
               control={form.control}

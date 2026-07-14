@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, Build, BuildContext, BuildDetailResponse, BuildEvent, BuildStatus,
+    ApiError, Build, BuildContext, BuildDetailResponse, BuildEvent, BuildPlatform, BuildStatus,
     CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse,
     ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
 };
@@ -236,6 +236,42 @@ fn create_config_snapshot(
         "repo_url": repo_url,
         "captured_at": now_unix(),
     })
+}
+
+fn validate_selected_platforms(
+    requested: Option<Vec<BuildPlatform>>,
+    configured: &[BuildPlatform],
+) -> Result<Option<Vec<BuildPlatform>>, (StatusCode, Json<ApiError>)> {
+    let Some(requested) = requested else {
+        return Ok(None);
+    };
+    if requested.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Select at least one platform for this build.",
+        ));
+    }
+
+    let mut selected = Vec::with_capacity(requested.len());
+    for platform in configured {
+        if requested.contains(platform) {
+            selected.push(platform.clone());
+        }
+    }
+    let has_duplicate = requested
+        .iter()
+        .enumerate()
+        .any(|(index, platform)| requested[..index].contains(platform));
+    if has_duplicate || selected.len() != requested.len() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Selected platforms must be unique and configured on this pipeline.",
+        ));
+    }
+
+    Ok(Some(selected))
 }
 
 fn parse_execution_config(raw: &str) -> PipelineExecutionConfig {
@@ -537,6 +573,8 @@ pub async fn create_build(
         .try_get("execution_config")
         .unwrap_or_else(|_| "{}".to_string());
     let execution_config = parse_execution_config(&execution_config_json);
+    let selected_platforms =
+        validate_selected_platforms(req.platforms, &execution_config.platforms)?;
     let concurrency_json: String = pipeline_row.get("concurrency");
     let concurrency: ConcurrencyPolicy =
         serde_json::from_str(&concurrency_json).unwrap_or_default();
@@ -614,7 +652,7 @@ pub async fn create_build(
         ));
     }
 
-    let config_snapshot = create_config_snapshot(
+    let mut config_snapshot = create_config_snapshot(
         &config_path,
         config_path_explicit != 0,
         &execution_config,
@@ -623,6 +661,9 @@ pub async fn create_build(
         branch.as_deref(),
         repo_url.as_deref(),
     );
+    if let Some(selected_platforms) = selected_platforms {
+        config_snapshot["selected_platforms"] = serde_json::json!(selected_platforms);
+    }
 
     let snapshot_str = config_snapshot.to_string();
     insert_build_with_retry(

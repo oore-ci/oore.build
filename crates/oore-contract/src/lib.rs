@@ -1031,6 +1031,9 @@ pub struct BuildEvent {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateBuildRequest {
     pub pipeline_id: String,
+    /// Optional one-run platform selection. Omitted builds every platform configured by the pipeline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<BuildPlatform>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

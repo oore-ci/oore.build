@@ -75,7 +75,10 @@ You can trigger builds three ways:
 1. Open the project
 2. Click **Trigger Build**
 3. Select the pipeline and branch
-4. Click **Start Build**
+4. For a multi-platform pipeline, keep every platform selected or choose the platforms needed for this run
+5. Click **Start Build**
+
+The platform choice affects only that manual run. Automatic builds still run every platform configured by the pipeline, and a re-run keeps the original selection.
 
 ### Webhook trigger (automatic)
 
@@ -89,6 +92,7 @@ curl -X POST http://127.0.0.1:8787/v1/projects/{project_id}/builds \
   -H "Content-Type: application/json" \
   -d '{
     "pipeline_id": "<pipeline_id>",
+    "platforms": ["android"],
     "branch": "main"
   }'
 ```
