@@ -429,7 +429,7 @@ struct IosSigningMaterialization {
     export_options_plist_path: PathBuf,
     bundle_profile_mapping: Vec<(String, String)>,
     effective_export_method: String,
-    signing_identity_sha1: Option<String>,
+    signing_identity_name: Option<String>,
 }
 
 struct IosSigningCleanup {
@@ -539,6 +539,15 @@ fn parse_certificate_sha1_hash(raw: &str) -> Option<String> {
         let candidate = line.trim().strip_prefix("SHA-1 hash:")?.trim();
         (candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()))
             .then(|| candidate.to_string())
+    })
+}
+
+fn parse_certificate_label(raw: &str) -> Option<String> {
+    raw.lines().find_map(|line| {
+        let (_, attribute) = line.split_once("\"labl\"")?;
+        let (_, value) = attribute.split_once("=\"")?;
+        let value = value.strip_suffix('"')?.trim();
+        (!value.is_empty()).then(|| value.to_string())
     })
 }
 
@@ -840,6 +849,10 @@ fn install_ios_signing_bundle(
         ])?;
         let signing_identity_sha1 = parse_certificate_sha1_hash(&certificate_output)
             .ok_or_else(|| anyhow::anyhow!("no signing certificate found after importing p12"))?;
+        let signing_identity_name =
+            parse_certificate_label(&certificate_output).ok_or_else(|| {
+                anyhow::anyhow!("imported signing certificate did not expose an identity name")
+            })?;
 
         run_security_command_with_strings(&[
             "set-key-partition-list".to_string(),
@@ -867,7 +880,7 @@ fn install_ios_signing_bundle(
             export_options_plist_path,
             bundle_profile_mapping,
             effective_export_method,
-            signing_identity_sha1: Some(signing_identity_sha1),
+            signing_identity_name: Some(signing_identity_name),
         })
     })();
 
@@ -1069,8 +1082,8 @@ fn ios_signing_xcode_environment(
             profile_ref.clone(),
         ));
     }
-    if let Some(ref sha1) = materialization.signing_identity_sha1 {
-        env.push(("FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(), sha1.clone()));
+    if let Some(ref name) = materialization.signing_identity_name {
+        env.push(("FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(), name.clone()));
     }
     env
 }
@@ -4290,7 +4303,9 @@ mod tests {
                 ),
             ],
             effective_export_method: "release-testing".to_string(),
-            signing_identity_sha1: Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string()),
+            signing_identity_name: Some(
+                "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
+            ),
         };
 
         let env = ios_signing_xcode_environment(&bundle, &materialization);
@@ -4324,7 +4339,7 @@ mod tests {
         )));
         assert!(env.contains(&(
             "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
-            "0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string(),
+            "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
         )));
         assert!(env.contains(&(
             "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
@@ -4361,12 +4376,21 @@ mod tests {
         let output = r#"
 SHA-256 hash: 7C16B3FEEB8C0DD77E73D2714F4E63C4F4EBB57CDAF72F11F121AF610AB1647F
 SHA-1 hash: 0ADDF2727054A792183CF51F72B687DCA1D35C6B
+keychain: "/tmp/oore-ci-build.keychain-db"
+attributes:
+    "alis"<blob>="Apple Distribution: Zerodha Broking Limited (843ED8PUW8)"
+    "labl"<blob>="Apple Distribution: Zerodha Broking Limited (843ED8PUW8)"
 "#;
         assert_eq!(
             parse_certificate_sha1_hash(output).as_deref(),
             Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B")
         );
         assert_eq!(parse_certificate_sha1_hash("SHA-1 hash: invalid"), None);
+        assert_eq!(
+            parse_certificate_label(output).as_deref(),
+            Some("Apple Distribution: Zerodha Broking Limited (843ED8PUW8)")
+        );
+        assert_eq!(parse_certificate_label("\"labl\"<blob>=\"\""), None);
     }
 
     #[test]

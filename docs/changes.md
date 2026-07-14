@@ -16,7 +16,7 @@ Rules:
 
 - **Reliable runner-side iOS identity import**:
   - The macOS runner now verifies the imported PKCS#12 material through the private signing key and certificate instead of relying on trust evaluation that can report no identities inside a system LaunchDaemon.
-  - The imported certificate's SHA-1 remains pinned in ExportOptions and is forwarded through Flutter's supported `FLUTTER_XCODE_*` bridge as a command-line Xcode build setting, so repository-local development signing settings cannot override Oore's distribution identity.
+  - The imported certificate's SHA-1 remains pinned in ExportOptions, while its exact Apple Distribution identity name is forwarded through Flutter's supported `FLUTTER_XCODE_*` bridge for the archive. This uses the value format each Xcode signing surface expects and prevents repository-local development signing settings from overriding Oore's distribution identity.
   - Key partition access is applied only to signing keys via macOS `security set-key-partition-list -s`, preventing the ACL step from invalidating an otherwise valid imported distribution identity.
   - When Oore supplies ExportOptions, the runner removes both accepted forms of Flutter's conflicting `--export-method` option before executing the build command.
   - Flutter iOS pipelines now create a signed archive with Oore's imported distribution identity and temporary keychain before exporting the IPA. Oore routes each stored provisioning profile to only the matching app or extension bundle ID during the archive, while third-party Pods remain profile-free; ExportOptions preserves the same exact mapping during export. This supports apps with extensions without rewriting their Xcode project.
