@@ -956,7 +956,18 @@ fn adapt_ios_command_for_signing(
     }
 
     args.retain(|arg| arg != "--no-codesign");
-    args.retain(|arg| !arg.starts_with("--export-method="));
+    let mut remove_export_method_value = false;
+    args.retain(|arg| {
+        if remove_export_method_value {
+            remove_export_method_value = false;
+            return false;
+        }
+        if arg == "--export-method" {
+            remove_export_method_value = true;
+            return false;
+        }
+        !arg.starts_with("--export-method=")
+    });
 
     let rewrote_ios_target = rewrite_flutter_ios_target_to_ipa(&mut args);
     if !rewrote_ios_target && !contains_flutter_build_target(&args, "ipa") {
@@ -4126,7 +4137,7 @@ mod tests {
     #[test]
     fn normalizes_wrapped_ipa_command_and_marks_signing_applied() {
         let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
-        let command = "env FOO=bar fvm flutter build ipa --release";
+        let command = "env FOO=bar fvm flutter build ipa --release --export-method ad-hoc";
         let (normalized, signing_applied) = normalize_stage_command_for_execution(
             "build",
             command,
@@ -4137,6 +4148,7 @@ mod tests {
 
         assert!(signing_applied);
         assert!(normalized.contains("fvm flutter build ipa --release"));
+        assert!(!normalized.contains("--export-method"));
         assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
     }
 
