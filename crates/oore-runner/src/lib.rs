@@ -930,6 +930,7 @@ fn ios_signing_prepared_marker(
             "profiles_count": bundle.provisioning_profiles.len(),
             "export_options_plist_path": materialization.export_options_plist_path,
             "effective_export_method": materialization.effective_export_method,
+            "signing_identity": materialization.signing_identity_name,
             "profile_mapping": materialization.bundle_profile_mapping,
         })
     )
@@ -1031,10 +1032,12 @@ fn adapt_ios_command_for_signing(
     }
 
     // Flutter forwards FLUTTER_XCODE_* environment variables as command-line
-    // xcodebuild settings. Oore supplies the imported distribution identity and
-    // resolves each app target's exact installed profile from its bundle ID.
-    // ExportOptions.plist then preserves that mapping for the IPA export. An
-    // unsigned archive cannot be repaired reliably at export.
+    // xcodebuild settings. Oore resolves each app target's exact installed
+    // profile from its bundle ID. ExportOptions.plist pins the imported
+    // distribution certificate for the IPA export. Do not force
+    // CODE_SIGN_IDENTITY here: command-line settings apply to every target in
+    // the workspace, including unsigned CocoaPods dependencies. Xcode selects
+    // the matching identity from the temporary keychain for the app targets.
     args.push(format!(
         "--export-options-plist={}",
         export_options_plist.display()
@@ -1081,9 +1084,6 @@ fn ios_signing_xcode_environment(
             ),
             profile_ref.clone(),
         ));
-    }
-    if let Some(ref name) = materialization.signing_identity_name {
-        env.push(("FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(), name.clone()));
     }
     env
 }
@@ -4338,14 +4338,13 @@ mod tests {
             "Kite Holdings Ad Hoc".to_string(),
         )));
         assert!(env.contains(&(
-            "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
-            "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string(),
-        )));
-        assert!(env.contains(&(
             "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
             "--keychain /tmp/signing/oore-ci-build.keychain-db".to_string(),
         )));
-        assert!(!env.iter().any(|(key, _)| key == "CODE_SIGN_IDENTITY"));
+        assert!(
+            !env.iter()
+                .any(|(key, _)| key.ends_with("CODE_SIGN_IDENTITY"))
+        );
     }
 
     #[test]
