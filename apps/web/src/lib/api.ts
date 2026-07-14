@@ -102,6 +102,7 @@ import type {
   ValidatePipelineResponse,
 } from '@/lib/types'
 import { READ_ONLY_REASON, isDemoMutationBlocked } from '@/lib/demo-mode'
+import { isLoopbackUrl } from '@/lib/connectivity'
 
 // ── Error class ─────────────────────────────────────────────────
 
@@ -894,6 +895,22 @@ export function getBuildLogs(
 
 // ── Artifact API ────────────────────────────────────────────
 
+function useInstanceOrigin(baseUrl: string, downloadUrl: string): string {
+  if (!isLoopbackUrl(downloadUrl)) return downloadUrl
+
+  try {
+    const download = new URL(downloadUrl)
+    const instance = new URL(baseUrl)
+    if (download.origin === instance.origin) return downloadUrl
+    return new URL(
+      `${download.pathname}${download.search}${download.hash}`,
+      instance,
+    ).toString()
+  } catch {
+    return downloadUrl
+  }
+}
+
 export function listArtifacts(
   baseUrl: string,
   token: string,
@@ -916,7 +933,10 @@ export function getArtifactDownloadLink(
     baseUrl,
     `/v1/artifacts/${artifactId}/download-link`,
     { method: 'POST', headers: authHeaders(token) },
-  )
+  ).then((response) => ({
+    ...response,
+    download_url: useInstanceOrigin(baseUrl, response.download_url),
+  }))
 }
 
 export function createScopedDownloadToken(
@@ -933,7 +953,10 @@ export function createScopedDownloadToken(
       headers: authHeaders(token),
       body: JSON.stringify(data),
     },
-  )
+  ).then((response) => ({
+    ...response,
+    download_url: useInstanceOrigin(baseUrl, response.download_url),
+  }))
 }
 
 // ── Project API ─────────────────────────────────────────────────

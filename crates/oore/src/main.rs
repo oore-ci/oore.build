@@ -214,7 +214,7 @@ struct UpdateArgs {
     /// GitHub repository in `owner/name` format
     ///
     /// If not specified, this defaults to the installed GITHUB_REPO file (if available) or
-    /// `devaryakjha/oore.build`.
+    /// `oore-ci/oore.build`.
     #[arg(long, env = "OORE_GITHUB_REPO")]
     repo: Option<String>,
 }
@@ -2871,7 +2871,9 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
 
 // ── Self-update helpers ──────────────────────────────────────────
 
-const DEFAULT_GITHUB_REPO: &str = "devaryakjha/oore.build";
+const DEFAULT_GITHUB_REPO: &str = "oore-ci/oore.build";
+const LEGACY_GITHUB_REPO: &str = "devaryakjha/oore.build";
+const DEFAULT_RELEASE_INDEX_BASE_URL: &str = "https://releases.oore.build";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReleaseChannel {
@@ -2897,28 +2899,15 @@ impl ReleaseChannel {
             other => anyhow::bail!("invalid channel '{other}', expected: stable|beta|alpha"),
         }
     }
-
-    fn tag_marker(self) -> Option<&'static str> {
-        match self {
-            Self::Stable => None,
-            Self::Alpha => Some("-alpha."),
-            Self::Beta => Some("-beta."),
-        }
-    }
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
-    assets: Vec<GitHubAsset>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
+struct ReleaseManifest {
+    schema_version: u32,
+    channel: String,
+    version: String,
+    tag: String,
+    download_base_url: String,
 }
 
 fn read_trimmed_file(path: &Path) -> Option<String> {
@@ -2953,22 +2942,19 @@ fn read_installed_channel(install_root: &Path) -> Option<ReleaseChannel> {
 }
 
 fn read_installed_repo(install_root: &Path) -> Option<String> {
-    read_trimmed_file(&install_root.join("GITHUB_REPO"))
+    read_trimmed_file(&install_root.join("GITHUB_REPO")).map(|repo| normalize_github_repo(&repo))
 }
 
-fn github_token() -> Option<String> {
-    for key in ["OORE_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(val) = std::env::var(key) {
-            let trimmed = val.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
+fn normalize_github_repo(repo: &str) -> String {
+    let repo = repo.trim();
+    if repo == LEGACY_GITHUB_REPO {
+        DEFAULT_GITHUB_REPO.to_string()
+    } else {
+        repo.to_string()
     }
-    None
 }
 
-fn github_client() -> anyhow::Result<reqwest::Client> {
+fn http_client() -> anyhow::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(format!("oore/{}/update", env!("CARGO_PKG_VERSION")))
         .build()
@@ -2979,83 +2965,54 @@ async fn fetch_latest_release(
     client: &reqwest::Client,
     repo: &str,
     channel: ReleaseChannel,
-) -> anyhow::Result<GitHubRelease> {
-    if !repo.contains('/') {
-        anyhow::bail!("invalid GitHub repo '{repo}', expected: owner/name");
-    }
-
-    let token = github_token();
-    let base = format!("https://api.github.com/repos/{repo}");
-
-    let mut req = match channel {
-        ReleaseChannel::Stable => client.get(format!("{base}/releases/latest")),
-        ReleaseChannel::Alpha | ReleaseChannel::Beta => {
-            client.get(format!("{base}/releases?per_page=100"))
-        }
-    };
-
-    req = req
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
-
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-
-    if channel == ReleaseChannel::Stable {
-        let rel: GitHubRelease = req
-            .send()
-            .await
-            .context("failed to fetch latest stable release")?
-            .error_for_status()
-            .context("latest stable release request failed")?
-            .json()
-            .await
-            .context("failed to parse latest stable release JSON")?;
-
-        if rel.draft {
-            anyhow::bail!("latest stable release is a draft (tag: {})", rel.tag_name);
-        }
-        if rel.prerelease {
-            anyhow::bail!(
-                "latest stable release is marked prerelease (tag: {}), refusing to use it for stable channel",
-                rel.tag_name
-            );
-        }
-
-        return Ok(rel);
-    }
-
-    let list: Vec<GitHubRelease> = req
+) -> anyhow::Result<ReleaseManifest> {
+    let base = std::env::var("OORE_RELEASE_INDEX_BASE_URL")
+        .unwrap_or_else(|_| DEFAULT_RELEASE_INDEX_BASE_URL.to_string());
+    let url = format!(
+        "{}/latest/{}.json",
+        base.trim_end_matches('/'),
+        channel.as_str()
+    );
+    let release: ReleaseManifest = client
+        .get(&url)
+        .header("Accept", "application/json")
         .send()
         .await
-        .context("failed to fetch release list")?
-        .error_for_status()
-        .context("release list request failed")?
-        .json()
-        .await
-        .context("failed to parse release list JSON")?;
-
-    let marker = channel.tag_marker().context("missing tag marker")?;
-    let rel = list
-        .into_iter()
-        .find(|r| !r.draft && r.prerelease && r.tag_name.contains(marker))
         .with_context(|| {
             format!(
-                "no {channel} release found in {repo}",
+                "failed to fetch {channel} release index",
                 channel = channel.as_str()
             )
-        })?;
-    Ok(rel)
+        })?
+        .error_for_status()
+        .with_context(|| format!("release index request failed: {url}"))?
+        .json()
+        .await
+        .context("failed to parse release index JSON")?;
+    if release.schema_version != 1 || release.channel != channel.as_str() {
+        anyhow::bail!(
+            "invalid {} release index response from {url}",
+            channel.as_str()
+        );
+    }
+    if release.tag.trim_start_matches('v') != release.version {
+        anyhow::bail!(
+            "release index tag and version do not match: {}",
+            release.tag
+        );
+    }
+    let expected_download_base = format!(
+        "https://github.com/{repo}/releases/download/{}",
+        release.tag
+    );
+    if release.download_base_url.trim_end_matches('/') != expected_download_base {
+        anyhow::bail!("release index asset source does not match GitHub repo {repo}");
+    }
+    Ok(release)
 }
 
-fn find_asset_url(release: &GitHubRelease, name: &str) -> anyhow::Result<String> {
-    release
-        .assets
-        .iter()
-        .find(|a| a.name == name)
-        .map(|a| a.browser_download_url.clone())
-        .with_context(|| format!("release {} is missing asset {name}", release.tag_name))
+fn find_asset_url(release: &ReleaseManifest, name: &str) -> String {
+    format!("{}/{name}", release.download_base_url.trim_end_matches('/'))
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
@@ -3530,7 +3487,7 @@ fn database_is_open(path: &Path) -> bool {
 }
 
 fn backup_restore(args: BackupRestoreArgs) -> anyhow::Result<()> {
-    let client = github_client()?;
+    let client = http_client()?;
     let runtime = tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
     let daemon_url = resolve_daemon_url(None)?;
     if runtime.block_on(check_daemon_running(&client, &daemon_url)) {
@@ -4006,6 +3963,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let repo = args
         .repo
         .clone()
+        .map(|repo| normalize_github_repo(&repo))
         .or_else(|| read_installed_repo(&install_root))
         .unwrap_or_else(|| DEFAULT_GITHUB_REPO.to_string());
 
@@ -4017,19 +3975,19 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         infer_channel_from_version(&current)
     };
 
-    let client = github_client()?;
+    let client = http_client()?;
 
     // 1. Fetch latest release metadata for the selected channel
     let rel = fetch_latest_release(&client, &repo, channel).await?;
-    let latest_str = rel.tag_name.trim().trim_start_matches('v').to_string();
+    let latest_str = rel.version.clone();
     let latest = parse_semver_loose(&latest_str)
-        .with_context(|| format!("invalid version in release tag: {}", rel.tag_name))?;
+        .with_context(|| format!("invalid version in release tag: {}", rel.tag))?;
 
     // 2. Compare versions
     println!("Channel:         {}", channel.as_str());
     println!("GitHub repo:     {repo}");
     println!("Current version: {current}");
-    println!("Latest version:  {latest} ({})", rel.tag_name);
+    println!("Latest version:  {latest} ({})", rel.tag);
 
     if current >= latest && !args.force {
         println!("Already up to date.");
@@ -4051,8 +4009,8 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let arch = release_arch()?;
     let archive_filename = format!("oore_{latest_str}_darwin_{arch}.tar.gz");
     let checksums_filename = format!("oore_{latest_str}_checksums.txt");
-    let archive_url = find_asset_url(&rel, &archive_filename)?;
-    let checksums_url = find_asset_url(&rel, &checksums_filename)?;
+    let archive_url = find_asset_url(&rel, &archive_filename);
+    let checksums_url = find_asset_url(&rel, &checksums_filename);
 
     println!("Downloading {archive_filename}...");
 
@@ -4392,6 +4350,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn legacy_release_repository_is_normalized() {
+        assert_eq!(
+            normalize_github_repo(LEGACY_GITHUB_REPO),
+            DEFAULT_GITHUB_REPO
+        );
+        assert_eq!(
+            normalize_github_repo(DEFAULT_GITHUB_REPO),
+            DEFAULT_GITHUB_REPO
+        );
     }
 
     #[test]

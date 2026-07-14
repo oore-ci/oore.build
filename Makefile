@@ -1,4 +1,4 @@
-.PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
+.PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index build check \
 		       test-web lint-web fix-web \
 		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
@@ -27,9 +27,14 @@ PAGES_PROJECT_WEB ?= oore-ci
 PAGES_PROJECT_DEMO ?= oore-demo
 PAGES_PROJECT_SITE ?= oore
 PAGES_PROJECT_DOCS ?= oore-docs
+PAGES_PROJECT_RELEASES ?= oore-releases
+PAGES_RELEASES_BRANCH ?= production
 PAGES_BRANCH ?=
 PAGES_COMMIT_HASH ?=
 PAGES_COMMIT_MESSAGE ?=
+RELEASE_INDEX_SOURCE ?= dist/github-releases.json
+RELEASE_INDEX_OUTPUT ?= dist/release-index
+RELEASE_INDEX_REPOSITORY ?= oore-ci/oore.build
 
 # If PAGES_BRANCH is set (e.g. alpha/beta), deploy to a Pages preview branch.
 # Important: avoid leaving behind extra whitespace in the shell command when unset.
@@ -96,6 +101,16 @@ deploy-docs: build-docs
 
 deploy-docs-only:
 	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
+
+# ── Release discovery index ───────────────────────────────────────
+build-release-index:
+	bun tools/generate-release-index.ts $(RELEASE_INDEX_SOURCE) $(RELEASE_INDEX_OUTPUT) $(RELEASE_INDEX_REPOSITORY)
+
+deploy-release-index-only:
+	$(WRANGLER) pages deploy $(RELEASE_INDEX_OUTPUT) --project-name=$(PAGES_PROJECT_RELEASES) --branch=$(PAGES_RELEASES_BRANCH)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
+
+test-release-index:
+	bun test tools/generate-release-index.test.ts
 
 test-docs:
 	cd apps/docs-site && bun run test
@@ -211,7 +226,7 @@ check: lint-web cargo-check
 
 lint: lint-web lint-docs fmt-rust-check
 
-test: test-web test-docs test-rust-workspace
+test: test-web test-docs test-release-index test-rust-workspace
 
 validate: docs-check lint test clippy-rust bundle-check build-docs build-site cargo-check
 

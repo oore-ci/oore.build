@@ -14,6 +14,16 @@ Rules:
 
 ## 2026-07-14
 
+- **Reachable artifact links behind a frontend proxy**:
+  - The web client now replaces only the daemon's loopback fallback origin with the instance URL it successfully used, so direct and scoped artifact links work through paired or reverse-proxied frontends even before `public_url` is configured. Explicit non-loopback storage and public URLs remain unchanged.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+- **Static release discovery and canonical repository move**:
+  - Installed backends, frontend hosts, and the installer now resolve updates from `https://releases.oore.build/latest/<channel>.json` instead of making rate-limited GitHub API calls. GitHub remains the verified release-asset host.
+  - Every successful GitHub Release now publishes both a direct latest manifest and a newest-first complete history at `https://releases.oore.build/<channel>.json`, giving update checks and a future changelog page one stable source of truth.
+  - Cloudflare Pages response rules are mutually exclusive, so latest and history manifests expose one valid CORS origin and one cache policy instead of overlapping headers that browsers can reject.
+  - Existing installed metadata pointing at `devaryakjha/oore.build` is normalized to the canonical `oore-ci/oore.build` repository, and public repository links now use the organization URL.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
+  - Linear runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
 - **CI-style build step navigation**:
   - Build steps now live in a compact navigation rail beside the terminal on desktop instead of consuming a large block above it. Narrow screens use a single horizontally scrollable step strip so the log remains the primary workspace.
   - The complete log stays the default for successful builds, while running and failed builds still focus the relevant step. Each step exposes status, line count, and duration without competing with the output.
@@ -304,14 +314,14 @@ Rules:
 
 ## 2026-05-05
 
-- **Project RBAC hardening from Codex scan** ([GitHub #88](https://github.com/devaryakjha/oore.build/issues/88), [#89](https://github.com/devaryakjha/oore.build/issues/89)):
+- **Project RBAC hardening from Codex scan** ([GitHub #88](https://github.com/oore-ci/oore.build/issues/88), [#89](https://github.com/oore-ci/oore.build/issues/89)):
   - `POST /v1/builds/{build_id}/cancel` now resolves the build project and requires `ProjectPermission::CancelBuild` before transitioning build state.
   - Scoped artifact token create/list/revoke routes now resolve artifact -> build -> project and require `ProjectPermission::ReadArtifacts` before minting or managing bearer download URLs.
   - Docs index: https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 ## 2026-04-15
 
-- **Security fixes from Codex scan** ([GitHub #83](https://github.com/devaryakjha/oore.build/issues/83), [#84](https://github.com/devaryakjha/oore.build/issues/84), [#85](https://github.com/devaryakjha/oore.build/issues/85), [#86](https://github.com/devaryakjha/oore.build/issues/86)):
+- **Security fixes from Codex scan** ([GitHub #83](https://github.com/oore-ci/oore.build/issues/83), [#84](https://github.com/oore-ci/oore.build/issues/84), [#85](https://github.com/oore-ci/oore.build/issues/85), [#86](https://github.com/oore-ci/oore.build/issues/86)):
   - Enforced configured trusted-proxy shared secrets with the `X-Oore-Trusted-Proxy-Secret` header for runtime trusted-proxy login and setup owner claim.
   - Scoped direct build/log/artifact read routes to project RBAC, including stream-token issuance and artifact download links.
   - Scoped direct pipeline and signing mutation routes to project RBAC before applying pipeline, Android signing, iOS signing, device registration, or sync changes.
@@ -386,7 +396,7 @@ Rules:
 
 ## 2026-03-18
 
-- **Doc improvements for early testers** ([#49](https://github.com/devaryakjha/oore.build/issues/49), [#44](https://github.com/devaryakjha/oore.build/issues/44), [#40](https://github.com/devaryakjha/oore.build/issues/40), [#48](https://github.com/devaryakjha/oore.build/issues/48), [#41](https://github.com/devaryakjha/oore.build/issues/41), [#42](https://github.com/devaryakjha/oore.build/issues/42), [#43](https://github.com/devaryakjha/oore.build/issues/43)):
+- **Doc improvements for early testers** ([#49](https://github.com/oore-ci/oore.build/issues/49), [#44](https://github.com/oore-ci/oore.build/issues/44), [#40](https://github.com/oore-ci/oore.build/issues/40), [#48](https://github.com/oore-ci/oore.build/issues/48), [#41](https://github.com/oore-ci/oore.build/issues/41), [#42](https://github.com/oore-ci/oore.build/issues/42), [#43](https://github.com/oore-ci/oore.build/issues/43)):
   - Added "Alpha Feedback Playbook" with 10-minute test flow and templates.
   - Added "Issue Report Checklist" page and linked from SUPPORT.md.
   - Added screenshots with modern `.webp` formatting to the Public Alpha guide.

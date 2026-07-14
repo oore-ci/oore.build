@@ -22,7 +22,7 @@ For one internal-only macOS rollout example behind NetBird + Warpgate, see [Mac 
 ### 1. Build from source
 
 ```bash
-git clone https://github.com/devaryakjha/oore.build.git
+git clone https://github.com/oore-ci/oore.build.git
 cd Oore CI
 cargo build --release -p oored
 cargo build --release -p oore

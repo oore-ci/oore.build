@@ -163,7 +163,7 @@ export default defineConfig({
       { text: 'Operations', link: '/operations/deployment' },
       {
         text: 'GitHub',
-        link: 'https://github.com/devaryakjha/oore.build',
+        link: 'https://github.com/oore-ci/oore.build',
       },
     ],
 
@@ -433,12 +433,12 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/devaryakjha/oore.build' },
+      { icon: 'github', link: 'https://github.com/oore-ci/oore.build' },
     ],
 
     editLink: {
       pattern:
-        'https://github.com/devaryakjha/oore.build/edit/master/apps/docs-site/docs/:path',
+        'https://github.com/oore-ci/oore.build/edit/master/apps/docs-site/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

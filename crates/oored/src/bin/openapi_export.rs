@@ -18,7 +18,7 @@ use utoipa::OpenApi;
         title = "Oore CI API",
         version = "1.0.0",
         description = "REST API for Oore CI — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support local-mode login and OIDC login/logout flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince Oore CI is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
-        license(name = "MIT", url = "https://github.com/devaryakjha/oore.build/blob/master/LICENSE"),
+        license(name = "MIT", url = "https://github.com/oore-ci/oore.build/blob/master/LICENSE"),
         contact(name = "Oore CI", url = "https://oore.build"),
     ),
     servers(

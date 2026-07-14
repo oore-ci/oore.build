@@ -31,7 +31,9 @@ const DEFAULT_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER =
 const DEFAULT_DIST_DIR =
   process.env.OORE_WEB_DIST_DIR ||
   path.resolve(path.dirname(process.execPath), '..', 'web-dist')
-const DEFAULT_GITHUB_REPO = 'devaryakjha/oore.build'
+const DEFAULT_GITHUB_REPO = 'oore-ci/oore.build'
+const LEGACY_GITHUB_REPO = 'devaryakjha/oore.build'
+const DEFAULT_RELEASE_INDEX_BASE_URL = 'https://releases.oore.build'
 const BACKEND_TRUSTED_PROXY_SECRET_HEADER = 'x-oore-trusted-proxy-secret'
 const CLIENT_CONTROLLED_IDENTITY_HEADERS = [
   'x-oore-user-email',
@@ -478,6 +480,11 @@ function inferChannelFromVersion(version) {
   return 'stable'
 }
 
+function normalizeGitHubRepo(repo) {
+  const value = repo.trim()
+  return value === LEGACY_GITHUB_REPO ? DEFAULT_GITHUB_REPO : value
+}
+
 function githubHeaders() {
   const headers = {
     Accept: 'application/vnd.github+json',
@@ -494,15 +501,41 @@ function githubHeaders() {
   return headers
 }
 
-async function fetchJson(url) {
+async function fetchReleaseManifest(channel, repo) {
+  const baseUrl = (
+    process.env.OORE_RELEASE_INDEX_BASE_URL || DEFAULT_RELEASE_INDEX_BASE_URL
+  ).replace(/\/$/, '')
+  const url = `${baseUrl}/latest/${channel}.json`
   const response = await fetch(url, {
-    headers: githubHeaders(),
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': `oore-web/${readInstalledVersion(resolveInstallRoot()) || 'unknown'}/update`,
+    },
     signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok) {
-    throw new Error(`request failed (${response.status}) for ${url}`)
+    throw new Error(
+      `release index request failed (${response.status}) for ${url}`,
+    )
   }
-  return await response.json()
+  const release = await response.json()
+  if (
+    release.schema_version !== 1 ||
+    release.channel !== channel ||
+    typeof release.tag !== 'string' ||
+    typeof release.version !== 'string' ||
+    typeof release.download_base_url !== 'string' ||
+    release.tag.replace(/^v/, '') !== release.version
+  ) {
+    throw new Error(`invalid ${channel} release index response from ${url}`)
+  }
+  const expectedDownloadBase = `https://github.com/${repo}/releases/download/${release.tag}`
+  if (release.download_base_url.replace(/\/$/, '') !== expectedDownloadBase) {
+    throw new Error(
+      `release index asset source does not match GitHub repo ${repo}`,
+    )
+  }
+  return release
 }
 
 async function fetchBytes(url) {
@@ -516,65 +549,8 @@ async function fetchBytes(url) {
   return Buffer.from(await response.arrayBuffer())
 }
 
-function releaseMatchesChannel(release, channel) {
-  if (release.draft) return false
-  if (channel === 'stable') return !release.prerelease
-  return release.prerelease && release.tag_name.includes(`-${channel}.`)
-}
-
-async function fetchLatestRelease(repo, channel) {
-  if (!repo.includes('/')) {
-    throw new Error(`invalid GitHub repo '${repo}', expected owner/name`)
-  }
-
-  const base = `https://api.github.com/repos/${repo}`
-  if (channel === 'stable') {
-    const release = await fetchJson(`${base}/releases/latest`)
-    if (!releaseMatchesChannel(release, channel)) {
-      throw new Error(
-        `latest stable release is not usable: ${release.tag_name}`,
-      )
-    }
-    return release
-  }
-
-  const releases = await fetchJson(`${base}/releases?per_page=100`)
-  const release = releases
-    .filter((candidate) => releaseMatchesChannel(candidate, channel))
-    .map((candidate) => {
-      try {
-        return {
-          release: candidate,
-          version: parseVersion(candidate.tag_name),
-        }
-      } catch {
-        return null
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => compareVersions(b.version, a.version))[0]?.release
-  if (!release) throw new Error(`no ${channel} release found in ${repo}`)
-  return release
-}
-
 function findAssetUrl(release, name) {
-  const asset = release.assets?.find((candidate) => candidate.name === name)
-  if (!asset?.browser_download_url) {
-    throw new Error(`release ${release.tag_name} is missing asset ${name}`)
-  }
-  return asset.browser_download_url
-}
-
-function releaseChangelogUrl(release, repo) {
-  const fallback =
-    release.html_url ||
-    `https://github.com/${repo}/releases/tag/${release.tag_name}`
-  const candidate = release.body?.match(
-    /\*\*Full Changelog\*\*:\s*(https:\/\/github\.com\/\S+)/,
-  )?.[1]
-  return candidate?.startsWith(`https://github.com/${repo}/compare/`)
-    ? candidate
-    : fallback
+  return `${release.download_base_url.replace(/\/$/, '')}/${name}`
 }
 
 function releasePlatform() {
@@ -645,9 +621,10 @@ function readInstalledMetadata() {
   return {
     version: readInstalledVersion(installRoot) || 'unknown',
     channel: readTrimmedFile(path.join(installRoot, 'CHANNEL')),
-    github_repo:
+    github_repo: normalizeGitHubRepo(
       readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
-      DEFAULT_GITHUB_REPO,
+        DEFAULT_GITHUB_REPO,
+    ),
   }
 }
 
@@ -811,24 +788,25 @@ async function runUpdate(config) {
   const installRoot = resolveInstallRoot()
   const currentRaw = readInstalledVersion(installRoot) || '0.0.0'
   const current = parseVersion(currentRaw)
-  const repo =
+  const repo = normalizeGitHubRepo(
     config.repo ||
-    readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
-    DEFAULT_GITHUB_REPO
+      readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
+      DEFAULT_GITHUB_REPO,
+  )
   const channel = parseChannel(
     config.channel ||
       readTrimmedFile(path.join(installRoot, 'CHANNEL')) ||
       inferChannelFromVersion(current),
   )
 
-  const release = await fetchLatestRelease(repo, channel)
-  const latestRaw = release.tag_name.trim().replace(/^v/, '')
+  const release = await fetchReleaseManifest(channel, repo)
+  const latestRaw = release.version
   const latest = parseVersion(latestRaw)
 
   console.log(`Channel:         ${channel}`)
   console.log(`GitHub repo:     ${repo}`)
   console.log(`Current version: ${current.raw}`)
-  console.log(`Latest version:  ${latest.raw} (${release.tag_name})`)
+  console.log(`Latest version:  ${latest.raw} (${release.tag})`)
 
   if (compareVersions(current, latest) >= 0 && !config.force) {
     console.log('Already up to date.')
@@ -950,9 +928,11 @@ export async function getWebUpdateStatus(updateState, searchParams) {
       metadata.channel ||
       inferChannelFromVersion(current),
   )
-  const repo = searchParams.get('repo') || metadata.github_repo
-  const release = await fetchLatestRelease(repo, channel)
-  const latest = parseVersion(release.tag_name)
+  const repo = normalizeGitHubRepo(
+    searchParams.get('repo') || metadata.github_repo,
+  )
+  const release = await fetchReleaseManifest(channel, repo)
+  const latest = parseVersion(release.version)
   return {
     ...metadata,
     version: current.raw,
@@ -960,12 +940,10 @@ export async function getWebUpdateStatus(updateState, searchParams) {
     github_repo: repo,
     latest_version: latest.raw,
     update_available: compareVersions(current, latest) < 0,
-    release_name: release.name || release.tag_name,
-    release_notes: release.body || '',
-    release_url:
-      release.html_url ||
-      `https://github.com/${repo}/releases/tag/${release.tag_name}`,
-    changelog_url: releaseChangelogUrl(release, repo),
+    release_name: release.release_name || release.tag,
+    release_notes: release.release_notes || '',
+    release_url: release.release_url,
+    changelog_url: release.changelog_url,
     managed_service: hasManagedWebService(),
     ...updateState,
   }

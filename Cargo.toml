@@ -6,7 +6,7 @@ resolver = "2"
 version = "0.1.10"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/devaryakjha/oore.build"
+repository = "https://github.com/oore-ci/oore.build"
 
 [workspace.dependencies]
 anyhow = "1.0"

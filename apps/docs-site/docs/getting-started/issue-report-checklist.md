@@ -50,5 +50,5 @@ Before filing, try these high-level checks:
 
 ## Where to file
 
-- **Bug Reports**: [Open a new issue](https://github.com/devaryakjha/oore.build/issues/new) using the **Alpha Test Report** template.
-- **Security Findings**: Follow [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md) for private disclosure.
+- **Bug Reports**: [Open a new issue](https://github.com/oore-ci/oore.build/issues/new) using the **Alpha Test Report** template.
+- **Security Findings**: Follow [SECURITY.md](https://github.com/oore-ci/oore.build/blob/master/SECURITY.md) for private disclosure.

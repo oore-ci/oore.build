@@ -72,14 +72,14 @@ rm -f "$service_call"
 curl_args="$(mktemp)"
 OORE_CHANNEL=alpha
 OORE_VERSION=latest
-OORE_RELEASES_LIST_URL=https://example.invalid/releases
+OORE_RELEASE_MANIFEST_URL=https://example.invalid/latest/alpha.json
 TMP_DIR="$(mktemp -d)"
 curl() {
   printf '%s\n' "$*" > "$curl_args"
   local previous=""
   for argument in "$@"; do
     if [[ "$previous" == "--output" ]]; then
-      printf '[{"tag_name":"v1.0.0-alpha.1","draft":false,"prerelease":true}]\n' > "$argument"
+      printf '{"schema_version":1,"channel":"alpha","tag":"v1.0.0-alpha.1"}\n' > "$argument"
       break
     fi
     previous="$argument"

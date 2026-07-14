@@ -172,4 +172,4 @@ Use:
 ## How to report issues and security findings
 
 - Bugs/UX issues: GitHub issues (use the [Alpha Feedback Playbook](/getting-started/alpha-feedback-playbook))
-- Security reports: follow [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md) (private disclosure)
+- Security reports: follow [SECURITY.md](https://github.com/oore-ci/oore.build/blob/master/SECURITY.md) (private disclosure)

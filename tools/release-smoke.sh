@@ -25,10 +25,20 @@ grep -q 'deploy_pages deploy-site-only' .github/workflows/release.yml
 grep -q 'deploy_pages deploy-docs-only' .github/workflows/release.yml
 grep -q 'deploy_pages deploy-web-only' .github/workflows/release.yml
 grep -q 'deploy_pages deploy-demo-only' .github/workflows/release.yml
+grep -q '^  release-index:' .github/workflows/release.yml
+grep -q '^    needs: release' .github/workflows/release.yml
+grep -q 'make build-release-index' .github/workflows/release.yml
+grep -q 'make deploy-release-index-only' .github/workflows/release.yml
+grep -q 'releases.oore.build' scripts/install.sh
+grep -Fq 'latest/$OORE_CHANNEL.json' scripts/install.sh
+grep -q 'releases.oore.build' apps/web/tools/oore-web.js
+grep -q 'releases.oore.build' crates/oore/src/main.rs
 if grep -Eq 'make deploy-(site|docs|web)-only &' .github/workflows/release.yml; then
   echo "[release-smoke] Pages deploys must not run concurrently." >&2
   exit 1
 fi
+
+make test-release-index
 
 # Release installer local-first defaults and browser-open policy.
 bash scripts/install-acceptance.sh

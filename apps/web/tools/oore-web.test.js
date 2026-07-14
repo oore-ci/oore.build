@@ -56,17 +56,21 @@ describe('oore-web runtime release metadata', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        Response.json([
-          {
-            tag_name: 'v1.2.3-alpha.2',
-            name: 'Alpha 2',
-            body: '- Faster builds\n\n**Full Changelog**: https://github.com/example/oore/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
-            html_url:
-              'https://github.com/example/oore/releases/tag/v1.2.3-alpha.2',
-            draft: false,
-            prerelease: true,
-          },
-        ]),
+        Response.json({
+          schema_version: 1,
+          channel: 'alpha',
+          version: '1.2.3-alpha.2',
+          tag: 'v1.2.3-alpha.2',
+          release_name: 'Alpha 2',
+          release_notes:
+            '- Faster builds\n\n**Full Changelog**: https://github.com/oore-ci/oore.build/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+          release_url:
+            'https://github.com/oore-ci/oore.build/releases/tag/v1.2.3-alpha.2',
+          changelog_url:
+            'https://github.com/oore-ci/oore.build/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+          download_base_url:
+            'https://github.com/oore-ci/oore.build/releases/download/v1.2.3-alpha.2',
+        }),
       ),
     )
 
@@ -75,7 +79,7 @@ describe('oore-web runtime release metadata', () => {
       new URLSearchParams({
         current: '1.2.3-alpha.1',
         channel: 'alpha',
-        repo: 'example/oore',
+        repo: 'oore-ci/oore.build',
       }),
     )
 
@@ -85,12 +89,18 @@ describe('oore-web runtime release metadata', () => {
       update_available: true,
       release_name: 'Alpha 2',
       release_notes:
-        '- Faster builds\n\n**Full Changelog**: https://github.com/example/oore/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+        '- Faster builds\n\n**Full Changelog**: https://github.com/oore-ci/oore.build/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
       release_url:
-        'https://github.com/example/oore/releases/tag/v1.2.3-alpha.2',
+        'https://github.com/oore-ci/oore.build/releases/tag/v1.2.3-alpha.2',
       changelog_url:
-        'https://github.com/example/oore/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
+        'https://github.com/oore-ci/oore.build/compare/v1.2.3-alpha.1...v1.2.3-alpha.2',
     })
+    expect(fetch).toHaveBeenCalledWith(
+      'https://releases.oore.build/latest/alpha.json',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Accept: 'application/json' }),
+      }),
+    )
   })
 })
 

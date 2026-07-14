@@ -11,10 +11,10 @@ OORE_DAEMON_URL_WAS_SET=0
 [[ -n "${OORE_DAEMON_URL+x}" ]] && OORE_DAEMON_URL_WAS_SET=1
 OORE_INSTALL_MODE="${OORE_INSTALL_MODE:-auto}"
 OORE_INSTALL_ROOT="${OORE_INSTALL_ROOT:-$HOME/.oore}"
-OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-devaryakjha/oore.build}"
+OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-oore-ci/oore.build}"
 OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://github.com/$OORE_GITHUB_REPO/releases/download}"
-OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases/latest}"
-OORE_RELEASES_LIST_URL="${OORE_RELEASES_LIST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases?per_page=100}"
+OORE_RELEASE_INDEX_BASE_URL="${OORE_RELEASE_INDEX_BASE_URL:-https://releases.oore.build}"
+OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-$OORE_RELEASE_INDEX_BASE_URL/latest/$OORE_CHANNEL.json}"
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
 OORE_OPEN_BROWSER="${OORE_OPEN_BROWSER:-}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
@@ -116,10 +116,10 @@ Environment overrides:
   OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET Secret your auth proxy sends to oore-web before identity headers are forwarded
   OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE File containing the auth proxy -> oore-web proof secret
   OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER Header carrying the auth proxy -> oore-web proof secret
-  OORE_GITHUB_REPO           GitHub repo (default: devaryakjha/oore.build)
+  OORE_GITHUB_REPO           GitHub repo used to download assets (default: oore-ci/oore.build)
   OORE_RELEASE_BASE_URL      Release asset base URL (default: GitHub Releases download base)
-  OORE_RELEASE_MANIFEST_URL  Release metadata URL for latest tag resolution (default: GitHub Releases API)
-  OORE_RELEASES_LIST_URL     Release list URL for prerelease channel resolution (default: GitHub Releases API list)
+  OORE_RELEASE_INDEX_BASE_URL Static release index origin (default: https://releases.oore.build)
+  OORE_RELEASE_MANIFEST_URL  Latest channel manifest override (default: <index>/latest/<channel>.json)
 EOF
 }
 
@@ -1121,117 +1121,19 @@ infer_channel_from_tag() {
   fi
 }
 
-resolve_latest_channel_tag_from_list() {
-  local json_file="$1"
-  local channel="$2"
-  local want_re=""
-
-  case "$channel" in
-    alpha) want_re='-alpha\.' ;;
-    beta) want_re='-beta\.' ;;
-    *) die "resolve_latest_channel_tag_from_list: unsupported channel: $channel" ;;
-  esac
-
-  # GitHub's release API order is not stable after release edits.
-  # Collect all matching prerelease tags and choose the highest version.
-  local candidates=()
-  local tag=""
-  local draft=""
-  local prerelease=""
-  local line=""
-  while IFS= read -r line; do
-    if [[ -z "$tag" ]]; then
-      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$draft" ]]; then
-      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$prerelease" ]]; then
-      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-
-    if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
-      if [[ "$draft" == "false" && "$prerelease" == "true" ]] && echo "$tag" | grep -qE -- "$want_re"; then
-        candidates+=("$tag")
-      fi
-      tag=""
-      draft=""
-      prerelease=""
-    fi
-  done < "$json_file"
-
-  if [[ "${#candidates[@]}" -eq 0 ]]; then
-    return 1
-  fi
-
-  printf '%s\n' "${candidates[@]}" | sort -V | tail -n1
-}
-
-resolve_latest_stable_tag_from_list() {
-  local json_file="$1"
-
-  # GitHub's release API order is not stable after release edits.
-  # Collect all stable tags and choose the highest version.
-  local candidates=()
-  local tag=""
-  local draft=""
-  local prerelease=""
-  local line=""
-  while IFS= read -r line; do
-    if [[ -z "$tag" ]]; then
-      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$draft" ]]; then
-      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$prerelease" ]]; then
-      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-
-    if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
-      if [[ "$draft" == "false" && "$prerelease" == "false" ]]; then
-        candidates+=("$tag")
-      fi
-      tag=""
-      draft=""
-      prerelease=""
-    fi
-  done < "$json_file"
-
-  if [[ "${#candidates[@]}" -eq 0 ]]; then
-    return 1
-  fi
-
-  printf '%s\n' "${candidates[@]}" | sort -V | tail -n1
-}
-
 resolve_release_tag() {
   local tag=""
   if [[ "$OORE_VERSION" == "latest" ]]; then
-    if [[ "$OORE_CHANNEL" == "stable" ]]; then
-      local manifest_file="$TMP_DIR/latest.json"
-      if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL"; then
-        # GitHub API returns "tag_name": "vX.Y.Z"
-        tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
-        [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
-      else
-        # GitHub returns 404 when there are no releases yet.
-        local list_file="$TMP_DIR/releases.json"
-        log "No stable release manifest found. Falling back to release list."
-        curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
-          || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
+    local manifest_file="$TMP_DIR/latest.json"
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL" \
+      || die "Unable to fetch latest $OORE_CHANNEL release manifest: $OORE_RELEASE_MANIFEST_URL"
 
-        tag="$(resolve_latest_stable_tag_from_list "$list_file" || true)"
-        [[ -n "$tag" ]] || die "No stable releases found. Try a prerelease channel: OORE_CHANNEL=beta (or alpha)."
-      fi
-    else
-      local list_file="$TMP_DIR/releases.json"
-      curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
-        || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
-
-      tag="$(resolve_latest_channel_tag_from_list "$list_file" "$OORE_CHANNEL" || true)"
-      [[ -n "$tag" ]] || die "Unable to resolve latest $OORE_CHANNEL release from: $OORE_RELEASES_LIST_URL"
+    tag="$(sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
+    # Preserve compatibility with custom manifests using GitHub's older field name.
+    if [[ -z "$tag" ]]; then
+      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
     fi
+    [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
   else
     if [[ "$OORE_VERSION" == v* ]]; then
       tag="$OORE_VERSION"

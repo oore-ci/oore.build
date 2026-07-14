@@ -12,7 +12,7 @@ hero:
       link: /getting-started/
     - theme: alt
       text: View on GitHub
-      link: https://github.com/devaryakjha/oore.build
+      link: https://github.com/oore-ci/oore.build
 
 features:
   - title: Self-Hosted CI

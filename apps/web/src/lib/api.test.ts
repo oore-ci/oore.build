@@ -4,9 +4,11 @@ import {
   completeSetup,
   configureExternalAccessOidc,
   configureOidc,
+  createScopedDownloadToken,
   createPipeline,
   discoverRepositoryWorkflows,
   getApiErrorMessage,
+  getArtifactDownloadLink,
   getArtifactStorageSettings,
   getExternalAccessOidc,
   getInstancePreferences,
@@ -159,6 +161,47 @@ describe('query cancellation', () => {
         headers: { Authorization: 'Bearer token' },
         signal: controller.signal,
       }),
+    )
+  })
+})
+
+describe('artifact download links', () => {
+  it('replaces the daemon loopback fallback with the reachable instance origin', async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          download_url: 'http://127.0.0.1:8787/v1/artifacts/download/direct',
+          expires_at: 1,
+        }),
+      )
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          id: 'share-1',
+          download_url: 'http://127.0.0.1:8787/v1/artifacts/dl/scoped',
+          token: 'scoped',
+          prefix: 'scoped',
+          expires_at: 1,
+          single_use: false,
+        }),
+      )
+
+    const direct = await getArtifactDownloadLink(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+    )
+    const scoped = await createScopedDownloadToken(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+      {},
+    )
+
+    expect(direct.download_url).toBe(
+      'https://oore.example.com/v1/artifacts/download/direct',
+    )
+    expect(scoped.download_url).toBe(
+      'https://oore.example.com/v1/artifacts/dl/scoped',
     )
   })
 })

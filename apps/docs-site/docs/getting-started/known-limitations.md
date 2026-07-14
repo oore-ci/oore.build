@@ -43,5 +43,5 @@ This page lists intentional constraints and known gaps for the current public al
 
 File actionable feedback in GitHub Issues:
 
-- <https://github.com/devaryakjha/oore.build/issues>
+- <https://github.com/oore-ci/oore.build/issues>
 - [Alpha Feedback Playbook](/getting-started/alpha-feedback-playbook)
