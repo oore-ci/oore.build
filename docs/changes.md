@@ -14,6 +14,11 @@ Rules:
 
 ## 2026-07-14
 
+- **CI-style build step navigation**:
+  - Build steps now live in a compact navigation rail beside the terminal on desktop instead of consuming a large block above it. Narrow screens use a single horizontally scrollable step strip so the log remains the primary workspace.
+  - The complete log stays the default for successful builds, while running and failed builds still focus the relevant step. Each step exposes status, line count, and duration without competing with the output.
+  - Signed-in demo builds now include representative step markers for successful and failed runs, keeping this production-only state visible during local visual review.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **React correctness follow-up**:
   - Component modules now export components only, preserving Fast Refresh state while shared schemas, variants, and release-note formatting live in focused utility modules.
   - State writes use explicit pure updater functions where React Doctor could otherwise mistake plain callback parameters for updater callbacks; one-use callback indirection was removed without changing UI behavior.

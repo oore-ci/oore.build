@@ -134,9 +134,9 @@ This follow-up supersedes Milestone 2's placement of artifacts as a secondary se
 - [x] Keep artifacts above the fold in a dedicated build-output column on desktop and before logs on narrow screens.
 - [x] Make artifact download the visible primary row action and group copy/share utilities in a compact actions menu.
 - [x] Present logs as one cohesive, full-height workspace with a persistent search field, line counts, download, wrapping, and explicit error navigation.
-- [x] Keep step navigation and selected output in the same workspace, default successful builds to the complete log, and focus running or failed builds on the relevant step.
+- [x] Keep step navigation and selected output in the same workspace: use a compact side rail on desktop and a horizontal step strip on narrow screens, default successful builds to the complete log, and focus running or failed builds on the relevant step.
 - [x] Separate log transport from severity: ordinary `stderr` progress stays neutral and only explicit error lines receive destructive treatment.
 - [x] Keep detailed event history one click away beside logs instead of requiring a page scroll.
-- [x] Verify the successful-artifact state in the local signed-in demo, including log filtering, timeline switching, and false-positive severity cases.
+- [x] Verify successful and failed step states in the local signed-in demo, including step filtering, full-log defaults, timeline switching, and false-positive severity cases.
 
 **Gate:** the first viewport answers whether the build succeeded, what it produced, and where execution details live; successful Git and tool progress is visually calm; focused tests, production build, React Doctor, docs gate, and `make validate` pass.

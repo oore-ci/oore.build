@@ -11,6 +11,7 @@ export function StepStatusIcon({ status }: { status: string }) {
     return (
       <HugeiconsIcon
         icon={Loading03Icon}
+        size={16}
         className="shrink-0 animate-spin text-info"
       />
     )
@@ -19,6 +20,7 @@ export function StepStatusIcon({ status }: { status: string }) {
     return (
       <HugeiconsIcon
         icon={CheckmarkCircle02Icon}
+        size={16}
         className="shrink-0 text-success"
       />
     )
@@ -31,6 +33,7 @@ export function StepStatusIcon({ status }: { status: string }) {
     return (
       <HugeiconsIcon
         icon={AlertCircleIcon}
+        size={16}
         className="shrink-0 text-destructive"
       />
     )

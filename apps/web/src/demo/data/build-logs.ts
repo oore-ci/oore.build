@@ -125,10 +125,76 @@ const failedBuildLogs: Array<BuildLogChunk> = [
   },
 ]
 
+function withStepMarkers(
+  steps: Array<{
+    name: string
+    command: string
+    status: string
+    logs: Array<BuildLogChunk>
+  }>,
+): Array<BuildLogChunk> {
+  let sequence = 0
+  return steps.flatMap((step) => [
+    {
+      sequence: sequence++,
+      content: `[oore-step] ${JSON.stringify({ event: 'start', name: step.name, command: step.command })}`,
+      stream: 'stdout',
+    },
+    ...step.logs.map((log) => ({ ...log, sequence: sequence++ })),
+    {
+      sequence: sequence++,
+      content: `[oore-step] ${JSON.stringify({ event: 'end', name: step.name, status: step.status })}`,
+      stream: 'stdout',
+    },
+  ])
+}
+
+const succeededBuildLogsWithSteps = withStepMarkers([
+  {
+    name: 'flutter pub get',
+    command: 'flutter pub get',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(0, 9),
+  },
+  {
+    name: 'flutter analyze',
+    command: 'flutter analyze --no-fatal-infos',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(9, 16),
+  },
+  {
+    name: 'flutter build apk --release',
+    command: 'flutter build apk --release --split-per-abi',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(16, 27),
+  },
+  {
+    name: 'flutter test --coverage',
+    command: 'flutter test --coverage',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(27),
+  },
+])
+
+const failedBuildLogsWithSteps = withStepMarkers([
+  {
+    name: 'flutter pub get',
+    command: 'flutter pub get',
+    status: 'succeeded',
+    logs: failedBuildLogs.slice(0, 5),
+  },
+  {
+    name: 'flutter analyze',
+    command: 'flutter analyze',
+    status: 'failed',
+    logs: failedBuildLogs.slice(5),
+  },
+])
+
 export const demoBuildLogs: Record<string, Array<BuildLogChunk>> = {
   [BUILD_IDS.running1]: flutterBuildLogs.slice(0, 20), // in-progress
   [BUILD_IDS.running2]: flutterBuildLogs.slice(0, 8),
-  [BUILD_IDS.succeeded1]: flutterBuildLogs,
+  [BUILD_IDS.succeeded1]: succeededBuildLogsWithSteps,
   [BUILD_IDS.succeeded2]: flutterBuildLogs.slice(0, 8).concat([
     { sequence: 8, content: '$ flutter build apk --debug', stream: 'stdout' },
     {
@@ -147,7 +213,7 @@ export const demoBuildLogs: Record<string, Array<BuildLogChunk>> = {
       stream: 'stdout',
     },
   ]),
-  [BUILD_IDS.failed1]: failedBuildLogs,
+  [BUILD_IDS.failed1]: failedBuildLogsWithSteps,
   [BUILD_IDS.failed2]: [
     { sequence: 0, content: '$ flutter pub get', stream: 'stdout' },
     { sequence: 1, content: 'Got dependencies!', stream: 'stdout' },

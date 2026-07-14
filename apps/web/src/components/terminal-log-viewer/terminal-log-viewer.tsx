@@ -190,28 +190,30 @@ export default function TerminalLogViewer({
         </div>
       </div>
 
-      {hasSteps ? (
-        <StepNavigation
-          groups={logStepGroups}
-          selectedStep={selectedStep}
-          allLogCount={allVisibleLogs.length}
-          onSelect={setUserSelectedStep}
-        />
-      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {hasSteps ? (
+          <StepNavigation
+            groups={logStepGroups}
+            selectedStep={selectedStep}
+            allLogCount={allVisibleLogs.length}
+            onSelect={setUserSelectedStep}
+          />
+        ) : null}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <LogOutput
-          logs={filteredLogs}
-          selectedStep={selectedStep}
-          selectedStepMeta={selectedStepMeta}
-          searchQuery={searchQuery}
-          isLoading={isLoading}
-          logsUnavailable={logsUnavailable}
-          isTerminal={isTerminal}
-          wrapLines={wrapLines}
-          scrollContainerRef={scrollContainerRef}
-          virtualizer={virtualizer}
-        />
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <LogOutput
+            logs={filteredLogs}
+            selectedStep={selectedStep}
+            selectedStepMeta={selectedStepMeta}
+            searchQuery={searchQuery}
+            isLoading={isLoading}
+            logsUnavailable={logsUnavailable}
+            isTerminal={isTerminal}
+            wrapLines={wrapLines}
+            scrollContainerRef={scrollContainerRef}
+            virtualizer={virtualizer}
+          />
+        </div>
       </div>
     </section>
   )
