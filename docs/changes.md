@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-14
 
+- **Reliable runner-side iOS identity import**:
+  - The macOS runner now verifies a PKCS#12 signing identity immediately after importing it, before changing key access controls, matching the native sequence that succeeds on the build host.
+  - Key partition access is applied only to signing keys via macOS `security set-key-partition-list -s`, preventing the ACL step from invalidating an otherwise valid imported distribution identity.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Portable iOS certificate inspection**:
   - PKCS#12 inspection and re-export now try the portable command first, then use OpenSSL 3's legacy provider only when an older bundle requires it. Valid Apple certificates can therefore be saved on the supported macOS backend, whose system LibreSSL does not recognize the `-legacy` option.
   - When LibreSSL rejects that compatibility option, Oore preserves the original certificate or password error instead of showing an unrelated OpenSSL flag failure.

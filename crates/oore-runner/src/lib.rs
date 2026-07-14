@@ -800,15 +800,6 @@ fn install_ios_signing_bundle(
             "/usr/bin/xcodebuild".to_string(),
         ])?;
 
-        run_security_command_with_strings(&[
-            "set-key-partition-list".to_string(),
-            "-S".to_string(),
-            "apple-tool:,apple:".to_string(),
-            "-k".to_string(),
-            keychain_password.clone(),
-            keychain_path_str.clone(),
-        ])?;
-
         let identity_output = run_security_command_with_strings(&[
             "find-identity".to_string(),
             "-v".to_string(),
@@ -820,6 +811,16 @@ fn install_ios_signing_bundle(
         if identity_hashes.is_empty() {
             anyhow::bail!("no valid code signing identity found after importing p12");
         }
+
+        run_security_command_with_strings(&[
+            "set-key-partition-list".to_string(),
+            "-S".to_string(),
+            "apple-tool:,apple:".to_string(),
+            "-s".to_string(),
+            "-k".to_string(),
+            keychain_password.clone(),
+            keychain_path_str.clone(),
+        ])?;
 
         let signing_identity_sha1 = identity_hashes.first().cloned();
         let effective_export_method = resolve_ios_export_method();
