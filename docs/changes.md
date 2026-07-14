@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-14
 
+- **Reliable command palette**:
+  - The Cmd/Ctrl+K search dialog now restores the required command context around its input, groups, and items, preventing the palette from crashing the entire web app when opened.
+  - A browser-style component regression test opens the real dialog through its keyboard shortcut and verifies that searchable navigation commands render.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
 - **Reachable artifact links behind a frontend proxy**:
   - The web client now replaces only the daemon's loopback fallback origin with the instance URL it successfully used, so direct and scoped artifact links work through paired or reverse-proxied frontends even before `public_url` is configured. Explicit non-loopback storage and public URLs remain unchanged.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5

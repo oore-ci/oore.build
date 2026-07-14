@@ -13,6 +13,7 @@ import {
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -164,93 +165,95 @@ export default function CommandPalette() {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Search projects, pages, actions..." />
-      <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
-        <CommandGroup heading="Navigation">
-          {navItems.map((item) => (
-            <CommandItem
-              key={item.id}
-              value={item.label}
-              keywords={item.keywords ? [item.keywords] : undefined}
-              onSelect={() => item.action()}
-            >
-              <HugeiconsIcon
-                icon={item.icon}
-                size={16}
-                className="text-muted-foreground"
-              />
-              {item.label}
-            </CommandItem>
-          ))}
-        </CommandGroup>
-        {adminItems.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Admin">
-              {adminItems.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.label}
-                  keywords={item.keywords ? [item.keywords] : undefined}
-                  onSelect={() => item.action()}
-                >
-                  <HugeiconsIcon
-                    icon={item.icon}
-                    size={16}
-                    className="text-muted-foreground"
-                  />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : null}
-        {actionItems.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Actions">
-              {actionItems.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.label}
-                  keywords={item.keywords ? [item.keywords] : undefined}
-                  onSelect={() => item.action()}
-                >
-                  <HugeiconsIcon
-                    icon={item.icon}
-                    size={16}
-                    className="text-muted-foreground"
-                  />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : null}
-        {projectItems.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Projects">
-              {projectItems.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.label}
-                  keywords={item.keywords ? [item.keywords] : undefined}
-                  onSelect={() => item.action()}
-                >
-                  <HugeiconsIcon
-                    icon={item.icon}
-                    size={16}
-                    className="text-muted-foreground"
-                  />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : null}
-      </CommandList>
+      <Command>
+        <CommandInput placeholder="Search projects, pages, actions..." />
+        <CommandList>
+          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandGroup heading="Navigation">
+            {navItems.map((item) => (
+              <CommandItem
+                key={item.id}
+                value={item.label}
+                keywords={item.keywords ? [item.keywords] : undefined}
+                onSelect={() => item.action()}
+              >
+                <HugeiconsIcon
+                  icon={item.icon}
+                  size={16}
+                  className="text-muted-foreground"
+                />
+                {item.label}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          {adminItems.length > 0 ? (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Admin">
+                {adminItems.map((item) => (
+                  <CommandItem
+                    key={item.id}
+                    value={item.label}
+                    keywords={item.keywords ? [item.keywords] : undefined}
+                    onSelect={() => item.action()}
+                  >
+                    <HugeiconsIcon
+                      icon={item.icon}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
+                    {item.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          ) : null}
+          {actionItems.length > 0 ? (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Actions">
+                {actionItems.map((item) => (
+                  <CommandItem
+                    key={item.id}
+                    value={item.label}
+                    keywords={item.keywords ? [item.keywords] : undefined}
+                    onSelect={() => item.action()}
+                  >
+                    <HugeiconsIcon
+                      icon={item.icon}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
+                    {item.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          ) : null}
+          {projectItems.length > 0 ? (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Projects">
+                {projectItems.map((item) => (
+                  <CommandItem
+                    key={item.id}
+                    value={item.label}
+                    keywords={item.keywords ? [item.keywords] : undefined}
+                    onSelect={() => item.action()}
+                  >
+                    <HugeiconsIcon
+                      icon={item.icon}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
+                    {item.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          ) : null}
+        </CommandList>
+      </Command>
     </CommandDialog>
   )
 }
