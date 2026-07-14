@@ -425,6 +425,7 @@ fn select_runner_signing_profile(
 #[derive(Debug, Clone)]
 struct IosSigningMaterialization {
     p12_path: PathBuf,
+    keychain_path: PathBuf,
     export_options_plist_path: PathBuf,
     bundle_profile_mapping: Vec<(String, String)>,
     effective_export_method: String,
@@ -862,6 +863,7 @@ fn install_ios_signing_bundle(
 
         Ok(IosSigningMaterialization {
             p12_path: p12_path.clone(),
+            keychain_path: keychain_path.clone(),
             export_options_plist_path,
             bundle_profile_mapping,
             effective_export_method,
@@ -1015,16 +1017,49 @@ fn adapt_ios_command_for_signing(
         );
     }
 
-    // Archive without signing so project-local development signing settings cannot
-    // override Oore's distribution identity. The export step then signs every target
-    // with the certificate and per-bundle profiles in ExportOptions.plist.
-    args.push("--no-codesign".to_string());
-
-    Ok(format!(
-        "{} && OORE_XCARCHIVE=$(find build/ios/archive -maxdepth 1 -type d -name '*.xcarchive' -print -quit) && test -n \"$OORE_XCARCHIVE\" && mkdir -p build/ios/ipa && xcrun xcodebuild -exportArchive -archivePath \"$OORE_XCARCHIVE\" -exportPath build/ios/ipa -exportOptionsPlist \"{}\"",
-        args.join(" "),
+    // Flutter forwards FLUTTER_XCODE_* environment variables as command-line
+    // xcodebuild settings. Those settings make the archive use Oore's imported
+    // distribution identity while Xcode selects the installed profile for each
+    // target. ExportOptions.plist then preserves the exact per-bundle mapping for
+    // the IPA export. An unsigned archive cannot be repaired reliably at export.
+    args.push(format!(
+        "--export-options-plist={}",
         export_options_plist.display()
-    ))
+    ));
+
+    Ok(args.join(" "))
+}
+
+fn ios_signing_xcode_environment(
+    bundle: &RunnerIosSigningBundle,
+    materialization: &IosSigningMaterialization,
+) -> Vec<(String, String)> {
+    let mut env = vec![
+        (
+            "FLUTTER_XCODE_DEVELOPMENT_TEAM".to_string(),
+            bundle.team_id.trim().to_string(),
+        ),
+        (
+            "FLUTTER_XCODE_CODE_SIGN_STYLE".to_string(),
+            "Automatic".to_string(),
+        ),
+        (
+            "FLUTTER_XCODE_PROVISIONING_PROFILE".to_string(),
+            String::new(),
+        ),
+        (
+            "FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER".to_string(),
+            String::new(),
+        ),
+        (
+            "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
+            format!("--keychain {}", materialization.keychain_path.display()),
+        ),
+    ];
+    if let Some(ref sha1) = materialization.signing_identity_sha1 {
+        env.push(("FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(), sha1.clone()));
+    }
+    env
 }
 
 fn normalize_stage_command_for_execution(
@@ -2162,11 +2197,11 @@ async fn execute_build(
         ios_signing_bundle.as_ref(),
         ios_signing_materialization.as_ref(),
     ) {
-        // Pin the exact signing identity via environment variable so xcodebuild doesn't
-        // accidentally pick a different distribution certificate from the user's login keychain.
-        if let Some(ref sha1) = materialization.signing_identity_sha1 {
-            step_env.push(("CODE_SIGN_IDENTITY".to_string(), sha1.clone()));
-        }
+        // Flutter deliberately forwards FLUTTER_XCODE_* variables as xcodebuild
+        // command-line settings, which have higher precedence than repository-local
+        // development signing settings. This keeps signing zero-config for projects
+        // with app extensions while pinning the imported distribution identity.
+        step_env.extend(ios_signing_xcode_environment(bundle, materialization));
         let _ = append_runner_log_line(
             client,
             daemon_url,
@@ -4106,16 +4141,14 @@ mod tests {
     }
 
     #[test]
-    fn adapts_flutter_build_ios_to_unsigned_archive_then_signed_export() {
+    fn adapts_flutter_build_ios_to_signed_ipa_export() {
         let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
         let command = "flutter build ios --release --no-codesign";
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.starts_with("flutter build ipa --release"));
-        assert!(adapted.contains("--no-codesign"));
-        assert!(adapted.contains("xcrun xcodebuild -exportArchive"));
-        assert!(adapted.contains("-archivePath \"$OORE_XCARCHIVE\""));
-        assert!(adapted.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
+        assert!(!adapted.contains("--no-codesign"));
+        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
     }
 
     #[test]
@@ -4135,9 +4168,8 @@ mod tests {
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.contains("flutter build ipa --release"));
-        assert!(adapted.contains("--no-codesign"));
-        assert!(adapted.contains("xcrun xcodebuild -exportArchive"));
-        assert!(adapted.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
+        assert!(!adapted.contains("--no-codesign"));
+        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
     }
 
     #[test]
@@ -4154,10 +4186,9 @@ mod tests {
 
         assert!(signing_applied);
         assert!(normalized.contains("flutter build ipa --release"));
-        assert!(normalized.contains("--no-codesign"));
+        assert!(!normalized.contains("--no-codesign"));
         assert!(normalized.contains("--dart-define-from-file=.env"));
-        assert!(normalized.contains("xcrun xcodebuild -exportArchive"));
-        assert!(normalized.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
+        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
     }
 
     #[test]
@@ -4191,9 +4222,8 @@ mod tests {
         assert!(signing_applied);
         assert!(normalized.contains("fvm flutter build ipa --release"));
         assert!(!normalized.contains("--export-method"));
-        assert!(normalized.contains("--no-codesign"));
-        assert!(normalized.contains("xcrun xcodebuild -exportArchive"));
-        assert!(normalized.contains("-exportOptionsPlist \"/tmp/ExportOptions.plist\""));
+        assert!(!normalized.contains("--no-codesign"));
+        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
     }
 
     #[test]
@@ -4206,8 +4236,57 @@ mod tests {
 
         assert!(!adapted.contains("/tmp/repo.plist"));
         assert!(!adapted.contains("--codesign"));
-        assert!(adapted.contains("--no-codesign"));
-        assert!(adapted.contains("-exportOptionsPlist \"/tmp/OoreExportOptions.plist\""));
+        assert!(!adapted.contains("--no-codesign"));
+        assert!(adapted.contains("--export-options-plist=/tmp/OoreExportOptions.plist"));
+    }
+
+    #[test]
+    fn passes_ios_signing_as_flutter_xcode_command_line_settings() {
+        let bundle = RunnerIosSigningBundle {
+            enabled: true,
+            mode: oore_contract::IosSigningMode::Manual,
+            team_id: " TEAM123 ".to_string(),
+            export_method: "ad-hoc".to_string(),
+            p12_filename: "distribution.p12".to_string(),
+            p12_base64: "ignored".to_string(),
+            p12_password: "ignored".to_string(),
+            provisioning_profiles: vec![],
+        };
+        let materialization = IosSigningMaterialization {
+            p12_path: PathBuf::from("/tmp/signing/distribution.p12"),
+            keychain_path: PathBuf::from("/tmp/signing/oore-ci-build.keychain-db"),
+            export_options_plist_path: PathBuf::from("/tmp/signing/ExportOptions.plist"),
+            bundle_profile_mapping: vec![],
+            effective_export_method: "release-testing".to_string(),
+            signing_identity_sha1: Some("0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string()),
+        };
+
+        let env = ios_signing_xcode_environment(&bundle, &materialization);
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_DEVELOPMENT_TEAM".to_string(),
+            "TEAM123".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_CODE_SIGN_STYLE".to_string(),
+            "Automatic".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_PROVISIONING_PROFILE".to_string(),
+            String::new(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_PROVISIONING_PROFILE_SPECIFIER".to_string(),
+            String::new(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_CODE_SIGN_IDENTITY".to_string(),
+            "0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string(),
+        )));
+        assert!(env.contains(&(
+            "FLUTTER_XCODE_OTHER_CODE_SIGN_FLAGS".to_string(),
+            "--keychain /tmp/signing/oore-ci-build.keychain-db".to_string(),
+        )));
+        assert!(!env.iter().any(|(key, _)| key == "CODE_SIGN_IDENTITY"));
     }
 
     #[test]

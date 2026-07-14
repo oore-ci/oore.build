@@ -16,10 +16,10 @@ Rules:
 
 - **Reliable runner-side iOS identity import**:
   - The macOS runner now verifies the imported PKCS#12 material through the private signing key and certificate instead of relying on trust evaluation that can report no identities inside a system LaunchDaemon.
-  - The imported certificate's SHA-1 remains pinned in ExportOptions and `CODE_SIGN_IDENTITY`, so this daemon-safe verification does not weaken or broaden signing selection.
+  - The imported certificate's SHA-1 remains pinned in ExportOptions and is forwarded through Flutter's supported `FLUTTER_XCODE_*` bridge as a command-line Xcode build setting, so repository-local development signing settings cannot override Oore's distribution identity.
   - Key partition access is applied only to signing keys via macOS `security set-key-partition-list -s`, preventing the ACL step from invalidating an otherwise valid imported distribution identity.
   - When Oore supplies ExportOptions, the runner removes both accepted forms of Flutter's conflicting `--export-method` option before executing the build command.
-  - Flutter iOS pipelines now create an unsigned archive before Oore performs the signed export with its exact distribution certificate and per-bundle provisioning-profile map. Repository-local development signing settings can no longer force a developer certificate or Apple-account login on the headless runner, including projects with app extensions.
+  - Flutter iOS pipelines now create a signed archive with Oore's imported distribution identity and temporary keychain before exporting the IPA. Xcode selects the installed provisioning profile for each target during the archive, while Oore's ExportOptions preserves the exact per-bundle profile map during export; this supports apps with extensions without rewriting their Xcode project.
   - The isolated build keychain becomes the runner user's default only for the signing window, allowing Xcode's distribution exporter to resolve the imported identity; cleanup restores both the previous default and search list before deleting the temporary keychain.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Portable iOS certificate inspection**:
