@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Copy01Icon,
   Download04Icon,
   File01Icon,
   Share08Icon,
@@ -10,49 +9,19 @@ import {
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
-import type {
-  Artifact,
-  BuildStatus,
-  CreateScopedDownloadTokenResponse,
-} from '@/lib/types'
-import {
-  useArtifactDownloadLink,
-  useCreateScopedDownloadToken,
-} from '@/hooks/use-builds'
+import type { Artifact, BuildStatus } from '@/lib/types'
+import { useArtifactDownloadLink } from '@/hooks/use-builds'
 import { formatFileSize, relativeTime } from '@/lib/format-utils'
 import { artifactInstallReadiness } from '@/lib/artifact-install'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+
+const loadArtifactShareMenu = () => import('./artifact-share-menu')
+const ArtifactShareMenu = lazy(loadArtifactShareMenu)
 
 function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
   switch (type) {
@@ -95,26 +64,51 @@ function artifactEmptyMessage(buildStatus: BuildStatus): string {
   }
 }
 
-const TTL_OPTIONS = [
-  { value: '3600', label: '1 hour' },
-  { value: '21600', label: '6 hours' },
-  { value: '86400', label: '24 hours' },
-  { value: '604800', label: '7 days' },
-] as const
+function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
+  const [requested, setRequested] = useState(false)
+  const [open, setOpen] = useState(false)
+  const expired = isArtifactExpired(artifact)
+
+  const trigger = (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-label={`Share options for ${artifact.name}`}
+      title="Share options"
+      disabled={expired}
+      onMouseEnter={() => void loadArtifactShareMenu()}
+      onFocus={() => void loadArtifactShareMenu()}
+      onClick={() => {
+        setRequested(true)
+        setOpen(true)
+      }}
+    >
+      <HugeiconsIcon icon={Share08Icon} />
+    </Button>
+  )
+
+  if (!requested) return trigger
+
+  return (
+    <Suspense fallback={trigger}>
+      <ArtifactShareMenu
+        artifact={artifact}
+        open={open}
+        onOpenChange={setOpen}
+      />
+    </Suspense>
+  )
+}
 
 function ArtifactRow({
   artifact,
   isDownloadPending,
   onDownload,
-  onCopyLink,
-  onShare,
   canManageShareLinks,
 }: {
   artifact: Artifact
   isDownloadPending: boolean
   onDownload: (artifactId: string, name: string) => void
-  onCopyLink: (artifactId: string, name: string) => void
-  onShare: (artifact: Artifact) => void
   canManageShareLinks: boolean
 }) {
   const expired = isArtifactExpired(artifact)
@@ -183,36 +177,7 @@ function ArtifactRow({
           )}
         </Button>
         {canManageShareLinks ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Share options for ${artifact.name}`}
-                  title="Share options"
-                  disabled={expired}
-                />
-              }
-            >
-              <HugeiconsIcon icon={Share08Icon} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-auto">
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  onClick={() => onCopyLink(artifact.id, artifact.name)}
-                  disabled={isDownloadPending}
-                >
-                  <HugeiconsIcon icon={Copy01Icon} />
-                  Copy download link
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onShare(artifact)}>
-                  <HugeiconsIcon icon={Share08Icon} />
-                  Create share link
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ArtifactShareControl artifact={artifact} />
         ) : null}
       </div>
     </div>
@@ -229,14 +194,7 @@ export function ArtifactsPanel({
   buildStatus: BuildStatus
 }) {
   const downloadMutation = useArtifactDownloadLink()
-  const createTokenMutation = useCreateScopedDownloadToken()
   const canManageShareLinks = useHasPermission('artifacts', 'write')
-
-  const [shareArtifact, setShareArtifact] = useState<Artifact | null>(null)
-  const [ttlSecs, setTtlSecs] = useState('86400')
-  const [singleUse, setSingleUse] = useState(false)
-  const [createdToken, setCreatedToken] =
-    useState<CreateScopedDownloadTokenResponse | null>(null)
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {
@@ -249,208 +207,43 @@ export function ArtifactsPanel({
     })
   }
 
-  function handleCopyLink(artifactId: string, name: string) {
-    downloadMutation.mutate(artifactId, {
-      onSuccess: (res) => {
-        void navigator.clipboard.writeText(res.download_url).then(
-          () => toast.success(`Download link copied for ${name}`),
-          () => toast.error('Failed to copy link'),
-        )
-      },
-      onError: (err) => {
-        toast.error(`Failed to get link for ${name}: ${err.message}`)
-      },
-    })
-  }
-
-  function handleShareLink(artifact: Artifact) {
-    setShareArtifact(() => artifact)
-    setCreatedToken(null)
-    setTtlSecs('86400')
-    setSingleUse(false)
-  }
-
-  function handleCreateToken() {
-    if (!shareArtifact) return
-    createTokenMutation.mutate(
-      {
-        artifactId: shareArtifact.id,
-        data: {
-          ttl_secs: Number(ttlSecs),
-          single_use: singleUse,
-        },
-      },
-      {
-        onSuccess: (res) => {
-          setCreatedToken(() => res)
-        },
-        onError: (err) => {
-          toast.error(`Failed to create share link: ${err.message}`)
-        },
-      },
-    )
-  }
-
-  function handleCopyShareUrl() {
-    if (!createdToken) return
-    void navigator.clipboard.writeText(createdToken.download_url).then(
-      () => toast.success('Share link copied to clipboard'),
-      () => toast.error('Failed to copy link'),
-    )
-  }
-
   return (
-    <>
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            <HugeiconsIcon icon={File01Icon} size={14} />
-            Artifacts
-            {artifacts.length > 0 ? (
-              <Badge variant="secondary" className="text-[10px]">
-                {artifacts.length}
-              </Badge>
-            ) : null}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ) : !artifacts.length ? (
-            <p className="text-xs text-muted-foreground">
-              {artifactEmptyMessage(buildStatus)}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {artifacts.map((artifact) => (
-                <ArtifactRow
-                  key={artifact.id}
-                  artifact={artifact}
-                  isDownloadPending={downloadMutation.isPending}
-                  onDownload={handleDownload}
-                  onCopyLink={handleCopyLink}
-                  onShare={handleShareLink}
-                  canManageShareLinks={canManageShareLinks}
-                />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog
-        open={shareArtifact !== null}
-        onOpenChange={(open) => {
-          if (!open) setShareArtifact(null)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {createdToken ? 'Share Link Created' : 'Create Share Link'}
-            </DialogTitle>
-            <DialogDescription>
-              {createdToken
-                ? 'Copy this link to share. It will not be shown again.'
-                : `Generate a scoped download link for "${shareArtifact?.name}".`}
-            </DialogDescription>
-          </DialogHeader>
-
-          {createdToken ? (
-            <div className="space-y-3">
-              <Alert>
-                <AlertDescription className="break-all text-xs font-mono">
-                  {createdToken.download_url}
-                </AlertDescription>
-              </Alert>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>Expires {relativeTime(createdToken.expires_at)}</span>
-                {createdToken.single_use ? (
-                  <Badge variant="secondary" className="text-[10px]">
-                    Single use
-                  </Badge>
-                ) : null}
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="secondary"
-                  onClick={() => setShareArtifact(null)}
-                >
-                  Close
-                </Button>
-                <Button onClick={handleCopyShareUrl}>
-                  <HugeiconsIcon
-                    icon={Copy01Icon}
-                    size={14}
-                    className="mr-1.5"
-                  />
-                  Copy link
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="ttl-select">Expires after</Label>
-                <Select
-                  items={TTL_OPTIONS}
-                  value={ttlSecs}
-                  onValueChange={(value) => {
-                    if (value != null) setTtlSecs(() => value)
-                  }}
-                >
-                  <SelectTrigger id="ttl-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {TTL_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="single-use"
-                  checked={singleUse}
-                  onCheckedChange={(checked) => setSingleUse(checked === true)}
-                />
-                <Label htmlFor="single-use" className="text-sm font-normal">
-                  Single use (consumed after first download)
-                </Label>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="secondary"
-                  onClick={() => setShareArtifact(null)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleCreateToken}
-                  disabled={createTokenMutation.isPending}
-                >
-                  {createTokenMutation.isPending ? (
-                    <>
-                      <Spinner className="mr-1.5" />
-                      Creating...
-                    </>
-                  ) : (
-                    'Create Link'
-                  )}
-                </Button>
-              </DialogFooter>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <HugeiconsIcon icon={File01Icon} size={14} />
+          Artifacts
+          {artifacts.length > 0 ? (
+            <Badge variant="secondary" className="text-[10px]">
+              {artifacts.length}
+            </Badge>
+          ) : null}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : !artifacts.length ? (
+          <p className="text-xs text-muted-foreground">
+            {artifactEmptyMessage(buildStatus)}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {artifacts.map((artifact) => (
+              <ArtifactRow
+                key={artifact.id}
+                artifact={artifact}
+                isDownloadPending={downloadMutation.isPending}
+                onDownload={handleDownload}
+                canManageShareLinks={canManageShareLinks}
+              />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
