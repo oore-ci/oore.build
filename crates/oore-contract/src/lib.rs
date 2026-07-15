@@ -1275,6 +1275,23 @@ pub struct ArtifactDownloadLinkResponse {
     pub expires_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactInstallPlatform {
+    Android,
+    Ios,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ArtifactInstallLinkResponse {
+    pub platform: ArtifactInstallPlatform,
+    pub install_url: String,
+    pub download_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_url: Option<String>,
+    pub expires_at: i64,
+}
+
 // ── Scoped download token types ─────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1522,6 +1539,8 @@ pub enum ExternalAccessNetworkSource {
 pub struct ExternalAccessNetworkSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
     pub source: ExternalAccessNetworkSource,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1537,6 +1556,8 @@ pub struct ExternalAccessNetworkSettingsResponse {
 pub struct UpdateExternalAccessNetworkSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
 }
 

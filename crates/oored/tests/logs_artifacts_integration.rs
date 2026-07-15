@@ -7,9 +7,10 @@ mod common;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
-    body_json, connect_pool, create_test_app, seed_github_integration, seed_project_chain,
-    seed_test_user,
+    body_json, connect_pool, create_test_app, create_test_app_with_network_urls,
+    seed_github_integration, seed_project_chain, seed_test_user,
 };
+use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -161,11 +162,42 @@ async fn full_scaffold() -> (
     String,
     String,
 ) {
+    full_scaffold_with_public_url(None).await
+}
+
+async fn full_scaffold_with_public_url(
+    public_url: Option<&str>,
+) -> (
+    axum::Router,
+    sqlx::SqlitePool,
+    String,
+    String,
+    String,
+    String,
+) {
+    full_scaffold_with_network_urls(public_url, None).await
+}
+
+async fn full_scaffold_with_network_urls(
+    public_url: Option<&str>,
+    artifact_delivery_url: Option<&str>,
+) -> (
+    axum::Router,
+    sqlx::SqlitePool,
+    String,
+    String,
+    String,
+    String,
+) {
     let tmp = tempfile::TempDir::new().unwrap();
     // Leak TempDir so it isn't dropped before tests finish
     let tmp = Box::leak(Box::new(tmp));
     let db_path = tmp.path().join("test.db");
-    let app = create_test_app(&db_path).await;
+    let app = if public_url.is_some() || artifact_delivery_url.is_some() {
+        create_test_app_with_network_urls(&db_path, public_url, artifact_delivery_url).await
+    } else {
+        create_test_app(&db_path).await
+    };
     let pool = connect_pool(&db_path).await;
     let user_id = seed_test_user(&pool).await;
     let session_token = create_session_token(&pool, &user_id).await;
@@ -177,6 +209,30 @@ async fn full_scaffold() -> (
     let build_id = seed_running_build(&pool, &project_id, &pipeline_id, &runner_id).await;
 
     (app, pool, session_token, runner_id, runner_token, build_id)
+}
+
+async fn seed_project_member(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    user_id: &str,
+    created_by: &str,
+    role: &str,
+) {
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO project_members \
+         (id, project_id, user_id, role, created_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(project_id)
+    .bind(user_id)
+    .bind(role)
+    .bind(created_by)
+    .bind(now)
+    .execute(pool)
+    .await
+    .expect("failed to seed project member");
 }
 
 async fn complete_artifact(
@@ -999,6 +1055,184 @@ async fn test_download_link_artifact_not_found() {
 
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_ios_install_manifest_and_qa_permissions() {
+    let (app, pool, owner_token, runner_id, runner_token, build_id) =
+        full_scaffold_with_network_urls(None, Some("https://install.ci.example.com")).await;
+
+    let artifact_body = serde_json::json!({
+        "name": "Kite.ipa",
+        "artifact_type": "ipa",
+        "file_size": 12_345_678,
+        "metadata": {
+            "ios_app": {
+                "bundle_identifier": "com.example.kite",
+                "display_name": "Kite QA",
+                "version": "3.2.1",
+                "build_number": "42"
+            },
+            "ios_signing": {
+                "bundle_ids": ["com.example.kite"],
+                "effective_export_method": "release-testing"
+            }
+        }
+    });
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let artifact_json = body_json(resp.into_body()).await;
+    let artifact_id = artifact_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
+
+    let (status, install) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/artifacts/{artifact_id}/install-link"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "install link: {install}");
+    assert_eq!(install["platform"].as_str(), Some("ios"));
+    assert!(
+        install["install_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("itms-services://?action=download-manifest&url=")
+    );
+    let manifest_url = install["manifest_url"].as_str().unwrap();
+    let manifest_path = manifest_url
+        .strip_prefix("https://install.ci.example.com")
+        .expect("manifest uses configured artifact delivery URL");
+    assert!(
+        install["download_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://install.ci.example.com/v1/artifacts/dl/")
+    );
+    let req = Request::builder()
+        .uri(manifest_path)
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/xml; charset=utf-8")
+    );
+    let manifest = String::from_utf8(
+        resp.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(manifest.contains("<string>com.example.kite</string>"));
+    assert!(manifest.contains("<string>Version 3.2.1 (42)</string>"));
+    assert!(manifest.contains("https://install.ci.example.com/v1/artifacts/dl/"));
+
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let owner_id: String = sqlx::query_scalar("SELECT created_by FROM projects WHERE id = ?1")
+        .bind(&project_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let qa_id = seed_user_with_role(&pool, "qa@example.com", "qa_viewer").await;
+    seed_project_member(&pool, &project_id, &qa_id, &owner_id, "viewer").await;
+    let qa_token = create_session_token(&pool, &qa_id).await;
+
+    let (status, qa_install) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/artifacts/{artifact_id}/install-link"),
+        &qa_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "QA install link: {qa_install}");
+
+    let (status, denied_share) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/artifacts/{artifact_id}/scoped-token"),
+        &qa_token,
+        Some(serde_json::json!({
+            "ttl_secs": 3600,
+            "single_use": false
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "QA share link: {denied_share}"
+    );
+}
+
+#[tokio::test]
+async fn test_android_install_link_uses_protected_scoped_download() {
+    let (app, _pool, owner_token, runner_id, runner_token, build_id) =
+        full_scaffold_with_public_url(Some("https://ci.example.com")).await;
+
+    let artifact_body = serde_json::json!({
+        "name": "Kite.apk",
+        "artifact_type": "apk",
+        "file_size": 8_765_432
+    });
+    let req = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let artifact_json = body_json(resp.into_body()).await;
+    let artifact_id = artifact_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
+
+    let (status, install) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/artifacts/{artifact_id}/install-link"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "install link: {install}");
+    assert_eq!(install["platform"].as_str(), Some("android"));
+    assert!(install["manifest_url"].is_null());
+    assert_eq!(install["install_url"], install["download_url"]);
+    assert!(
+        install["install_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://ci.example.com/v1/artifacts/dl/")
+    );
 }
 
 // ── End-to-end log + artifact flow test ─────────────────────────

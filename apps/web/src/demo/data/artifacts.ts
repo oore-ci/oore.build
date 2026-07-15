@@ -47,7 +47,18 @@ export const demoArtifacts: Record<string, Array<Artifact>> = {
       file_path: 'build/ios/ipa/FlutterShop.ipa',
       file_size: 32505856,
       checksum: 'sha256:c3d4e5f6a7b8...',
-      metadata: { bundleId: 'build.oore.fluttershop' },
+      metadata: {
+        ios_app: {
+          bundle_identifier: 'build.oore.fluttershop',
+          display_name: 'Flutter Shop',
+          version: '1.4.0',
+          build_number: '84',
+        },
+        ios_signing: {
+          bundle_ids: ['build.oore.fluttershop'],
+          effective_export_method: 'release-testing',
+        },
+      },
       created_at: ago(28260),
     },
   ],

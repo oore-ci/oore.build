@@ -58,10 +58,13 @@ All error codes returned by the Oore CI API, consolidated from all endpoint grou
 
 ## Input validation errors
 
-| Code                   | HTTP Status | Description                    |
-| ---------------------- | ----------- | ------------------------------ |
-| `invalid_input`        | 400         | Request body validation failed |
-| `invalid_redirect_uri` | 400         | Redirect URI is malformed      |
+| Code                                    | HTTP Status | Description                                |
+| --------------------------------------- | ----------- | ------------------------------------------ |
+| `invalid_input`                         | 400         | Request body validation failed             |
+| `invalid_redirect_uri`                  | 400         | Redirect URI is malformed                  |
+| `artifact_delivery_https_required`      | 400         | Artifact delivery URL is not HTTPS         |
+| `artifact_delivery_public_url_required` | 400         | Artifact delivery URL uses a loopback host |
+| `artifact_delivery_url_invalid`         | 400         | Artifact delivery URL is malformed         |
 
 ## Storage and system errors
 
@@ -72,3 +75,14 @@ All error codes returned by the Oore CI API, consolidated from all endpoint grou
 | `decryption_error`  | 500         | Failed to decrypt stored secrets   |
 | `http_client_error` | 500         | Failed to create HTTP client       |
 | `session_error`     | 500         | Session creation/validation failed |
+
+## Artifact installation errors
+
+| Code                           | HTTP Status | Description                                               |
+| ------------------------------ | ----------- | --------------------------------------------------------- |
+| `artifact_not_installable`     | 422         | Artifact is not an APK or signed ad-hoc IPA               |
+| `ios_artifact_not_installable` | 422         | IPA is missing current app/signing metadata               |
+| `artifact_expired`             | 410         | Artifact retention period has elapsed                     |
+| `external_access_required`     | 412         | No artifact delivery or public instance URL is configured |
+| `external_access_invalid`      | 412         | Configured artifact delivery/public URL is invalid        |
+| `ios_install_requires_https`   | 412         | iOS OTA installation requires an HTTPS delivery URL       |

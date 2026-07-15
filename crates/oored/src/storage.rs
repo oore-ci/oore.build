@@ -233,9 +233,19 @@ impl LocalStorageClient {
         )
     }
 
-    pub async fn generate_download_url(&self, key: &str, ttl_secs: u64) -> String {
+    pub async fn generate_download_url_with_base(
+        &self,
+        key: &str,
+        ttl_secs: u64,
+        public_base_url: Option<&str>,
+    ) -> String {
         let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
-        format!("{}/v1/artifacts/download/{}", self.public_base_url, token)
+        let base = public_base_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&self.public_base_url)
+            .trim_end_matches('/');
+        format!("{base}/v1/artifacts/download/{token}")
     }
 
     pub async fn handle_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
@@ -344,10 +354,24 @@ impl StorageBackend {
         key: &str,
         ttl_secs: u64,
     ) -> Result<Option<String>, anyhow::Error> {
+        self.generate_download_url_with_base(key, ttl_secs, None)
+            .await
+    }
+
+    pub async fn generate_download_url_with_base(
+        &self,
+        key: &str,
+        ttl_secs: u64,
+        public_base_url: Option<&str>,
+    ) -> Result<Option<String>, anyhow::Error> {
         match self {
             Self::Disabled => Ok(None),
             Self::S3(client) => client.generate_download_url(key, ttl_secs).await.map(Some),
-            Self::Local(client) => Ok(Some(client.generate_download_url(key, ttl_secs).await)),
+            Self::Local(client) => Ok(Some(
+                client
+                    .generate_download_url_with_base(key, ttl_secs, public_base_url)
+                    .await,
+            )),
         }
     }
 
@@ -564,5 +588,30 @@ pub async fn load_backend(
             warn!(error = %e, "failed to load artifact storage config; using disabled backend");
             StorageBackend::Disabled
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_download_can_use_artifact_delivery_origin() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client = LocalStorageClient::new(
+            temp.path().to_path_buf(),
+            Some("https://ci.example.com".to_string()),
+        )
+        .expect("local storage");
+
+        let url = client
+            .generate_download_url_with_base(
+                "builds/kite.ipa",
+                900,
+                Some("https://install.ci.example.com"),
+            )
+            .await;
+
+        assert!(url.starts_with("https://install.ci.example.com/v1/artifacts/download/"));
     }
 }

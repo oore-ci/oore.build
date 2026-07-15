@@ -99,6 +99,32 @@ export function ExternalAccessNetworkDialog({
               )}
             />
 
+            <FormField
+              control={externalAccessNetworkForm.control}
+              name="artifact_delivery_url"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Artifact delivery URL (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="url"
+                      placeholder="https://install.ci.example.com"
+                      {...field}
+                      disabled={
+                        updateNetworkSettingsMutation.isPending || !isOwner
+                      }
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Use a separate HTTPS origin when an interactive auth proxy
+                    protects the main URL. Expose only Oore’s token-protected
+                    artifact delivery paths there.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <DialogFooter>
               <Button
                 type="button"

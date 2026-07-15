@@ -16,6 +16,7 @@ import type {
 } from '@/lib/types'
 import {
   cancelBuild,
+  createArtifactInstallLink,
   createBuild,
   createScopedDownloadToken,
   getArtifactDownloadLink,
@@ -288,6 +289,19 @@ export function useArtifactDownloadLink() {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return getArtifactDownloadLink(baseUrl, token, artifactId)
+    },
+  })
+}
+
+export function useArtifactInstallLink() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+
+  return useMutation({
+    mutationFn: (artifactId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return createArtifactInstallLink(baseUrl, token, artifactId)
     },
   })
 }

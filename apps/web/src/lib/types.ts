@@ -526,6 +526,16 @@ export interface ArtifactDownloadLinkResponse {
   expires_at: number
 }
 
+export type ArtifactInstallPlatform = 'android' | 'ios'
+
+export interface ArtifactInstallLinkResponse {
+  platform: ArtifactInstallPlatform
+  install_url: string
+  download_url: string
+  manifest_url?: string
+  expires_at: number
+}
+
 // ── Scoped download token types ────────────────────────────
 
 export interface CreateScopedDownloadTokenRequest {
@@ -612,6 +622,7 @@ export type ExternalAccessNetworkSource = 'database' | 'environment' | 'default'
 
 export interface ExternalAccessNetworkSettings {
   public_url?: string
+  artifact_delivery_url?: string
   allowed_origins: Array<string>
   source: ExternalAccessNetworkSource
   updated_at?: number
@@ -623,6 +634,7 @@ export interface ExternalAccessNetworkSettingsResponse {
 
 export interface UpdateExternalAccessNetworkSettingsRequest {
   public_url?: string
+  artifact_delivery_url?: string
   allowed_origins: Array<string>
 }
 

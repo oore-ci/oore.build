@@ -26,6 +26,7 @@ let instancePreferences: InstancePreferences = { ...demoInstancePreferences }
 
 let externalAccessNetworkSettings: ExternalAccessNetworkSettings = {
   public_url: undefined,
+  artifact_delivery_url: undefined,
   allowed_origins: [],
   source: 'default',
   updated_at: ago(86400 * 30),
@@ -193,11 +194,13 @@ export const settingsHandlers = [
     await delay(250)
     const body = (await request.json()) as {
       public_url?: string
+      artifact_delivery_url?: string
       allowed_origins: Array<string>
     }
     externalAccessNetworkSettings = {
       ...externalAccessNetworkSettings,
       public_url: body.public_url,
+      artifact_delivery_url: body.artifact_delivery_url,
       allowed_origins: body.allowed_origins,
       source: 'database',
       updated_at: now(),

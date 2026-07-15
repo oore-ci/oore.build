@@ -15,5 +15,8 @@ export const Route = createFileRoute('/builds/$buildId')({
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
   },
+  validateSearch: (search: Record<string, unknown>): { install?: string } => ({
+    install: typeof search.install === 'string' ? search.install : undefined,
+  }),
   component: BuildDetailRoute,
 })

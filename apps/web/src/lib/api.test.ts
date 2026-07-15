@@ -4,6 +4,7 @@ import {
   completeSetup,
   configureExternalAccessOidc,
   configureOidc,
+  createArtifactInstallLink,
   createScopedDownloadToken,
   createPipeline,
   discoverRepositoryWorkflows,
@@ -202,6 +203,34 @@ describe('artifact download links', () => {
     )
     expect(scoped.download_url).toBe(
       'https://oore.example.com/v1/artifacts/dl/scoped',
+    )
+  })
+
+  it('keeps custom-protocol install URLs while normalizing HTTPS artifact URLs', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, {
+        platform: 'ios',
+        install_url:
+          'itms-services://?action=download-manifest&url=https%3A%2F%2Fci.example.com%2Fmanifest.plist',
+        download_url: 'http://127.0.0.1:8787/v1/artifacts/dl/install',
+        manifest_url:
+          'http://127.0.0.1:8787/v1/artifacts/install/ios/install/manifest.plist',
+        expires_at: 1,
+      }),
+    )
+
+    const result = await createArtifactInstallLink(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+    )
+
+    expect(result.install_url).toMatch(/^itms-services:/)
+    expect(result.download_url).toBe(
+      'https://oore.example.com/v1/artifacts/dl/install',
+    )
+    expect(result.manifest_url).toBe(
+      'https://oore.example.com/v1/artifacts/install/ios/install/manifest.plist',
     )
   })
 })

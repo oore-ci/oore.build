@@ -963,7 +963,7 @@ async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
     let pool = connect_pool(&db_path).await;
     let owner_id = seed_test_user(&pool).await;
     let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
-    let (_project_id, pipeline_id) =
+    let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &owner_id, "org/private-project").await;
 
     let outsider_id = seed_user_with_role(&pool, "outsider@example.com", "developer").await;
@@ -1033,6 +1033,18 @@ async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
     for (method, uri, body) in denied_requests {
         let (status, json) = json_request(&app, method, &uri, &outsider_token, body).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {json}");
+    }
+
+    let viewer_id = seed_user_with_role(&pool, "viewer@example.com", "qa_viewer").await;
+    seed_project_member(&pool, &project_id, &viewer_id, &owner_id, "viewer").await;
+    let viewer_token = create_session_token(&pool, &viewer_id).await;
+    for uri in [
+        format!("/v1/pipelines/{pipeline_id}/android-signing"),
+        format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+        format!("/v1/pipelines/{pipeline_id}/ios-signing/devices"),
+    ] {
+        let (status, json) = json_request(&app, "GET", &uri, &viewer_token, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "GET {uri}: {json}");
     }
 }
 

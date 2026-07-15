@@ -54,6 +54,7 @@ pub const TRUSTED_PROXY_SHARED_SECRET_HEADER: &str = "x-oore-trusted-proxy-secre
 #[derive(Debug, Clone)]
 pub struct EffectiveExternalAccessNetworkSettings {
     pub public_url: Option<String>,
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
     pub source: ExternalAccessNetworkSource,
     pub updated_at: Option<i64>,
@@ -202,8 +203,14 @@ pub(crate) fn normalize_requested_trusted_proxy_cidrs(
 pub async fn load_effective_external_access_network_settings(
     pool: &sqlx::SqlitePool,
 ) -> anyhow::Result<EffectiveExternalAccessNetworkSettings> {
+    let env_public_url = std::env::var("OORE_PUBLIC_URL")
+        .ok()
+        .and_then(|value| trim_opt(Some(value)));
+    let env_artifact_delivery_url = std::env::var("OORE_ARTIFACT_DELIVERY_URL")
+        .ok()
+        .and_then(|value| trim_opt(Some(value)));
     let row = sqlx::query(
-        "SELECT public_url, allowed_origins_json, updated_at \
+        "SELECT public_url, artifact_delivery_url, allowed_origins_json, updated_at \
          FROM external_access_network_settings WHERE id = 1",
     )
     .fetch_optional(pool)
@@ -215,6 +222,12 @@ pub async fn load_effective_external_access_network_settings(
             .ok()
             .flatten()
             .and_then(|value| trim_opt(Some(value)));
+        let artifact_delivery_url = row
+            .try_get::<Option<String>, _>("artifact_delivery_url")
+            .ok()
+            .flatten()
+            .and_then(|value| trim_opt(Some(value)))
+            .or_else(|| env_artifact_delivery_url.clone());
         let allowed_origins = row
             .try_get::<String, _>("allowed_origins_json")
             .ok()
@@ -223,15 +236,13 @@ pub async fn load_effective_external_access_network_settings(
 
         return Ok(EffectiveExternalAccessNetworkSettings {
             public_url,
+            artifact_delivery_url,
             allowed_origins: with_local_defaults(allowed_origins),
             source: ExternalAccessNetworkSource::Database,
             updated_at: row.try_get::<Option<i64>, _>("updated_at").ok().flatten(),
         });
     }
 
-    let env_public_url = std::env::var("OORE_PUBLIC_URL")
-        .ok()
-        .and_then(|value| trim_opt(Some(value)));
     let env_origins_raw = std::env::var("OORE_CORS_ORIGINS")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -241,6 +252,7 @@ pub async fn load_effective_external_access_network_settings(
         let parsed = parse_allowed_origins_raw(&raw);
         return Ok(EffectiveExternalAccessNetworkSettings {
             public_url: env_public_url,
+            artifact_delivery_url: env_artifact_delivery_url,
             allowed_origins: with_local_defaults(parsed),
             source: ExternalAccessNetworkSource::Environment,
             updated_at: None,
@@ -249,6 +261,7 @@ pub async fn load_effective_external_access_network_settings(
 
     Ok(EffectiveExternalAccessNetworkSettings {
         public_url: env_public_url,
+        artifact_delivery_url: env_artifact_delivery_url,
         allowed_origins: default_allowed_origins(),
         source: ExternalAccessNetworkSource::Default,
         updated_at: None,
@@ -335,6 +348,7 @@ async fn runtime_network_settings(state: &Arc<AppState>) -> EffectiveExternalAcc
     let allowed_origins = state.allowed_origins.read().await.clone();
     EffectiveExternalAccessNetworkSettings {
         public_url,
+        artifact_delivery_url: None,
         allowed_origins,
         source: ExternalAccessNetworkSource::Database,
         updated_at: None,
@@ -347,6 +361,7 @@ fn network_settings_response(
     ExternalAccessNetworkSettingsResponse {
         settings: ExternalAccessNetworkSettings {
             public_url: settings.public_url,
+            artifact_delivery_url: settings.artifact_delivery_url,
             allowed_origins: settings.allowed_origins,
             source: settings.source,
             updated_at: settings.updated_at,
@@ -1341,6 +1356,7 @@ pub async fn update_external_access_network_settings(
     }
 
     let mut public_url = trim_opt(req.public_url);
+    let mut artifact_delivery_url = trim_opt(req.artifact_delivery_url);
     let allowed_origins = normalize_requested_allowed_origins(req.allowed_origins)?;
     if let Some(raw) = public_url.as_ref() {
         let parsed = validate_external_access_public_url(raw).map_err(|reason| match reason {
@@ -1379,6 +1395,27 @@ pub async fn update_external_access_network_settings(
         public_url = Some(raw.trim_end_matches('/').to_string());
     }
 
+    if let Some(raw) = artifact_delivery_url.as_ref() {
+        validate_external_access_public_url(raw).map_err(|reason| match reason {
+            "https_required" => api_err(
+                StatusCode::BAD_REQUEST,
+                "artifact_delivery_https_required",
+                "Artifact delivery URL must use https",
+            ),
+            "loopback_host" => api_err(
+                StatusCode::BAD_REQUEST,
+                "artifact_delivery_public_url_required",
+                "Artifact delivery URL must resolve to a non-loopback host",
+            ),
+            _ => api_err(
+                StatusCode::BAD_REQUEST,
+                "artifact_delivery_url_invalid",
+                "Artifact delivery URL is not valid",
+            ),
+        })?;
+        artifact_delivery_url = Some(raw.trim_end_matches('/').to_string());
+    }
+
     let now = now_unix();
     let allowed_origins_json = serde_json::to_string(&allowed_origins).map_err(|e| {
         error!(error = %e, "failed to serialize allowed origins");
@@ -1390,15 +1427,17 @@ pub async fn update_external_access_network_settings(
     })?;
 
     sqlx::query(
-        "INSERT INTO external_access_network_settings (id, public_url, allowed_origins_json, updated_by, created_at, updated_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?4)
+        "INSERT INTO external_access_network_settings (id, public_url, artifact_delivery_url, allowed_origins_json, updated_by, created_at, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?5)
          ON CONFLICT(id) DO UPDATE SET
             public_url = excluded.public_url,
+            artifact_delivery_url = excluded.artifact_delivery_url,
             allowed_origins_json = excluded.allowed_origins_json,
             updated_by = excluded.updated_by,
             updated_at = excluded.updated_at",
     )
     .bind(public_url.clone())
+    .bind(artifact_delivery_url.clone())
     .bind(allowed_origins_json)
     .bind(&auth.0.user_id)
     .bind(now)
@@ -1430,6 +1469,7 @@ pub async fn update_external_access_network_settings(
 
     let details = serde_json::json!({
         "public_url": public_url,
+        "artifact_delivery_url": artifact_delivery_url,
         "allowed_origins": allowed_origins,
     })
     .to_string();
@@ -1446,6 +1486,7 @@ pub async fn update_external_access_network_settings(
     Ok(Json(network_settings_response(
         EffectiveExternalAccessNetworkSettings {
             public_url,
+            artifact_delivery_url,
             allowed_origins,
             source: ExternalAccessNetworkSource::Database,
             updated_at: Some(now),

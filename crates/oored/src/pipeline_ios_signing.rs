@@ -2055,7 +2055,7 @@ pub async fn get_pipeline_ios_signing(
         &auth.0.role,
         &auth.0.auth_source,
         &pipeline_id,
-        ProjectPermission::Read,
+        ProjectPermission::ManagePipelines,
     )
     .await?;
 
@@ -2735,7 +2735,7 @@ pub async fn list_pipeline_ios_devices(
         &auth.0.role,
         &auth.0.auth_source,
         &pipeline_id,
-        ProjectPermission::Read,
+        ProjectPermission::ManagePipelines,
     )
     .await?;
     if !ensure_pipeline_exists(&pool, &pipeline_id)

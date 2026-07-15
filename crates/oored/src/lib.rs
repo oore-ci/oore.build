@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod apple_api;
+pub mod artifact_install;
 pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
@@ -2048,6 +2049,7 @@ async fn build_router_inner(
                 warn!(error = %error, "failed to load external access network settings; falling back to defaults");
                 instance_settings::EffectiveExternalAccessNetworkSettings {
                     public_url: None,
+                    artifact_delivery_url: None,
                     allowed_origins: instance_settings::default_allowed_origins(),
                     source: oore_contract::ExternalAccessNetworkSource::Default,
                     updated_at: None,
@@ -2070,6 +2072,7 @@ async fn build_router_inner(
     info!(
         source = ?external_access_network.source,
         public_url = ?external_access_network.public_url,
+        artifact_delivery_url = ?external_access_network.artifact_delivery_url,
         origins = ?external_access_network.allowed_origins,
         "configured External Access network settings"
     );
@@ -2473,6 +2476,10 @@ async fn build_router_inner(
             post(artifacts::generate_download_link),
         )
         .route(
+            "/v1/artifacts/{artifact_id}/install-link",
+            post(artifact_install::create_install_link),
+        )
+        .route(
             "/v1/artifacts/local-upload/{token}",
             axum::routing::put(artifacts::upload_local_artifact)
                 // Local artifact uploads can be large (APK/IPA), but must remain bounded.
@@ -2504,6 +2511,10 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/dl/{token}",
             get(artifact_tokens::download_via_scoped_token),
+        )
+        .route(
+            "/v1/artifacts/install/ios/{token}/manifest.plist",
+            get(artifact_install::ios_install_manifest),
         )
         // ── Retention policy ────────────────────────────────────
         .route(

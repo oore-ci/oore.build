@@ -7,7 +7,8 @@ export function isDemoMutationAllowed(method: string, path: string): boolean {
   return (
     path.startsWith('/v1/auth/') ||
     path.includes('/validate') ||
-    path.endsWith('/download-link')
+    path.endsWith('/download-link') ||
+    path.endsWith('/install-link')
   )
 }
 

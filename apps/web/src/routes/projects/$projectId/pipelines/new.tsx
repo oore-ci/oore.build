@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AlertCircleIcon,
@@ -22,6 +22,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   useCreatePipeline,
   useRepositoryWorkflows,
@@ -57,9 +58,15 @@ export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
     breadcrumbLabel: 'New Pipeline',
     breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
   },
-  beforeLoad: () => {
+  beforeLoad: ({ params }) => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
+    if (useAuthStore.getState().user?.role === 'qa_viewer') {
+      throw redirect({
+        to: '/projects/$projectId',
+        params: { projectId: params.projectId },
+      })
+    }
   },
   component: NewPipelinePage,
 })

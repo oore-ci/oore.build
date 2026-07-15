@@ -89,8 +89,13 @@ function usePipelineDetailPageState() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
-  const signingQuery = usePipelineAndroidSigning(pipelineId)
-  const iosSigningQuery = usePipelineIosSigning(pipelineId)
+  const canWrite = useHasPermission('pipelines', 'write')
+  const signingQuery = usePipelineAndroidSigning(pipelineId, {
+    enabled: canWrite,
+  })
+  const iosSigningQuery = usePipelineIosSigning(pipelineId, {
+    enabled: canWrite,
+  })
   const { data: projectData } = useProject(projectId)
   const { data: buildsData } = useBuilds({
     pipeline_id: pipelineId,
@@ -98,7 +103,6 @@ function usePipelineDetailPageState() {
   })
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
-  const canWrite = useHasPermission('pipelines', 'write')
   const canDelete = useHasPermission('pipelines', 'delete')
   const canTriggerBuild = useHasPermission('builds', 'write')
   const repoProviderQuery = useRepositoryProvider(

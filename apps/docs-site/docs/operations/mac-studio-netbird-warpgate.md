@@ -154,6 +154,30 @@ From the browser, open the Warpgate-protected public URL. The authenticated emai
 
 Configure External Access `public_url` and `allowed_origins` with that same HTTPS URL after login.
 
+### 6. Add token-only artifact delivery
+
+Warpgate requires an interactive session, while the iOS installer fetches its manifest and IPA outside Safari. Keep the main Oore hostname behind Warpgate and add a separate HTTPS hostname, such as `install.oore.example.com`, that reaches the existing HAProxy → `oore-web` path without Warpgate.
+
+Restrict that hostname to `GET` and `HEAD` requests for only these path prefixes:
+
+```text
+/v1/artifacts/install/ios/
+/v1/artifacts/dl/
+/v1/artifacts/download/
+```
+
+Reject every other method and path at the edge. These endpoints require short-lived, artifact-scoped bearer tokens; they do not accept a user identity header as authorization.
+
+In **Settings → Preferences → External Access**, set **Artifact delivery URL** to the new HTTPS origin. Keep **Public URL** set to the Warpgate-protected browser origin.
+
+Verify an invalid token reaches Oore rather than an interactive login page:
+
+```bash
+curl -i https://install.oore.example.com/v1/artifacts/install/ios/not-a-token/manifest.plist
+```
+
+The response must be Oore JSON with `401 invalid_token`, not a `3xx` redirect.
+
 ## Common mistakes
 
 - Binding `oored` to `0.0.0.0`: bind only the Mac private/NetBird address used by the AWS frontend.

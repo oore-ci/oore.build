@@ -141,6 +141,7 @@ function parseTrustedProxyCidrs(value: string | undefined): Array<string> {
 
 const externalAccessNetworkSchema = z.object({
   public_url: z.string().optional(),
+  artifact_delivery_url: z.string().optional(),
   allowed_origins: z
     .string()
     .min(1, 'Add at least one allowed frontend origin.'),
@@ -298,6 +299,7 @@ function usePreferencesPageState() {
     if (!networkSettings) return undefined
     return {
       public_url: networkSettings.public_url ?? '',
+      artifact_delivery_url: networkSettings.artifact_delivery_url ?? '',
       allowed_origins: networkSettings.allowed_origins.join('\n'),
     }
   }, [networkSettings])
@@ -306,6 +308,7 @@ function usePreferencesPageState() {
     resolver: zodResolver(externalAccessNetworkSchema),
     defaultValues: {
       public_url: '',
+      artifact_delivery_url: '',
       allowed_origins: '',
     },
     values: networkValues,
@@ -439,6 +442,8 @@ function usePreferencesPageState() {
     updateNetworkSettingsMutation.mutate(
       {
         public_url: values.public_url?.trim() || undefined,
+        artifact_delivery_url:
+          values.artifact_delivery_url?.trim() || undefined,
         allowed_origins: allowedOrigins,
       },
       {
@@ -455,6 +460,12 @@ function usePreferencesPageState() {
               external_access_loopback_required:
                 'In Local Only mode, network settings can only be changed from localhost on the host machine.',
               external_access_https_required: 'Public URL must use HTTPS.',
+              artifact_delivery_https_required:
+                'Artifact delivery URL must use HTTPS.',
+              artifact_delivery_public_url_required:
+                'Artifact delivery URL must use a non-loopback host.',
+              artifact_delivery_url_invalid:
+                'Artifact delivery URL is invalid.',
               external_access_origin_not_allowed:
                 'Public URL origin must be included in allowed origins.',
               invalid_input:

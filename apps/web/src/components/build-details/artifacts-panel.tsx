@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Copy01Icon,
   Download04Icon,
   File01Icon,
   Share08Icon,
+  SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
@@ -18,6 +20,8 @@ import {
   useCreateScopedDownloadToken,
 } from '@/hooks/use-builds'
 import { formatFileSize, relativeTime } from '@/lib/format-utils'
+import { artifactInstallReadiness } from '@/lib/artifact-install'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -104,15 +108,18 @@ function ArtifactRow({
   onDownload,
   onCopyLink,
   onShare,
+  canManageShareLinks,
 }: {
   artifact: Artifact
   isDownloadPending: boolean
   onDownload: (artifactId: string, name: string) => void
   onCopyLink: (artifactId: string, name: string) => void
   onShare: (artifact: Artifact) => void
+  canManageShareLinks: boolean
 }) {
   const expired = isArtifactExpired(artifact)
   const expiryLabel = artifactExpiryLabel(artifact)
+  const installReady = artifactInstallReadiness(artifact).ready
 
   return (
     <div
@@ -142,6 +149,25 @@ function ArtifactRow({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {installReady ? (
+          <Button
+            size="xs"
+            render={
+              <Link
+                to="/builds/$buildId"
+                params={{
+                  buildId: artifact.build_id,
+                }}
+                search={{ install: artifact.id }}
+              />
+            }
+            nativeButton={false}
+            disabled={expired}
+          >
+            <HugeiconsIcon icon={SmartPhone01Icon} />
+            Install
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           size="icon-xs"
@@ -156,36 +182,38 @@ function ArtifactRow({
             <HugeiconsIcon icon={Download04Icon} />
           )}
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Share options for ${artifact.name}`}
-                title="Share options"
-                disabled={expired}
-              />
-            }
-          >
-            <HugeiconsIcon icon={Share08Icon} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-auto">
-            <DropdownMenuGroup>
-              <DropdownMenuItem
-                onClick={() => onCopyLink(artifact.id, artifact.name)}
-                disabled={isDownloadPending}
-              >
-                <HugeiconsIcon icon={Copy01Icon} />
-                Copy download link
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onShare(artifact)}>
-                <HugeiconsIcon icon={Share08Icon} />
-                Create share link
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {canManageShareLinks ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Share options for ${artifact.name}`}
+                  title="Share options"
+                  disabled={expired}
+                />
+              }
+            >
+              <HugeiconsIcon icon={Share08Icon} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-auto">
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  onClick={() => onCopyLink(artifact.id, artifact.name)}
+                  disabled={isDownloadPending}
+                >
+                  <HugeiconsIcon icon={Copy01Icon} />
+                  Copy download link
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onShare(artifact)}>
+                  <HugeiconsIcon icon={Share08Icon} />
+                  Create share link
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
       </div>
     </div>
   )
@@ -202,6 +230,7 @@ export function ArtifactsPanel({
 }) {
   const downloadMutation = useArtifactDownloadLink()
   const createTokenMutation = useCreateScopedDownloadToken()
+  const canManageShareLinks = useHasPermission('artifacts', 'write')
 
   const [shareArtifact, setShareArtifact] = useState<Artifact | null>(null)
   const [ttlSecs, setTtlSecs] = useState('86400')
@@ -304,6 +333,7 @@ export function ArtifactsPanel({
                   onDownload={handleDownload}
                   onCopyLink={handleCopyLink}
                   onShare={handleShareLink}
+                  canManageShareLinks={canManageShareLinks}
                 />
               ))}
             </div>

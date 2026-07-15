@@ -82,6 +82,7 @@ and preflight checks.
 {
   "settings": {
     "public_url": "https://ci.example.com",
+    "artifact_delivery_url": "https://install.ci.example.com",
     "allowed_origins": [
       "http://localhost:3000",
       "http://127.0.0.1:3000",
@@ -102,7 +103,7 @@ PUT /v1/settings/external-access/network
 ```
 
 Owner-only endpoint to update External Access network settings (`public_url`,
-`allowed_origins`).
+optional `artifact_delivery_url`, and `allowed_origins`).
 
 **Authentication**: User session (Bearer, write access to `instance_settings`, role `owner`)
 
@@ -111,6 +112,7 @@ Owner-only endpoint to update External Access network settings (`public_url`,
 ```json
 {
   "public_url": "https://ci.example.com",
+  "artifact_delivery_url": "https://install.ci.example.com",
   "allowed_origins": [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -121,13 +123,16 @@ Owner-only endpoint to update External Access network settings (`public_url`,
 
 ### Error responses
 
-| Status | Code                                 | Description                                                |
-| ------ | ------------------------------------ | ---------------------------------------------------------- |
-| 400    | `invalid_input`                      | Public URL/origin format is invalid                        |
-| 400    | `external_access_https_required`     | Public URL is not HTTPS                                    |
-| 400    | `external_access_origin_not_allowed` | Public URL origin missing from `allowed_origins`           |
-| 403    | `external_access_owner_required`     | Non-owner attempted update                                 |
-| 403    | `external_access_loopback_required`  | In `local` mode, update attempted from non-loopback client |
+| Status | Code                                    | Description                                                |
+| ------ | --------------------------------------- | ---------------------------------------------------------- |
+| 400    | `invalid_input`                         | Public URL/origin format is invalid                        |
+| 400    | `external_access_https_required`        | Public URL is not HTTPS                                    |
+| 400    | `external_access_origin_not_allowed`    | Public URL origin missing from `allowed_origins`           |
+| 400    | `artifact_delivery_https_required`      | Artifact delivery URL is not HTTPS                         |
+| 400    | `artifact_delivery_public_url_required` | Artifact delivery URL is loopback                          |
+| 400    | `artifact_delivery_url_invalid`         | Artifact delivery URL is malformed                         |
+| 403    | `external_access_owner_required`        | Non-owner attempted update                                 |
+| 403    | `external_access_loopback_required`     | In `local` mode, update attempted from non-loopback client |
 
 ---
 

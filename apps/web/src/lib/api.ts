@@ -1,6 +1,7 @@
 import type {
   ApiError,
   ArtifactDownloadLinkResponse,
+  ArtifactInstallLinkResponse,
   ArtifactStorageSettingsResponse,
   BootstrapTokenVerifyResponse,
   BrowseLocalGitDirectoriesResponse,
@@ -936,6 +937,24 @@ export function getArtifactDownloadLink(
   ).then((response) => ({
     ...response,
     download_url: useInstanceOrigin(baseUrl, response.download_url),
+  }))
+}
+
+export function createArtifactInstallLink(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+): Promise<ArtifactInstallLinkResponse> {
+  return request<ArtifactInstallLinkResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/install-link`,
+    { method: 'POST', headers: authHeaders(token) },
+  ).then((response) => ({
+    ...response,
+    download_url: useInstanceOrigin(baseUrl, response.download_url),
+    manifest_url: response.manifest_url
+      ? useInstanceOrigin(baseUrl, response.manifest_url)
+      : undefined,
   }))
 }
 

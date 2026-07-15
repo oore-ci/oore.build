@@ -53,6 +53,8 @@ curl -o my-app.apk "http://127.0.0.1:8787/v1/artifacts/download/token_abc123"
 
 Download links are time-limited. Generate a new link if the previous one expired.
 
+To install an APK or signed ad-hoc IPA directly on a phone, use the artifact's **Install** action instead. See [Install Mobile Builds](/guides/artifacts/install-mobile-builds).
+
 ## How download links work
 
 | Storage backend | Download mechanism                            |

@@ -537,6 +537,7 @@ async fn test_external_access_network_settings_update_requires_owner() {
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
                 "public_url": "https://ci.oore.test",
+                "artifact_delivery_url": "https://install.ci.oore.test",
                 "allowed_origins": ["https://ci.oore.test"]
             }))
             .expect("serialize request"),
@@ -654,6 +655,7 @@ async fn test_external_access_network_settings_update_and_readback() {
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
                 "public_url": "https://ci.oore.test",
+                "artifact_delivery_url": "https://install.ci.oore.test",
                 "allowed_origins": ["https://ci.oore.test"]
             }))
             .expect("serialize request"),
@@ -672,6 +674,10 @@ async fn test_external_access_network_settings_update_and_readback() {
         Some("https://ci.oore.test")
     );
     assert_eq!(put_body["settings"]["source"], "database");
+    assert_eq!(
+        put_body["settings"]["artifact_delivery_url"].as_str(),
+        Some("https://install.ci.oore.test")
+    );
     let origins = put_body["settings"]["allowed_origins"]
         .as_array()
         .expect("allowed origins array");
@@ -706,7 +712,69 @@ async fn test_external_access_network_settings_update_and_readback() {
         get_body["settings"]["public_url"].as_str(),
         Some("https://ci.oore.test")
     );
+    assert_eq!(
+        get_body["settings"]["artifact_delivery_url"].as_str(),
+        Some("https://install.ci.oore.test")
+    );
     assert_eq!(get_body["settings"]["source"], "database");
+
+    let invalid_delivery_req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41103))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "public_url": "https://ci.oore.test",
+                "artifact_delivery_url": "http://install.ci.oore.test",
+                "allowed_origins": ["https://ci.oore.test"]
+            }))
+            .expect("serialize request"),
+        ))
+        .unwrap();
+    let invalid_delivery_resp = app
+        .oneshot(invalid_delivery_req)
+        .await
+        .expect("invalid delivery URL response");
+    assert_eq!(invalid_delivery_resp.status(), StatusCode::BAD_REQUEST);
+    let invalid_delivery_body = body_json(invalid_delivery_resp.into_body()).await;
+    assert_eq!(
+        invalid_delivery_body["code"],
+        "artifact_delivery_https_required"
+    );
+}
+
+#[tokio::test]
+async fn test_artifact_delivery_env_fills_empty_database_field() {
+    let _env_guard = env_lock().lock().await;
+    let _delivery_url =
+        EnvVarGuard::set("OORE_ARTIFACT_DELIVERY_URL", "https://install.ci.oore.test");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let _app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO external_access_network_settings \
+         (id, public_url, allowed_origins_json, created_at, updated_at) \
+         VALUES (1, 'https://ci.oore.test', '[\"https://ci.oore.test\"]', ?1, ?1)",
+    )
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("seed network settings");
+
+    let settings = oored::instance_settings::load_effective_external_access_network_settings(&pool)
+        .await
+        .expect("load network settings");
+    assert_eq!(
+        settings.artifact_delivery_url.as_deref(),
+        Some("https://install.ci.oore.test")
+    );
 }
 
 #[tokio::test]

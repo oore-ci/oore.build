@@ -154,6 +154,8 @@ use utoipa::OpenApi;
         paths::abort_artifact,
         paths::list_artifacts,
         paths::generate_download_link,
+        paths::create_artifact_install_link,
+        paths::get_ios_install_manifest,
         // ── Scoped Download Tokens (OOR-140) ──
         paths::create_scoped_download_token,
         paths::list_scoped_download_tokens,
@@ -333,6 +335,8 @@ use utoipa::OpenApi;
         oore_contract::CompleteArtifactResponse,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
+        oore_contract::ArtifactInstallPlatform,
+        oore_contract::ArtifactInstallLinkResponse,
         oore_contract::CreateScopedDownloadTokenRequest,
         oore_contract::CreateScopedDownloadTokenResponse,
         oore_contract::ArtifactDownloadTokenSummary,
@@ -1864,6 +1868,37 @@ mod paths {
         )
     )]
     pub(super) async fn generate_download_link() {}
+
+    /// Create device install link
+    ///
+    /// Creates a one-hour install session for an APK or install-ready signed IPA.
+    /// QA viewers may use this endpoint through their artifact read permission.
+    #[utoipa::path(post, path = "/v1/artifacts/{artifact_id}/install-link", tag = "Artifacts",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Device install session", body = ArtifactInstallLinkResponse),
+            (status = 404, description = "Artifact not found", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+            (status = 412, description = "External HTTPS access is not ready", body = ApiError),
+            (status = 422, description = "Artifact is not install-ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_artifact_install_link() {}
+
+    /// Get iOS OTA install manifest
+    ///
+    /// Returns an Apple property-list manifest authorized by the scoped token in the URL.
+    #[utoipa::path(get, path = "/v1/artifacts/install/ios/{token}/manifest.plist", tag = "Artifacts",
+        params(("token" = String, Path, description = "Artifact install token")),
+        responses(
+            (status = 200, description = "Apple OTA installation manifest", content_type = "application/xml"),
+            (status = 401, description = "Invalid or expired token", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+            (status = 422, description = "IPA is not install-ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_ios_install_manifest() {}
 
     // ── Scoped Download Tokens (OOR-140) ──
 

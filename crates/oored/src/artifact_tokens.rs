@@ -37,7 +37,7 @@ const MAX_TTL_SECS: i64 = 604_800;
 
 // ── DB helpers ──────────────────────────────────────────────────
 
-async fn require_project_artifact_read(
+async fn require_project_artifact_write(
     pool: &SqlitePool,
     auth: &AuthUser,
     project_id: &str,
@@ -50,7 +50,7 @@ async fn require_project_artifact_read(
         &auth.0.auth_source,
     )
     .await?;
-    require_project_permission(&effective, ProjectPermission::ReadArtifacts)
+    require_project_permission(&effective, ProjectPermission::WriteArtifacts)
 }
 
 async fn load_artifact_access(
@@ -206,7 +206,7 @@ pub async fn create_scoped_token_handler(
     };
 
     let (artifact_expires_at, project_id) = load_artifact_access(&pool, &artifact_id).await?;
-    require_project_artifact_read(&pool, &auth, &project_id).await?;
+    require_project_artifact_write(&pool, &auth, &project_id).await?;
     if let Some(ea) = artifact_expires_at
         && ea <= now_unix()
     {
@@ -282,7 +282,7 @@ pub async fn list_scoped_tokens_handler(
         store.pool().clone()
     };
     let (_, project_id) = load_artifact_access(&pool, &artifact_id).await?;
-    require_project_artifact_read(&pool, &auth, &project_id).await?;
+    require_project_artifact_write(&pool, &auth, &project_id).await?;
     let now = now_unix();
 
     let rows = sqlx::query(
@@ -375,7 +375,7 @@ pub async fn revoke_scoped_token_handler(
     })?;
 
     let project_id: String = row.get("project_id");
-    require_project_artifact_read(&pool, &auth, &project_id).await?;
+    require_project_artifact_write(&pool, &auth, &project_id).await?;
 
     let revoked_at: Option<i64> = row.get("revoked_at");
     if revoked_at.is_some() {
@@ -493,12 +493,27 @@ pub async fn download_via_scoped_token(
     }
 
     // Serve the file via storage backend
+    let network_settings =
+        crate::instance_settings::load_effective_external_access_network_settings(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load artifact delivery settings");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to load artifact delivery settings",
+                )
+            })?;
     let storage = state.storage.read().await;
 
-    // For S3/R2, generate a presigned URL and redirect
-    // For local storage, stream the bytes directly
+    // S3/R2 returns a presigned object URL; local storage returns a second,
+    // short-lived token URL on the artifact delivery origin.
     let download_url = storage
-        .generate_download_url(&validated.file_path, 900)
+        .generate_download_url_with_base(
+            &validated.file_path,
+            900,
+            network_settings.artifact_delivery_url.as_deref(),
+        )
         .await
         .map_err(|e| {
             error!(error = %e, "failed to generate download URL for scoped token");
