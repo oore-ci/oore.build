@@ -14,6 +14,7 @@ import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
+import QaReleasesPage from '@/components/qa-releases-page'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import {
   DashboardGettingStarted,
@@ -240,7 +241,7 @@ function IndexPage() {
 
   if (status?.is_configured) {
     if (authUser?.role === 'qa_viewer') {
-      return <QaBuildRedirect />
+      return <QaReleasesPage />
     }
     return (
       <>
@@ -259,23 +260,6 @@ function IndexPage() {
       <div className="flex items-center gap-3">
         <Spinner className="size-5" />
         <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
-    </div>
-  )
-}
-
-function QaBuildRedirect() {
-  const navigate = useNavigate()
-  useMountEffect(() => {
-    void navigate({ to: '/builds', replace: true })
-  })
-
-  return (
-    <div className="flex flex-1 items-center justify-center">
-      <PageMeta />
-      <div className="flex items-center gap-3">
-        <Spinner className="size-5" />
-        <p className="text-sm text-muted-foreground">Loading builds...</p>
       </div>
     </div>
   )

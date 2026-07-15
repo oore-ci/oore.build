@@ -31,6 +31,40 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
 const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 
+fn avatar_content_type(declared: Option<&str>, body: &[u8]) -> Option<&'static str> {
+    match declared.map(str::trim) {
+        Some("image/png") => Some("image/png"),
+        Some("image/jpeg" | "image/jpg") => Some("image/jpeg"),
+        Some("image/gif") => Some("image/gif"),
+        Some("image/webp") => Some("image/webp"),
+        Some("image/avif") => Some("image/avif"),
+        Some("image/svg+xml") => Some("image/svg+xml"),
+        Some("application/octet-stream" | "binary/octet-stream") | None => {
+            sniff_avatar_content_type(body)
+        }
+        _ => None,
+    }
+}
+
+fn sniff_avatar_content_type(body: &[u8]) -> Option<&'static str> {
+    if body.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if body.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if body.starts_with(b"GIF87a") || body.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if body.len() >= 12 && body.starts_with(b"RIFF") && &body[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if body.len() >= 12
+        && &body[4..8] == b"ftyp"
+        && matches!(&body[8..12], b"avif" | b"avis")
+    {
+        Some("image/avif")
+    } else {
+        None
+    }
+}
+
 fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -169,31 +203,13 @@ pub(crate) async fn fetch_repository_avatar(
         ));
     }
 
-    let content_type = response
+    let declared_content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
         .map(str::trim)
-        .filter(|value| {
-            matches!(
-                *value,
-                "image/png"
-                    | "image/jpeg"
-                    | "image/gif"
-                    | "image/webp"
-                    | "image/avif"
-                    | "image/svg+xml"
-            )
-        })
-        .ok_or_else(|| {
-            api_err(
-                StatusCode::BAD_GATEWAY,
-                "gitlab_avatar_invalid",
-                "GitLab returned an unsupported repository avatar",
-            )
-        })?
-        .to_string();
+        .map(str::to_string);
 
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| {
@@ -213,6 +229,16 @@ pub(crate) async fn fetch_repository_avatar(
         }
         body.extend_from_slice(&chunk);
     }
+
+    let content_type = avatar_content_type(declared_content_type.as_deref(), &body)
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_avatar_invalid",
+                "GitLab returned an unsupported repository avatar",
+            )
+        })?
+        .to_string();
 
     Ok((content_type, body))
 }
@@ -288,6 +314,88 @@ pub(crate) async fn resolve_branch_commit(
                 StatusCode::BAD_GATEWAY,
                 "gitlab_parse_error",
                 "Failed to parse GitLab commit response",
+            )
+        })
+}
+
+pub(crate) async fn compare_commits(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    target: (&str, &str, &str),
+    base: &str,
+    head: &str,
+) -> Result<Vec<super::CommitSummary>, (StatusCode, Json<ApiError>)> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        commits: Vec<CompareCommit>,
+    }
+    #[derive(Deserialize)]
+    struct CompareCommit {
+        author_name: String,
+        title: String,
+    }
+
+    let (host_url, auth_mode, repository_external_id) = target;
+    let token = access_token(pool, encryption_key, integration_id).await?;
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitLab client",
+        )
+    })?;
+    let mut request = client
+        .get(format!(
+            "{}/api/v4/projects/{}/repository/compare",
+            host_url.trim_end_matches('/'),
+            urlencoding::encode(repository_external_id)
+        ))
+        .query(&[("from", base), ("to", head), ("straight", "true")])
+        .header("User-Agent", "oore-ci");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request.send().await.map_err(|e| {
+        error!(error = %e, "failed to compare GitLab commits");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            "Failed to compare repository revisions",
+        )
+    })?;
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            format!(
+                "GitLab returned {} while comparing revisions",
+                response.status()
+            ),
+        ));
+    }
+    response
+        .json::<CompareResponse>()
+        .await
+        .map(|response| {
+            response
+                .commits
+                .into_iter()
+                .map(|commit| super::CommitSummary {
+                    title: commit.title,
+                    author: commit.author_name,
+                })
+                .collect()
+        })
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitLab comparison");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_parse_error",
+                "Failed to read repository comparison",
             )
         })
 }
@@ -1777,17 +1885,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repository_avatar_uses_gitlab_credentials() {
+    async fn repository_avatar_uses_gitlab_credentials_and_sniffs_generic_content_type() {
+        let avatar = b"\x89PNG\r\n\x1a\navatar".to_vec();
         let app = axum::Router::new().route(
             "/api/v4/projects/42/avatar",
-            get(|headers: HeaderMap| async move {
-                assert_eq!(
-                    headers
-                        .get("PRIVATE-TOKEN")
-                        .and_then(|value| value.to_str().ok()),
-                    Some("gitlab-token")
-                );
-                ([("content-type", "image/png")], vec![1_u8, 2, 3])
+            get(move |headers: HeaderMap| {
+                let avatar = avatar.clone();
+                async move {
+                    assert_eq!(
+                        headers
+                            .get("PRIVATE-TOKEN")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("gitlab-token")
+                    );
+                    ([("content-type", "application/octet-stream")], avatar)
+                }
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1827,7 +1939,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(content_type, "image/png");
-        assert_eq!(body, vec![1, 2, 3]);
+        assert_eq!(body, b"\x89PNG\r\n\x1a\navatar");
         server.abort();
     }
 

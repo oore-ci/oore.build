@@ -80,6 +80,11 @@ use crate::util::api_err;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
+pub(crate) struct CommitSummary {
+    pub title: String,
+    pub author: String,
+}
+
 pub(crate) async fn require_remote_mode(
     pool: &sqlx::SqlitePool,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
@@ -188,6 +193,94 @@ pub(crate) async fn resolve_branch_commit(
             StatusCode::CONFLICT,
             "unsupported_provider",
             "The linked source provider cannot resolve branch revisions",
+        )),
+    }
+}
+
+pub(crate) async fn compare_commits(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    repository_id: &str,
+    base: &str,
+    head: &str,
+) -> Result<Vec<CommitSummary>, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
+                inst.external_id AS installation_external_id, r.external_id AS repository_external_id, \
+                r.full_name, r.html_url \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.status = 'active'",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to load source comparison target");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load the linked repository",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "source_unresolvable",
+            "The linked source is unavailable; reconnect it before triggering a build",
+        )
+    })?;
+
+    let provider: String = row.get("provider");
+    let integration_id: String = row.get("integration_id");
+    match provider.as_str() {
+        "local_git" => {
+            let path: Option<String> = row.get("html_url");
+            local_git::compare_commits(
+                path.as_deref().ok_or_else(|| {
+                    api_err(
+                        StatusCode::CONFLICT,
+                        "source_unresolvable",
+                        "The linked local repository path is missing",
+                    )
+                })?,
+                base,
+                head,
+            )
+            .await
+        }
+        "github" => {
+            github::compare_commits(
+                pool,
+                encryption_key,
+                &integration_id,
+                &row.get::<String, _>("installation_external_id"),
+                &row.get::<String, _>("full_name"),
+                base,
+                head,
+            )
+            .await
+        }
+        "gitlab" => {
+            gitlab::compare_commits(
+                pool,
+                encryption_key,
+                &integration_id,
+                (
+                    &row.get::<String, _>("host_url"),
+                    &row.get::<String, _>("auth_mode"),
+                    &row.get::<String, _>("repository_external_id"),
+                ),
+                base,
+                head,
+            )
+            .await
+        }
+        _ => Err(api_err(
+            StatusCode::CONFLICT,
+            "unsupported_provider",
+            "The linked source provider cannot compare revisions",
         )),
     }
 }

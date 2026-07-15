@@ -56,6 +56,7 @@ export const demoBuilds: Array<Build> = [
     trigger_actor: USER_IDS.developer,
     commit_sha: 'f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9',
     branch: 'main',
+    changelog: 'Adds receipt sharing and improves payment retry messaging.',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macMini,
     step_results: [
@@ -86,6 +87,7 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'refs/heads/main',
     commit_sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
     branch: 'main',
+    changelog: 'Adds wishlist sharing and smoother cart updates.',
     config_snapshot: {},
     queued_at: ago(60),
     created_at: ago(60),
@@ -104,6 +106,8 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'refs/heads/main',
     commit_sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1',
     branch: 'main',
+    changelog:
+      'Faster checkout, clearer payment errors, and fixes for saved delivery addresses.',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     step_results: [
@@ -194,6 +198,8 @@ export const demoBuilds: Array<Build> = [
     trigger_actor: USER_IDS.owner,
     commit_sha: 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
     branch: 'main',
+    changelog:
+      'Faster checkout, clearer payment errors, and fixes for saved delivery addresses.',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     step_results: [

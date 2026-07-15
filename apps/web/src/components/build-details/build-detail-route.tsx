@@ -2,14 +2,16 @@ import { useParams, useSearch } from '@tanstack/react-router'
 
 import { ArtifactInstallPage } from './artifact-install-page'
 import { BuildDetailPage } from './build-detail-page'
+import { useAuthStore } from '@/stores/auth-store'
 
 export function BuildDetailRoute() {
   const { buildId } = useParams({ from: '/builds/$buildId' })
   const { install: artifactId } = useSearch({ from: '/builds/$buildId' })
-  if (artifactId) {
+  const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
+  if (artifactId || isQaViewer) {
     return (
       <ArtifactInstallPage
-        key={`${buildId}:${artifactId}`}
+        key={`${buildId}:${artifactId ?? 'auto'}`}
         buildId={buildId}
         artifactId={artifactId}
       />

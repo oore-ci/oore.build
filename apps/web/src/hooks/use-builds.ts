@@ -3,10 +3,12 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  useQueries,
 } from '@tanstack/react-query'
 import type { UseQueryOptions } from '@tanstack/react-query'
 import type {
   Build,
+  BuildChangelogPreviewResponse,
   BuildDetailResponse,
   BuildLogChunk,
   BuildStatus,
@@ -21,8 +23,10 @@ import {
   createScopedDownloadToken,
   getArtifactDownloadLink,
   getBuild,
+  getBuildChangelogPreview,
   getBuildLogs,
   listArtifacts,
+  listProjectArtifacts,
   listBuilds,
   rerunBuild,
 } from '@/lib/api'
@@ -143,6 +147,7 @@ export function useCreateBuild() {
         branch: data.branch,
         commit_sha: data.commit_sha,
         trigger_ref: data.trigger_ref,
+        changelog: data.changelog,
         config_snapshot: {},
         queued_at: Math.floor(Date.now() / 1000),
         created_at: Math.floor(Date.now() / 1000),
@@ -172,6 +177,36 @@ export function useCreateBuild() {
         queryKey: [instanceId, 'builds'],
       })
     },
+  })
+}
+
+export function useBuildChangelogPreview(
+  projectId: string,
+  params: { pipeline_id: string; branch?: string; commit_sha?: string },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery<BuildChangelogPreviewResponse>({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'build-changelog-preview',
+      projectId,
+      params,
+    ],
+    queryFn: ({ signal }) =>
+      getBuildChangelogPreview(baseUrl!, token!, projectId, params, { signal }),
+    enabled:
+      !!baseUrl &&
+      !!token &&
+      (options?.enabled ?? true) &&
+      !!projectId &&
+      !!params.pipeline_id &&
+      (!!params.branch || !!params.commit_sha),
+    staleTime: 30_000,
+    retry: false,
   })
 }
 
@@ -277,6 +312,36 @@ export function useArtifacts(
     enabled: !!baseUrl && !!token && !!buildId,
     staleTime: 5_000,
     refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useProjectArtifacts(projectId: string) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'project-artifacts', projectId],
+    queryFn: ({ signal }) =>
+      listProjectArtifacts(baseUrl!, token!, projectId, { signal }),
+    enabled: !!baseUrl && !!token && !!projectId,
+    staleTime: 5_000,
+  })
+}
+
+export function useArtifactsForProjects(projectIds: Array<string>) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQueries({
+    queries: projectIds.map((projectId) => ({
+      queryKey: [instance?.id ?? '__none__', 'project-artifacts', projectId],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        listProjectArtifacts(baseUrl!, token!, projectId, { signal }),
+      enabled: !!baseUrl && !!token,
+      staleTime: 5_000,
+    })),
   })
 }
 

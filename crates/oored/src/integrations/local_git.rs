@@ -156,6 +156,61 @@ pub(crate) async fn resolve_branch_commit(
     })?
 }
 
+pub(crate) async fn compare_commits(
+    repo_path: &str,
+    base: &str,
+    head: &str,
+) -> Result<Vec<super::CommitSummary>, (StatusCode, Json<ApiError>)> {
+    let repo_path = repo_path.to_string();
+    let range = format!("{base}..{head}");
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                repo_path.as_str(),
+                "log",
+                "--reverse",
+                "--format=%s%x1f%an%x1e",
+                &range,
+            ])
+            .output()
+            .map_err(|e| {
+                error!(error = %e, "failed to compare local git commits");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Failed to compare repository revisions",
+                )
+            })?;
+        if !output.status.success() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_ref",
+                "The previous or target commit is unavailable",
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .split('\x1e')
+            .filter_map(|record| {
+                let (title, author) = record.trim().split_once('\x1f')?;
+                Some(super::CommitSummary {
+                    title: title.to_string(),
+                    author: author.to_string(),
+                })
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local git comparison task failed");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git_error",
+            "Failed to compare repository revisions",
+        )
+    })?
+}
+
 struct LocalGitRepoInspection {
     canonical_str: String,
     default_branch: Option<String>,

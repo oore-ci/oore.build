@@ -2397,6 +2397,10 @@ async fn build_router_inner(
             "/v1/projects/{project_id}/builds",
             post(builds::create_build),
         )
+        .route(
+            "/v1/projects/{project_id}/builds/changelog-preview",
+            get(builds::preview_build_changelog),
+        )
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
@@ -2475,6 +2479,10 @@ async fn build_router_inner(
         .route(
             "/v1/builds/{build_id}/artifacts",
             get(artifacts::list_artifacts),
+        )
+        .route(
+            "/v1/projects/{project_id}/artifacts",
+            get(artifacts::list_project_artifacts),
         )
         .route(
             "/v1/artifacts/{artifact_id}/download-link",

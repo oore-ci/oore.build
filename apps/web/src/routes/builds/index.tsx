@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/select'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import QaReleasesPage from '@/components/qa-releases-page'
 import SetupHint from '@/components/setup-hint'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -293,6 +294,11 @@ function useBuildsListPageState() {
 }
 
 function BuildsListPage() {
+  const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
+  return isQaViewer ? <QaReleasesPage /> : <OperationsBuildsPage />
+}
+
+function OperationsBuildsPage() {
   const pageState = useBuildsListPageState()
   const {
     branchFilter,
