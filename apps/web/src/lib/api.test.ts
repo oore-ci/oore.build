@@ -15,6 +15,7 @@ import {
   getExternalAccessOidc,
   getInstancePreferences,
   getPipeline,
+  getRepositoryAvatar,
   getSetupStatus,
   listBuilds,
   listProjectMembers,
@@ -244,6 +245,34 @@ describe('QA project access', () => {
         headers: { ...auth, 'Content-Type': 'application/json' },
       }),
     )
+  })
+})
+
+describe('repository avatars', () => {
+  it('fetches the image through Oore with the session token', async () => {
+    const controller = new AbortController()
+    const avatar = new Blob(['avatar'], { type: 'image/png' })
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(avatar),
+    })
+
+    const result = await getRepositoryAvatar(
+      'https://oore.example.com',
+      'session-token',
+      'repo-1',
+      { signal: controller.signal },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://oore.example.com/v1/integration-repositories/repo-1/avatar',
+      {
+        headers: { Authorization: 'Bearer session-token' },
+        signal: controller.signal,
+      },
+    )
+    expect(result).toBe(avatar)
   })
 })
 

@@ -2292,6 +2292,10 @@ async fn build_router_inner(
             get(integrations::list_repositories),
         )
         .route(
+            "/v1/integration-repositories/{id}/avatar",
+            get(integrations::repository_avatar),
+        )
+        .route(
             "/v1/integrations/github/start",
             post(integrations::github::github_start),
         )

@@ -22,6 +22,11 @@ Rules:
   - Linear feature doc: https://linear.app/oorebuild/document/feature-ad-hoc-app-installation-18011ca32086
   - Linear RBAC ADR: https://linear.app/oorebuild/document/adr-0002-rbac-implementation-strategy-28554f736e4a
 
+- **Authenticated private GitLab repository avatars**:
+  - Private GitLab repository avatars now load through a bearer-authenticated Oore endpoint instead of depending on each browser's GitLab cookies. GitHub avatars continue using their public URLs, while missing or unavailable images retain the existing initials fallback.
+  - The backend applies the stored GitLab credential through GitLab's project/group avatar APIs, restricts requests to the configured GitLab origin, disables redirects, validates image types, and enforces a 2 MiB response limit.
+  - Linear feature doc: https://linear.app/oorebuild/document/authenticated-gitlab-repository-avatars-3eab35144db0
+
 - **Ad-hoc Android and iOS app installation**:
   - Build artifacts now expose a dedicated mobile-first install page. APKs use protected scoped downloads; signed ad-hoc IPAs use a short-lived tokenized Apple OTA manifest and `itms-services` install URL. The page detects iPhone Safari, blocks misleading install attempts in other iPhone browsers, and gives platform-specific device guidance.
   - The macOS runner attaches bundle identifier, app name, marketing version, and build number to newly signed IPA artifacts, allowing the backend to verify manifest readiness before issuing an install link. Older IPAs remain downloadable and become install-ready after one rebuild.

@@ -31,6 +31,8 @@ export default function ProjectCard({
               <RepositoryAvatar
                 fullName={project.repository_full_name}
                 avatarUrl={project.repository_avatar_url}
+                repositoryId={project.repository_id}
+                provider={project.repository_provider}
               />
             ) : null}
             <div className="min-w-0">

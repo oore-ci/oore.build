@@ -105,6 +105,8 @@ export function IntegrationInventory({
                         <RepositoryAvatar
                           fullName={repository.full_name}
                           avatarUrl={repository.avatar_url}
+                          repositoryId={repository.id}
+                          provider={integration.provider}
                         />
                         <span>{repository.full_name}</span>
                       </div>

@@ -83,6 +83,7 @@ use utoipa::OpenApi;
         paths::get_integration,
         paths::delete_integration,
         paths::list_repositories,
+        paths::repository_avatar,
         paths::list_installations,
         paths::sync_installations,
         paths::github_start,
@@ -1120,6 +1121,18 @@ mod paths {
         )
     )]
     pub(super) async fn list_repositories() {}
+
+    /// Fetch a private GitLab repository avatar through Oore
+    #[utoipa::path(get, path = "/v1/integration-repositories/{id}/avatar", tag = "Integrations",
+        params(("id" = String, Path, description = "Integration repository ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Repository avatar image", content_type = "image/*"),
+            (status = 404, description = "Avatar not found", body = ApiError),
+            (status = 502, description = "GitLab avatar unavailable", body = ApiError),
+        )
+    )]
+    pub(super) async fn repository_avatar() {}
 
     /// List integration installations
     #[utoipa::path(get, path = "/v1/integrations/{id}/installations", tag = "Integrations",

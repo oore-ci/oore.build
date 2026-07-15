@@ -29,6 +29,7 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 /// Maximum age (seconds) for a GitLab OAuth state token.
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
+const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 
 fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
@@ -72,6 +73,148 @@ async fn access_token(
             "Failed to decrypt source credentials",
         )
     })
+}
+
+pub(crate) async fn fetch_repository_avatar(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    host_url: &str,
+    auth_mode: &str,
+    repository_external_id: &str,
+    avatar_url: &str,
+) -> Result<(String, Vec<u8>), (StatusCode, Json<ApiError>)> {
+    let host_origin = normalize_gitlab_host_url(host_url)?;
+    let parsed_avatar_url = url::Url::parse(avatar_url).map_err(|_| {
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_invalid",
+            "GitLab returned an invalid repository avatar URL",
+        )
+    })?;
+    if !matches!(parsed_avatar_url.scheme(), "http" | "https")
+        || parsed_avatar_url.host_str().is_none()
+        || !parsed_avatar_url.username().is_empty()
+        || parsed_avatar_url.password().is_some()
+        || parsed_avatar_url.origin().ascii_serialization() != host_origin
+    {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_invalid",
+            "GitLab returned an untrusted repository avatar URL",
+        ));
+    }
+
+    let path_segments = parsed_avatar_url
+        .path_segments()
+        .map(Iterator::collect::<Vec<_>>)
+        .unwrap_or_default();
+    let group_id = path_segments
+        .windows(3)
+        .find(|segments| segments[0] == "group" && segments[1] == "avatar")
+        .map(|segments| segments[2])
+        .filter(|id| !id.is_empty() && id.chars().all(|character| character.is_ascii_digit()));
+    let avatar_api_url = if let Some(group_id) = group_id {
+        format!("{host_origin}/api/v4/groups/{group_id}/avatar")
+    } else {
+        format!(
+            "{host_origin}/api/v4/projects/{}/avatar",
+            urlencoding::encode(repository_external_id)
+        )
+    };
+
+    let token = access_token(pool, encryption_key, integration_id).await?;
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab avatar client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitLab client",
+        )
+    })?;
+    let mut request = client
+        .get(avatar_api_url)
+        .header("User-Agent", "oore-ci")
+        .header("Accept", "image/*");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+
+    let mut response = request.send().await.map_err(|e| {
+        error!(error = %e, "failed to fetch GitLab repository avatar");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_unavailable",
+            "Failed to fetch the GitLab repository avatar",
+        )
+    })?;
+    if !response.status().is_success() {
+        error!(status = %response.status(), "GitLab repository avatar request failed");
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_unavailable",
+            "Failed to fetch the GitLab repository avatar",
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_AVATAR_BYTES as u64)
+    {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_too_large",
+            "GitLab repository avatar exceeds the size limit",
+        ));
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| {
+            matches!(
+                *value,
+                "image/png"
+                    | "image/jpeg"
+                    | "image/gif"
+                    | "image/webp"
+                    | "image/avif"
+                    | "image/svg+xml"
+            )
+        })
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_avatar_invalid",
+                "GitLab returned an unsupported repository avatar",
+            )
+        })?
+        .to_string();
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        error!(error = %e, "failed to read GitLab repository avatar");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_unavailable",
+            "Failed to fetch the GitLab repository avatar",
+        )
+    })? {
+        if body.len() + chunk.len() > MAX_AVATAR_BYTES {
+            return Err(api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_avatar_too_large",
+                "GitLab repository avatar exceeds the size limit",
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok((content_type, body))
 }
 
 pub(crate) async fn resolve_branch_commit(
@@ -1597,12 +1740,14 @@ async fn exchange_gitlab_code(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_http_client, git_checkout_request_allowed, normalize_gitlab_host_url,
-        oauth_callback_url, sync_gitlab_projects, validate_redirect_origin,
+        build_http_client, fetch_repository_avatar, git_checkout_request_allowed,
+        normalize_gitlab_host_url, oauth_callback_url, sync_gitlab_projects,
+        validate_redirect_origin,
     };
+    use crate::crypto;
     use axum::Json;
     use axum::extract::Query;
-    use axum::http::Method;
+    use axum::http::{HeaderMap, Method};
     use axum::routing::get;
     use std::collections::HashMap;
 
@@ -1629,6 +1774,61 @@ mod tests {
         ] {
             assert!(normalize_gitlab_host_url(host).is_err(), "accepted {host}");
         }
+    }
+
+    #[tokio::test]
+    async fn repository_avatar_uses_gitlab_credentials() {
+        let app = axum::Router::new().route(
+            "/api/v4/projects/42/avatar",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(
+                    headers
+                        .get("PRIVATE-TOKEN")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("gitlab-token")
+                );
+                ([("content-type", "image/png")], vec![1_u8, 2, 3])
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE integration_credentials (
+                integration_id TEXT NOT NULL, credential_type TEXT NOT NULL,
+                encrypted_value TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let key = [7_u8; 32];
+        let encrypted = crypto::encrypt("gitlab-token", &key).unwrap();
+        sqlx::query(
+            "INSERT INTO integration_credentials VALUES ('integration-1', 'access_token', ?1)",
+        )
+        .bind(encrypted)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (content_type, body) = fetch_repository_avatar(
+            &pool,
+            &key,
+            "integration-1",
+            &host,
+            "personal_token",
+            "42",
+            &format!("{host}/uploads/avatar.png"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(content_type, "image/png");
+        assert_eq!(body, vec![1, 2, 3]);
+        server.abort();
     }
 
     #[test]

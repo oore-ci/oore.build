@@ -1687,6 +1687,8 @@ pub struct Project {
     pub repository_full_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_provider: Option<String>,
     #[schema(value_type = Object)]
     pub settings: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]

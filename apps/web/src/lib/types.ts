@@ -729,6 +729,7 @@ export interface Project {
   repository_id?: string
   repository_full_name?: string
   repository_avatar_url?: string
+  repository_provider?: ScmProvider
   settings: Record<string, unknown>
   default_branch?: string
   created_by: string

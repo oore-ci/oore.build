@@ -59,8 +59,10 @@ pub(crate) fn error_page(title: &str, message: &str) -> String {
 }
 
 use axum::Json;
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::Response;
 use oore_contract::{
     ApiError, Integration, IntegrationDetailResponse, IntegrationInstallation,
     IntegrationRepository, ListInstallationsResponse, ListIntegrationsResponse,
@@ -511,6 +513,80 @@ pub async fn list_repositories(
     let repositories = rows.iter().map(row_to_repository).collect();
 
     Ok(Json(ListRepositoriesResponse { repositories }))
+}
+
+/// `GET /v1/integration-repositories/{id}/avatar` — proxy a private GitLab avatar.
+pub async fn repository_avatar(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.host_url, i.auth_mode, r.external_id, r.avatar_url \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.provider = 'gitlab' AND i.status = 'active'",
+    )
+    .bind(&id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %id, "failed to load GitLab repository avatar");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load the repository avatar",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "GitLab repository avatar not found",
+        )
+    })?;
+
+    let avatar_url: Option<String> = row.get("avatar_url");
+    let avatar_url = avatar_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "GitLab repository avatar not found",
+            )
+        })?;
+    let (content_type, body) = gitlab::fetch_repository_avatar(
+        &pool,
+        &state.encryption_key,
+        row.get("integration_id"),
+        row.get("host_url"),
+        row.get("auth_mode"),
+        row.get("external_id"),
+        &avatar_url,
+    )
+    .await?;
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "private, max-age=3600")
+        .body(Body::from(body))
+        .map_err(|e| {
+            error!(error = %e, "failed to build repository avatar response");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_error",
+                "Failed to return the repository avatar",
+            )
+        })
 }
 
 /// `GET /v1/integrations/{id}/installations` — list installations for an integration.

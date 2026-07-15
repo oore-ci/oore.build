@@ -1441,6 +1441,59 @@
         }
       }
     },
+    "/v1/integration-repositories/{id}/avatar": {
+      "get": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Fetch a private GitLab repository avatar through Oore",
+        "operationId": "repository_avatar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration repository ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repository avatar image",
+            "content": {
+              "image/*": {}
+            }
+          },
+          "404": {
+            "description": "Avatar not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "GitLab avatar unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/integrations": {
       "get": {
         "tags": [
@@ -9609,6 +9662,12 @@
             ]
           },
           "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_provider": {
             "type": [
               "string",
               "null"
