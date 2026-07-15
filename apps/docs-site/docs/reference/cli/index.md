@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for the oore operator tool including all commands and flags."
+description: 'CLI reference for the oore operator tool including all commands and flags.'
 ---
 
 # CLI Reference
@@ -10,18 +10,24 @@ Oore CI provides two command-line tools:
 - **`oored`** — the daemon (control plane and API server)
 - **`oore`** — the operator CLI for setup, administration, and daily use
 
+Validate repository pipeline YAML locally with the exact parser used by the daemon and runner:
+
+```bash
+oore pipeline validate .oore.yaml
+```
+
 ## oored (Daemon)
 
 The daemon serves the HTTP API and manages instance state.
 
 ### Commands
 
-| Command | Description | Status |
-|---|---|---|
-| `oored run` | Start the daemon | Implemented |
-| `oored install-service` | Install and optionally start a macOS launchd user service | Implemented |
-| `oored uninstall-service` | Stop and remove the launchd user service | Implemented |
-| `oored version` | Print version information | Implemented |
+| Command                   | Description                                               | Status      |
+| ------------------------- | --------------------------------------------------------- | ----------- |
+| `oored run`               | Start the daemon                                          | Implemented |
+| `oored install-service`   | Install and optionally start a macOS launchd user service | Implemented |
+| `oored uninstall-service` | Stop and remove the launchd user service                  | Implemented |
+| `oored version`           | Print version information                                 | Implemented |
 
 ### `oored run`
 
@@ -29,10 +35,10 @@ The daemon serves the HTTP API and manages instance state.
 oored run [--listen <addr>] [--state-file <path>]
 ```
 
-| Flag | Default | Env var | Description |
-|---|---|---|---|
-| `--listen` | `127.0.0.1:8787` | `OORED_LISTEN_ADDR` | Address and port to listen on |
-| `--state-file` | Platform default | `OORE_SETUP_STATE_FILE` | Override database path |
+| Flag           | Default          | Env var                 | Description                   |
+| -------------- | ---------------- | ----------------------- | ----------------------------- |
+| `--listen`     | `127.0.0.1:8787` | `OORED_LISTEN_ADDR`     | Address and port to listen on |
+| `--state-file` | Platform default | `OORE_SETUP_STATE_FILE` | Override database path        |
 
 The default database path is `~/Library/Application Support/oore/oore.db`. The encryption key is stored at `~/Library/Application Support/oore/encryption.key`.
 
@@ -41,20 +47,22 @@ In default mode, `oored` starts an embedded local runner automatically. Set `OOR
 ### `oored install-service`
 
 ```bash
-oored install-service [--listen <addr>] [--state-file <path>] [--label <label>] [--env KEY=VALUE] [--no-start]
+oored install-service [--listen <addr>] [--state-file <path>] [--label <label>] [--env KEY=VALUE] [--no-start] [--system --user <name>]
 ```
 
 Installs `oored` as a macOS launchd user service. The default service label is
 `build.oore.oored`, and the plist is written to
 `~/Library/LaunchAgents/build.oore.oored.plist`.
 
-| Flag | Default | Env var | Description |
-|---|---|---|---|
-| `--listen` | `127.0.0.1:8787` | `OORED_LISTEN_ADDR` | Address and port used by the service |
-| `--state-file` | Platform default | `OORE_SETUP_STATE_FILE` | Override database path |
-| `--label` | `build.oore.oored` | none | Override the launchd service label and plist name |
-| `--env KEY=VALUE` | none | none | Add or override an environment variable in the launchd plist. Repeat for multiple variables |
-| `--no-start` | `false` | none | Write the plist without bootstrapping the service |
+| Flag              | Default            | Env var                 | Description                                                                                 |
+| ----------------- | ------------------ | ----------------------- | ------------------------------------------------------------------------------------------- |
+| `--listen`        | `127.0.0.1:8787`   | `OORED_LISTEN_ADDR`     | Address and port used by the service                                                        |
+| `--state-file`    | Platform default   | `OORE_SETUP_STATE_FILE` | Override database path                                                                      |
+| `--label`         | `build.oore.oored` | none                    | Override the launchd service label and plist name                                           |
+| `--env KEY=VALUE` | none               | none                    | Add or override an environment variable in the launchd plist. Repeat for multiple variables |
+| `--no-start`      | `false`            | none                    | Write the plist without bootstrapping the service                                           |
+| `--system`        | `false`            | none                    | Install a boot-time LaunchDaemon; requires root                                             |
+| `--user`          | none               | none                    | Account that runs the LaunchDaemon; required with `--system`                                |
 
 The service uses the currently running `oored` executable, keeps the daemon alive
 with launchd, writes logs to `~/.oore/logs/oored.log`, and preserves the same
@@ -81,13 +89,14 @@ Useful launchd checks:
 
 ```bash
 launchctl print gui/$(id -u)/build.oore.oored
+sudo launchctl print system/build.oore.oored
 tail -f ~/.oore/logs/oored.log
 ```
 
 ### `oored uninstall-service`
 
 ```bash
-oored uninstall-service [--label <label>]
+oored uninstall-service [--label <label>] [--system]
 ```
 
 Stops and removes the launchd user service. This deletes the plist but leaves
@@ -99,17 +108,21 @@ The operator CLI handles setup, authentication, and administration.
 
 ### Commands
 
-| Command | Description | Status |
-|---|---|---|
-| [`oore setup`](/reference/cli/oore-setup) | Interactive 4-step instance setup | Implemented |
-| [`oore setup token`](/reference/cli/oore-setup#setup-token) | Generate a bootstrap token | Implemented |
-| [`oore login`](/reference/cli/oore-login) | Authenticate in local mode or import a token | Implemented |
-| [`oore status`](/reference/cli/oore-status) | Show setup status and authenticated operational summary | Implemented |
-| `oore runner register` | Register an external build runner | Implemented |
-| `oore runner start` | Start external runner process | Implemented |
-| [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values | Implemented |
-| [`oore config get <key>`](/reference/cli/oore-config) | Get CLI configuration values | Implemented |
-| [`oore doctor`](/reference/cli/oore-doctor) | Run environment/signing diagnostics | Implemented |
+| Command                                                       | Description                                             | Status      |
+| ------------------------------------------------------------- | ------------------------------------------------------- | ----------- |
+| [`oore setup`](/reference/cli/oore-setup)                     | Interactive 4-step instance setup                       | Implemented |
+| [`oore setup token`](/reference/cli/oore-setup#setup-token)   | Generate a bootstrap token                              | Implemented |
+| [`oore login`](/reference/cli/oore-login)                     | Authenticate in local mode or import a token            | Implemented |
+| [`oore status`](/reference/cli/oore-status)                   | Show setup status and authenticated operational summary | Implemented |
+| `oore runner register`                                        | Register an external build runner                       | Implemented |
+| `oore runner start`                                           | Start external runner process                           | Implemented |
+| `oore runner install-service`                                 | Install a macOS login-session runner service            | Implemented |
+| `oore runner uninstall-service`                               | Remove the managed macOS runner service                 | Implemented |
+| [`oore config set <key> <value>`](/reference/cli/oore-config) | Set CLI configuration values                            | Implemented |
+| [`oore config get <key>`](/reference/cli/oore-config)         | Get CLI configuration values                            | Implemented |
+| [`oore doctor`](/reference/cli/oore-doctor)                   | Run environment/signing diagnostics                     | Implemented |
+| `oore backup create                                           | verify                                                  | restore`    | Create and recover verified SQLite/key backups | Implemented |
+| `oore update`                                                 | Safely install a verified release update                | Implemented |
 
 ### Global behavior
 
@@ -121,3 +134,5 @@ The operator CLI handles setup, authentication, and administration.
 ### Embedded runner note
 
 The single-host default flow does not require `oore runner start`. The daemon (`oored`) auto-starts an embedded local runner unless `OORED_RUNNER_MODE=external`.
+
+iOS signing is the exception: use `OORED_RUNNER_MODE=external` and `oore runner install-service` so code signing runs in the logged-in macOS user session required by Apple Keychain Services.

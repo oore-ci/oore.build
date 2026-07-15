@@ -16,7 +16,7 @@ import type {
   SortingState,
 } from '@tanstack/react-table'
 
-import type { UserRole } from '@/lib/types'
+import type { User, UserRole } from '@/lib/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,11 +35,13 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import {
   useDeleteUser,
   useInviteUser,
+  usePreviewQaUser,
   useReEnableUser,
   useUpdateUserRole,
   useUsers,
 } from '@/hooks/use-auth'
 import { useAuthStore } from '@/stores/auth-store'
+import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -65,6 +67,7 @@ export const Route = createFileRoute('/settings/users')({
 })
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const EMPTY_USERS: Array<User> = []
 
 const ROLE_OPTIONS: Record<string, string> = {
   admin: 'Admin',
@@ -91,13 +94,16 @@ interface ConfirmAction {
   userIds?: Array<string>
 }
 
-function UsersSettingsPage() {
+function useUsersSettingsPageState() {
   const authUser = useAuthStore((s) => s.user)
   const { data, isLoading, error } = useUsers()
   const inviteMutation = useInviteUser()
   const updateRoleMutation = useUpdateUserRole()
   const deleteMutation = useDeleteUser()
   const reEnableMutation = useReEnableUser()
+  const previewMutation = usePreviewQaUser()
+  const activeInstance = useActiveInstance()
+  const navigate = Route.useNavigate()
 
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<UserRole>('developer')
@@ -227,7 +233,56 @@ function UsersSettingsPage() {
     [reEnableMutation, showError],
   )
 
-  const users = data?.users ?? []
+  const handlePreviewQa = useCallback(
+    (userId: string, email: string) => {
+      if (!activeInstance) {
+        toast.error('No active instance')
+        return
+      }
+      previewMutation.mutate(userId, {
+        onSuccess: (response) => {
+          const previewUser = response.user
+          if (!previewUser.user_id || previewUser.role !== 'qa_viewer') {
+            toast.error('The preview session returned an invalid QA profile')
+            return
+          }
+
+          const instanceStore = useInstanceStore.getState()
+          for (const instance of Object.values(instanceStore.instances)) {
+            if (instance.qaPreviewSourceId === activeInstance.id) {
+              instanceStore.removeInstance(instance.id)
+            }
+          }
+          const previewInstanceId = instanceStore.addInstance(
+            `${activeInstance.label} · QA preview`,
+            activeInstance.url,
+            activeInstance.icon,
+            activeInstance.id,
+          )
+          instanceStore.setActiveInstance(previewInstanceId)
+          useAuthStore
+            .getState()
+            .setAuth(response.session_token, response.expires_at, {
+              email: previewUser.email,
+              oidc_subject: previewUser.oidc_subject,
+              user_id: previewUser.user_id,
+              role: previewUser.role,
+              avatar_url: previewUser.avatar_url,
+            })
+          toast.success(`Previewing access for ${email}`, {
+            description:
+              'This read-only preview ends in 10 minutes. Switch instances to return sooner.',
+          })
+          void navigate({ to: '/builds', replace: true })
+        },
+        onError: (previewError) =>
+          showError(previewError, 'Failed to start QA preview'),
+      })
+    },
+    [activeInstance, navigate, previewMutation, showError],
+  )
+
+  const users = data?.users ?? EMPTY_USERS
   const userStatusCounts = useMemo(
     () =>
       users.reduce(
@@ -244,6 +299,7 @@ function UsersSettingsPage() {
     () =>
       getColumns({
         authUserId: authUser?.user_id,
+        canPreviewQa: authUser?.role === 'owner',
         onRoleChange: (userId, email, newRole) => {
           setConfirmAction({
             type: 'role_change',
@@ -259,9 +315,10 @@ function UsersSettingsPage() {
             userEmail: email,
           })
         },
+        onPreviewQa: handlePreviewQa,
         onReEnable: handleReEnable,
       }),
-    [authUser?.user_id, handleReEnable],
+    [authUser?.role, authUser?.user_id, handlePreviewQa, handleReEnable],
   )
 
   const table = useReactTable({
@@ -281,7 +338,9 @@ function UsersSettingsPage() {
   })
 
   const pendingMutation =
-    deleteMutation.isPending || updateRoleMutation.isPending
+    deleteMutation.isPending ||
+    updateRoleMutation.isPending ||
+    previewMutation.isPending
 
   const handleBulkDisable = (userIds: Array<string>) => {
     setConfirmAction({
@@ -315,6 +374,44 @@ function UsersSettingsPage() {
   })()
 
   if (isLoading) {
+    return { status: 'loading' as const }
+  }
+
+  if (error) {
+    return {
+      status: 'error' as const,
+      message: error instanceof Error ? error.message : 'Unknown error',
+    }
+  }
+
+  return {
+    status: 'ready' as const,
+    confirmAction,
+    confirmDescription,
+    confirmTitle,
+    emailError,
+    handleBulkDisable,
+    handleConfirm,
+    handleInvite,
+    inviteEmail,
+    inviteError,
+    inviteMutation,
+    inviteRole,
+    pendingMutation,
+    setConfirmAction,
+    setEmailError,
+    setInviteEmail,
+    setInviteRole,
+    table,
+    users,
+    userStatusCounts,
+  }
+}
+
+function UsersSettingsPage() {
+  const pageState = useUsersSettingsPageState()
+
+  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
         <PageMeta title="User Management" noindex />
@@ -332,26 +429,47 @@ function UsersSettingsPage() {
     )
   }
 
-  if (error) {
+  if (pageState.status === 'error') {
     return (
       <PageLayout>
         <PageMeta title="User Management" noindex />
         <Alert variant="destructive">
           <AlertDescription>
-            Failed to load users:{' '}
-            {error instanceof Error ? error.message : 'Unknown error'}
+            Failed to load users: {pageState.message}
           </AlertDescription>
         </Alert>
       </PageLayout>
     )
   }
 
+  const {
+    confirmAction,
+    confirmDescription,
+    confirmTitle,
+    emailError,
+    handleBulkDisable,
+    handleConfirm,
+    handleInvite,
+    inviteEmail,
+    inviteError,
+    inviteMutation,
+    inviteRole,
+    pendingMutation,
+    setConfirmAction,
+    setEmailError,
+    setInviteEmail,
+    setInviteRole,
+    table,
+    users,
+    userStatusCounts,
+  } = pageState
+
   return (
     <PageLayout width="wide">
       <PageMeta title="User Management" noindex />
       <PageHeader
         title="Users"
-        description="Manage team members and their roles."
+        description="Manage team roles, preview QA access, and assign projects from each project's Settings tab."
       />
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -402,7 +520,7 @@ function UsersSettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <div className="flex flex-1 flex-col gap-1">
               <Input
                 type="email"
@@ -430,7 +548,7 @@ function UsersSettingsPage() {
               onValueChange={(v) => setInviteRole(v as UserRole)}
               items={ROLE_OPTIONS}
             >
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-full sm:w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -442,6 +560,7 @@ function UsersSettingsPage() {
               </SelectContent>
             </Select>
             <Button
+              className="w-full sm:w-auto"
               onClick={handleInvite}
               disabled={
                 !inviteEmail || !!emailError || inviteMutation.isPending
@@ -517,7 +636,7 @@ function UsersSettingsPage() {
         title={confirmTitle}
         description={confirmDescription}
         confirmLabel={
-          confirmAction?.type === 'role_change' ? 'Change Role' : 'Disable'
+          confirmAction?.type === 'role_change' ? 'Change role' : 'Disable'
         }
         confirmVariant={
           confirmAction?.type === 'role_change' ? 'default' : 'destructive'

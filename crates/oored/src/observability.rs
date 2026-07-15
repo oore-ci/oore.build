@@ -10,14 +10,20 @@
 use std::time::Instant;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{MatchedPath, Request, State},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
 };
 use metrics::{counter, histogram};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use oore_contract::ApiError;
+use serde::Deserialize;
+
+use crate::extractors::AuthUser;
+use crate::util::api_err;
 
 // ── OpenTelemetry tracing setup ─────────────────────────────────
 
@@ -109,10 +115,179 @@ pub fn shutdown_tracing() {
 /// Install the `metrics` recorder backed by Prometheus and return the
 /// handle used to render the text exposition format.
 pub fn init_metrics() -> PrometheusHandle {
-    let builder = PrometheusBuilder::new();
-    builder
+    metrics_builder()
         .install_recorder()
         .expect("failed to install Prometheus metrics recorder")
+}
+
+pub(crate) fn metrics_builder() -> PrometheusBuilder {
+    const PAGE_SECONDS: &[f64] = &[0.1, 0.2, 0.4, 0.8, 1.0, 1.8, 2.5, 4.0, 8.0, 15.0, 60.0];
+
+    PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("oore_web_lcp_seconds".to_string()),
+            &[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 10.0, 20.0, 60.0],
+        )
+        .expect("valid LCP buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("oore_web_inp_seconds".to_string()),
+            &[0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0, 2.0, 5.0, 10.0],
+        )
+        .expect("valid INP buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("oore_web_cls_ratio".to_string()),
+            &[0.01, 0.05, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
+        )
+        .expect("valid CLS buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("oore_web_ttfb_seconds".to_string()),
+            PAGE_SECONDS,
+        )
+        .expect("valid TTFB buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("oore_web_dom_content_loaded_seconds".to_string()),
+            PAGE_SECONDS,
+        )
+        .expect("valid DOM content loaded buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("oore_web_load_seconds".to_string()),
+            PAGE_SECONDS,
+        )
+        .expect("valid load buckets")
+}
+
+const MAX_WEB_VITAL_OBSERVATIONS: usize = 8;
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WebReleaseChannel {
+    Dev,
+    Alpha,
+    Beta,
+    Stable,
+}
+
+impl WebReleaseChannel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Alpha => "alpha",
+            Self::Beta => "beta",
+            Self::Stable => "stable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WebPersona {
+    OperatorShell,
+    MobileShell,
+    Admin,
+    OperatorBuildDetail,
+    QaShell,
+    QaInstall,
+}
+
+impl WebPersona {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::OperatorShell => "operator_shell",
+            Self::MobileShell => "mobile_shell",
+            Self::Admin => "admin",
+            Self::OperatorBuildDetail => "operator_build_detail",
+            Self::QaShell => "qa_shell",
+            Self::QaInstall => "qa_install",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WebPerformanceMetric {
+    Lcp,
+    Inp,
+    Cls,
+    Ttfb,
+    DomContentLoaded,
+    Load,
+}
+
+#[derive(Deserialize)]
+struct WebPerformanceObservation {
+    metric: WebPerformanceMetric,
+    value: f64,
+}
+
+impl WebPerformanceObservation {
+    fn validate(&self) -> bool {
+        self.value.is_finite()
+            && self.value >= 0.0
+            && match self.metric {
+                WebPerformanceMetric::Cls => self.value <= 10.0,
+                _ => self.value <= 120_000.0,
+            }
+    }
+
+    fn record(&self, channel: WebReleaseChannel, persona: WebPersona) {
+        let labels = [("channel", channel.as_str()), ("persona", persona.as_str())];
+        match self.metric {
+            WebPerformanceMetric::Lcp => {
+                histogram!("oore_web_lcp_seconds", &labels).record(self.value / 1000.0)
+            }
+            WebPerformanceMetric::Inp => {
+                histogram!("oore_web_inp_seconds", &labels).record(self.value / 1000.0)
+            }
+            WebPerformanceMetric::Cls => {
+                histogram!("oore_web_cls_ratio", &labels).record(self.value)
+            }
+            WebPerformanceMetric::Ttfb => {
+                histogram!("oore_web_ttfb_seconds", &labels).record(self.value / 1000.0)
+            }
+            WebPerformanceMetric::DomContentLoaded => {
+                histogram!("oore_web_dom_content_loaded_seconds", &labels)
+                    .record(self.value / 1000.0)
+            }
+            WebPerformanceMetric::Load => {
+                histogram!("oore_web_load_seconds", &labels).record(self.value / 1000.0)
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct WebPerformanceRequest {
+    channel: WebReleaseChannel,
+    persona: WebPersona,
+    observations: Vec<WebPerformanceObservation>,
+}
+
+/// Records authenticated, anonymous browser performance histograms.
+///
+/// The fixed enums deliberately exclude URLs, user IDs, device IDs, and arbitrary labels.
+pub async fn record_web_performance(
+    _auth: AuthUser,
+    Json(request): Json<WebPerformanceRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    if request.observations.is_empty()
+        || request.observations.len() > MAX_WEB_VITAL_OBSERVATIONS
+        || request
+            .observations
+            .iter()
+            .any(|observation| !observation.validate())
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_web_performance_observation",
+            "Web performance observations must contain 1-8 bounded values",
+        ));
+    }
+
+    for observation in &request.observations {
+        observation.record(request.channel, request.persona);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Axum handler for `GET /metrics`.
@@ -157,4 +332,35 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     histogram!("http_request_duration_seconds", &labels).record(elapsed);
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_performance_contract_rejects_unbounded_or_arbitrary_data() {
+        let valid: WebPerformanceRequest = serde_json::from_value(serde_json::json!({
+            "channel": "alpha",
+            "persona": "qa_install",
+            "observations": [{"metric": "lcp", "value": 2499.0}]
+        }))
+        .expect("valid fixed-cardinality observation");
+        assert!(valid.observations[0].validate());
+
+        let arbitrary = serde_json::from_value::<WebPerformanceRequest>(serde_json::json!({
+            "channel": "alpha",
+            "persona": "/builds/private-id",
+            "observations": [{"metric": "lcp", "value": 1.0}]
+        }));
+        assert!(arbitrary.is_err());
+
+        let unbounded: WebPerformanceRequest = serde_json::from_value(serde_json::json!({
+            "channel": "alpha",
+            "persona": "qa_install",
+            "observations": [{"metric": "lcp", "value": 120001.0}]
+        }))
+        .expect("shape is valid");
+        assert!(!unbounded.observations[0].validate());
+    }
 }

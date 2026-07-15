@@ -59,8 +59,10 @@ pub(crate) fn error_page(title: &str, message: &str) -> String {
 }
 
 use axum::Json;
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::Response;
 use oore_contract::{
     ApiError, Integration, IntegrationDetailResponse, IntegrationInstallation,
     IntegrationRepository, ListInstallationsResponse, ListIntegrationsResponse,
@@ -77,6 +79,11 @@ use crate::store::write_audit_log;
 use crate::util::api_err;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+
+pub(crate) struct CommitSummary {
+    pub title: String,
+    pub author: String,
+}
 
 pub(crate) async fn require_remote_mode(
     pool: &sqlx::SqlitePool,
@@ -101,6 +108,181 @@ pub(crate) async fn require_remote_mode(
     }
 
     Ok(())
+}
+
+pub(crate) async fn resolve_branch_commit(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    repository_id: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
+                inst.external_id AS installation_external_id, r.external_id AS repository_external_id, \
+                r.full_name, r.html_url \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.status = 'active'",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to load source revision target");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load the linked repository",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "source_unresolvable",
+            "The linked source is unavailable; reconnect it before triggering a build",
+        )
+    })?;
+
+    let provider: String = row.get("provider");
+    let integration_id: String = row.get("integration_id");
+    match provider.as_str() {
+        "local_git" => {
+            let path: Option<String> = row.get("html_url");
+            local_git::resolve_branch_commit(
+                path.as_deref().ok_or_else(|| {
+                    api_err(
+                        StatusCode::CONFLICT,
+                        "source_unresolvable",
+                        "The linked local repository path is missing",
+                    )
+                })?,
+                branch,
+            )
+            .await
+        }
+        "github" => {
+            let installation_id: String = row.get("installation_external_id");
+            let full_name: String = row.get("full_name");
+            github::resolve_branch_commit(
+                pool,
+                encryption_key,
+                &integration_id,
+                &installation_id,
+                &full_name,
+                branch,
+            )
+            .await
+        }
+        "gitlab" => {
+            let host_url: String = row.get("host_url");
+            let auth_mode: String = row.get("auth_mode");
+            let repository_external_id: String = row.get("repository_external_id");
+            gitlab::resolve_branch_commit(
+                pool,
+                encryption_key,
+                &integration_id,
+                &host_url,
+                &auth_mode,
+                &repository_external_id,
+                branch,
+            )
+            .await
+        }
+        _ => Err(api_err(
+            StatusCode::CONFLICT,
+            "unsupported_provider",
+            "The linked source provider cannot resolve branch revisions",
+        )),
+    }
+}
+
+pub(crate) async fn compare_commits(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    repository_id: &str,
+    base: &str,
+    head: &str,
+) -> Result<Vec<CommitSummary>, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
+                inst.external_id AS installation_external_id, r.external_id AS repository_external_id, \
+                r.full_name, r.html_url \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.status = 'active'",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to load source comparison target");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load the linked repository",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "source_unresolvable",
+            "The linked source is unavailable; reconnect it before triggering a build",
+        )
+    })?;
+
+    let provider: String = row.get("provider");
+    let integration_id: String = row.get("integration_id");
+    match provider.as_str() {
+        "local_git" => {
+            let path: Option<String> = row.get("html_url");
+            local_git::compare_commits(
+                path.as_deref().ok_or_else(|| {
+                    api_err(
+                        StatusCode::CONFLICT,
+                        "source_unresolvable",
+                        "The linked local repository path is missing",
+                    )
+                })?,
+                base,
+                head,
+            )
+            .await
+        }
+        "github" => {
+            github::compare_commits(
+                pool,
+                encryption_key,
+                &integration_id,
+                &row.get::<String, _>("installation_external_id"),
+                &row.get::<String, _>("full_name"),
+                base,
+                head,
+            )
+            .await
+        }
+        "gitlab" => {
+            gitlab::compare_commits(
+                pool,
+                encryption_key,
+                &integration_id,
+                (
+                    &row.get::<String, _>("host_url"),
+                    &row.get::<String, _>("auth_mode"),
+                    &row.get::<String, _>("repository_external_id"),
+                ),
+                base,
+                head,
+            )
+            .await
+        }
+        _ => Err(api_err(
+            StatusCode::CONFLICT,
+            "unsupported_provider",
+            "The linked source provider cannot compare revisions",
+        )),
+    }
 }
 
 // ── Row conversion helpers ──────────────────────────────────────
@@ -140,6 +322,7 @@ pub fn row_to_repository(row: &sqlx::sqlite::SqliteRow) -> IntegrationRepository
         full_name: row.get("full_name"),
         default_branch: row.get("default_branch"),
         is_private: row.get::<i32, _>("is_private") != 0,
+        avatar_url: row.get("avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -423,6 +606,80 @@ pub async fn list_repositories(
     let repositories = rows.iter().map(row_to_repository).collect();
 
     Ok(Json(ListRepositoriesResponse { repositories }))
+}
+
+/// `GET /v1/integration-repositories/{id}/avatar` — proxy a private GitLab avatar.
+pub async fn repository_avatar(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.host_url, i.auth_mode, r.external_id, r.avatar_url \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.provider = 'gitlab' AND i.status = 'active'",
+    )
+    .bind(&id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %id, "failed to load GitLab repository avatar");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load the repository avatar",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "GitLab repository avatar not found",
+        )
+    })?;
+
+    let avatar_url: Option<String> = row.get("avatar_url");
+    let avatar_url = avatar_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "GitLab repository avatar not found",
+            )
+        })?;
+    let (content_type, body) = gitlab::fetch_repository_avatar(
+        &pool,
+        &state.encryption_key,
+        row.get("integration_id"),
+        row.get("host_url"),
+        row.get("auth_mode"),
+        row.get("external_id"),
+        &avatar_url,
+    )
+    .await?;
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "private, max-age=3600")
+        .body(Body::from(body))
+        .map_err(|e| {
+            error!(error = %e, "failed to build repository avatar response");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_error",
+                "Failed to return the repository avatar",
+            )
+        })
 }
 
 /// `GET /v1/integrations/{id}/installations` — list installations for an integration.

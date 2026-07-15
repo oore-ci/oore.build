@@ -5,8 +5,8 @@ mod common;
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
-    body_json, connect_pool, create_test_app, now_unix, seed_github_integration,
-    seed_project_chain, seed_test_user,
+    body_json, connect_pool, create_test_app, create_test_app_with_public_url, now_unix,
+    seed_github_integration, seed_project_chain, seed_test_user,
 };
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -86,6 +86,29 @@ async fn seed_running_build(
     build_id
 }
 
+async fn complete_artifact(
+    app: &axum::Router,
+    runner_id: &str,
+    runner_token: &str,
+    build_id: &str,
+    artifact_id: &str,
+) {
+    let req = Request::builder()
+        .uri(format!(
+            "/v1/runners/{runner_id}/jobs/{build_id}/artifacts/{artifact_id}/complete"
+        ))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::from("{}"))
+        .unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn test_owner_can_configure_local_storage_and_download_artifact() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -160,6 +183,7 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let artifact_id = create_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")
@@ -186,6 +210,197 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes.as_ref(), &[1u8, 2, 3, 4]);
+}
+
+#[tokio::test]
+async fn test_warpgate_ios_install_keeps_ticket_through_local_download() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app_with_public_url(&db_path, "https://ci.example.com").await;
+    let pool = connect_pool(&db_path).await;
+    let now = now_unix();
+
+    sqlx::query(
+        "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, remote_auth_mode, created_at, updated_at)
+         VALUES (1, 'file', 'remote', 'trusted_proxy', ?1, ?1)
+         ON CONFLICT(id) DO UPDATE SET runtime_mode = 'remote', remote_auth_mode = 'trusted_proxy', updated_at = ?1",
+    )
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("set Warpgate mode");
+    let encrypted_ticket = oored::crypto::encrypt("ios ticket/+?", &common::TEST_ENCRYPTION_KEY)
+        .expect("encrypt Warpgate ticket");
+    sqlx::query(
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_warpgate_ticket, created_at, updated_at)
+         VALUES (1, 'x-warpgate-username', '[]', ?1, ?2, ?2)",
+    )
+    .bind(encrypted_ticket)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("configure Warpgate ticket");
+
+    let owner_id = seed_test_user(&pool).await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "test/warpgate-ios").await;
+    let (runner_id, runner_token) = register_runner(&app, &owner_session, "ios-runner").await;
+    let build_id = seed_running_build(&pool, &project_id, &pipeline_id, &runner_id).await;
+
+    let local_dir = tmp.path().join("artifacts");
+    let request = Request::builder()
+        .uri("/v1/settings/artifact-storage")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "provider": "local",
+                "local_base_dir": local_dir.to_string_lossy(),
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let artifact_body = serde_json::json!({
+        "name": "Kite.ipa",
+        "artifact_type": "ipa",
+        "file_size": 4,
+        "checksum": "abcd",
+        "metadata": {
+            "ios_app": {
+                "bundle_identifier": "com.example.kite",
+                "display_name": "Kite QA",
+                "version": "1.0.0",
+                "build_number": "1"
+            },
+            "ios_signing": {
+                "bundle_ids": ["com.example.kite"],
+                "effective_export_method": "release-testing"
+            }
+        }
+    });
+    let request = Request::builder()
+        .uri(format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"))
+        .method("POST")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::from(serde_json::to_string(&artifact_body).unwrap()))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let created = body_json(response.into_body()).await;
+    let upload_url = url::Url::parse(created["upload_url"].as_str().unwrap()).unwrap();
+    let request = Request::builder()
+        .uri(upload_url.path())
+        .method("PUT")
+        .body(Body::from(vec![1u8, 2, 3, 4]))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let artifact_id = created["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
+    let request = Request::builder()
+        .uri(format!("/v1/artifacts/{artifact_id}/install-link"))
+        .method("POST")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let install = body_json(response.into_body()).await;
+
+    let manifest_url = url::Url::parse(install["manifest_url"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        manifest_url
+            .query_pairs()
+            .find(|(key, _)| key == "warpgate-ticket")
+            .map(|(_, value)| value.into_owned())
+            .as_deref(),
+        Some("ios ticket/+?")
+    );
+    let manifest_uri = match manifest_url.query() {
+        Some(query) => format!("{}?{query}", manifest_url.path()),
+        None => manifest_url.path().to_string(),
+    };
+    let request = Request::builder()
+        .uri(manifest_uri)
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let manifest = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(manifest.contains("warpgate-ticket=ios+ticket%2F%2B%3F"));
+
+    let scoped_url = url::Url::parse(install["download_url"].as_str().unwrap()).unwrap();
+    let scoped_uri = format!(
+        "{}?{}",
+        scoped_url.path(),
+        scoped_url.query().expect("Warpgate query")
+    );
+    let request = Request::builder()
+        .uri(scoped_uri)
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    let local_url = url::Url::parse(
+        response
+            .headers()
+            .get(http::header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        local_url
+            .query_pairs()
+            .find(|(key, _)| key == "warpgate-ticket")
+            .map(|(_, value)| value.into_owned())
+            .as_deref(),
+        Some("ios ticket/+?")
+    );
+
+    let local_uri = format!(
+        "{}?{}",
+        local_url.path(),
+        local_url.query().expect("Warpgate query")
+    );
+    let request = Request::builder()
+        .uri(local_uri)
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(bytes.as_ref(), &[1u8, 2, 3, 4]);
 }
 
@@ -263,6 +478,7 @@ async fn test_local_storage_large_artifact_upload_download() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let artifact_id = create_json["artifact"]["id"].as_str().unwrap();
+    complete_artifact(&app, &runner_id, &runner_token, &build_id, artifact_id).await;
     let req = Request::builder()
         .uri(format!("/v1/artifacts/{artifact_id}/download-link"))
         .method("POST")

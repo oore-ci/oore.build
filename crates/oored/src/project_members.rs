@@ -124,8 +124,9 @@ pub async fn add_project_member(
         ));
     }
 
-    // Verify target user exists and is active
-    let target_user = sqlx::query("SELECT id, email, display_name, avatar_url, role FROM users WHERE id = ?1 AND status = 'active'")
+    // Invited users can be assigned before their first sign-in; disabled users
+    // remain ineligible until re-enabled.
+    let target_user = sqlx::query("SELECT id, email, display_name, avatar_url, role FROM users WHERE id = ?1 AND status IN ('active', 'invited')")
         .bind(&req.user_id)
         .fetch_optional(&pool)
         .await
@@ -133,7 +134,7 @@ pub async fn add_project_member(
             error!(error = %e, "failed to query target user");
             api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to verify user")
         })?
-        .ok_or_else(|| api_err(StatusCode::BAD_REQUEST, "invalid_user", "User not found or not active"))?;
+        .ok_or_else(|| api_err(StatusCode::BAD_REQUEST, "invalid_user", "User not found or not eligible for project access"))?;
 
     let target_instance_role: String = target_user.get("role");
     // owner/admin don't need project membership (they have implicit full access)
@@ -142,6 +143,13 @@ pub async fn add_project_member(
             StatusCode::BAD_REQUEST,
             "invalid_user",
             "Owner and admin users already have full access to all projects",
+        ));
+    }
+    if target_instance_role == "qa_viewer" && req.role != ProjectRole::Viewer {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_project_role",
+            "QA Viewer users can only be assigned the Viewer project role",
         ));
     }
 
@@ -237,6 +245,27 @@ pub async fn update_project_member(
     )
     .await?;
     require_project_permission(&effective, ProjectPermission::ManageMembers)?;
+
+    let target_instance_role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
+            .bind(&user_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to check target user role");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to check target user role",
+                )
+            })?;
+    if target_instance_role.as_deref() == Some("qa_viewer") && req.role != ProjectRole::Viewer {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_project_role",
+            "QA Viewer users can only be assigned the Viewer project role",
+        ));
+    }
 
     let now = now_unix();
 

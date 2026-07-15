@@ -6,6 +6,42 @@ export interface MergeBuildLogChunksResult {
   lastSequence: number
 }
 
+export function createLogFrameBatcher(
+  onFlush: (chunks: Array<BuildLogChunk>) => void,
+  schedule: (callback: () => void) => number = requestAnimationFrame,
+  cancel: (handle: number) => void = cancelAnimationFrame,
+) {
+  let frame: number | null = null
+  let queued: Array<BuildLogChunk> = []
+
+  const flush = () => {
+    if (frame !== null) cancel(frame)
+    frame = null
+    if (queued.length === 0) return
+    const chunks = queued
+    queued = []
+    onFlush(chunks)
+  }
+
+  return {
+    enqueue(chunk: BuildLogChunk) {
+      queued.push(chunk)
+      if (frame === null) {
+        frame = schedule(() => {
+          frame = null
+          flush()
+        })
+      }
+    },
+    flush,
+    cancel() {
+      if (frame !== null) cancel(frame)
+      frame = null
+      queued = []
+    },
+  }
+}
+
 function findLogInsertIndex(
   logs: Array<BuildLogChunk>,
   sequence: number,
@@ -69,4 +105,17 @@ export function mergeBuildLogChunks(
     lastSequence:
       nextLogs.length > 0 ? nextLogs[nextLogs.length - 1].sequence : -1,
   }
+}
+
+export function mergeBuildLogSnapshots(
+  streamedLogs: Array<BuildLogChunk>,
+  finalLogs: Array<BuildLogChunk>,
+): Array<BuildLogChunk> {
+  if (streamedLogs.length === 0) return finalLogs
+  if (finalLogs.length === 0) return streamedLogs
+
+  const logsBySequence = new Map(
+    streamedLogs.map((chunk) => [chunk.sequence, chunk]),
+  )
+  return mergeBuildLogChunks(streamedLogs, logsBySequence, finalLogs).logs
 }

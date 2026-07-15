@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Understand Oore CI system architecture including daemon, CLI, and web UI components."
+description: 'Understand Oore CI system architecture including daemon, CLI, and web UI components.'
 ---
 
 # System Architecture
@@ -114,12 +114,12 @@ The daemon also supports loopback-only local login (no OIDC) for local-first onb
 
 ## Technology choices
 
-| Component | Technology | Why |
-|---|---|---|
-| Backend language | Rust | Performance, memory safety, single binary deployment |
-| Web framework | Axum | Async, tower middleware ecosystem, type-safe extractors |
-| Database | SQLite | Zero-config, single-file backup, sufficient for single-host |
-| Frontend | React 19 + TanStack Router | File-based routing, type-safe, modern React patterns |
-| Server state | TanStack Query | Cache management, background refetch, optimistic updates |
-| Package manager | Bun | Fast installs, native bundler support |
-| Flutter management | FVM | Per-project Flutter version pinning |
+| Component          | Technology                 | Why                                                         |
+| ------------------ | -------------------------- | ----------------------------------------------------------- |
+| Backend language   | Rust                       | Performance, memory safety, single binary deployment        |
+| Web framework      | Axum                       | Async, tower middleware ecosystem, type-safe extractors     |
+| Database           | SQLite                     | Zero-config, single-file backup, sufficient for single-host |
+| Frontend           | React 19 + TanStack Router | File-based routing, type-safe, modern React patterns        |
+| Server state       | TanStack Query             | Cache management, background refetch, optimistic updates    |
+| Package manager    | Bun                        | Fast installs, native bundler support                       |
+| Flutter management | FVM                        | Per-project Flutter version pinning                         |

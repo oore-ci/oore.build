@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for managing projects in Oore CI."
+description: 'API endpoints for managing projects in Oore CI.'
 ---
 
 # Projects API
@@ -58,11 +58,11 @@ Returns the created project object.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Missing or invalid fields |
-| 401 | `missing_auth` | Authorization header not provided |
-| 401 | `invalid_session` | Session token is invalid |
+| Status | Code              | Description                       |
+| ------ | ----------------- | --------------------------------- |
+| 400    | `invalid_input`   | Missing or invalid fields         |
+| 401    | `missing_auth`    | Authorization header not provided |
+| 401    | `invalid_session` | Session token is invalid          |
 
 ---
 
@@ -118,6 +118,6 @@ Returns a confirmation.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 403 | `forbidden` | Insufficient permissions (requires owner or admin role) |
+| Status | Code        | Description                                             |
+| ------ | ----------- | ------------------------------------------------------- |
+| 403    | `forbidden` | Insufficient permissions (requires owner or admin role) |

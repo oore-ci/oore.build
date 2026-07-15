@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Download build artifacts from Oore CI using signed time-limited URLs."
+description: 'Download build artifacts from Oore CI using signed time-limited URLs.'
 ---
 
 # Download Build Artifacts
@@ -53,20 +53,22 @@ curl -o my-app.apk "http://127.0.0.1:8787/v1/artifacts/download/token_abc123"
 
 Download links are time-limited. Generate a new link if the previous one expired.
 
+To install an APK or signed ad-hoc IPA directly on a phone, use the artifact's **Install** action instead. See [Install Mobile Builds](/guides/artifacts/install-mobile-builds).
+
 ## How download links work
 
-| Storage backend | Download mechanism |
-|---|---|
-| **Local** | Daemon serves the file via a signed token URL |
-| **S3** | Daemon generates a pre-signed S3 URL |
-| **R2** | Daemon generates a pre-signed R2 URL |
+| Storage backend | Download mechanism                            |
+| --------------- | --------------------------------------------- |
+| **Local**       | Daemon serves the file via a signed token URL |
+| **S3**          | Daemon generates a pre-signed S3 URL          |
+| **R2**          | Daemon generates a pre-signed R2 URL          |
 
 The download token is short-lived and scoped to the specific artifact. No direct access to the underlying storage is exposed.
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/v1/builds/{build_id}/artifacts` | List artifacts for a build |
-| `POST` | `/v1/artifacts/{artifact_id}/download-link` | Generate download link |
-| `GET` | `/v1/artifacts/download/{token}` | Download artifact |
+| Method | Path                                        | Description                |
+| ------ | ------------------------------------------- | -------------------------- |
+| `GET`  | `/v1/builds/{build_id}/artifacts`           | List artifacts for a build |
+| `POST` | `/v1/artifacts/{artifact_id}/download-link` | Generate download link     |
+| `GET`  | `/v1/artifacts/download/{token}`            | Download artifact          |

@@ -102,6 +102,115 @@ fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+pub(crate) async fn resolve_branch_commit(
+    repo_path: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let repo_path = repo_path.to_string();
+    let branch = branch.to_string();
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                repo_path.as_str(),
+                "rev-parse",
+                "--verify",
+                &format!("refs/heads/{branch}^{{commit}}"),
+            ])
+            .output()
+            .map_err(|e| {
+                error!(error = %e, "failed to resolve local git branch");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Failed to inspect the local repository",
+                )
+            })?;
+        if !output.status.success() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_ref",
+                format!("Branch '{branch}' was not found in the linked repository"),
+            ));
+        }
+        String::from_utf8(output.stdout)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Git returned an invalid commit identifier",
+                )
+            })
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local git branch resolution task failed");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git_error",
+            "Failed to inspect the local repository",
+        )
+    })?
+}
+
+pub(crate) async fn compare_commits(
+    repo_path: &str,
+    base: &str,
+    head: &str,
+) -> Result<Vec<super::CommitSummary>, (StatusCode, Json<ApiError>)> {
+    let repo_path = repo_path.to_string();
+    let range = format!("{base}..{head}");
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                repo_path.as_str(),
+                "log",
+                "--reverse",
+                "--format=%s%x1f%an%x1e",
+                &range,
+            ])
+            .output()
+            .map_err(|e| {
+                error!(error = %e, "failed to compare local git commits");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Failed to compare repository revisions",
+                )
+            })?;
+        if !output.status.success() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_ref",
+                "The previous or target commit is unavailable",
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .split('\x1e')
+            .filter_map(|record| {
+                let (title, author) = record.trim().split_once('\x1f')?;
+                Some(super::CommitSummary {
+                    title: title.to_string(),
+                    author: author.to_string(),
+                })
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| {
+        error!(error = %e, "local git comparison task failed");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git_error",
+            "Failed to compare repository revisions",
+        )
+    })?
+}
+
 struct LocalGitRepoInspection {
     canonical_str: String,
     default_branch: Option<String>,
@@ -494,6 +603,7 @@ pub async fn create_local_git_integration(
         full_name: repo_name,
         default_branch,
         is_private: true,
+        avatar_url: None,
         created_at: now,
         updated_at: now,
     };

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Connect your self-hosted Oore CI backend to the hosted UI at ci.oore.build."
+description: 'Connect your self-hosted Oore CI backend to the hosted UI at ci.oore.build.'
 ---
 
 # Hosted UI Onboarding
@@ -18,6 +18,7 @@ It cannot call `http://127.0.0.1:*` or other local-only HTTP addresses.
 Before opening the Hosted UI, verify your backend is reachable over HTTPS from your local machine (where you run the browser). Replace `YOUR_URL` with your actual backend URL.
 
 1. **Verify HTTPS connection**:
+
    ```bash
    # Should return HTTP 200/401/403, not a timeout or DNS error
    curl -I https://YOUR_URL/healthz

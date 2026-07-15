@@ -4,18 +4,30 @@ import {
   completeSetup,
   configureExternalAccessOidc,
   configureOidc,
+  addProjectMember,
+  createArtifactInstallLink,
+  createScopedDownloadToken,
   createPipeline,
+  discoverRepositoryWorkflows,
   getApiErrorMessage,
+  getArtifactDownloadLink,
   getArtifactStorageSettings,
   getExternalAccessOidc,
   getInstancePreferences,
   getPipeline,
+  getRepositoryAvatar,
   getSetupStatus,
+  listBuildArtifacts,
+  listBuilds,
+  listProjectMembers,
   listPipelines,
   listRunners,
+  previewQaUser,
+  removeProjectMember,
   testOidcConnection,
   updateArtifactStorageSettings,
   updateInstancePreferences,
+  updateProjectMember,
   updatePipeline,
   updateRunner,
   validatePipeline,
@@ -138,6 +150,223 @@ describe('getSetupStatus', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'https://ci.example.com/v1/public/setup-status',
       { headers: {} },
+    )
+  })
+})
+
+describe('query cancellation', () => {
+  it('passes the TanStack signal through build requests', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, { builds: [], total: 0 }))
+
+    await listBuilds('https://ci.example.com', 'token', undefined, {
+      signal: controller.signal,
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/builds',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer token' },
+        signal: controller.signal,
+      }),
+    )
+  })
+
+  it('queries an artifact batch with bearer auth and cancellation', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, { artifacts: [] }))
+
+    await listBuildArtifacts(
+      'https://ci.example.com',
+      'token',
+      { build_ids: ['build-1', 'build-2'] },
+      { signal: controller.signal },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/artifacts/query',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ build_ids: ['build-1', 'build-2'] }),
+        signal: controller.signal,
+      },
+    )
+  })
+})
+
+describe('QA project access', () => {
+  it('calls the preview and project membership endpoints with bearer auth', async () => {
+    mockFetch
+      .mockReturnValueOnce(mockJsonResponse(200, { session_token: 'preview' }))
+      .mockReturnValueOnce(mockJsonResponse(200, { members: [] }))
+      .mockReturnValueOnce(mockJsonResponse(200, { member: { id: 'm1' } }))
+      .mockReturnValueOnce(mockJsonResponse(200, { member: { id: 'm1' } }))
+      .mockReturnValueOnce(mockJsonResponse(200, { ok: true }))
+
+    await previewQaUser('https://ci.example.com', 'owner-token', 'qa-1')
+    await listProjectMembers(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+    )
+    await addProjectMember(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+      { user_id: 'qa-1', role: 'viewer' },
+    )
+    await updateProjectMember(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+      'qa-1',
+      { role: 'viewer' },
+    )
+    await removeProjectMember(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+      'qa-1',
+    )
+
+    const auth = { Authorization: 'Bearer owner-token' }
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/users/qa-1/preview',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/projects/project-1/members',
+      { headers: auth },
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      3,
+      'https://ci.example.com/v1/projects/project-1/members',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      4,
+      'https://ci.example.com/v1/projects/project-1/members/qa-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      5,
+      'https://ci.example.com/v1/projects/project-1/members/qa-1',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+  })
+})
+
+describe('repository avatars', () => {
+  it('fetches the image through Oore with the session token', async () => {
+    const controller = new AbortController()
+    const avatar = new Blob(['avatar'], { type: 'image/png' })
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: () => Promise.resolve(avatar),
+    })
+
+    const result = await getRepositoryAvatar(
+      'https://oore.example.com',
+      'session-token',
+      'repo-1',
+      { signal: controller.signal },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://oore.example.com/v1/integration-repositories/repo-1/avatar',
+      {
+        headers: { Authorization: 'Bearer session-token' },
+        signal: controller.signal,
+      },
+    )
+    expect(result).toBe(avatar)
+  })
+})
+
+describe('artifact download links', () => {
+  it('replaces the daemon loopback fallback with the reachable instance origin', async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          download_url: 'http://127.0.0.1:8787/v1/artifacts/download/direct',
+          expires_at: 1,
+        }),
+      )
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          id: 'share-1',
+          download_url: 'http://127.0.0.1:8787/install/artifact/scoped',
+          token: 'scoped',
+          prefix: 'scoped',
+          expires_at: 1,
+          single_use: false,
+        }),
+      )
+
+    const direct = await getArtifactDownloadLink(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+    )
+    const scoped = await createScopedDownloadToken(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+      {},
+    )
+
+    expect(direct.download_url).toBe(
+      'https://oore.example.com/v1/artifacts/download/direct',
+    )
+    expect(scoped.download_url).toBe(
+      'https://oore.example.com/install/artifact/scoped',
+    )
+  })
+
+  it('keeps custom-protocol install URLs while normalizing HTTPS artifact URLs', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, {
+        platform: 'ios',
+        install_url:
+          'itms-services://?action=download-manifest&url=https%3A%2F%2Fci.example.com%2Fmanifest.plist',
+        download_url: 'http://127.0.0.1:8787/install/artifact/install',
+        manifest_url:
+          'http://127.0.0.1:8787/install/ios/install/manifest.plist',
+        expires_at: 1,
+      }),
+    )
+
+    const result = await createArtifactInstallLink(
+      'https://oore.example.com',
+      'token',
+      'artifact-1',
+    )
+
+    expect(result.install_url).toMatch(/^itms-services:/)
+    expect(result.download_url).toBe(
+      'https://oore.example.com/install/artifact/install',
+    )
+    expect(result.manifest_url).toBe(
+      'https://oore.example.com/install/ios/install/manifest.plist',
     )
   })
 })
@@ -556,6 +785,34 @@ describe('external access oidc api', () => {
 })
 
 describe('pipeline api', () => {
+  it('discovers repository workflows at an encoded ref and path', async () => {
+    mockFetch.mockReturnValue(
+      mockJsonResponse(200, {
+        project_id: 'proj-1',
+        provider: 'gitlab',
+        reference: 'feature/mobile',
+        workflows: [],
+        truncated: false,
+      }),
+    )
+
+    await discoverRepositoryWorkflows(
+      'https://ci.example.com',
+      'session-token',
+      'proj-1',
+      { reference: 'feature/mobile', path: '.oore/android release.yaml' },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/proj-1/repository-workflows?ref=feature%2Fmobile&path=.oore%2Fandroid+release.yaml',
+      {
+        headers: {
+          Authorization: 'Bearer session-token',
+        },
+      },
+    )
+  })
+
   it('calls POST /v1/projects/{project_id}/pipelines with execution config fields', async () => {
     const payload = {
       pipeline: {

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Cancel running or queued builds in Oore CI."
+description: 'Cancel running or queued builds in Oore CI.'
 ---
 
 # Cancel Running Builds

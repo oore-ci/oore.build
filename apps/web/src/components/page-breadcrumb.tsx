@@ -7,6 +7,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
+import { resolveBreadcrumbPath } from '@/lib/breadcrumbs'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 
 interface BreadcrumbEntry {
@@ -23,6 +24,10 @@ export default function PageBreadcrumb() {
   const dynamicLabels = useBreadcrumbStore((s) => s.labels)
 
   const crumbs: Array<BreadcrumbEntry> = []
+  const params = Object.assign(
+    {},
+    ...matches.map((match) => match.params),
+  ) as Record<string, string>
 
   // Check if any match is under /settings — inject virtual "Settings" parent
   const isSettingsRoute = matches.some((m) =>
@@ -35,11 +40,29 @@ export default function PageBreadcrumb() {
 
     // Dynamic label from store takes priority over static data
     const staticData = match.staticData as
-      | { breadcrumbLabel?: string }
+      | {
+          breadcrumbLabel?: string
+          breadcrumbParent?: { label: string; to: string }
+        }
       | undefined
-    const label = dynamicLabels[match.id] || staticData?.breadcrumbLabel
+    const label =
+      dynamicLabels[match.fullPath] ||
+      dynamicLabels[match.id] ||
+      staticData?.breadcrumbLabel
 
     if (label) {
+      const parent = staticData?.breadcrumbParent
+      const parentTo = parent
+        ? resolveBreadcrumbPath(parent.to, params)
+        : undefined
+      if (
+        parent &&
+        !crumbs.some(
+          (crumb) => crumb.label === parent.label && crumb.to === parentTo,
+        )
+      ) {
+        crumbs.push({ label: parent.label, to: parentTo })
+      }
       crumbs.push({
         label,
         to: match.fullPath,
@@ -72,10 +95,17 @@ export default function PageBreadcrumb() {
           const isLast = i === lastIndex
 
           return (
-            <span key={i} className="contents">
-              {i > 0 && <BreadcrumbSeparator className="hidden md:block" />}
+            <span
+              key={`${crumb.to ?? 'current'}:${crumb.label}`}
+              className="contents"
+            >
+              {i > 0 && (
+                <BreadcrumbSeparator
+                  className={i < lastIndex ? 'hidden md:block' : ''}
+                />
+              )}
               <BreadcrumbItem
-                className={i < lastIndex ? 'hidden md:block' : ''}
+                className={i < lastIndex - 1 ? 'hidden md:block' : ''}
               >
                 {isLast ? (
                   <BreadcrumbPage>{crumb.label}</BreadcrumbPage>

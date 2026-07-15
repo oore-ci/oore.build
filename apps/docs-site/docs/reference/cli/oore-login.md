@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "CLI reference for oore login in alpha mode (token import + local login)."
+description: 'CLI reference for oore login in alpha mode (token import + local login).'
 ---
 
 # oore login
@@ -22,12 +22,12 @@ oore login --json ...
 
 ## Flags
 
-| Flag | Env var | Description |
-|------|---------|-------------|
-| `--daemon-url` | `OORE_DAEMON_URL` | Daemon URL (defaults to config file, then `http://127.0.0.1:8787`) |
-| `--token` | — | Import an existing session token and validate via `/v1/users/me` |
-| `--email` | — | Optional local-login email override (`owner@local` by default server-side) |
-| `--json` | — | Print machine-readable output |
+| Flag           | Env var           | Description                                                                |
+| -------------- | ----------------- | -------------------------------------------------------------------------- |
+| `--daemon-url` | `OORE_DAEMON_URL` | Daemon URL (defaults to config file, then `http://127.0.0.1:8787`)         |
+| `--token`      | —                 | Import an existing session token and validate via `/v1/users/me`           |
+| `--email`      | —                 | Optional local-login email override (`owner@local` by default server-side) |
+| `--json`       | —                 | Print machine-readable output                                              |
 
 ## Behavior
 
@@ -36,7 +36,7 @@ oore login --json ...
 - On success, `oore` stores:
   - `daemon_url`
   - `session_token`
-  in `~/.oore/config.json` (or `OORE_CONFIG_FILE` override).
+    in `~/.oore/config.json` (or `OORE_CONFIG_FILE` override).
 
 ## Examples
 

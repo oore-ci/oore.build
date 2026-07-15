@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Upgrade Oore CI to a new version with zero-downtime strategies."
+description: 'Upgrade Oore CI to a new version with zero-downtime strategies.'
 ---
 
 # Upgrade Procedures
@@ -10,12 +10,24 @@ How to upgrade your Oore CI instance to a new version.
 ## Before upgrading
 
 1. **Read the release notes** for the target version
-2. **Back up your database and encryption key** (see [Backup and Restore](/operations/backup-restore))
+2. **Create and verify a backup** (see [Backup and Restore](/operations/backup-restore))
 3. **Check for breaking changes** in the changelog
 
 ## Upgrade steps
 
-### 1. Pull the latest code
+### Installed release update
+
+```bash
+oore update
+```
+
+The updater creates a pre-update backup, stages the verified release inside the install root, atomically replaces release files, reloads active launchd daemon/local-web services, and rolls back the release if readiness fails. Use `/healthz` for liveness and `/readyz` for database, migration, and encryption-runtime readiness.
+
+::: warning
+This hardening release must be installed with the current installer. An already-installed older updater cannot be made retroactively atomic or rollback-safe.
+:::
+
+### Source checkout update
 
 ```bash
 cd /path/to/Oore CI
@@ -48,6 +60,7 @@ The daemon handles any necessary database migrations automatically on startup.
 
 ```bash
 curl http://127.0.0.1:8787/healthz
+curl http://127.0.0.1:8787/readyz
 curl http://127.0.0.1:8787/v1/public/setup-status
 ```
 

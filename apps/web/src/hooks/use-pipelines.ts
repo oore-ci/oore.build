@@ -10,6 +10,7 @@ import type {
 import {
   createPipeline,
   deletePipeline,
+  discoverRepositoryWorkflows,
   getPipeline,
   getPipelineAndroidSigning,
   getPipelineIosSigning,
@@ -58,6 +59,30 @@ export function usePipelines(
     ],
     queryFn: () => listPipelines(baseUrl!, token!, projectId, params),
     enabled: enabled && !!baseUrl && !!token && !!projectId,
+  })
+}
+
+export function useRepositoryWorkflows(
+  projectId: string,
+  params?: { reference?: string; path?: string },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'repository-workflows',
+      projectId,
+      params ?? {},
+    ],
+    queryFn: () =>
+      discoverRepositoryWorkflows(baseUrl!, token!, projectId, params),
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+    staleTime: 30_000,
   })
 }
 
@@ -165,7 +190,10 @@ export function useValidatePipeline() {
   })
 }
 
-export function usePipelineAndroidSigning(pipelineId: string) {
+export function usePipelineAndroidSigning(
+  pipelineId: string,
+  options?: { enabled?: boolean },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -177,7 +205,7 @@ export function usePipelineAndroidSigning(pipelineId: string) {
       pipelineId,
     ],
     queryFn: () => getPipelineAndroidSigning(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
   })
 }
 
@@ -218,7 +246,10 @@ export function useUpdatePipelineAndroidSigning() {
   })
 }
 
-export function usePipelineIosSigning(pipelineId: string) {
+export function usePipelineIosSigning(
+  pipelineId: string,
+  options?: { enabled?: boolean },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -226,7 +257,7 @@ export function usePipelineIosSigning(pipelineId: string) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline-ios-signing', pipelineId],
     queryFn: () => getPipelineIosSigning(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
   })
 }
 
@@ -274,7 +305,10 @@ export function useUpdatePipelineIosSigning() {
   })
 }
 
-export function usePipelineIosDevices(pipelineId: string) {
+export function usePipelineIosDevices(
+  pipelineId: string,
+  options?: { enabled?: boolean },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
@@ -286,7 +320,7 @@ export function usePipelineIosDevices(pipelineId: string) {
       pipelineId,
     ],
     queryFn: () => listPipelineIosDevices(baseUrl!, token!, pipelineId),
-    enabled: !!baseUrl && !!token && !!pipelineId,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
   })
 }
 

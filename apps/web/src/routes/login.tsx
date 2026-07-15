@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
@@ -29,9 +30,16 @@ import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { resolveLoginFlow } from '@/lib/login-flow'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
+import DemoLoginForm from '@/components/demo-login-form'
+import { isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
+})
+
+const lastAuthTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
 })
 
 function instanceHostname(url: string): string {
@@ -44,10 +52,7 @@ function instanceHostname(url: string): string {
 }
 
 function formatLastAuthTime(epochSeconds: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(epochSeconds * 1000)
+  return lastAuthTimeFormatter.format(epochSeconds * 1000)
 }
 
 function formatAuthMethodLabel(
@@ -77,11 +82,12 @@ function resolveBackendHostname(url: string): string {
   }
 }
 
-function LoginPage() {
+function useLoginPageState() {
   const instance = useActiveInstance()
   const instances = useInstanceStore((s) => s.instances)
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
+  const removeInstance = useInstanceStore((s) => s.removeInstance)
   const navigate = useNavigate()
   const setAuth = useAuthStore((s) => s.setAuth)
   const token = useAuthStore((s) => s.token)
@@ -117,12 +123,22 @@ function LoginPage() {
     ? resolveLoginFlow(setupStatusQuery.data, loopbackLocalPath)
     : null
   const localLoginAvailable = loginFlow === 'local' && loopbackLocalPath
-  const trustedProxyLoginAvailable = loginFlow === 'trusted_proxy'
+  const trustedProxyLoginAvailable =
+    loginFlow === 'trusted_proxy' && !instance?.qaPreviewSourceId
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
   useMountEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
+    }
+  })
+
+  useMountEffect(() => {
+    if (!hasValidToken && instance?.qaPreviewSourceId) {
+      removeInstance(instance.id)
+      toast.dismiss()
+      toast.info('QA preview ended. You are back in your owner session.')
+      void navigate({ to: '/settings/users', replace: true })
     }
   })
 
@@ -140,6 +156,11 @@ function LoginPage() {
 
   const handleLogin = useCallback(async () => {
     if (!instance) return
+    if (instance.qaPreviewSourceId) {
+      removeInstance(instance.id)
+      void navigate({ to: '/settings/users', replace: true })
+      return
+    }
     const baseUrl = resolveInstanceApiBaseUrl(instance)
     if (!baseUrl) return
     setLoading(true)
@@ -301,7 +322,7 @@ function LoginPage() {
       }
       setLoading(false)
     }
-  }, [instance, localEmail, navigate, setAuth])
+  }, [instance, localEmail, navigate, removeInstance, setAuth])
 
   useTrustedProxyAutoLogin({
     enabled:
@@ -309,10 +330,82 @@ function LoginPage() {
       !hasValidToken &&
       !loading &&
       setupStatusQuery.data?.is_configured === true &&
-      loginFlow === 'trusted_proxy',
+      trustedProxyLoginAvailable,
     instanceId: instance?.id ?? null,
     onLogin: handleLogin,
   })
+
+  return {
+    activeInstanceId,
+    connectivityIssue,
+    error,
+    handleLogin,
+    hostedUi,
+    instance,
+    instanceList,
+    lastAuthMeta,
+    loading,
+    localEmail,
+    localLoginAvailable,
+    localModeNetworkBlocked,
+    loginFlow,
+    runtimeMode,
+    setActiveInstance,
+    setLocalEmail,
+    setShowAddInstance,
+    setupStatusQuery,
+    showAddInstance,
+    trustedProxyLoginAvailable,
+  }
+}
+
+function LoginPage() {
+  const {
+    activeInstanceId,
+    connectivityIssue,
+    error,
+    handleLogin,
+    hostedUi,
+    instance,
+    instanceList,
+    lastAuthMeta,
+    loading,
+    localEmail,
+    localLoginAvailable,
+    localModeNetworkBlocked,
+    loginFlow,
+    runtimeMode,
+    setActiveInstance,
+    setLocalEmail,
+    setShowAddInstance,
+    setupStatusQuery,
+    showAddInstance,
+    trustedProxyLoginAvailable,
+  } = useLoginPageState()
+
+  if (isDemoMode) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
+        <PageMeta title="Demo login" />
+        <div className="w-full max-w-sm space-y-8">
+          <div className="space-y-4 text-center">
+            <div className="mx-auto flex size-14 items-center justify-center">
+              <img src="/logo.svg" alt="Oore logo" className="size-full" />
+            </div>
+            <div className="space-y-1">
+              <h1 className="text-3xl font-bold tracking-tight">
+                Explore the Oore demo
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Choose a role to see its real navigation, data, and permissions.
+              </p>
+            </div>
+          </div>
+          <DemoLoginForm />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">
@@ -463,7 +556,7 @@ function LoginPage() {
                   'Sign in locally'
                 )
               ) : trustedProxyLoginAvailable ? (
-                'Continue with Trusted Proxy'
+                'Continue with trusted proxy'
               ) : setupStatusQuery.isLoading ? (
                 'Checking sign-in method...'
               ) : (
@@ -529,8 +622,8 @@ function LoginPage() {
               className="w-full"
               onClick={() => setShowAddInstance(true)}
             >
-              <HugeiconsIcon icon={Add01Icon} size={16} />
-              Add Another Instance
+              <HugeiconsIcon icon={Add01Icon} />
+              Add another instance
             </Button>
           </CardContent>
         </Card>

@@ -125,7 +125,7 @@ export default function LocalFolderPickerDialog({
               }}
               disabled={!browserData?.parent_path || browserFetching}
             >
-              <HugeiconsIcon icon={ArrowUp01Icon} size={14} />
+              <HugeiconsIcon icon={ArrowUp01Icon} />
               Up
             </Button>
 
@@ -136,7 +136,7 @@ export default function LocalFolderPickerDialog({
               onClick={() => void refetchBrowser()}
               disabled={browserFetching}
             >
-              <HugeiconsIcon icon={Refresh01Icon} size={14} />
+              <HugeiconsIcon icon={Refresh01Icon} />
               Refresh
             </Button>
 
@@ -149,7 +149,7 @@ export default function LocalFolderPickerDialog({
                   onOpenChange(false)
                 }}
               >
-                <HugeiconsIcon icon={currentSelectIcon} size={14} />
+                <HugeiconsIcon icon={currentSelectIcon} />
                 {selectCurrentLabel}
               </Button>
             ) : null}
@@ -202,7 +202,7 @@ export default function LocalFolderPickerDialog({
                               onOpenChange(false)
                             }}
                           >
-                            <HugeiconsIcon icon={Add01Icon} size={14} />
+                            <HugeiconsIcon icon={Add01Icon} />
                             {selectDirectoryLabel}
                           </Button>
                         ) : null}

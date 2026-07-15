@@ -545,6 +545,75 @@ async fn test_full_setup_flow() {
 }
 
 #[tokio::test]
+async fn frontend_pairing_is_single_use_and_returns_the_backend_proof() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("pairing.db");
+    let app = create_test_app(&db_path).await;
+    set_state(&db_path, SetupState::Ready).await;
+    upsert_trusted_proxy_settings(&db_path, Some("backend-proof")).await;
+
+    let store = connect_store(&db_path).await;
+    sqlx::query(
+        "UPDATE trusted_proxy_settings SET trusted_proxy_cidrs_json = '[\"100.107.126.166/32\"]' WHERE id = 1",
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+    let code = "fp_test-pairing-code";
+    sqlx::query(
+        "INSERT INTO frontend_pairing_invites (id, token_hash, expires_at, consumed_at, created_at) \
+         VALUES ('invite-1', ?1, ?2, NULL, ?3)",
+    )
+    .bind(hash_token(code))
+    .bind(now_unix() + 600)
+    .bind(now_unix())
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let request = |peer: [u8; 4]| {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/frontend/pair")
+            .header("Content-Type", "application/json")
+            .extension(ConnectInfo(SocketAddr::from((peer, 41240))))
+            .body(Body::from(json!({"code": code}).to_string()))
+            .unwrap()
+    };
+
+    let disallowed = app
+        .clone()
+        .oneshot(request([10, 10, 19, 145]))
+        .await
+        .unwrap();
+    assert_eq!(disallowed.status(), 403);
+
+    let response = app
+        .clone()
+        .oneshot(request([100, 107, 126, 166]))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_json(response).await;
+    assert_eq!(body["backend_proof"], "backend-proof");
+    assert_eq!(body["user_email_header"], "x-oore-user-email");
+
+    let reused = app.oneshot(request([100, 107, 126, 166])).await.unwrap();
+    assert_eq!(reused.status(), 401);
+
+    let audit_details: String = sqlx::query_scalar(
+        "SELECT details FROM audit_logs WHERE action = 'frontend_pairing_completed' AND resource_id = 'invite-1'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&audit_details).unwrap()["peer_ip"],
+        "100.107.126.166"
+    );
+}
+
+#[tokio::test]
 async fn test_healthz() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("oore.db");
@@ -563,6 +632,29 @@ async fn test_healthz() {
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["ok"], true);
+}
+
+#[tokio::test]
+async fn test_readyz_reports_runtime_dependencies() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["database"], true);
+    assert_eq!(body["migrations"], true);
+    assert_eq!(body["encryption"], true);
 }
 
 // ── Bootstrap token edge cases ──────────────────────────────────

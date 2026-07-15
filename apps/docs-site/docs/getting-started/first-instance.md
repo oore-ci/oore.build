@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Run the backend-owned Oore CI setup wizard to choose Local Only, Remote OIDC, or Remote Trusted Proxy access and create your first owner account."
+description: 'Run the backend-owned Oore CI setup wizard to choose Local Only, Remote OIDC, or Remote Trusted Proxy access and create your first owner account.'
 ---
 
 # Set Up Your Instance
@@ -10,10 +10,10 @@ Setup state lives in `oored`; the CLI, hosted UI, and self-hosted UI are just cl
 
 During setup you choose one access mode:
 
-| Mode | What it means | Requirements |
-|---|---|---|
-| `Local Only` | Loopback-only local login for one-machine evaluation or operator access. | Browser or CLI reaches the backend on loopback. No local passwords. |
-| `Remote OIDC` | Non-loopback users authenticate with any OIDC-compatible identity provider. | HTTPS browser path to the backend and OIDC issuer/client details. |
+| Mode                   | What it means                                                                               | Requirements                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Local Only`           | Loopback-only local login for one-machine evaluation or operator access.                    | Browser or CLI reaches the backend on loopback. No local passwords.                                             |
+| `Remote OIDC`          | Non-loopback users authenticate with any OIDC-compatible identity provider.                 | HTTPS browser path to the backend and OIDC issuer/client details.                                               |
 | `Remote Trusted Proxy` | An upstream identity-aware proxy authenticates users and forwards identity headers to Oore. | HTTPS browser path through that proxy, a trusted identity header, and a shared secret on proxy-to-backend hops. |
 
 ## What you need
@@ -92,13 +92,13 @@ Choose one of two clients: the **web UI** or the **interactive CLI**. Both confi
 
 4. Follow the setup steps:
 
-   | Step | What you do |
-   |---|---|
-   | **1. Bootstrap** | Paste your bootstrap token to authenticate |
-   | **2. Mode** | Choose `Local Only`, `Remote OIDC`, or `Remote Trusted Proxy` |
+   | Step              | What you do                                                                               |
+   | ----------------- | ----------------------------------------------------------------------------------------- |
+   | **1. Bootstrap**  | Paste your bootstrap token to authenticate                                                |
+   | **2. Mode**       | Choose `Local Only`, `Remote OIDC`, or `Remote Trusted Proxy`                             |
    | **3. Auth setup** | Configure OIDC, or trusted-proxy header settings, or skip directly to owner in local mode |
-   | **4. Owner** | Verify the owner account through OIDC, trusted proxy, or local owner creation |
-   | **5. Finalize** | Confirm to lock setup endpoints permanently |
+   | **4. Owner**      | Verify the owner account through OIDC, trusted proxy, or local owner creation             |
+   | **5. Finalize**   | Confirm to lock setup endpoints permanently                                               |
 
 ::: warning Hosted UI reachability
 `ci.oore.build` is frontend-only. It does not host your daemon and it cannot call `http://127.0.0.1:*`. Use CLI setup or the local frontend for loopback-only setup, or expose the backend through HTTPS before using the hosted UI.
@@ -195,12 +195,12 @@ The instance progresses through four states. Each step requires the previous one
 bootstrap_pending → idp_configured → owner_created → ready
 ```
 
-| State | What happened | What's next |
-|---|---|---|
-| `bootstrap_pending` | Daemon started, waiting for bootstrap token | Verify token to get a setup session |
-| `idp_configured` | Access-mode preferences and any remote auth details have been configured | Verify or claim the owner account |
-| `owner_created` | Owner identity verified, account created | Finalize to lock setup |
-| `ready` | Setup complete, all setup endpoints disabled | Instance ready for normal use |
+| State               | What happened                                                            | What's next                         |
+| ------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
+| `bootstrap_pending` | Daemon started, waiting for bootstrap token                              | Verify token to get a setup session |
+| `idp_configured`    | Access-mode preferences and any remote auth details have been configured | Verify or claim the owner account   |
+| `owner_created`     | Owner identity verified, account created                                 | Finalize to lock setup              |
+| `ready`             | Setup complete, all setup endpoints disabled                             | Instance ready for normal use       |
 
 For the full state machine reference, see [Setup States](/reference/setup-states).
 

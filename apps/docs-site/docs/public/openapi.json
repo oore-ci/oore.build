@@ -9,7 +9,7 @@
     },
     "license": {
       "name": "MIT",
-      "url": "https://github.com/devaryakjha/oore.build/blob/master/LICENSE"
+      "url": "https://github.com/oore-ci/oore.build/blob/master/LICENSE"
     },
     "version": "1.0.0"
   },
@@ -35,6 +35,111 @@
         "responses": {
           "200": {
             "description": "Daemon is healthy"
+          }
+        }
+      }
+    },
+    "/install/artifact/{token}": {
+      "get": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Download via scoped token",
+        "description": "Downloads an artifact using a scoped download token. No session auth required —\nthe token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.",
+        "operationId": "download_via_scoped_token",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Scoped download token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to presigned download URL"
+          },
+          "401": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/install/ios/{token}/manifest.plist": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Get iOS OTA install manifest",
+        "description": "Returns an Apple property-list manifest authorized by the scoped token in the URL.",
+        "operationId": "get_ios_install_manifest",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Artifact install token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apple OTA installation manifest",
+            "content": {
+              "application/xml": {}
+            }
+          },
+          "401": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IPA is not install-ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -267,41 +372,36 @@
         ]
       }
     },
-    "/v1/artifacts/dl/{token}": {
-      "get": {
+    "/v1/artifacts/query": {
+      "post": {
         "tags": [
-          "Scoped Download Tokens"
+          "Artifacts"
         ],
-        "summary": "Download via scoped token",
-        "description": "Downloads an artifact using a scoped download token. No session auth required —\nthe token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.",
-        "operationId": "download_via_scoped_token",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "description": "Scoped download token",
-            "required": true,
-            "schema": {
-              "type": "string"
+        "summary": "List available artifacts for a bounded set of builds",
+        "operationId": "list_build_artifacts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListBuildArtifactsRequest"
+              }
             }
-          }
-        ],
+          },
+          "required": true
+        },
         "responses": {
-          "302": {
-            "description": "Redirect to presigned download URL"
-          },
-          "401": {
-            "description": "Invalid or expired token",
+          "200": {
+            "description": "Artifact list",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/ListArtifactsResponse"
                 }
               }
             }
           },
-          "410": {
-            "description": "Artifact expired",
+          "400": {
+            "description": "Too many build IDs",
             "content": {
               "application/json": {
                 "schema": {
@@ -310,7 +410,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/v1/artifacts/{artifact_id}/download-link": {
@@ -345,6 +450,84 @@
           },
           "404": {
             "description": "Artifact not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/artifacts/{artifact_id}/install-link": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Create device install link",
+        "description": "Creates a one-hour install session for an APK or install-ready signed IPA.\nQA viewers may use this endpoint through their artifact read permission.",
+        "operationId": "create_artifact_install_link",
+        "parameters": [
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "description": "Artifact ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Device install session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactInstallLinkResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Artifact not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "External HTTPS access is not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Artifact is not install-ready",
             "content": {
               "application/json": {
                 "schema": {
@@ -1223,6 +1406,131 @@
         "responses": {
           "200": {
             "description": "Streaming token created"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/frontend/pair": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Exchange a frontend pairing code",
+        "description": "Exchanges a short-lived, single-use code created by `oore frontend invite`\nfor the backend trusted-proxy proof and configured identity header. This\nendpoint accepts requests only from configured trusted-proxy peer CIDRs.",
+        "operationId": "frontend_pair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrontendPairRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Frontend paired with backend",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPairResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired, or consumed pairing code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request peer is not allowlisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Backend setup or trusted proxy configuration is incomplete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/integration-repositories/{id}/avatar": {
+      "get": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Fetch a private GitLab repository avatar through Oore",
+        "operationId": "repository_avatar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration repository ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repository avatar image",
+            "content": {
+              "image/*": {}
+            }
+          },
+          "404": {
+            "description": "Avatar not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "GitLab avatar unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2627,6 +2935,43 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/artifacts": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List available artifacts across a project",
+        "operationId": "list_project_artifacts",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project artifact list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/builds": {
       "post": {
         "tags": [
@@ -2689,6 +3034,90 @@
           },
           "409": {
             "description": "Project source is not configured or resolvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/builds/changelog-preview": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Preview a Markdown changelog for a manual build.",
+        "operationId": "preview_build_changelog",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pipeline_id",
+            "in": "query",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "description": "Target branch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "commit_sha",
+            "in": "query",
+            "description": "Target commit",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generated changelog draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildChangelogPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or pipeline not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -3052,6 +3481,102 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/repository-workflows": {
+      "get": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Discover repository-owned workflows",
+        "description": "Reads supported Oore workflow files from the linked repository without\nmodifying it. The response contains validated behavior but never raw YAML,\nenvironment values, or source credentials.",
+        "operationId": "discover_repository_workflows",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "description": "Branch, tag, or commit; defaults to the project branch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Additional explicit repository-relative config path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret-free repository workflow previews",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverRepositoryWorkflowsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ref or config path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Manage Pipelines permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source provider request failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/retention": {
       "get": {
         "tags": [
@@ -3376,6 +3901,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Job claimed (or null)",
@@ -3528,6 +4063,252 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreateArtifactResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "operationId": "abort_artifact",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteArtifactResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "operationId": "complete_artifact",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteArtifactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteArtifactResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{git_path}": {
+      "get": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Discover a private GitLab repository for checkout",
+        "description": "Internal Git smart-HTTP endpoint. The runner token is accepted only for\nthe repository assigned to this job; GitLab credentials remain server-side.",
+        "operationId": "gitlab_checkout_discovery",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_path",
+            "in": "path",
+            "description": "Assigned repository info/refs path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "description": "Must be git-upload-pack",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Git upload-pack discovery response"
+          },
+          "403": {
+            "description": "Repository path does not match the assigned job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Stream a private GitLab upload-pack request",
+        "operationId": "gitlab_checkout_upload_pack",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "git_path",
+            "in": "path",
+            "description": "Assigned repository git-upload-pack path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Git upload-pack response"
+          },
+          "403": {
+            "description": "Repository path does not match the assigned job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5326,6 +6107,108 @@
         ]
       }
     },
+    "/v1/system/update": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get backend update state",
+        "description": "Reports whether the backend is managed by the supported macOS launchd\nservice and whether an update is currently running. Requires owner role.",
+        "operationId": "get_runtime_update_status",
+        "responses": {
+          "200": {
+            "description": "Backend update state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeUpdateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Start a backend update",
+        "description": "Runs the installed updater and hands restart control to the managed\nmacOS launchd service. Requires owner role.",
+        "operationId": "start_runtime_update",
+        "responses": {
+          "202": {
+            "description": "Backend update started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeUpdateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Managed updater unavailable or already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users": {
       "get": {
         "tags": [
@@ -5560,6 +6443,84 @@
           },
           "404": {
             "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/{user_id}/preview": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Preview QA user access",
+        "description": "Creates a short-lived session for an active QA Viewer. Owner only.",
+        "operationId": "preview_qa_user",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "QA user ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "QA preview session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewQaUserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Target is not a QA Viewer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "QA user is not active",
             "content": {
               "application/json": {
                 "schema": {
@@ -5940,7 +6901,8 @@
           "artifact_type",
           "file_path",
           "metadata",
-          "created_at"
+          "created_at",
+          "state"
         ],
         "properties": {
           "artifact_type": {
@@ -5983,6 +6945,9 @@
             "type": "object"
           },
           "name": {
+            "type": "string"
+          },
+          "state": {
             "type": "string"
           }
         }
@@ -6069,6 +7034,43 @@
             "format": "int64"
           }
         }
+      },
+      "ArtifactInstallLinkResponse": {
+        "type": "object",
+        "required": [
+          "platform",
+          "install_url",
+          "download_url",
+          "expires_at"
+        ],
+        "properties": {
+          "download_url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "install_url": {
+            "type": "string"
+          },
+          "manifest_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform": {
+            "$ref": "#/components/schemas/ArtifactInstallPlatform"
+          }
+        }
+      },
+      "ArtifactInstallPlatform": {
+        "type": "string",
+        "enum": [
+          "android",
+          "ios"
+        ]
       },
       "ArtifactStorageProvider": {
         "type": "string",
@@ -6321,6 +7323,12 @@
             "type": "integer",
             "format": "int64"
           },
+          "changelog": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "commit_sha": {
             "type": [
               "string",
@@ -6329,6 +7337,16 @@
           },
           "config_snapshot": {
             "type": "object"
+          },
+          "context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildContext"
+              }
+            ]
           },
           "created_at": {
             "type": "integer",
@@ -6416,6 +7434,50 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "BuildChangelogPreviewResponse": {
+        "type": "object",
+        "required": [
+          "target_commit",
+          "markdown"
+        ],
+        "properties": {
+          "base_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "target_commit": {
+            "type": "string"
+          }
+        }
+      },
+      "BuildContext": {
+        "type": "object",
+        "properties": {
+          "pipeline_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runner_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -6551,6 +7613,19 @@
           }
         }
       },
+      "ClaimJobRequest": {
+        "type": "object",
+        "required": [
+          "protocol_version"
+        ],
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "ClaimJobResponse": {
         "type": "object",
         "properties": {
@@ -6608,6 +7683,28 @@
           },
           "project_id": {
             "type": "string"
+          }
+        }
+      },
+      "CompleteArtifactRequest": {
+        "type": "object",
+        "properties": {
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CompleteArtifactResponse": {
+        "type": "object",
+        "required": [
+          "artifact"
+        ],
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
           }
         }
       },
@@ -6788,6 +7885,12 @@
               "null"
             ]
           },
+          "changelog": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "commit_sha": {
             "type": [
               "string",
@@ -6796,6 +7899,16 @@
           },
           "pipeline_id": {
             "type": "string"
+          },
+          "platforms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Optional one-run platform selection. Omitted builds every platform configured by the pipeline."
           },
           "trigger_ref": {
             "type": [
@@ -7068,6 +8181,38 @@
           }
         }
       },
+      "DiscoverRepositoryWorkflowsResponse": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "provider",
+          "reference",
+          "workflows",
+          "truncated"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ScmProvider"
+          },
+          "reference": {
+            "type": "string",
+            "description": "Branch, tag, or commit requested for discovery."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when more matching files existed than the bounded response could inspect."
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryWorkflowPreview"
+            }
+          }
+        }
+      },
       "EffectiveProjectRetentionResponse": {
         "type": "object",
         "required": [
@@ -7105,6 +8250,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "artifact_delivery_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "public_url": {
             "type": [
@@ -7187,6 +8338,32 @@
           },
           "ready": {
             "type": "boolean"
+          }
+        }
+      },
+      "FrontendPairRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "FrontendPairResponse": {
+        "type": "object",
+        "required": [
+          "backend_proof",
+          "user_email_header"
+        ],
+        "properties": {
+          "backend_proof": {
+            "type": "string"
+          },
+          "user_email_header": {
+            "type": "string"
           }
         }
       },
@@ -7539,6 +8716,12 @@
           "updated_at"
         ],
         "properties": {
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -7809,6 +8992,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListBuildArtifactsRequest": {
+        "type": "object",
+        "required": [
+          "build_ids"
+        ],
+        "properties": {
+          "build_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -8398,7 +9595,8 @@
               "type": "string"
             }
           }
-        }
+        },
+        "additionalProperties": false
       },
       "PipelineDetailResponse": {
         "type": "object",
@@ -8429,7 +9627,8 @@
           "value": {
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "PipelineExecutionConfig": {
         "type": "object",
@@ -8581,7 +9780,8 @@
               "type": "string"
             }
           }
-        }
+        },
+        "additionalProperties": false
       },
       "PlatformBuildCommands": {
         "type": "object",
@@ -8603,6 +9803,27 @@
               "string",
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewQaUserResponse": {
+        "type": "object",
+        "required": [
+          "session_token",
+          "expires_at",
+          "user"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_token": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AuthenticatedUser"
           }
         }
       },
@@ -8642,7 +9863,25 @@
           "name": {
             "type": "string"
           },
+          "repository_avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_full_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "repository_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_provider": {
             "type": [
               "string",
               "null"
@@ -8944,6 +10183,86 @@
           "trusted_proxy"
         ]
       },
+      "RepositoryWorkflowExecutionPreview": {
+        "type": "object",
+        "description": "Pipeline behavior safe to show before import. Environment values are never returned.",
+        "required": [
+          "platforms",
+          "commands",
+          "platform_build_args",
+          "platform_commands",
+          "env_keys",
+          "artifact_patterns"
+        ],
+        "properties": {
+          "artifact_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commands": {
+            "$ref": "#/components/schemas/PipelineCommandStages"
+          },
+          "env_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "flutter_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform_build_args": {
+            "$ref": "#/components/schemas/PlatformBuildArgs"
+          },
+          "platform_commands": {
+            "$ref": "#/components/schemas/PlatformBuildCommands"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            }
+          }
+        }
+      },
+      "RepositoryWorkflowPreview": {
+        "type": "object",
+        "description": "Secret-free representation of a repository-owned pipeline config.",
+        "required": [
+          "path",
+          "valid",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "execution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RepositoryWorkflowExecutionPreview"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        }
+      },
       "RerunBuildResponse": {
         "type": "object",
         "required": [
@@ -9181,6 +10500,36 @@
           "local",
           "remote"
         ]
+      },
+      "RuntimeUpdatePhase": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "updating",
+          "restarting",
+          "failed"
+        ]
+      },
+      "RuntimeUpdateStatus": {
+        "type": "object",
+        "required": [
+          "phase",
+          "managed_service"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "managed_service": {
+            "type": "boolean"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/RuntimeUpdatePhase"
+          }
+        }
       },
       "ScmProvider": {
         "type": "string",
@@ -9741,10 +11090,14 @@
         "required": [
           "user_email_header",
           "trusted_proxy_cidrs",
-          "has_shared_secret"
+          "has_shared_secret",
+          "has_warpgate_ticket"
         ],
         "properties": {
           "has_shared_secret": {
+            "type": "boolean"
+          },
+          "has_warpgate_ticket": {
             "type": "boolean"
           },
           "trusted_proxy_cidrs": {
@@ -9762,6 +11115,16 @@
           },
           "user_email_header": {
             "type": "string"
+          },
+          "warpgate_ticket_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WarpgateTicketSource"
+              }
+            ]
           }
         }
       },
@@ -9834,6 +11197,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "artifact_delivery_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "public_url": {
             "type": [
@@ -10360,6 +11729,12 @@
               "string",
               "null"
             ]
+          },
+          "warpgate_ticket": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -10493,6 +11868,12 @@
               }
             ]
           },
+          "repository_yaml": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "trigger_config": {
             "oneOf": [
               {
@@ -10522,6 +11903,13 @@
             "type": "boolean"
           }
         }
+      },
+      "WarpgateTicketSource": {
+        "type": "string",
+        "enum": [
+          "database",
+          "environment"
+        ]
       }
     }
   },

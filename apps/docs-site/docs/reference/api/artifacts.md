@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for build artifact management and downloads in Oore CI."
+description: 'API endpoints for build artifact management and downloads in Oore CI.'
 ---
 
 # Artifacts API
@@ -59,6 +59,62 @@ For S3/R2 storage, the URL is a pre-signed URL pointing directly to the storage 
 
 ---
 
+## Create Install Link {#create-install-link}
+
+Create a one-hour device installation session for an APK or install-ready signed IPA.
+
+```
+POST /v1/artifacts/{artifact_id}/install-link
+```
+
+**Authentication**: User session with artifact read access (Bearer)
+
+### iOS response `200 OK`
+
+```json
+{
+  "platform": "ios",
+  "install_url": "itms-services://?action=download-manifest&url=https%3A%2F%2Fci.example.com%2Finstall%2Fios%2Ftoken%2Fmanifest.plist",
+  "download_url": "https://ci.example.com/install/artifact/token",
+  "manifest_url": "https://ci.example.com/install/ios/token/manifest.plist",
+  "expires_at": 1784073600
+}
+```
+
+APK responses use `platform: "android"`, set `install_url` to the scoped APK download URL, and omit `manifest_url`.
+
+The endpoint prefers the optional Artifact delivery URL and otherwise uses the External Access public URL. It returns `412` if neither is available or iOS does not have an HTTPS delivery URL. It returns `422` for unsupported artifacts or signed IPAs missing current install metadata.
+
+When the instance is explicitly configured for Remote Trusted Proxy auth with
+the `x-warpgate-username` identity header and has a Warpgate access ticket, Oore
+adds `warpgate-ticket` to the iOS manifest and IPA delivery URLs. This lets the
+non-interactive Apple installer pass the same ingress policy as the browser UI.
+The integration is inactive for OIDC, Local Only mode, generic trusted proxies,
+and Android artifacts.
+
+---
+
+## iOS Install Manifest {#ios-install-manifest}
+
+Return the Apple OTA property-list manifest referenced by an iOS install URL.
+
+```
+GET /install/ios/{token}/manifest.plist
+```
+
+**Authentication**: Install token (in URL path)
+
+The XML manifest identifies the app and references `/install/artifact/{token}` for the protected IPA download. The token remains reusable until expiry because iOS fetches the manifest and IPA separately.
+
+Local artifact storage may redirect once more to `/install/download/{token}`. All installer traffic therefore remains under the single public `/install/` prefix.
+
+In Warpgate mode, the access-ticket query parameter is preserved across all
+three requests: the manifest, `/install/artifact/{token}`, and the final local
+download redirect. The artifact-scoped Oore token remains independently
+required; the Warpgate ticket does not grant access to arbitrary artifacts.
+
+---
+
 ## Download Artifact {#download-artifact}
 
 Download an artifact using a token from the download link endpoint.
@@ -84,6 +140,14 @@ POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts
 **Authentication**: Runner token (Bearer)
 
 This endpoint is called by the runner process, not by end users.
+
+The returned artifact is `pending`. After uploading, the runner must call:
+
+```
+POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete
+```
+
+If upload fails, it calls the corresponding `/abort` endpoint. Only completed (`available`) artifacts appear in list and download APIs.
 
 ---
 

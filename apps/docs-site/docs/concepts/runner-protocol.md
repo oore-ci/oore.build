@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "The HTTP-based protocol between Oore CI runners and the daemon."
+description: 'The HTTP-based protocol between Oore CI runners and the daemon.'
 ---
 
 # Runner Protocol
@@ -31,33 +31,33 @@ The runner periodically calls `POST /v1/runners/{runner_id}/heartbeat` to report
 
 **Runner statuses:**
 
-| Status | Meaning |
-|--------|---------|
-| `online` | Ready to accept work |
-| `busy` | Currently executing a build |
+| Status     | Meaning                                           |
+| ---------- | ------------------------------------------------- |
+| `online`   | Ready to accept work                              |
+| `busy`     | Currently executing a build                       |
 | `draining` | Will not accept new work; finishing current build |
-| `offline` | Not responding to heartbeats |
+| `offline`  | Not responding to heartbeats                      |
 
 The daemon uses heartbeat data to track which runners are available.
 
 ### 3. Job claim
 
-The runner calls `POST /v1/runners/{runner_id}/claim` to request work. The daemon:
+The runner calls `POST /v1/runners/{runner_id}/claim` with `{"protocol_version": 2}` to request work. The daemon rejects incompatible runners before assigning work.
 
 1. Finds the oldest build with `status = queued`
 2. Transitions the build: `queued` → `scheduled` → `assigned`
 3. Sets the `runner_id` on the build record
 4. Returns a `ClaimedJob` containing everything the runner needs:
 
-| Field | Description |
-|-------|-------------|
-| `build_id` | Unique build identifier |
-| `project_id` | Parent project |
-| `pipeline_id` | Pipeline that defines the build |
-| `build_number` | Human-readable build number |
-| `config_snapshot` | Full pipeline configuration captured at build creation time |
-| `commit_sha` | Git commit to build |
-| `branch` | Git branch |
+| Field              | Description                                                     |
+| ------------------ | --------------------------------------------------------------- |
+| `build_id`         | Unique build identifier                                         |
+| `project_id`       | Parent project                                                  |
+| `pipeline_id`      | Pipeline that defines the build                                 |
+| `build_number`     | Human-readable build number                                     |
+| `config_snapshot`  | Full pipeline configuration captured at build creation time     |
+| `commit_sha`       | Git commit to build                                             |
+| `branch`           | Git branch                                                      |
 | `lease_expires_at` | Deadline for the runner to start reporting progress (5 minutes) |
 
 If no builds are queued, the endpoint returns `204 No Content`.
@@ -77,12 +77,12 @@ The runner clones the repository, checks out the commit, and executes build step
 
 During and after execution, the runner calls `POST /v1/runners/{runner_id}/jobs/{job_id}/status` with:
 
-| Field | Description |
-|-------|-------------|
-| `status` | `running`, `succeeded`, or `failed` |
-| `steps` | Array of step results (name, status, duration) |
-| `exit_code` | Process exit code (for terminal states) |
-| `error_message` | Error details (for `failed` status) |
+| Field           | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `status`        | `running`, `succeeded`, or `failed`            |
+| `steps`         | Array of step results (name, status, duration) |
+| `exit_code`     | Process exit code (for terminal states)        |
+| `error_message` | Error details (for `failed` status)            |
 
 The daemon validates the state transition using the [build state machine](/reference/build-states) and updates the build record.
 
@@ -97,6 +97,7 @@ After a successful build, the runner uploads artifacts:
 1. **Create artifact record**: `POST /v1/runners/{runner_id}/jobs/{job_id}/artifacts` with the artifact name, type (`apk`, `ipa`, `app`, `generic`), and checksum
 2. **Receive upload URL**: The daemon returns a presigned upload URL (S3/R2) or a local upload token
 3. **Upload the file**: The runner PUTs the file to the upload URL (max 512 MiB)
+4. **Finalize or abort**: The runner calls the artifact `complete` endpoint after a successful upload, or `abort` after a failed upload. Pending artifacts are not visible or downloadable.
 
 See [Artifact Access Model](/concepts/artifact-access) for details on how uploads and downloads are secured.
 

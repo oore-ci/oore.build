@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -10,9 +10,9 @@ import {
   Settings01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -23,7 +23,11 @@ import {
 } from '@/components/ui/command'
 import { useProjects } from '@/hooks/use-projects'
 import { useAuthStore } from '@/stores/auth-store'
+import { useUiStore } from '@/stores/ui-store'
 import { useHasPermission } from '@/hooks/use-permissions'
+import type { Project } from '@/lib/types'
+
+const EMPTY_PROJECTS: Array<Project> = []
 
 interface PaletteItem {
   id: string
@@ -34,52 +38,49 @@ interface PaletteItem {
 }
 
 export default function CommandPalette() {
-  const [open, setOpen] = useState(false)
+  const open = useUiStore((state) => state.commandPaletteOpen)
+  const setOpen = useUiStore((state) => state.setCommandPaletteOpen)
   const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
 
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
+  const isQaViewer = authUser?.role === 'qa_viewer'
   const canWriteProjects = useHasPermission('projects', 'write')
 
-  const { data: projectsData } = useProjects({ limit: 50 })
-  const projects = projectsData?.projects ?? []
-
-  // Keyboard shortcut to open
-  useMountEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setOpen((prev) => !prev)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  })
+  const { data: projectsData } = useProjects(
+    { limit: 50 },
+    { enabled: !isQaViewer },
+  )
+  const projects = projectsData?.projects ?? EMPTY_PROJECTS
 
   const go = useCallback(
     (to: string) => {
       setOpen(false)
       void navigate({ to })
     },
-    [navigate],
+    [navigate, setOpen],
   )
 
   const navItems = useMemo<Array<PaletteItem>>(
     () => [
-      {
-        id: 'nav-dashboard',
-        label: 'Dashboard',
-        icon: Home01Icon,
-        action: () => go('/'),
-        keywords: 'home overview',
-      },
-      {
-        id: 'nav-projects',
-        label: 'Projects',
-        icon: FolderLibraryIcon,
-        action: () => go('/projects'),
-        keywords: 'repositories repos',
-      },
+      ...(!isQaViewer
+        ? [
+            {
+              id: 'nav-dashboard',
+              label: 'Dashboard',
+              icon: Home01Icon,
+              action: () => go('/'),
+              keywords: 'home overview',
+            },
+            {
+              id: 'nav-projects',
+              label: 'Projects',
+              icon: FolderLibraryIcon,
+              action: () => go('/projects'),
+              keywords: 'repositories repos',
+            },
+          ]
+        : []),
       {
         id: 'nav-builds',
         label: 'Builds',
@@ -88,7 +89,7 @@ export default function CommandPalette() {
         keywords: 'queue history runs',
       },
     ],
-    [go],
+    [go, isQaViewer],
   )
 
   const adminItems = useMemo<Array<PaletteItem>>(
@@ -146,105 +147,113 @@ export default function CommandPalette() {
 
   const projectItems = useMemo<Array<PaletteItem>>(
     () =>
-      projects.map((project) => ({
+      (isQaViewer ? [] : projects).map((project) => ({
         id: `project-${project.id}`,
         label: project.name,
         icon: FolderLibraryIcon,
         action: () => go(`/projects/${project.id}`),
         keywords: project.description ?? '',
       })),
-    [go, projects],
+    [go, isQaViewer, projects],
   )
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Search projects, pages, actions..." />
-      <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
-        <CommandGroup heading="Navigation">
-          {navItems.map((item) => (
-            <CommandItem
-              key={item.id}
-              value={item.label}
-              keywords={item.keywords ? [item.keywords] : undefined}
-              onSelect={() => item.action()}
-            >
-              <HugeiconsIcon
-                icon={item.icon}
-                size={16}
-                className="text-muted-foreground"
-              />
-              {item.label}
-            </CommandItem>
-          ))}
-        </CommandGroup>
-        {adminItems.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Admin">
-              {adminItems.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.label}
-                  keywords={item.keywords ? [item.keywords] : undefined}
-                  onSelect={() => item.action()}
-                >
-                  <HugeiconsIcon
-                    icon={item.icon}
-                    size={16}
-                    className="text-muted-foreground"
-                  />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : null}
-        {actionItems.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Actions">
-              {actionItems.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.label}
-                  keywords={item.keywords ? [item.keywords] : undefined}
-                  onSelect={() => item.action()}
-                >
-                  <HugeiconsIcon
-                    icon={item.icon}
-                    size={16}
-                    className="text-muted-foreground"
-                  />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : null}
-        {projectItems.length > 0 ? (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Projects">
-              {projectItems.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.label}
-                  keywords={item.keywords ? [item.keywords] : undefined}
-                  onSelect={() => item.action()}
-                >
-                  <HugeiconsIcon
-                    icon={item.icon}
-                    size={16}
-                    className="text-muted-foreground"
-                  />
-                  {item.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : null}
-      </CommandList>
+      <Command>
+        <CommandInput
+          placeholder={
+            isQaViewer
+              ? 'Search builds and pages...'
+              : 'Search projects, pages, actions...'
+          }
+        />
+        <CommandList>
+          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandGroup heading="Navigation">
+            {navItems.map((item) => (
+              <CommandItem
+                key={item.id}
+                value={item.label}
+                keywords={item.keywords ? [item.keywords] : undefined}
+                onSelect={() => item.action()}
+              >
+                <HugeiconsIcon
+                  icon={item.icon}
+                  size={16}
+                  className="text-muted-foreground"
+                />
+                {item.label}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          {adminItems.length > 0 ? (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Admin">
+                {adminItems.map((item) => (
+                  <CommandItem
+                    key={item.id}
+                    value={item.label}
+                    keywords={item.keywords ? [item.keywords] : undefined}
+                    onSelect={() => item.action()}
+                  >
+                    <HugeiconsIcon
+                      icon={item.icon}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
+                    {item.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          ) : null}
+          {actionItems.length > 0 ? (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Actions">
+                {actionItems.map((item) => (
+                  <CommandItem
+                    key={item.id}
+                    value={item.label}
+                    keywords={item.keywords ? [item.keywords] : undefined}
+                    onSelect={() => item.action()}
+                  >
+                    <HugeiconsIcon
+                      icon={item.icon}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
+                    {item.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          ) : null}
+          {projectItems.length > 0 ? (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Projects">
+                {projectItems.map((item) => (
+                  <CommandItem
+                    key={item.id}
+                    value={item.label}
+                    keywords={item.keywords ? [item.keywords] : undefined}
+                    onSelect={() => item.action()}
+                  >
+                    <HugeiconsIcon
+                      icon={item.icon}
+                      size={16}
+                      className="text-muted-foreground"
+                    />
+                    {item.label}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          ) : null}
+        </CommandList>
+      </Command>
     </CommandDialog>
   )
 }

@@ -39,7 +39,7 @@ export function UsersToolbar({ table, onBulkDisable }: UsersToolbarProps) {
               {selectedCount} selected
             </span>
             <Button variant="destructive" size="sm" onClick={handleBulkDisable}>
-              Disable Selected
+              Disable selected
             </Button>
           </>
         ) : null}

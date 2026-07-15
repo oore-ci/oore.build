@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "API endpoints for instance settings, External Access preflight, and runtime preferences."
+description: 'API endpoints for instance settings, External Access preflight, and runtime preferences.'
 ---
 
 # Settings API
@@ -35,10 +35,10 @@ Uses `UpdateArtifactStorageSettingsRequest`.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_local_base_dir` / `invalid_s3_bucket` / `invalid_s3_endpoint` / `missing_s3_credentials` | Provider-specific validation failed |
-| 403 | `insufficient_role` | Caller lacks write permission |
+| Status | Code                                                                                              | Description                         |
+| ------ | ------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 400    | `invalid_local_base_dir` / `invalid_s3_bucket` / `invalid_s3_endpoint` / `missing_s3_credentials` | Provider-specific validation failed |
+| 403    | `insufficient_role`                                                                               | Caller lacks write permission       |
 
 ---
 
@@ -82,6 +82,7 @@ and preflight checks.
 {
   "settings": {
     "public_url": "https://ci.example.com",
+    "artifact_delivery_url": null,
     "allowed_origins": [
       "http://localhost:3000",
       "http://127.0.0.1:3000",
@@ -102,7 +103,7 @@ PUT /v1/settings/external-access/network
 ```
 
 Owner-only endpoint to update External Access network settings (`public_url`,
-`allowed_origins`).
+optional `artifact_delivery_url`, and `allowed_origins`).
 
 **Authentication**: User session (Bearer, write access to `instance_settings`, role `owner`)
 
@@ -111,6 +112,7 @@ Owner-only endpoint to update External Access network settings (`public_url`,
 ```json
 {
   "public_url": "https://ci.example.com",
+  "artifact_delivery_url": null,
   "allowed_origins": [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -121,13 +123,16 @@ Owner-only endpoint to update External Access network settings (`public_url`,
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Public URL/origin format is invalid |
-| 400 | `external_access_https_required` | Public URL is not HTTPS |
-| 400 | `external_access_origin_not_allowed` | Public URL origin missing from `allowed_origins` |
-| 403 | `external_access_owner_required` | Non-owner attempted update |
-| 403 | `external_access_loopback_required` | In `local` mode, update attempted from non-loopback client |
+| Status | Code                                    | Description                                                |
+| ------ | --------------------------------------- | ---------------------------------------------------------- |
+| 400    | `invalid_input`                         | Public URL/origin format is invalid                        |
+| 400    | `external_access_https_required`        | Public URL is not HTTPS                                    |
+| 400    | `external_access_origin_not_allowed`    | Public URL origin missing from `allowed_origins`           |
+| 400    | `artifact_delivery_https_required`      | Artifact delivery URL is not HTTPS                         |
+| 400    | `artifact_delivery_public_url_required` | Artifact delivery URL is loopback                          |
+| 400    | `artifact_delivery_url_invalid`         | Artifact delivery URL is malformed                         |
+| 403    | `external_access_owner_required`        | Non-owner attempted update                                 |
+| 403    | `external_access_loopback_required`     | In `local` mode, update attempted from non-loopback client |
 
 ---
 
@@ -194,12 +199,12 @@ re-running setup.
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `invalid_input` | Issuer/client values are invalid |
-| 400 | `oidc_discovery_failed` | Provider discovery failed |
-| 403 | `external_access_owner_required` | Non-owner attempted update |
-| 409 | `invalid_state` | Setup is not yet `ready` |
+| Status | Code                             | Description                      |
+| ------ | -------------------------------- | -------------------------------- |
+| 400    | `invalid_input`                  | Issuer/client values are invalid |
+| 400    | `oidc_discovery_failed`          | Provider discovery failed        |
+| 403    | `external_access_owner_required` | Non-owner attempted update       |
+| 409    | `invalid_state`                  | Setup is not yet `ready`         |
 
 ---
 
@@ -228,11 +233,11 @@ PUT /v1/settings/preferences
 
 ### Error responses
 
-| Status | Code | Description |
-|---|---|---|
-| 400 | `unsupported_key_storage_mode` | Only `file` mode is allowed in this release |
-| 400 | `external_access_preflight_failed` | Generic preflight failure |
-| 400 | `external_access_public_url_missing` | Public URL is missing/invalid/loopback |
-| 400 | `external_access_https_required` | Public URL is not HTTPS |
-| 400 | `external_access_origin_not_allowed` | Public origin not allowlisted in CORS |
-| 403 | `external_access_owner_required` | Non-owner attempted runtime mode change |
+| Status | Code                                 | Description                                 |
+| ------ | ------------------------------------ | ------------------------------------------- |
+| 400    | `unsupported_key_storage_mode`       | Only `file` mode is allowed in this release |
+| 400    | `external_access_preflight_failed`   | Generic preflight failure                   |
+| 400    | `external_access_public_url_missing` | Public URL is missing/invalid/loopback      |
+| 400    | `external_access_https_required`     | Public URL is not HTTPS                     |
+| 400    | `external_access_origin_not_allowed` | Public origin not allowlisted in CORS       |
+| 403    | `external_access_owner_required`     | Non-owner attempted runtime mode change     |

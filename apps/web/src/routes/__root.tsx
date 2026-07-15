@@ -1,28 +1,19 @@
-import { Suspense, lazy, useRef } from 'react'
+import { Suspense, lazy } from 'react'
 import {
-  Link,
   Outlet,
   createRootRoute,
   useMatches,
-  useRouter,
   useRouterState,
 } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  AlertCircleIcon,
-  ArrowLeft02Icon,
-  Home01Icon,
-  RotateClockwiseIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import type { ErrorComponentProps } from '@tanstack/react-router'
+import { Search01Icon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
 import PageBreadcrumb from '@/components/page-breadcrumb'
-import { Button } from '@/components/ui/button'
+import QaAppHeader from '@/components/qa-app-header'
 import { Separator } from '@/components/ui/separator'
 import {
   SidebarInset,
@@ -35,10 +26,17 @@ import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
+import { useUiStore } from '@/stores/ui-store'
 import { useInstanceStore } from '@/stores/instance-store'
-import { useSetupStore } from '@/stores/setup-store'
+import { isDemoMode } from '@/lib/demo-mode'
+import { useWindowEvent } from '@/hooks/use-window-event'
+import {
+  RootErrorBoundary,
+  RootNotFound,
+} from '@/components/root-route-boundaries'
 
-const CommandPalette = lazy(() => import('@/components/command-palette'))
+const loadCommandPalette = () => import('@/components/command-palette')
+const CommandPalette = lazy(loadCommandPalette)
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
@@ -73,72 +71,6 @@ function RouteTransitionBar() {
   )
 }
 
-function NotFound() {
-  return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-6 text-center">
-      <div className="space-y-2">
-        <p className="text-6xl font-bold tracking-tight text-muted-foreground/40">
-          404
-        </p>
-        <h1 className="text-2xl font-bold tracking-tight">Page not found</h1>
-        <p className="text-sm text-muted-foreground">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
-      </div>
-      <div className="flex items-center gap-3">
-        <Button variant="outline" render={<Link to="/" />} nativeButton={false}>
-          <HugeiconsIcon icon={Home01Icon} size={16} />
-          Dashboard
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function RootError({ error, reset }: ErrorComponentProps) {
-  const router = useRouter()
-  return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-6 text-center">
-      <div className="flex size-12 items-center justify-center border border-destructive/30 bg-destructive/10">
-        <HugeiconsIcon
-          icon={AlertCircleIcon}
-          size={24}
-          className="text-destructive"
-        />
-      </div>
-      <div className="space-y-2">
-        <h1 className="text-2xl font-bold tracking-tight">
-          Something went wrong
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          An unexpected error occurred. Try refreshing or go back.
-        </p>
-        {import.meta.env.DEV && error instanceof Error && (
-          <pre className="mt-4 max-w-lg overflow-x-auto border bg-muted/50 p-3 text-left font-mono text-xs text-muted-foreground">
-            {error.message}
-          </pre>
-        )}
-      </div>
-      <div className="flex items-center gap-3">
-        <Button
-          variant="outline"
-          onClick={() => {
-            reset()
-            router.invalidate()
-          }}
-        >
-          <HugeiconsIcon icon={RotateClockwiseIcon} size={16} />
-          Try again
-        </Button>
-        <Button variant="outline" onClick={() => window.history.back()}>
-          <HugeiconsIcon icon={ArrowLeft02Icon} size={16} />
-          Go back
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 export const Route = createRootRoute({
   beforeLoad: () => {
     let activeId = useInstanceStore.getState().activeInstanceId
@@ -161,8 +93,8 @@ export const Route = createRootRoute({
     }
   },
   component: RootLayout,
-  notFoundComponent: NotFound,
-  errorComponent: RootError,
+  notFoundComponent: RootNotFound,
+  errorComponent: RootErrorBoundary,
 })
 
 function RootLayout() {
@@ -174,6 +106,11 @@ function RootLayout() {
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const authToken = useAuthStore((s) => s.token)
   const authUser = useAuthStore((s) => s.user)
+  const openCommandPalette = useUiStore((s) => s.setCommandPaletteOpen)
+  const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen)
+  const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette)
+  const sidebarOpen = useUiStore((s) => s.sidebarOpen)
+  const setSidebarOpen = useUiStore((s) => s.setSidebarOpen)
 
   // Show sidebar+header only when: not on setup/login AND instance+auth exist
   const showAppChrome =
@@ -182,23 +119,36 @@ function RootLayout() {
     !!activeInstanceId &&
     !!authToken &&
     !!authUser
+  const showQaChrome = showAppChrome && authUser.role === 'qa_viewer'
 
   useSessionMonitor()
-
-  // Sync instance context on initial render (store action handles subsequent changes)
-  const instanceContextSynced = useRef(false)
-  if (activeInstanceId && !instanceContextSynced.current) {
-    instanceContextSynced.current = true
-    useSetupStore.getState().setInstanceContext(activeInstanceId)
-    useAuthStore.getState().setInstanceContext(activeInstanceId)
-  }
+  useWindowEvent('keydown', (event) => {
+    if (
+      showAppChrome &&
+      !showQaChrome &&
+      (event.metaKey || event.ctrlKey) &&
+      event.key === 'k'
+    ) {
+      event.preventDefault()
+      void loadCommandPalette()
+      toggleCommandPalette()
+    }
+  })
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <RouteTransitionBar />
-        {showAppChrome ? (
-          <SidebarProvider>
+        {showQaChrome ? (
+          <div className="flex min-h-screen flex-col bg-surface">
+            <QaAppHeader />
+            <ConnectivityBanner />
+            <main className="flex flex-1 flex-col">
+              <Outlet />
+            </main>
+          </div>
+        ) : showAppChrome ? (
+          <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
             <SidebarInset>
               <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
@@ -207,29 +157,15 @@ function RootLayout() {
                   orientation="vertical"
                   className="mr-2 h-4! self-auto!"
                 />
-                <Link to="/" className="flex items-center gap-2 pr-1">
-                  <img src="/logo.svg" alt="Oore CI logo" className="size-5" />
-                  <span className="hidden text-sm font-semibold tracking-tight sm:inline">
-                    Oore CI
-                  </span>
-                </Link>
-                <Separator
-                  orientation="vertical"
-                  className="mr-2 h-4! self-auto!"
-                />
                 <PageBreadcrumb />
                 <div className="ml-auto">
                   <button
                     type="button"
-                    onClick={() =>
-                      window.dispatchEvent(
-                        new KeyboardEvent('keydown', {
-                          key: 'k',
-                          metaKey: true,
-                        }),
-                      )
-                    }
-                    className="inline-flex h-8 items-center gap-2 rounded-sm border bg-muted/50 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                    aria-label="Search"
+                    onMouseEnter={() => void loadCommandPalette()}
+                    onFocus={() => void loadCommandPalette()}
+                    onClick={() => openCommandPalette(true)}
+                    className="inline-flex h-8 w-8 items-center justify-center gap-2 rounded-sm border bg-muted/50 px-0 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:w-48 sm:justify-between sm:px-3"
                   >
                     <HugeiconsIcon icon={Search01Icon} size={14} />
                     <span className="hidden sm:inline">Search</span>
@@ -252,12 +188,12 @@ function RootLayout() {
           </div>
         )}
         <Toaster />
-        {showAppChrome ? (
+        {showAppChrome && !showQaChrome && commandPaletteOpen ? (
           <Suspense fallback={null}>
             <CommandPalette />
           </Suspense>
         ) : null}
-        {import.meta.env.VITE_DEMO_MODE === 'true' && (
+        {isDemoMode && (
           <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
             <span className="size-1.5 animate-pulse bg-primary" />
             Demo Mode
@@ -268,7 +204,7 @@ function RootLayout() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Learn more
+              View Oore product details
             </a>
           </div>
         )}

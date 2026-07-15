@@ -2,9 +2,9 @@ name: Validate
 
 on:
   pull_request:
-    branches: [master]
+    branches: [master, alpha, beta, stable]
   push:
-    branches: [master]
+    branches: [master, alpha, beta, stable]
   workflow_dispatch:
 
 concurrency:
@@ -24,6 +24,9 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # Long-lived release branches must compare with their own previous
+          # commit, not the repository default branch.
+          base: ${{ github.ref }}
           filters: |
             frontend:
               - 'apps/web/**'
@@ -32,11 +35,18 @@ jobs:
             docs:
               - 'apps/docs-site/**'
               - 'docs/**'
+              - 'scripts/**'
               - 'tools/docs-check.sh'
+              - 'tools/release-smoke.sh'
+              - 'tools/autotag.sh'
+              - '.github/workflows/**'
             rust:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'tools/release-smoke.sh'
+              - 'tools/autotag.sh'
+              - '.github/workflows/**'
 
   frontend:
     name: Frontend
@@ -94,6 +104,11 @@ jobs:
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v6
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
 
       - name: Format check
         run: cargo fmt --check

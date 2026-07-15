@@ -37,7 +37,7 @@ const MAX_TTL_SECS: i64 = 604_800;
 
 // ── DB helpers ──────────────────────────────────────────────────
 
-async fn require_project_artifact_read(
+async fn require_project_artifact_write(
     pool: &SqlitePool,
     auth: &AuthUser,
     project_id: &str,
@@ -50,7 +50,7 @@ async fn require_project_artifact_read(
         &auth.0.auth_source,
     )
     .await?;
-    require_project_permission(&effective, ProjectPermission::ReadArtifacts)
+    require_project_permission(&effective, ProjectPermission::WriteArtifacts)
 }
 
 async fn load_artifact_access(
@@ -61,7 +61,7 @@ async fn load_artifact_access(
         "SELECT a.expires_at, b.project_id \
          FROM artifacts a \
          JOIN builds b ON b.id = a.build_id \
-         WHERE a.id = ?1",
+         WHERE a.id = ?1 AND a.state = 'available'",
     )
     .bind(artifact_id)
     .fetch_optional(pool)
@@ -116,6 +116,7 @@ pub async fn create_download_token(
 pub struct ValidatedDownloadToken {
     pub token_hash: String,
     pub artifact_id: String,
+    pub artifact_type: String,
     pub file_path: String,
     pub artifact_name: String,
     pub single_use: bool,
@@ -130,10 +131,11 @@ pub async fn validate_download_token(
 
     let row = sqlx::query(
         "SELECT t.token_hash, t.artifact_id, t.single_use, t.used_at, \
-                a.file_path, a.name AS artifact_name, a.expires_at AS artifact_expires_at \
+                a.artifact_type, a.file_path, a.name AS artifact_name, a.expires_at AS artifact_expires_at \
          FROM artifact_download_tokens t \
          JOIN artifacts a ON a.id = t.artifact_id \
          WHERE t.token_hash = ?1 \
+           AND a.state = 'available' \
            AND t.revoked_at IS NULL \
            AND t.expires_at > ?2 \
            AND (t.single_use = 0 OR t.used_at IS NULL)",
@@ -146,6 +148,7 @@ pub async fn validate_download_token(
     Ok(row.map(|r| ValidatedDownloadToken {
         token_hash: r.get("token_hash"),
         artifact_id: r.get("artifact_id"),
+        artifact_type: r.get("artifact_type"),
         file_path: r.get("file_path"),
         artifact_name: r.get("artifact_name"),
         single_use: r.get::<i32, _>("single_use") != 0,
@@ -205,7 +208,7 @@ pub async fn create_scoped_token_handler(
     };
 
     let (artifact_expires_at, project_id) = load_artifact_access(&pool, &artifact_id).await?;
-    require_project_artifact_read(&pool, &auth, &project_id).await?;
+    require_project_artifact_write(&pool, &auth, &project_id).await?;
     if let Some(ea) = artifact_expires_at
         && ea <= now_unix()
     {
@@ -231,7 +234,7 @@ pub async fn create_scoped_token_handler(
     // Build the download URL
     let public_url = state.public_url.read().await.clone();
     let base = public_url.as_deref().unwrap_or("http://127.0.0.1:8787");
-    let download_url = format!("{}/v1/artifacts/dl/{}", base.trim_end_matches('/'), &token);
+    let download_url = format!("{}/install/artifact/{}", base.trim_end_matches('/'), &token);
 
     // Audit log
     let details = serde_json::json!({
@@ -281,7 +284,7 @@ pub async fn list_scoped_tokens_handler(
         store.pool().clone()
     };
     let (_, project_id) = load_artifact_access(&pool, &artifact_id).await?;
-    require_project_artifact_read(&pool, &auth, &project_id).await?;
+    require_project_artifact_write(&pool, &auth, &project_id).await?;
     let now = now_unix();
 
     let rows = sqlx::query(
@@ -374,7 +377,7 @@ pub async fn revoke_scoped_token_handler(
     })?;
 
     let project_id: String = row.get("project_id");
-    require_project_artifact_read(&pool, &auth, &project_id).await?;
+    require_project_artifact_write(&pool, &auth, &project_id).await?;
 
     let revoked_at: Option<i64> = row.get("revoked_at");
     if revoked_at.is_some() {
@@ -427,7 +430,7 @@ pub async fn revoke_scoped_token_handler(
     Ok(Json(RevokeArtifactDownloadTokenResponse { revoked: true }))
 }
 
-/// `GET /v1/artifacts/dl/{token}` — download an artifact via scoped token (no session auth).
+/// `GET /install/artifact/{token}` — download an artifact via scoped token (no session auth).
 pub async fn download_via_scoped_token(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -492,12 +495,47 @@ pub async fn download_via_scoped_token(
     }
 
     // Serve the file via storage backend
+    let network_settings =
+        crate::instance_settings::load_effective_external_access_network_settings(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load artifact delivery settings");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to load artifact delivery settings",
+                )
+            })?;
     let storage = state.storage.read().await;
+    let warpgate_ticket = if validated.artifact_type == "ipa" {
+        crate::instance_settings::load_warpgate_install_ticket(&pool, &state.encryption_key)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load Warpgate install ticket");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "warpgate_ticket_error",
+                    "Failed to load Warpgate install configuration",
+                )
+            })?
+    } else {
+        None
+    };
 
-    // For S3/R2, generate a presigned URL and redirect
-    // For local storage, stream the bytes directly
+    // S3/R2 returns a presigned object URL; local storage returns a second,
+    // short-lived token URL on the artifact delivery origin.
     let download_url = storage
-        .generate_download_url(&validated.file_path, 900)
+        .generate_download_url_with_base(
+            &validated.file_path,
+            900,
+            network_settings
+                .artifact_delivery_url
+                .as_deref()
+                .or(network_settings.public_url.as_deref()),
+            warpgate_ticket
+                .as_deref()
+                .map(|ticket| ("warpgate-ticket", ticket)),
+        )
         .await
         .map_err(|e| {
             error!(error = %e, "failed to generate download URL for scoped token");

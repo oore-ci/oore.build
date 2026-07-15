@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How Oore CI executes Flutter builds from queue to artifact storage."
+description: 'How Oore CI executes Flutter builds from queue to artifact storage.'
 ---
 
 # Build Execution
@@ -67,11 +67,11 @@ After a successful build, the runner scans the workspace for files matching the 
 
 The daemon stores artifacts according to the instance's storage configuration:
 
-| Storage | How it works |
-|---|---|
+| Storage   | How it works                                                               |
+| --------- | -------------------------------------------------------------------------- |
 | **Local** | Files stored on the daemon's filesystem. Downloaded via signed token URLs. |
-| **S3** | Files uploaded to an S3 bucket. Downloaded via pre-signed S3 URLs. |
-| **R2** | Files uploaded to Cloudflare R2. Downloaded via pre-signed R2 URLs. |
+| **S3**    | Files uploaded to an S3 bucket. Downloaded via pre-signed S3 URLs.         |
+| **R2**    | Files uploaded to Cloudflare R2. Downloaded via pre-signed R2 URLs.        |
 
 Download links are time-limited and generated on demand via `POST /v1/artifacts/{artifact_id}/download-link`.
 

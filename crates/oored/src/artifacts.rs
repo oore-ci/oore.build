@@ -6,10 +6,11 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use oore_contract::{
-    ApiError, Artifact, ArtifactDownloadLinkResponse, CreateArtifactRequest,
-    CreateArtifactResponse, ListArtifactsResponse,
+    ApiError, Artifact, ArtifactDownloadLinkResponse, CompleteArtifactRequest,
+    CompleteArtifactResponse, CreateArtifactRequest, CreateArtifactResponse, ListArtifactsResponse,
+    ListBuildArtifactsRequest,
 };
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -37,6 +38,9 @@ pub const MAX_LOCAL_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 /// Valid artifact types.
 const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
 
+/// Keep artifact batches aligned with the maximum build-list page used by the UI.
+const MAX_ARTIFACT_BUILD_IDS: usize = 200;
+
 fn is_unique_constraint(err: &sqlx::Error) -> bool {
     match err {
         sqlx::Error::Database(db_err) => db_err.message().contains("UNIQUE constraint failed"),
@@ -60,6 +64,7 @@ fn row_to_artifact(row: &sqlx::sqlite::SqliteRow) -> Artifact {
         checksum: row.get("checksum"),
         metadata,
         created_at: row.get("created_at"),
+        state: row.get("state"),
         expires_at: row.get("expires_at"),
     }
 }
@@ -162,7 +167,7 @@ pub async fn create_artifact(
     // This avoids duplicate attachments when the same file is discovered more than once.
     if let Some(checksum_value) = &checksum
         && let Some(existing_row) = sqlx::query(
-            "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
+            "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 AND state = 'available' \
              ORDER BY created_at ASC LIMIT 1",
         )
         .bind(&build_id)
@@ -227,8 +232,8 @@ pub async fn create_artifact(
 
     // Insert artifact row only after URL generation succeeds
     let insert_result = sqlx::query(
-        "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, checksum, metadata, created_at, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, checksum, metadata, created_at, expires_at, state) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending')",
     )
     .bind(&artifact_id)
     .bind(&build_id)
@@ -248,7 +253,7 @@ pub async fn create_artifact(
         if is_unique_constraint(&e)
             && let Some(checksum_value) = &checksum
             && let Some(existing_row) = sqlx::query(
-                "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 \
+                "SELECT * FROM artifacts WHERE build_id = ?1 AND checksum = ?2 AND state = 'available' \
                  ORDER BY created_at ASC LIMIT 1",
             )
             .bind(&build_id)
@@ -303,6 +308,7 @@ pub async fn create_artifact(
         checksum,
         metadata: req.metadata,
         created_at: now,
+        state: "pending".to_string(),
         expires_at,
     };
 
@@ -310,6 +316,109 @@ pub async fn create_artifact(
         artifact,
         upload_url,
     }))
+}
+
+async fn finish_artifact(
+    state: Arc<AppState>,
+    runner_id: String,
+    job_id: String,
+    artifact_id: String,
+    runner_auth: RunnerAuth,
+    available: bool,
+    error_message: Option<String>,
+) -> ApiResult<CompleteArtifactResponse> {
+    if runner_auth.runner_id != runner_id {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "runner_mismatch",
+            "Runner token does not match the requested runner ID",
+        ));
+    }
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let now = now_unix();
+    let new_state = if available { "available" } else { "failed" };
+    let result = sqlx::query(
+        "UPDATE artifacts SET state = ?1, finalized_at = ?2, error_message = ?3 \
+         WHERE id = ?4 AND build_id = ?5 AND state = 'pending' \
+         AND EXISTS (SELECT 1 FROM builds WHERE id = ?5 AND runner_id = ?6)",
+    )
+    .bind(new_state)
+    .bind(now)
+    .bind(error_message.as_deref())
+    .bind(&artifact_id)
+    .bind(&job_id)
+    .bind(&runner_id)
+    .execute(&pool)
+    .await
+    .map_err(|error| {
+        error!(error = %error, artifact_id = %artifact_id, "failed to finalize artifact");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to finalize artifact",
+        )
+    })?;
+    if result.rows_affected() == 0 {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "artifact_not_pending",
+            "Artifact is not pending or does not belong to this runner job",
+        ));
+    }
+    let row = sqlx::query("SELECT * FROM artifacts WHERE id = ?1")
+        .bind(&artifact_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|error| {
+            error!(error = %error, artifact_id = %artifact_id, "failed to load finalized artifact");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load artifact",
+            )
+        })?;
+    Ok(Json(CompleteArtifactResponse {
+        artifact: row_to_artifact(&row),
+    }))
+}
+
+pub async fn complete_artifact(
+    State(state): State<Arc<AppState>>,
+    Path((runner_id, job_id, artifact_id)): Path<(String, String, String)>,
+    runner_auth: RunnerAuth,
+    Json(req): Json<CompleteArtifactRequest>,
+) -> ApiResult<CompleteArtifactResponse> {
+    finish_artifact(
+        state,
+        runner_id,
+        job_id,
+        artifact_id,
+        runner_auth,
+        true,
+        req.error_message,
+    )
+    .await
+}
+
+pub async fn abort_artifact(
+    State(state): State<Arc<AppState>>,
+    Path((runner_id, job_id, artifact_id)): Path<(String, String, String)>,
+    runner_auth: RunnerAuth,
+    Json(req): Json<CompleteArtifactRequest>,
+) -> ApiResult<CompleteArtifactResponse> {
+    finish_artifact(
+        state,
+        runner_id,
+        job_id,
+        artifact_id,
+        runner_auth,
+        false,
+        req.error_message,
+    )
+    .await
 }
 
 /// `GET /v1/builds/{build_id}/artifacts` — list artifacts for a build.
@@ -338,7 +447,7 @@ pub async fn list_artifacts(
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
     require_project_artifact_read(&pool, &auth, &project_id).await?;
 
-    let rows = sqlx::query("SELECT * FROM artifacts WHERE build_id = ?1 ORDER BY created_at ASC")
+    let rows = sqlx::query("SELECT * FROM artifacts WHERE build_id = ?1 AND state = 'available' ORDER BY created_at ASC")
         .bind(&build_id)
         .fetch_all(&pool)
         .await
@@ -353,6 +462,108 @@ pub async fn list_artifacts(
 
     let artifacts = rows.iter().map(row_to_artifact).collect();
 
+    Ok(Json(ListArtifactsResponse { artifacts }))
+}
+
+/// `GET /v1/projects/{project_id}/artifacts` — list available artifacts for a project.
+pub async fn list_project_artifacts(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(project_id): Path<String>,
+) -> ApiResult<ListArtifactsResponse> {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
+
+    let rows = sqlx::query(
+        "SELECT a.* FROM artifacts a \
+         JOIN builds b ON b.id = a.build_id \
+         WHERE b.project_id = ?1 AND a.state = 'available' \
+         ORDER BY a.created_at DESC",
+    )
+    .bind(&project_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to list project artifacts");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list project artifacts",
+        )
+    })?;
+
+    let artifacts = rows.iter().map(row_to_artifact).collect();
+    Ok(Json(ListArtifactsResponse { artifacts }))
+}
+
+/// `POST /v1/artifacts/query` — list available artifacts for a bounded build set.
+pub async fn list_build_artifacts(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<ListBuildArtifactsRequest>,
+) -> ApiResult<ListArtifactsResponse> {
+    if req.build_ids.len() > MAX_ARTIFACT_BUILD_IDS {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "too_many_build_ids",
+            format!("At most {MAX_ARTIFACT_BUILD_IDS} build IDs may be requested"),
+        ));
+    }
+
+    let mut build_ids = req
+        .build_ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect::<Vec<_>>();
+    build_ids.sort_unstable();
+    build_ids.dedup();
+    if build_ids.is_empty() {
+        return Ok(Json(ListArtifactsResponse { artifacts: vec![] }));
+    }
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let is_instance_admin = auth.0.role == "owner" || auth.0.role == "admin";
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT a.* FROM artifacts a JOIN builds b ON b.id = a.build_id \
+         WHERE a.state = 'available' AND b.id IN (",
+    );
+    {
+        let mut ids = query.separated(", ");
+        for build_id in &build_ids {
+            ids.push_bind(build_id);
+        }
+    }
+    query.push(")");
+
+    // Every project role can read artifacts. Instance owners/admins have implicit
+    // access; all other identities must still have an explicit project membership.
+    if !is_instance_admin {
+        query.push(
+            " AND EXISTS (SELECT 1 FROM project_members pm \
+             WHERE pm.project_id = b.project_id AND pm.user_id = ",
+        );
+        query.push_bind(&auth.0.user_id);
+        query.push(")");
+    }
+    query.push(" ORDER BY a.created_at DESC");
+
+    let rows = query.build().fetch_all(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to list artifacts for build batch");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list artifacts",
+        )
+    })?;
+
+    let artifacts = rows.iter().map(row_to_artifact).collect();
     Ok(Json(ListArtifactsResponse { artifacts }))
 }
 
@@ -372,7 +583,7 @@ pub async fn generate_download_link(
         "SELECT a.*, b.project_id AS project_id \
          FROM artifacts a \
          JOIN builds b ON b.id = a.build_id \
-         WHERE a.id = ?1",
+         WHERE a.id = ?1 AND a.state = 'available'",
     )
     .bind(&artifact_id)
     .fetch_optional(&pool)

@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod apple_api;
+pub mod artifact_install;
 pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
@@ -9,6 +10,7 @@ pub mod builds;
 pub mod crypto;
 pub mod embedded_runner;
 pub mod extractors;
+pub mod frontend_pairing;
 pub mod instance_settings;
 pub mod integrations;
 pub mod logs;
@@ -23,8 +25,10 @@ pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
+pub mod runtime_updates;
 pub mod scheduler;
 pub mod session;
 pub mod storage;
@@ -101,6 +105,8 @@ pub struct AppState {
     pub allowed_origins: Arc<RwLock<Vec<String>>>,
     /// Effective public base URL for externally reachable callbacks/download links.
     pub public_url: Arc<RwLock<Option<String>>>,
+    /// Owner-triggered backend update state.
+    pub runtime_update: runtime_updates::RuntimeUpdateState,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -423,6 +429,13 @@ fn validate_session(
         )
     })?;
 
+    validate_session_hash(state_file, &hash_token(token))
+}
+
+fn validate_session_hash(
+    state_file: &mut SetupStateFile,
+    expected_hash: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
     let session = state_file.setup_session.as_ref().ok_or_else(|| {
         api_err(
             StatusCode::UNAUTHORIZED,
@@ -431,8 +444,7 @@ fn validate_session(
         )
     })?;
 
-    let hashed = hash_token(token);
-    if hashed != session.hash {
+    if expected_hash != session.hash {
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
             "invalid_session",
@@ -473,6 +485,7 @@ fn installed_runtime_metadata() -> serde_json::Value {
     json!({
         "version": read_trimmed("VERSION").unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
         "channel": read_trimmed("CHANNEL"),
+        "github_repo": read_trimmed("GITHUB_REPO"),
         "package_version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -483,6 +496,31 @@ async fn healthz() -> Json<serde_json::Value> {
         map.insert("ok".to_string(), serde_json::Value::Bool(true));
     }
     Json(metadata)
+}
+
+/// Liveness is intentionally independent of SQLite so a process which can
+/// accept requests remains observable while a dependency is being repaired.
+async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
+    let db_ready = {
+        let store = state.store.lock().await;
+        sqlx::query("SELECT 1").execute(store.pool()).await.is_ok()
+    };
+    let encryption_ready = state.encryption_key.len() == 32;
+    let ready = db_ready && encryption_ready;
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(json!({
+            "ok": ready,
+            "database": db_ready,
+            // Migrations and the runtime key are completed before the router is built.
+            "migrations": db_ready,
+            "encryption": encryption_ready,
+        })),
+    )
 }
 
 async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {
@@ -1193,7 +1231,7 @@ async fn setup_oidc_start(
     validate_redirect_uri(&req.redirect_uri, &allowed_origins)?;
 
     // Validate setup session and state
-    {
+    let setup_session_hash = {
         let store = state.store.lock().await;
         let mut sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state");
@@ -1224,6 +1262,17 @@ async fn setup_oidc_start(
         }
 
         validate_session(&mut sf, &headers)?;
+        let session_hash = sf
+            .setup_session
+            .as_ref()
+            .map(|session| session.hash.clone())
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::UNAUTHORIZED,
+                    "no_session",
+                    "No active setup session",
+                )
+            })?;
 
         // Persist the bumped session expiry
         store.save(&sf).await.map_err(|e| {
@@ -1234,7 +1283,8 @@ async fn setup_oidc_start(
                 "Failed to save setup state",
             )
         })?;
-    }
+        session_hash
+    };
 
     // Load the OIDC config (allows IdpConfigured state)
     let oidc_config = load_oidc_config_for_setup(&state).await?;
@@ -1277,6 +1327,7 @@ async fn setup_oidc_start(
                     nonce,
                     redirect_uri: req.redirect_uri,
                     created_at: now,
+                    setup_session_hash: Some(setup_session_hash.clone()),
                 },
             );
         }
@@ -1363,6 +1414,7 @@ async fn setup_oidc_start(
                 nonce,
                 redirect_uri: req.redirect_uri,
                 created_at: now,
+                setup_session_hash: Some(setup_session_hash),
             },
         );
     }
@@ -1381,10 +1433,36 @@ async fn setup_oidc_start(
 /// Requires a valid setup session and `setup_state == IdpConfigured`.
 async fn setup_oidc_verify(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Json(req): Json<SetupOidcVerifyRequest>,
 ) -> ApiResult<SetupOidcVerifyResponse> {
     info!("verify-oidc: request received");
+
+    let pending = {
+        let mut pending_map = state.pending_auth.lock().await;
+        pending_map.remove(&req.state).ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_state",
+                "Unknown or expired OIDC state parameter",
+            )
+        })?
+    };
+
+    if now_unix() - pending.created_at >= 600 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "auth_expired",
+            "OIDC authorization request has expired",
+        ));
+    }
+
+    let setup_session_hash = pending.setup_session_hash.as_deref().ok_or_else(|| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_state",
+            "OIDC state does not belong to a setup flow",
+        )
+    })?;
 
     // Validate setup session and state
     {
@@ -1417,7 +1495,7 @@ async fn setup_oidc_verify(
             ));
         }
 
-        validate_session(&mut sf, &headers)?;
+        validate_session_hash(&mut sf, setup_session_hash)?;
 
         store.save(&sf).await.map_err(|e| {
             error!(error = %e, "failed to save setup state");
@@ -1430,26 +1508,6 @@ async fn setup_oidc_verify(
     }
 
     info!("verify-oidc: session validated");
-
-    // Retrieve pending auth entry (validates CSRF state)
-    let pending = {
-        let mut pending_map = state.pending_auth.lock().await;
-        pending_map.remove(&req.state).ok_or_else(|| {
-            api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_state",
-                "Unknown or expired OIDC state parameter",
-            )
-        })?
-    };
-
-    if now_unix() - pending.created_at >= 600 {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "auth_expired",
-            "OIDC authorization request has expired",
-        ));
-    }
 
     info!("verify-oidc: pending auth found, starting token exchange");
 
@@ -1955,7 +2013,7 @@ pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Ro
     static TEST_METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
     let metrics_handle = TEST_METRICS
         .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
+            observability::metrics_builder()
                 .install_recorder()
                 .expect("failed to install test metrics recorder")
         })
@@ -1991,6 +2049,7 @@ async fn build_router_inner(
                 warn!(error = %error, "failed to load external access network settings; falling back to defaults");
                 instance_settings::EffectiveExternalAccessNetworkSettings {
                     public_url: None,
+                    artifact_delivery_url: None,
                     allowed_origins: instance_settings::default_allowed_origins(),
                     source: oore_contract::ExternalAccessNetworkSource::Default,
                     updated_at: None,
@@ -2013,6 +2072,7 @@ async fn build_router_inner(
     info!(
         source = ?external_access_network.source,
         public_url = ?external_access_network.public_url,
+        artifact_delivery_url = ?external_access_network.artifact_delivery_url,
         origins = ?external_access_network.allowed_origins,
         "configured External Access network settings"
     );
@@ -2035,6 +2095,7 @@ async fn build_router_inner(
         stream_tokens: logs::StreamTokenStore::new(),
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
+        runtime_update: runtime_updates::new_state(),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2113,7 +2174,9 @@ async fn build_router_inner(
 
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .route("/v1/public/setup-status", get(setup_status))
+        .route("/v1/frontend/pair", post(frontend_pairing::pair))
         .route(
             "/v1/setup/bootstrap-token/verify",
             post(verify_bootstrap_token),
@@ -2145,10 +2208,19 @@ async fn build_router_inner(
             post(auth::trusted_proxy_login),
         )
         .route("/v1/auth/logout", post(auth::logout))
+        .route(
+            "/v1/telemetry/web-performance",
+            post(observability::record_web_performance),
+        )
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
+        .route(
+            "/v1/system/update",
+            get(runtime_updates::get_status).post(runtime_updates::start_update),
+        )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
+        .route("/v1/users/{user_id}/preview", post(users::preview_qa_user))
         .route(
             "/v1/users/{user_id}/role",
             axum::routing::patch(users::update_user_role),
@@ -2224,6 +2296,10 @@ async fn build_router_inner(
             get(integrations::list_repositories),
         )
         .route(
+            "/v1/integration-repositories/{id}/avatar",
+            get(integrations::repository_avatar),
+        )
+        .route(
             "/v1/integrations/github/start",
             post(integrations::github::github_start),
         )
@@ -2266,6 +2342,10 @@ async fn build_router_inner(
             get(projects::get_project)
                 .patch(projects::update_project)
                 .delete(projects::delete_project),
+        )
+        .route(
+            "/v1/projects/{project_id}/repository-workflows",
+            get(repository_workflows::discover_repository_workflows),
         )
         // Project member endpoints
         .route(
@@ -2321,6 +2401,10 @@ async fn build_router_inner(
             "/v1/projects/{project_id}/builds",
             post(builds::create_build),
         )
+        .route(
+            "/v1/projects/{project_id}/builds/changelog-preview",
+            get(builds::preview_build_changelog),
+        )
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
@@ -2347,6 +2431,11 @@ async fn build_router_inner(
             post(runners::runner_heartbeat),
         )
         .route("/v1/runners/{runner_id}/claim", post(runners::claim_job))
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{*git_path}",
+            get(integrations::gitlab::proxy_git_checkout)
+                .post(integrations::gitlab::proxy_git_checkout),
+        )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/status",
             post(runners::update_job_status),
@@ -2384,12 +2473,29 @@ async fn build_router_inner(
             post(artifacts::create_artifact),
         )
         .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete",
+            post(artifacts::complete_artifact),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort",
+            post(artifacts::abort_artifact),
+        )
+        .route(
             "/v1/builds/{build_id}/artifacts",
             get(artifacts::list_artifacts),
         )
         .route(
+            "/v1/projects/{project_id}/artifacts",
+            get(artifacts::list_project_artifacts),
+        )
+        .route("/v1/artifacts/query", post(artifacts::list_build_artifacts))
+        .route(
             "/v1/artifacts/{artifact_id}/download-link",
             post(artifacts::generate_download_link),
+        )
+        .route(
+            "/v1/artifacts/{artifact_id}/install-link",
+            post(artifact_install::create_install_link),
         )
         .route(
             "/v1/artifacts/local-upload/{token}",
@@ -2423,6 +2529,22 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/dl/{token}",
             get(artifact_tokens::download_via_scoped_token),
+        )
+        .route(
+            "/v1/artifacts/install/ios/{token}/manifest.plist",
+            get(artifact_install::ios_install_manifest),
+        )
+        .route(
+            "/install/artifact/{token}",
+            get(artifact_tokens::download_via_scoped_token),
+        )
+        .route(
+            "/install/ios/{token}/manifest.plist",
+            get(artifact_install::ios_install_manifest),
+        )
+        .route(
+            "/install/download/{token}",
+            get(artifacts::download_local_artifact),
         )
         // ── Retention policy ────────────────────────────────────
         .route(

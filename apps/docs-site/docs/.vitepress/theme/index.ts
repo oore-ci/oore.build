@@ -9,7 +9,7 @@ import type { Theme } from 'vitepress'
 
 function injectStructuredData() {
   const route = useRoute()
-  const { frontmatter, title, description } = useData()
+  const { title, description } = useData()
 
   onMounted(() => {
     const update = () => {
@@ -46,7 +46,7 @@ function injectStructuredData() {
       }
 
       // TechArticle for content pages (not the home page)
-      const scripts = [breadcrumbLd]
+      const scripts: Array<Record<string, unknown>> = [breadcrumbLd]
       if (segments.length > 0) {
         scripts.push({
           '@context': 'https://schema.org',
@@ -62,7 +62,7 @@ function injectStructuredData() {
             url: 'https://aryak.dev',
             sameAs: 'https://github.com/devaryakjha',
           },
-        } as Record<string, unknown>)
+        })
       }
 
       scripts.forEach((data) => {
@@ -84,7 +84,7 @@ function injectStructuredData() {
 
 export default {
   extends: DefaultTheme,
-  enhanceApp({ app }) {
+  enhanceApp(context) {
     const openapi = useOpenapi({
       spec,
       config: {
@@ -93,7 +93,7 @@ export default {
         },
       },
     })
-    theme.enhanceApp({ app, openapi })
+    theme.enhanceApp({ ...context, openapi })
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {

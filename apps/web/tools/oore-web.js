@@ -31,7 +31,9 @@ const DEFAULT_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER =
 const DEFAULT_DIST_DIR =
   process.env.OORE_WEB_DIST_DIR ||
   path.resolve(path.dirname(process.execPath), '..', 'web-dist')
-const DEFAULT_GITHUB_REPO = 'devaryakjha/oore.build'
+const DEFAULT_GITHUB_REPO = 'oore-ci/oore.build'
+const LEGACY_GITHUB_REPO = 'devaryakjha/oore.build'
+const DEFAULT_RELEASE_INDEX_BASE_URL = 'https://releases.oore.build'
 const BACKEND_TRUSTED_PROXY_SECRET_HEADER = 'x-oore-trusted-proxy-secret'
 const CLIENT_CONTROLLED_IDENTITY_HEADERS = [
   'x-oore-user-email',
@@ -48,6 +50,7 @@ function printHelp() {
 
 Usage:
   oore-web [serve] [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
+  oore-web status [--url <frontend-url>] [--json]
   oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
   oore-web version
 
@@ -68,6 +71,19 @@ Options:
   --upstream-trusted-proxy-secret-header
                   Header carrying the upstream proof (default: ${DEFAULT_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER})
   --help          Show this help text
+`)
+}
+
+function printStatusHelp() {
+  console.log(`oore-web status - check frontend and backend readiness
+
+Usage:
+  oore-web status [--url <frontend-url>] [--json]
+
+Options:
+  --url    Frontend URL (default: derived from ${DEFAULT_LISTEN})
+  --json   Print machine-readable output
+  --help   Show this help text
 `)
 }
 
@@ -144,6 +160,46 @@ function parseListen(raw) {
   return { hostname, port }
 }
 
+function defaultStatusUrl() {
+  const { hostname, port } = parseListen(DEFAULT_LISTEN)
+  const host = hostname.includes(':') ? `[${hostname}]` : hostname
+  return `http://${host}:${port}`
+}
+
+function parseStatusArgs(argv) {
+  const config = { url: defaultStatusUrl(), json: false }
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === '--help' || arg === '-h') {
+      printStatusHelp()
+      process.exit(0)
+    }
+    if (arg === '--url') {
+      const value = argv[i + 1]
+      if (!value) throw new Error('--url requires a value')
+      config.url = value
+      i += 1
+      continue
+    }
+    if (arg === '--json') {
+      config.json = true
+      continue
+    }
+    throw new Error(`unknown status argument: ${arg}`)
+  }
+
+  const url = new URL(config.url)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('--url must use http or https')
+  }
+  if (url.username || url.password) {
+    throw new Error('--url must not include credentials')
+  }
+  config.url = url.origin
+  return config
+}
+
 function parseServeArgs(argv) {
   const config = {
     listen: DEFAULT_LISTEN,
@@ -199,7 +255,8 @@ function parseServeArgs(argv) {
 
     if (arg === '--trusted-proxy-secret-file') {
       const value = argv[i + 1]
-      if (!value) throw new Error('--trusted-proxy-secret-file requires a value')
+      if (!value)
+        throw new Error('--trusted-proxy-secret-file requires a value')
       config.trustedProxySecretFile = value
       i += 1
       continue
@@ -235,7 +292,9 @@ function parseServeArgs(argv) {
     if (arg === '--upstream-trusted-proxy-secret-header') {
       const value = argv[i + 1]
       if (!value)
-        throw new Error('--upstream-trusted-proxy-secret-header requires a value')
+        throw new Error(
+          '--upstream-trusted-proxy-secret-header requires a value',
+        )
       config.upstreamTrustedProxySecretHeader = value
       i += 1
       continue
@@ -421,6 +480,11 @@ function inferChannelFromVersion(version) {
   return 'stable'
 }
 
+function normalizeGitHubRepo(repo) {
+  const value = repo.trim()
+  return value === LEGACY_GITHUB_REPO ? DEFAULT_GITHUB_REPO : value
+}
+
 function githubHeaders() {
   const headers = {
     Accept: 'application/vnd.github+json',
@@ -437,69 +501,56 @@ function githubHeaders() {
   return headers
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: githubHeaders() })
+async function fetchReleaseManifest(channel, repo) {
+  const baseUrl = (
+    process.env.OORE_RELEASE_INDEX_BASE_URL || DEFAULT_RELEASE_INDEX_BASE_URL
+  ).replace(/\/$/, '')
+  const url = `${baseUrl}/latest/${channel}.json`
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': `oore-web/${readInstalledVersion(resolveInstallRoot()) || 'unknown'}/update`,
+    },
+    signal: AbortSignal.timeout(10_000),
+  })
   if (!response.ok) {
-    throw new Error(`request failed (${response.status}) for ${url}`)
+    throw new Error(
+      `release index request failed (${response.status}) for ${url}`,
+    )
   }
-  return await response.json()
+  const release = await response.json()
+  if (
+    release.schema_version !== 1 ||
+    release.channel !== channel ||
+    typeof release.tag !== 'string' ||
+    typeof release.version !== 'string' ||
+    typeof release.download_base_url !== 'string' ||
+    release.tag.replace(/^v/, '') !== release.version
+  ) {
+    throw new Error(`invalid ${channel} release index response from ${url}`)
+  }
+  const expectedDownloadBase = `https://github.com/${repo}/releases/download/${release.tag}`
+  if (release.download_base_url.replace(/\/$/, '') !== expectedDownloadBase) {
+    throw new Error(
+      `release index asset source does not match GitHub repo ${repo}`,
+    )
+  }
+  return release
 }
 
 async function fetchBytes(url) {
-  const response = await fetch(url, { headers: githubHeaders() })
+  const response = await fetch(url, {
+    headers: githubHeaders(),
+    signal: AbortSignal.timeout(120_000),
+  })
   if (!response.ok) {
     throw new Error(`download failed (${response.status}) for ${url}`)
   }
   return Buffer.from(await response.arrayBuffer())
 }
 
-function releaseMatchesChannel(release, channel) {
-  if (release.draft) return false
-  if (channel === 'stable') return !release.prerelease
-  return release.prerelease && release.tag_name.includes(`-${channel}.`)
-}
-
-async function fetchLatestRelease(repo, channel) {
-  if (!repo.includes('/')) {
-    throw new Error(`invalid GitHub repo '${repo}', expected owner/name`)
-  }
-
-  const base = `https://api.github.com/repos/${repo}`
-  if (channel === 'stable') {
-    const release = await fetchJson(`${base}/releases/latest`)
-    if (!releaseMatchesChannel(release, channel)) {
-      throw new Error(
-        `latest stable release is not usable: ${release.tag_name}`,
-      )
-    }
-    return release
-  }
-
-  const releases = await fetchJson(`${base}/releases?per_page=100`)
-  const release = releases
-    .filter((candidate) => releaseMatchesChannel(candidate, channel))
-    .map((candidate) => {
-      try {
-        return {
-          release: candidate,
-          version: parseVersion(candidate.tag_name),
-        }
-      } catch {
-        return null
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => compareVersions(b.version, a.version))[0]?.release
-  if (!release) throw new Error(`no ${channel} release found in ${repo}`)
-  return release
-}
-
 function findAssetUrl(release, name) {
-  const asset = release.assets?.find((candidate) => candidate.name === name)
-  if (!asset?.browser_download_url) {
-    throw new Error(`release ${release.tag_name} is missing asset ${name}`)
-  }
-  return asset.browser_download_url
+  return `${release.download_base_url.replace(/\/$/, '')}/${name}`
 }
 
 function releasePlatform() {
@@ -528,9 +579,9 @@ function sha256(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex')
 }
 
-function extractTarGz(archivePath, extractDir) {
+function extractTarGz(bundlePath, extractDir) {
   fs.mkdirSync(extractDir, { recursive: true })
-  const result = spawnSync('tar', ['-xzf', archivePath, '-C', extractDir], {
+  const result = spawnSync('tar', ['-xzf', bundlePath, '-C', extractDir], {
     stdio: 'pipe',
     encoding: 'utf8',
   })
@@ -570,9 +621,10 @@ function readInstalledMetadata() {
   return {
     version: readInstalledVersion(installRoot) || 'unknown',
     channel: readTrimmedFile(path.join(installRoot, 'CHANNEL')),
-    github_repo:
+    github_repo: normalizeGitHubRepo(
       readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
-      DEFAULT_GITHUB_REPO,
+        DEFAULT_GITHUB_REPO,
+    ),
   }
 }
 
@@ -582,32 +634,183 @@ function printVersion() {
   console.log(version || 'unknown')
 }
 
+async function statusProbe(baseUrl, pathname) {
+  let response
+  try {
+    response = await fetch(new URL(pathname, baseUrl), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    return { ok: false, error: 'connection_failed' }
+  }
+
+  let data
+  try {
+    data = await response.json()
+  } catch {
+    return { ok: false, status: response.status, error: 'invalid_json' }
+  }
+
+  return {
+    ok: response.ok && data?.ok === true,
+    status: response.status,
+    proxied: response.headers.get('x-oore-web-proxy') === '1',
+    data,
+  }
+}
+
+function statusValue(value) {
+  if (typeof value !== 'string') return 'unknown'
+  return value.replace(/[^\x20-\x7e]/g, '').slice(0, 128) || 'unknown'
+}
+
+function probeFailure(probe) {
+  if (probe.error === 'connection_failed') return 'connection failed'
+  if (probe.error === 'invalid_json') return 'invalid JSON response'
+  if (probe.status) return `HTTP ${probe.status}`
+  return 'unhealthy response'
+}
+
+async function getStatus(baseUrl) {
+  const frontendProbe = await statusProbe(baseUrl, '/__oore_web_healthz')
+  if (!frontendProbe.ok) {
+    return {
+      ok: false,
+      url: baseUrl,
+      frontend: {
+        ok: false,
+        version: 'unknown',
+        error: `Frontend check failed (${probeFailure(frontendProbe)}). Check that oore-web is running and --url is correct.`,
+      },
+      backend: {
+        ok: false,
+        version: 'unknown',
+        skipped: true,
+        error: 'Backend check skipped because the frontend is unavailable.',
+      },
+    }
+  }
+
+  const [backendHealth, backendReady] = await Promise.all([
+    statusProbe(baseUrl, '/healthz'),
+    statusProbe(baseUrl, '/readyz'),
+  ])
+  const checks = {
+    database:
+      typeof backendReady.data?.database === 'boolean'
+        ? backendReady.data.database
+        : null,
+    migrations:
+      typeof backendReady.data?.migrations === 'boolean'
+        ? backendReady.data.migrations
+        : null,
+    encryption:
+      typeof backendReady.data?.encryption === 'boolean'
+        ? backendReady.data.encryption
+        : null,
+  }
+
+  let backendError
+  if (!backendHealth.ok) {
+    backendError = `Backend liveness check failed (${probeFailure(backendHealth)}). Check OORE_WEB_BACKEND_URL and that oored is running.`
+  } else if (!backendHealth.proxied) {
+    backendError =
+      'Backend response did not pass through oore-web. Check that --url points to oore-web.'
+  } else if (!backendReady.ok) {
+    if (backendReady.proxied) {
+      const failed = Object.entries(checks)
+        .filter(([, ok]) => ok === false)
+        .map(([name]) => name)
+        .join(', ')
+      backendError = `Backend is not ready${failed ? ` (${failed} failed)` : ''}. Check oored logs and dependencies.`
+    } else {
+      backendError = `Backend readiness check failed (${probeFailure(backendReady)}). Check OORE_WEB_BACKEND_URL and that oored is running.`
+    }
+  } else if (!backendReady.proxied) {
+    backendError =
+      'Backend response did not pass through oore-web. Check that --url points to oore-web.'
+  }
+
+  const backendOk = !backendError
+  return {
+    ok: backendOk,
+    url: baseUrl,
+    frontend: {
+      ok: true,
+      version: statusValue(frontendProbe.data?.version),
+      channel: statusValue(frontendProbe.data?.channel),
+    },
+    backend: {
+      ok: backendOk,
+      version: statusValue(backendHealth.data?.version),
+      channel: statusValue(backendHealth.data?.channel),
+      ready: backendReady.ok,
+      checks,
+      ...(backendError ? { error: backendError } : {}),
+    },
+  }
+}
+
+function printStatus(report, json) {
+  if (json) {
+    console.log(JSON.stringify(report, null, 2))
+    return
+  }
+
+  console.log(`URL:      ${report.url}`)
+  console.log(
+    `Frontend: ${report.frontend.ok ? 'ok' : 'failed'} (version ${report.frontend.version}, channel ${report.frontend.channel || 'unknown'})`,
+  )
+  if (report.frontend.error) console.log(`          ${report.frontend.error}`)
+
+  if (report.backend.skipped) {
+    console.log(`Backend:  skipped - ${report.backend.error}`)
+    return
+  }
+
+  console.log(
+    `Backend:  ${report.backend.ok ? 'ok' : 'failed'} (version ${report.backend.version}, channel ${report.backend.channel})`,
+  )
+  if (report.backend.error) console.log(`          ${report.backend.error}`)
+  console.log(
+    `Ready:    database=${report.backend.checks.database ?? 'unknown'} migrations=${report.backend.checks.migrations ?? 'unknown'} encryption=${report.backend.checks.encryption ?? 'unknown'}`,
+  )
+}
+
+async function runStatus(config) {
+  const report = await getStatus(config.url)
+  printStatus(report, config.json)
+  if (!report.ok) process.exitCode = 1
+}
+
 async function runUpdate(config) {
   const installRoot = resolveInstallRoot()
   const currentRaw = readInstalledVersion(installRoot) || '0.0.0'
   const current = parseVersion(currentRaw)
-  const repo =
+  const repo = normalizeGitHubRepo(
     config.repo ||
-    readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
-    DEFAULT_GITHUB_REPO
+      readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
+      DEFAULT_GITHUB_REPO,
+  )
   const channel = parseChannel(
     config.channel ||
       readTrimmedFile(path.join(installRoot, 'CHANNEL')) ||
       inferChannelFromVersion(current),
   )
 
-  const release = await fetchLatestRelease(repo, channel)
-  const latestRaw = release.tag_name.trim().replace(/^v/, '')
+  const release = await fetchReleaseManifest(channel, repo)
+  const latestRaw = release.version
   const latest = parseVersion(latestRaw)
 
   console.log(`Channel:         ${channel}`)
   console.log(`GitHub repo:     ${repo}`)
   console.log(`Current version: ${current.raw}`)
-  console.log(`Latest version:  ${latest.raw} (${release.tag_name})`)
+  console.log(`Latest version:  ${latest.raw} (${release.tag})`)
 
   if (compareVersions(current, latest) >= 0 && !config.force) {
     console.log('Already up to date.')
-    return
+    return { current: current.raw, latest: latest.raw, updated: false }
   }
 
   if (compareVersions(current, latest) < 0) {
@@ -645,10 +848,10 @@ async function runUpdate(config) {
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oore-web-update-'))
   try {
-    const archivePath = path.join(tmpDir, archiveName)
+    const bundlePath = path.join(tmpDir, archiveName)
     const extractDir = path.join(tmpDir, 'extract')
-    fs.writeFileSync(archivePath, archiveBytes)
-    extractTarGz(archivePath, extractDir)
+    fs.writeFileSync(bundlePath, archiveBytes)
+    extractTarGz(bundlePath, extractDir)
 
     const extractedBinary = path.join(extractDir, 'bin', 'oore-web')
     const extractedDist = path.join(extractDir, 'web-dist')
@@ -679,11 +882,80 @@ async function runUpdate(config) {
   console.log(
     'If oore-web is running as a service, restart the service to use the updated launcher binary.',
   )
+  return { current: current.raw, latest: latest.raw, updated: true }
 }
 
-function isApiPath(pathname) {
+function hasManagedWebService() {
   return (
-    pathname === '/healthz' || pathname === '/v1' || pathname.startsWith('/v1/')
+    fileExists(
+      path.join(os.homedir(), '.config', 'systemd', 'user', 'oore-web.service'),
+    ) ||
+    fileExists(
+      path.join(
+        os.homedir(),
+        'Library',
+        'LaunchAgents',
+        'build.oore.oore-web.plist',
+      ),
+    )
+  )
+}
+
+export async function authorizeOwner(
+  request,
+  backendUrl,
+  config,
+  signal = AbortSignal.timeout(5000),
+) {
+  const headers = new Headers(request.headers)
+  headers.delete('host')
+  headers.delete('content-length')
+  applyTrustedProxyHeaders(request, headers, config)
+  const response = await fetch(new URL('/v1/users/me', backendUrl), {
+    headers,
+    ...(signal ? { signal } : {}),
+  })
+  if (!response.ok) return false
+  const profile = await response.json()
+  return profile?.user?.role === 'owner'
+}
+
+export async function getWebUpdateStatus(updateState, searchParams) {
+  const metadata = readInstalledMetadata()
+  const current = parseVersion(searchParams.get('current') || metadata.version)
+  const channel = parseChannel(
+    searchParams.get('channel') ||
+      metadata.channel ||
+      inferChannelFromVersion(current),
+  )
+  const repo = normalizeGitHubRepo(
+    searchParams.get('repo') || metadata.github_repo,
+  )
+  const release = await fetchReleaseManifest(channel, repo)
+  const latest = parseVersion(release.version)
+  return {
+    ...metadata,
+    version: current.raw,
+    channel,
+    github_repo: repo,
+    latest_version: latest.raw,
+    update_available: compareVersions(current, latest) < 0,
+    release_name: release.release_name || release.tag,
+    release_notes: release.release_notes || '',
+    release_url: release.release_url,
+    changelog_url: release.changelog_url,
+    managed_service: hasManagedWebService(),
+    ...updateState,
+  }
+}
+
+export function isApiPath(pathname) {
+  return (
+    pathname === '/healthz' ||
+    pathname === '/readyz' ||
+    pathname.startsWith('/install/') ||
+    pathname === '/v1' ||
+    pathname.startsWith('/v1/')
   )
 }
 
@@ -706,7 +978,7 @@ function headersToStripForTrustedProxy(config) {
   ])
 }
 
-function applyTrustedProxyHeaders(request, headers, config) {
+export function applyTrustedProxyHeaders(request, headers, config) {
   const trustedProxySecret = config.trustedProxySecret.trim()
   const upstreamSecret = config.upstreamTrustedProxySecret.trim()
   const identityHeader = config.trustedProxyUserEmailHeader
@@ -764,6 +1036,22 @@ async function proxyRequest(request, backendUrl, url, config) {
   }
 }
 
+export function spaCacheControl(pathname) {
+  if (pathname.startsWith('/assets/')) {
+    return 'public, max-age=31536000, immutable'
+  }
+  if (pathname === '/' || pathname.endsWith('.html')) {
+    return 'public, max-age=0, must-revalidate'
+  }
+  return 'public, max-age=3600, must-revalidate'
+}
+
+function spaFileResponse(filePath, pathname) {
+  return new Response(Bun.file(filePath), {
+    headers: { 'Cache-Control': spaCacheControl(pathname) },
+  })
+}
+
 function serveSpa(distDir, pathname, acceptHeader) {
   const assetPath = resolveAssetPath(distDir, pathname)
   if (!assetPath) {
@@ -773,12 +1061,12 @@ function serveSpa(distDir, pathname, acceptHeader) {
   if (isDirectory(assetPath)) {
     const indexPath = path.join(assetPath, 'index.html')
     if (fileExists(indexPath)) {
-      return new Response(Bun.file(indexPath))
+      return spaFileResponse(indexPath, '/')
     }
   }
 
   if (fileExists(assetPath)) {
-    return new Response(Bun.file(assetPath))
+    return spaFileResponse(assetPath, pathname)
   }
 
   const wantsHtml =
@@ -788,7 +1076,7 @@ function serveSpa(distDir, pathname, acceptHeader) {
     if (!fileExists(indexPath)) {
       return new Response('index.html not found', { status: 500 })
     }
-    return new Response(Bun.file(indexPath))
+    return spaFileResponse(indexPath, '/')
   }
 
   return new Response('Not found', { status: 404 })
@@ -802,6 +1090,20 @@ async function main() {
   }
   if (parsedCommand.command === 'version') {
     printVersion()
+    return
+  }
+  if (parsedCommand.command === 'status') {
+    let statusConfig
+    try {
+      statusConfig = parseStatusArgs(parsedCommand.args)
+    } catch (error) {
+      console.error(
+        `[oore-web] ${error instanceof Error ? error.message : 'failed to parse status args'}`,
+      )
+      printStatusHelp()
+      process.exit(2)
+    }
+    await runStatus(statusConfig)
     return
   }
   if (parsedCommand.command === 'update') {
@@ -863,10 +1165,11 @@ async function main() {
     process.exit(2)
   }
 
+  const updateState = { phase: 'idle', error: null }
   const server = Bun.serve({
     hostname: listen.hostname,
     port: listen.port,
-    fetch: (request) => {
+    fetch: async (request) => {
       const url = new URL(request.url)
 
       if (url.pathname === '/__oore_web_healthz') {
@@ -874,8 +1177,6 @@ async function main() {
           {
             ok: true,
             ...readInstalledMetadata(),
-            backend_url: backendUrl.toString(),
-            dist_dir: distDir,
           },
           {
             headers: {
@@ -883,6 +1184,80 @@ async function main() {
             },
           },
         )
+      }
+
+      if (url.pathname === '/__oore_web_update') {
+        let owner = false
+        try {
+          owner = await authorizeOwner(request, backendUrl, config)
+        } catch {
+          return Response.json(
+            { error: 'Could not verify the current owner session' },
+            { status: 502 },
+          )
+        }
+        if (!owner) {
+          return Response.json(
+            { error: 'Only the instance owner can manage runtime updates' },
+            { status: 403 },
+          )
+        }
+
+        if (request.method === 'GET') {
+          try {
+            return Response.json(
+              await getWebUpdateStatus(updateState, url.searchParams),
+              {
+                headers: { 'Cache-Control': 'no-store' },
+              },
+            )
+          } catch (error) {
+            return Response.json(
+              {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Failed to check for frontend updates',
+              },
+              { status: 502 },
+            )
+          }
+        }
+
+        if (request.method !== 'POST') {
+          return new Response('Method not allowed', { status: 405 })
+        }
+        if (!hasManagedWebService()) {
+          return Response.json(
+            { error: 'Frontend updates require a managed service' },
+            { status: 409 },
+          )
+        }
+        if (updateState.phase === 'updating') {
+          return Response.json(
+            { error: 'A frontend update is already in progress' },
+            { status: 409 },
+          )
+        }
+
+        updateState.phase = 'updating'
+        updateState.error = null
+        void runUpdate({ check: false, force: false }).then(
+          (result) => {
+            if (!result.updated) {
+              updateState.phase = 'idle'
+              return
+            }
+            updateState.phase = 'restarting'
+            setTimeout(() => process.exit(75), 1000)
+          },
+          (error) => {
+            updateState.phase = 'failed'
+            updateState.error =
+              error instanceof Error ? error.message : 'Frontend update failed'
+          },
+        )
+        return Response.json(updateState, { status: 202 })
       }
 
       if (isApiPath(url.pathname)) {
@@ -923,7 +1298,11 @@ async function main() {
   process.on('SIGTERM', shutdown)
 }
 
-main().catch((error) => {
-  console.error(`[oore-web] ${error instanceof Error ? error.message : error}`)
-  process.exit(1)
-})
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(
+      `[oore-web] ${error instanceof Error ? error.message : error}`,
+    )
+    process.exit(1)
+  })
+}

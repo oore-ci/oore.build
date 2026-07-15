@@ -3,16 +3,18 @@ import { useRouter } from '@tanstack/react-router'
 import type { InviteUserRequest, UpdateUserRoleRequest } from '@/lib/types'
 import {
   deleteUser,
-  getMe,
   inviteUser,
   listUsers,
   logout,
+  previewQaUser,
   reEnableUser,
   updateUserRole,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
+import { isDemoMode } from '@/lib/demo-mode'
+import { useRecentProjectsStore } from '@/stores/recent-projects-store'
 
 function useAuthToken(): string | null {
   const token = useAuthStore((s) => s.token)
@@ -25,18 +27,6 @@ function useAuthToken(): string | null {
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
   return resolveInstanceApiBaseUrl(instance)
-}
-
-export function useCurrentUser() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'me'],
-    queryFn: () => getMe(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
-  })
 }
 
 export function useUsers() {
@@ -97,6 +87,19 @@ export function useUpdateUserRole() {
   })
 }
 
+export function usePreviewQaUser() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+
+  return useMutation({
+    mutationFn: (userId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return previewQaUser(baseUrl, token, userId)
+    },
+  })
+}
+
 export function useReEnableUser() {
   const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
@@ -153,6 +156,7 @@ export function useLogout() {
     onSettled: () => {
       clearAuth()
       queryClient.clear()
+      if (isDemoMode) useRecentProjectsStore.getState().clear()
       void router.navigate({ to: '/login', replace: true })
     },
   })

@@ -20,6 +20,7 @@ use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+const RETENTION_PERMISSION_RESOURCE: &str = "instance_settings";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -127,7 +128,13 @@ pub async fn get_retention_policy(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
 ) -> ApiResult<RetentionPolicyResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "settings", "read").await?;
+    check_permission(
+        &state.enforcer,
+        &auth.0.role,
+        RETENTION_PERMISSION_RESOURCE,
+        "read",
+    )
+    .await?;
 
     let store = state.store.lock().await;
     let pool = store.pool();
@@ -149,7 +156,13 @@ pub async fn update_retention_policy(
     auth: AuthUser,
     Json(req): Json<UpdateRetentionPolicyRequest>,
 ) -> ApiResult<RetentionPolicyResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "settings", "write").await?;
+    check_permission(
+        &state.enforcer,
+        &auth.0.role,
+        RETENTION_PERMISSION_RESOURCE,
+        "write",
+    )
+    .await?;
 
     // Validate numeric fields to prevent self-DoS (tight loop) or mass deletion (negative values)
     if req.cleanup_interval_secs < 60 {
@@ -443,7 +456,13 @@ pub async fn get_last_cleanup(
     State(state): State<std::sync::Arc<AppState>>,
     auth: AuthUser,
 ) -> ApiResult<RetentionCleanupSummaryResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "settings", "read").await?;
+    check_permission(
+        &state.enforcer,
+        &auth.0.role,
+        RETENTION_PERMISSION_RESOURCE,
+        "read",
+    )
+    .await?;
 
     let store = state.store.lock().await;
     let pool = store.pool();
@@ -470,4 +489,31 @@ pub async fn get_last_cleanup(
     });
 
     Ok(Json(RetentionCleanupSummaryResponse { last_cleanup }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RETENTION_PERMISSION_RESOURCE;
+    use crate::rbac::init_enforcer;
+
+    #[tokio::test]
+    async fn retention_uses_registered_instance_settings_permission() {
+        let enforcer = init_enforcer().await.expect("RBAC policy should load");
+
+        assert!(
+            enforcer
+                .check("owner", RETENTION_PERMISSION_RESOURCE, "read")
+                .await
+        );
+        assert!(
+            enforcer
+                .check("owner", RETENTION_PERMISSION_RESOURCE, "write")
+                .await
+        );
+        assert!(
+            enforcer
+                .check("admin", RETENTION_PERMISSION_RESOURCE, "read")
+                .await
+        );
+    }
 }

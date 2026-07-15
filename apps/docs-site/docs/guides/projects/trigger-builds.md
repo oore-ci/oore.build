@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Trigger builds manually, via webhook, or through the Oore CI API."
+description: 'Trigger builds manually, via webhook, or through the Oore CI API.'
 ---
 
 # Trigger Builds
@@ -20,7 +20,7 @@ Oore CI supports three ways to trigger builds: manual triggers from the UI, webh
 3. Select the pipeline, branch, and optionally a specific commit
 4. Click **Start Build**
 
-The build enters `queued` state and is picked up by the next available runner.
+Oore resolves the selected branch to its current commit before the build enters `queued` state. The runner checks out that exact commit, and a rerun keeps the same commit even if the branch has moved.
 
 ## Webhook trigger
 
@@ -61,16 +61,16 @@ curl -X POST http://127.0.0.1:8787/v1/projects/{project_id}/builds \
 
 ### Request body
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `pipeline_id` | `string` | Yes | ID of the pipeline to build |
-| `branch` | `string` | No | Branch to build (defaults to repository default) |
-| `commit_sha` | `string` | No | Specific commit to build |
-| `trigger_ref` | `string` | No | Reference string (e.g., PR number) |
+| Field         | Type     | Required | Description                                                  |
+| ------------- | -------- | -------- | ------------------------------------------------------------ |
+| `pipeline_id` | `string` | Yes      | ID of the pipeline to build                                  |
+| `branch`      | `string` | No       | Branch to resolve and build (defaults to repository default) |
+| `commit_sha`  | `string` | No       | Specific commit to build                                     |
+| `trigger_ref` | `string` | No       | Reference string (e.g., PR number)                           |
 
 ### Response `200 OK`
 
-Returns the created build object with its ID and initial `queued` status.
+Returns the created build object with its ID, resolved `commit_sha`, and initial `queued` status.
 
 ## Monitoring builds
 

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Learn what Oore CI is and how its components work together to provide self-hosted Flutter CI."
+description: 'Learn what Oore CI is and how its components work together to provide self-hosted Flutter CI.'
 ---
 
 # What is Oore CI?
@@ -11,11 +11,11 @@ Oore CI is a self-hosted, Flutter-first mobile CI and internal app distribution 
 
 Oore CI has three components:
 
-| Component | What it does |
-|---|---|
-| **oored** (daemon) | Runs on your Mac. Serves the API, manages builds, stores state in SQLite. |
-| **oore** (CLI) | Operator tool for setup, runner management, and diagnostics. |
-| **Web UI** | React client for setup, triggering builds, managing projects, and distributing artifacts. Hosted at `ci.oore.build` or self-hosted; the backend still owns setup, auth, data, and build execution. |
+| Component          | What it does                                                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **oored** (daemon) | Runs on your Mac. Serves the API, manages builds, stores state in SQLite.                                                                                                                          |
+| **oore** (CLI)     | Operator tool for setup, runner management, and diagnostics.                                                                                                                                       |
+| **Web UI**         | React client for setup, triggering builds, managing projects, and distributing artifacts. Hosted at `ci.oore.build` or self-hosted; the backend still owns setup, auth, data, and build execution. |
 
 The web UI connects to your daemon over HTTPS. Your source code and signing keys stay on your hardware.
 

@@ -3,12 +3,16 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use base64::Engine as _;
 use oore_contract::{
-    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobResponse, ClaimedJob,
-    JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
-    PlatformBuildArgs, PlatformBuildCommands, RunnerAndroidSigningProfile,
+    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
+    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, JobStatusResponse,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
+    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
+    artifact_pattern_matches, parse_repository_pipeline_yaml, validate_artifact_pattern,
+    validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -72,12 +76,20 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .unwrap_or_default();
 
     let arch = std::env::consts::ARCH.to_string();
+    let version = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent()?.parent().map(|root| root.join("VERSION")))
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
     serde_json::json!({
         "os": "macos",
         "os_version": os_version,
         "arch": arch,
         "xcode_version": xcode_version,
+        "version": version,
     })
 }
 
@@ -266,7 +278,12 @@ fn materialize_android_signing_files(
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = fs::Permissions::from_mode(0o600);
-        let _ = fs::set_permissions(&keystore_path, perms);
+        fs::set_permissions(&keystore_path, perms).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to secure Android keystore {}: {e}",
+                keystore_path.display()
+            )
+        })?;
     }
 
     let key_properties_path = android_dir.join("key.properties");
@@ -281,6 +298,18 @@ fn materialize_android_signing_files(
             key_properties_path.display()
         )
     })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(&key_properties_path, perms).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to secure Android key.properties {}: {e}",
+                key_properties_path.display()
+            )
+        })?;
+    }
 
     Ok(AndroidSigningMaterialization {
         keystore_path,
@@ -396,14 +425,32 @@ fn select_runner_signing_profile(
 #[derive(Debug, Clone)]
 struct IosSigningMaterialization {
     p12_path: PathBuf,
+    keychain_path: PathBuf,
     export_options_plist_path: PathBuf,
     bundle_profile_mapping: Vec<(String, String)>,
+    bundle_profile_paths: Vec<(String, PathBuf)>,
     effective_export_method: String,
-    signing_identity_sha1: Option<String>,
+    signing_identity_sha1: String,
+    signing_identity_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct IosAppMetadata {
+    bundle_identifier: String,
+    display_name: String,
+    version: String,
+    build_number: String,
+}
+
+#[derive(Debug)]
+struct SignedIosArchive {
+    ipa_path: PathBuf,
+    app: IosAppMetadata,
 }
 
 struct IosSigningCleanup {
     keychain_path: PathBuf,
+    original_default_keychain: String,
     original_keychains: Vec<String>,
     installed_profiles: Vec<PathBuf>,
 }
@@ -412,6 +459,7 @@ impl Drop for IosSigningCleanup {
     fn drop(&mut self) {
         cleanup_ios_signing_state(
             Some(&self.keychain_path),
+            Some(&self.original_default_keychain),
             &self.original_keychains,
             &self.installed_profiles,
         );
@@ -419,7 +467,7 @@ impl Drop for IosSigningCleanup {
 }
 
 fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("security")
+    let output = Command::new("/usr/bin/security")
         .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
@@ -431,7 +479,7 @@ fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
 }
 
 fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> {
-    let output = Command::new("security")
+    let output = Command::new("/usr/bin/security")
         .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
@@ -444,6 +492,7 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
 
 fn cleanup_ios_signing_state(
     keychain_path: Option<&Path>,
+    original_default_keychain: Option<&str>,
     original_keychains: &[String],
     installed_profiles: &[PathBuf],
 ) {
@@ -452,6 +501,15 @@ fn cleanup_ios_signing_state(
     }
 
     if let Some(path) = keychain_path {
+        if let Some(default_keychain) = original_default_keychain {
+            let _ = run_security_command_with_strings(&[
+                "default-keychain".to_string(),
+                "-d".to_string(),
+                "user".to_string(),
+                "-s".to_string(),
+                default_keychain.to_string(),
+            ]);
+        }
         if !original_keychains.is_empty() {
             let _ = run_security_command_with_strings(
                 &[
@@ -492,19 +550,22 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_codesigning_identity_hashes(raw: &str) -> Vec<String> {
-    raw.lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            let (_, rest) = trimmed.split_once(')')?;
-            let candidate = rest.split_whitespace().next()?;
-            if candidate.len() == 40 && candidate.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                Some(candidate.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
+fn parse_distribution_certificate(raw: &str) -> Option<(String, String)> {
+    raw.split("SHA-256 hash:").find_map(|block| {
+        let name = block
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("\"alis\"<blob>=\""))?
+            .strip_suffix('"')?;
+        if !name.contains("Distribution") {
+            return None;
+        }
+        let sha1 = block
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("SHA-1 hash:"))?
+            .trim();
+        (sha1.len() == 40 && sha1.chars().all(|ch| ch.is_ascii_hexdigit()))
+            .then(|| (sha1.to_string(), name.to_string()))
+    })
 }
 
 fn random_password_hex() -> String {
@@ -674,10 +735,12 @@ fn install_ios_signing_bundle(
     let keychain_path = signing_dir.join("oore-ci-build.keychain-db");
     let keychain_path_str = keychain_path.display().to_string();
     let mut keychain_created = false;
+    let mut original_default_keychain = None;
     let mut original_keychains = Vec::new();
 
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
         let mut bundle_profile_mapping = Vec::new();
+        let mut bundle_profile_paths = Vec::new();
         for profile in &bundle.provisioning_profiles {
             if profile.bundle_id.trim().is_empty() {
                 anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
@@ -720,6 +783,7 @@ fn install_ios_signing_bundle(
             })?;
             installed_profiles.push(installed_path);
             bundle_profile_mapping.push((profile.bundle_id.clone(), profile_ref));
+            bundle_profile_paths.push((profile.bundle_id.clone(), work_path));
         }
 
         run_security_command_with_strings(&[
@@ -742,57 +806,109 @@ fn install_ios_signing_bundle(
             keychain_password.clone(),
             keychain_path_str.clone(),
         ])?;
+        run_security_command_with_strings(&[
+            "set-keychain-settings".to_string(),
+            "-lut".to_string(),
+            "21600".to_string(),
+            keychain_path_str.clone(),
+        ])?;
 
         let original_keychain_output = run_security_command(&["list-keychains", "-d", "user"])?;
         original_keychains = parse_keychain_list(&original_keychain_output);
+        let original_default_output = run_security_command(&["default-keychain", "-d", "user"])?;
+        original_default_keychain = parse_keychain_list(&original_default_output)
+            .into_iter()
+            .next();
+        anyhow::ensure!(
+            original_default_keychain.is_some(),
+            "no default user keychain is configured"
+        );
 
-        let mut list_args = vec![
+        // Match Codemagic's proven keychain layout: keep the user's normal
+        // keychains available for Apple's public trust chain and append the
+        // isolated build keychain that owns the private signing identity.
+        let mut build_keychain_search_list = vec![
             "list-keychains".to_string(),
             "-d".to_string(),
             "user".to_string(),
             "-s".to_string(),
-            keychain_path_str.clone(),
         ];
-        list_args.extend(original_keychains.clone());
-        run_security_command_with_strings(&list_args)?;
+        build_keychain_search_list.extend(original_keychains.iter().cloned());
+        build_keychain_search_list.push(keychain_path_str.clone());
+        run_security_command_with_strings(&build_keychain_search_list)?;
+        run_security_command_with_strings(&[
+            "default-keychain".to_string(),
+            "-d".to_string(),
+            "user".to_string(),
+            "-s".to_string(),
+            keychain_path_str.clone(),
+        ])?;
 
         run_security_command_with_strings(&[
             "import".to_string(),
             p12_path.display().to_string(),
+            "-f".to_string(),
+            "pkcs12".to_string(),
             "-k".to_string(),
             keychain_path_str.clone(),
             "-P".to_string(),
             bundle.p12_password.clone(),
-            "-T".to_string(),
-            "/usr/bin/codesign".to_string(),
-            "-T".to_string(),
-            "/usr/bin/security".to_string(),
-            "-T".to_string(),
-            "/usr/bin/xcodebuild".to_string(),
+            "-A".to_string(),
         ])?;
 
         run_security_command_with_strings(&[
-            "set-key-partition-list".to_string(),
-            "-S".to_string(),
-            "apple-tool:,apple:".to_string(),
-            "-k".to_string(),
-            keychain_password.clone(),
+            "find-key".to_string(),
+            "-s".to_string(),
+            "-t".to_string(),
+            "private".to_string(),
+            keychain_path_str.clone(),
+        ])
+        .map_err(|error| {
+            anyhow::anyhow!("no sign-capable private key found after importing p12: {error}")
+        })?;
+
+        let certificates = run_security_command_with_strings(&[
+            "find-certificate".to_string(),
+            "-a".to_string(),
+            "-Z".to_string(),
             keychain_path_str.clone(),
         ])?;
+        let (signing_identity_sha1, signing_identity_name) =
+            parse_distribution_certificate(&certificates).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no Apple Distribution certificate found after importing p12:\n{}",
+                    certificates.trim()
+                )
+            })?;
 
-        let identity_output = run_security_command_with_strings(&[
-            "find-identity".to_string(),
-            "-v".to_string(),
-            "-p".to_string(),
-            "codesigning".to_string(),
-            keychain_path_str.clone(),
-        ])?;
-        let identity_hashes = parse_codesigning_identity_hashes(&identity_output);
-        if identity_hashes.is_empty() {
-            anyhow::bail!("no valid code signing identity found after importing p12");
-        }
+        let signing_preflight_path = signing_dir.join("oore-signing-preflight");
+        fs::copy("/usr/bin/true", &signing_preflight_path).map_err(|error| {
+            anyhow::anyhow!("failed to prepare iOS signing identity preflight: {error}")
+        })?;
+        run_ios_signing_tool(
+            "/usr/bin/codesign",
+            vec![
+                "--force".to_string(),
+                "--sign".to_string(),
+                signing_identity_sha1.clone(),
+                "--keychain".to_string(),
+                keychain_path_str.clone(),
+                "--timestamp=none".to_string(),
+                signing_preflight_path.display().to_string(),
+            ],
+            "use the imported iOS signing identity from the build keychain",
+        )?;
+        run_ios_signing_tool(
+            "/usr/bin/codesign",
+            vec![
+                "--verify".to_string(),
+                "--strict".to_string(),
+                signing_preflight_path.display().to_string(),
+            ],
+            "verify imported iOS signing identity access",
+        )?;
+        let _ = fs::remove_file(signing_preflight_path);
 
-        let signing_identity_sha1 = identity_hashes.first().cloned();
         let effective_export_method = resolve_ios_export_method();
         let export_options_plist_path = signing_dir.join("ExportOptions.plist");
         write_export_options_plist(
@@ -800,15 +916,18 @@ fn install_ios_signing_bundle(
             bundle.team_id.trim(),
             &effective_export_method,
             &bundle_profile_mapping,
-            signing_identity_sha1.as_deref(),
+            Some(&signing_identity_sha1),
         )?;
 
         Ok(IosSigningMaterialization {
             p12_path: p12_path.clone(),
+            keychain_path: keychain_path.clone(),
             export_options_plist_path,
             bundle_profile_mapping,
+            bundle_profile_paths,
             effective_export_method,
             signing_identity_sha1,
+            signing_identity_name: Some(signing_identity_name),
         })
     })();
 
@@ -817,6 +936,8 @@ fn install_ios_signing_bundle(
             materialization,
             IosSigningCleanup {
                 keychain_path,
+                original_default_keychain: original_default_keychain
+                    .expect("default keychain verified before signing setup"),
                 original_keychains,
                 installed_profiles,
             },
@@ -828,12 +949,354 @@ fn install_ios_signing_bundle(
                 } else {
                     None
                 },
+                original_default_keychain.as_deref(),
                 &original_keychains,
                 &installed_profiles,
             );
             Err(err)
         }
     }
+}
+
+fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyhow::Result<String> {
+    let output = Command::new(program)
+        .args(&args)
+        .output()
+        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let mut detail = if stderr.is_empty() { stdout } else { stderr };
+        if detail.contains("errSecInternalComponent")
+            || detail.contains("User interaction is not allowed")
+        {
+            detail.push_str(
+                "; the runner is outside an interactive macOS login session. Register it as an external runner and run `oore runner install-service`",
+            );
+        }
+        anyhow::bail!("failed to {action}: {detail}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn collect_paths_with_extension(
+    root: &Path,
+    extension: &str,
+    output: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    for entry in fs::read_dir(root)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", root.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            if matches!(
+                path.file_name().and_then(|value| value.to_str()),
+                Some(".git" | ".dart_tool" | "Pods")
+            ) {
+                continue;
+            }
+            if path.extension().and_then(|value| value.to_str()) == Some(extension) {
+                output.push(path.clone());
+            }
+            collect_paths_with_extension(&path, extension, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn find_newest_path_with_extension(root: &Path, extension: &str) -> anyhow::Result<PathBuf> {
+    let mut candidates = Vec::new();
+    collect_paths_with_extension(root, extension, &mut candidates)?;
+    candidates
+        .into_iter()
+        .max_by_key(|path| {
+            fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no .{extension} bundle was produced under {}",
+                root.display()
+            )
+        })
+}
+
+fn find_direct_path_with_extension(root: &Path, extension: &str) -> anyhow::Result<PathBuf> {
+    fs::read_dir(root)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", root.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_dir() && path.extension().and_then(|value| value.to_str()) == Some(extension)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no direct .{extension} bundle was produced under {}",
+                root.display()
+            )
+        })
+}
+
+fn read_apple_bundle_identifier(bundle_path: &Path) -> anyhow::Result<String> {
+    run_ios_signing_tool(
+        "/usr/libexec/PlistBuddy",
+        vec![
+            "-c".to_string(),
+            "Print :CFBundleIdentifier".to_string(),
+            bundle_path.join("Info.plist").display().to_string(),
+        ],
+        &format!("read bundle identifier from {}", bundle_path.display()),
+    )
+}
+
+fn read_apple_bundle_value(bundle_path: &Path, key: &str) -> Option<String> {
+    let output = Command::new("/usr/libexec/PlistBuddy")
+        .args([
+            "-c".to_string(),
+            format!("Print :{key}"),
+            bundle_path.join("Info.plist").display().to_string(),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn read_ios_app_metadata(bundle_path: &Path) -> anyhow::Result<IosAppMetadata> {
+    let bundle_identifier = read_apple_bundle_identifier(bundle_path)?;
+    let display_name = read_apple_bundle_value(bundle_path, "CFBundleDisplayName")
+        .or_else(|| read_apple_bundle_value(bundle_path, "CFBundleName"))
+        .or_else(|| {
+            bundle_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_string)
+        })
+        .ok_or_else(|| anyhow::anyhow!("app bundle is missing a display name"))?;
+    let version = read_apple_bundle_value(bundle_path, "CFBundleShortVersionString")
+        .ok_or_else(|| anyhow::anyhow!("app bundle is missing CFBundleShortVersionString"))?;
+    let build_number = read_apple_bundle_value(bundle_path, "CFBundleVersion")
+        .ok_or_else(|| anyhow::anyhow!("app bundle is missing CFBundleVersion"))?;
+
+    Ok(IosAppMetadata {
+        bundle_identifier,
+        display_name,
+        version,
+        build_number,
+    })
+}
+
+fn profile_path_for_bundle<'a>(
+    materialization: &'a IosSigningMaterialization,
+    bundle_id: &str,
+) -> anyhow::Result<&'a Path> {
+    materialization
+        .bundle_profile_paths
+        .iter()
+        .find(|(candidate, _)| candidate == bundle_id)
+        .map(|(_, path)| path.as_path())
+        .ok_or_else(|| {
+            anyhow::anyhow!("no stored provisioning profile matches bundle ID {bundle_id}")
+        })
+}
+
+fn extract_profile_entitlements(profile_path: &Path, output_path: &Path) -> anyhow::Result<()> {
+    let decoded_path = output_path.with_extension("profile.plist");
+    run_ios_signing_tool(
+        "/usr/bin/security",
+        vec![
+            "cms".to_string(),
+            "-D".to_string(),
+            "-i".to_string(),
+            profile_path.display().to_string(),
+            "-o".to_string(),
+            decoded_path.display().to_string(),
+        ],
+        &format!("decode provisioning profile {}", profile_path.display()),
+    )?;
+    run_ios_signing_tool(
+        "/usr/bin/plutil",
+        vec![
+            "-extract".to_string(),
+            "Entitlements".to_string(),
+            "xml1".to_string(),
+            "-o".to_string(),
+            output_path.display().to_string(),
+            decoded_path.display().to_string(),
+        ],
+        &format!("extract entitlements from {}", profile_path.display()),
+    )?;
+    let _ = fs::remove_file(decoded_path);
+    Ok(())
+}
+
+fn codesign_path(
+    path: &Path,
+    materialization: &IosSigningMaterialization,
+    entitlements: Option<&Path>,
+) -> anyhow::Result<()> {
+    let mut args = vec![
+        "--force".to_string(),
+        "--sign".to_string(),
+        materialization.signing_identity_sha1.clone(),
+        "--keychain".to_string(),
+        materialization.keychain_path.display().to_string(),
+        "--timestamp=none".to_string(),
+    ];
+    if let Some(entitlements) = entitlements {
+        args.push("--entitlements".to_string());
+        args.push(entitlements.display().to_string());
+    }
+    args.push(path.display().to_string());
+    run_ios_signing_tool(
+        "/usr/bin/codesign",
+        args,
+        &format!("sign {}", path.display()),
+    )?;
+    Ok(())
+}
+
+fn collect_nested_code(root: &Path, output: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    for entry in fs::read_dir(root)
+        .map_err(|error| anyhow::anyhow!("failed to inspect {}: {error}", root.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nested_code(&path, output)?;
+            if matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("framework" | "xpc")
+            ) {
+                output.push(path);
+            }
+        } else if path.extension().and_then(|value| value.to_str()) == Some("dylib") {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn manually_sign_ios_archive(
+    workspace: &Path,
+    materialization: &IosSigningMaterialization,
+) -> anyhow::Result<SignedIosArchive> {
+    let archive = find_newest_path_with_extension(workspace, "xcarchive")?;
+    let applications = archive.join("Products").join("Applications");
+    let app = find_direct_path_with_extension(&applications, "app")?;
+    let entitlements_dir = materialization
+        .export_options_plist_path
+        .parent()
+        .unwrap_or(workspace)
+        .join("entitlements");
+    fs::create_dir_all(&entitlements_dir)?;
+
+    let mut app_extensions = Vec::new();
+    collect_paths_with_extension(&app, "appex", &mut app_extensions)?;
+
+    let mut nested_code = Vec::new();
+    collect_nested_code(&app, &mut nested_code)?;
+    nested_code.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for path in nested_code {
+        codesign_path(&path, materialization, None)?;
+    }
+
+    app_extensions.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for extension in &app_extensions {
+        let bundle_id = read_apple_bundle_identifier(extension)?;
+        let profile = profile_path_for_bundle(materialization, &bundle_id)?;
+        fs::copy(profile, extension.join("embedded.mobileprovision"))
+            .map_err(|error| anyhow::anyhow!("failed to embed profile for {bundle_id}: {error}"))?;
+        let entitlements = entitlements_dir.join(format!(
+            "{}.plist",
+            xcode_build_setting_identifier(&bundle_id)
+        ));
+        extract_profile_entitlements(profile, &entitlements)?;
+        codesign_path(extension, materialization, Some(&entitlements))?;
+    }
+
+    let app_bundle_id = read_apple_bundle_identifier(&app)?;
+    let app_profile = profile_path_for_bundle(materialization, &app_bundle_id)?;
+    fs::copy(app_profile, app.join("embedded.mobileprovision"))
+        .map_err(|error| anyhow::anyhow!("failed to embed profile for {app_bundle_id}: {error}"))?;
+    let app_entitlements = entitlements_dir.join(format!(
+        "{}.plist",
+        xcode_build_setting_identifier(&app_bundle_id)
+    ));
+    extract_profile_entitlements(app_profile, &app_entitlements)?;
+    codesign_path(&app, materialization, Some(&app_entitlements))?;
+
+    run_ios_signing_tool(
+        "/usr/bin/codesign",
+        vec![
+            "--verify".to_string(),
+            "--deep".to_string(),
+            "--strict".to_string(),
+            "--verbose=2".to_string(),
+            app.display().to_string(),
+        ],
+        &format!("verify signed app {}", app.display()),
+    )?;
+
+    let app_metadata = read_ios_app_metadata(&app)?;
+
+    let package_root = entitlements_dir.join("package");
+    let payload = package_root.join("Payload");
+    if package_root.exists() {
+        fs::remove_dir_all(&package_root)?;
+    }
+    fs::create_dir_all(&payload)?;
+    let packaged_app = payload.join(
+        app.file_name()
+            .ok_or_else(|| anyhow::anyhow!("archive app path has no filename"))?,
+    );
+    run_ios_signing_tool(
+        "/usr/bin/ditto",
+        vec![
+            app.display().to_string(),
+            packaged_app.display().to_string(),
+        ],
+        "copy signed app into IPA payload",
+    )?;
+
+    let ios_build_dir = archive
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| anyhow::anyhow!("archive path is missing its iOS build directory"))?;
+    let ipa_dir = ios_build_dir.join("ipa");
+    fs::create_dir_all(&ipa_dir)?;
+    let ipa_path = ipa_dir.join(format!(
+        "{}.ipa",
+        app.file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Runner")
+    ));
+    if ipa_path.exists() {
+        fs::remove_file(&ipa_path)?;
+    }
+    run_ios_signing_tool(
+        "/usr/bin/ditto",
+        vec![
+            "-c".to_string(),
+            "-k".to_string(),
+            "--sequesterRsrc".to_string(),
+            "--keepParent".to_string(),
+            payload.display().to_string(),
+            ipa_path.display().to_string(),
+        ],
+        "package signed IPA",
+    )?;
+    fs::metadata(&ipa_path)
+        .map_err(|error| anyhow::anyhow!("signed IPA was not created: {error}"))?;
+    Ok(SignedIosArchive {
+        ipa_path,
+        app: app_metadata,
+    })
 }
 
 fn ios_signing_prepared_marker(
@@ -855,6 +1318,7 @@ fn ios_signing_prepared_marker(
             "profiles_count": bundle.provisioning_profiles.len(),
             "export_options_plist_path": materialization.export_options_plist_path,
             "effective_export_method": materialization.effective_export_method,
+            "signing_identity": materialization.signing_identity_name,
             "profile_mapping": materialization.bundle_profile_mapping,
         })
     )
@@ -906,7 +1370,7 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
 
 fn adapt_ios_command_for_signing(
     command: &str,
-    export_options_plist: &Path,
+    _export_options_plist: &Path,
 ) -> anyhow::Result<String> {
     if !is_ios_flutter_build_command(command) {
         return Ok(command.to_string());
@@ -926,8 +1390,27 @@ fn adapt_ios_command_for_signing(
         );
     }
 
-    args.retain(|arg| arg != "--no-codesign");
-    args.retain(|arg| !arg.starts_with("--export-method="));
+    let mut filtered_args = Vec::with_capacity(args.len());
+    let mut remove_next_value = false;
+    for arg in args {
+        if remove_next_value {
+            remove_next_value = false;
+            continue;
+        }
+        if arg == "--export-method" || arg == "--export-options-plist" {
+            remove_next_value = true;
+            continue;
+        }
+        if arg == "--codesign"
+            || arg == "--no-codesign"
+            || arg.starts_with("--export-method=")
+            || arg.starts_with("--export-options-plist=")
+        {
+            continue;
+        }
+        filtered_args.push(arg);
+    }
+    args = filtered_args;
 
     let rewrote_ios_target = rewrite_flutter_ios_target_to_ipa(&mut args);
     if !rewrote_ios_target && !contains_flutter_build_target(&args, "ipa") {
@@ -936,17 +1419,26 @@ fn adapt_ios_command_for_signing(
         );
     }
 
-    let has_export_plist = args
-        .iter()
-        .any(|arg| arg.starts_with("--export-options-plist="));
-    if !has_export_plist {
-        args.push(format!(
-            "--export-options-plist={}",
-            export_options_plist.display()
-        ));
-    }
+    // Xcode's certificate discovery is tied to a GUI security session on some
+    // headless macOS runners. Build an unsigned archive first; Oore then embeds
+    // the stored profiles and signs every nested bundle directly with the exact
+    // managed identity and temporary keychain.
+    args.push("--no-codesign".to_string());
 
     Ok(args.join(" "))
+}
+
+fn xcode_build_setting_identifier(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn normalize_stage_command_for_execution(
@@ -1071,6 +1563,9 @@ async fn claim_and_execute(
             daemon_url, config.runner_id
         ))
         .bearer_auth(&config.runner_token)
+        .json(&ClaimJobRequest {
+            protocol_version: RUNNER_PROTOCOL_VERSION,
+        })
         .send()
         .await?;
 
@@ -1184,72 +1679,6 @@ impl std::fmt::Display for BuildTerminated {
 }
 
 impl std::error::Error for BuildTerminated {}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoPipelineConfig {
-    version: u32,
-    platforms: Vec<BuildPlatform>,
-    #[serde(default)]
-    flutter_version: Option<String>,
-    #[serde(default)]
-    commands: RepoCommandStages,
-    #[serde(default)]
-    platform_build_args: RepoPlatformBuildArgs,
-    #[serde(default)]
-    platform_commands: RepoPlatformBuildCommands,
-    #[serde(default)]
-    env: Vec<RepoEnvVar>,
-    #[serde(default)]
-    artifacts: RepoArtifacts,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoCommandStages {
-    #[serde(default)]
-    pre_build: Vec<String>,
-    #[serde(default)]
-    build: Vec<String>,
-    #[serde(default)]
-    post_build: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoArtifacts {
-    #[serde(default)]
-    patterns: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoPlatformBuildArgs {
-    #[serde(default)]
-    android: Vec<String>,
-    #[serde(default)]
-    ios: Vec<String>,
-    #[serde(default)]
-    macos: Vec<String>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoPlatformBuildCommands {
-    #[serde(default)]
-    android: Option<String>,
-    #[serde(default)]
-    ios: Option<String>,
-    #[serde(default)]
-    macos: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RepoEnvVar {
-    key: String,
-    value: String,
-}
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1373,9 +1802,8 @@ fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>
         if trimmed.is_empty() {
             anyhow::bail!("artifacts.patterns[{idx}] must not be empty");
         }
-        if !trimmed.starts_with("*.") || trimmed.chars().any(char::is_whitespace) {
-            anyhow::bail!("artifacts.patterns[{idx}] must be extension globs like '*.apk'");
-        }
+        validate_artifact_pattern(trimmed)
+            .map_err(|error| anyhow::anyhow!("artifacts.patterns[{idx}] {error}"))?;
         cleaned.push(trimmed.to_string());
     }
     Ok(cleaned)
@@ -1494,41 +1922,7 @@ fn normalize_execution_config(
 }
 
 fn parse_repo_config_file(raw: &str) -> anyhow::Result<PipelineExecutionConfig> {
-    let parsed: RepoPipelineConfig =
-        serde_yaml::from_str(raw).map_err(|e| anyhow::anyhow!("YAML parse error: {e}"))?;
-
-    if parsed.version != 1 {
-        anyhow::bail!("unsupported config version {}, expected 1", parsed.version);
-    }
-
-    normalize_execution_config(PipelineExecutionConfig {
-        platforms: parsed.platforms,
-        flutter_version: parsed.flutter_version,
-        commands: PipelineCommandStages {
-            pre_build: parsed.commands.pre_build,
-            build: parsed.commands.build,
-            post_build: parsed.commands.post_build,
-        },
-        platform_build_args: PlatformBuildArgs {
-            android: parsed.platform_build_args.android,
-            ios: parsed.platform_build_args.ios,
-            macos: parsed.platform_build_args.macos,
-        },
-        platform_commands: PlatformBuildCommands {
-            android: parsed.platform_commands.android,
-            ios: parsed.platform_commands.ios,
-            macos: parsed.platform_commands.macos,
-        },
-        env: parsed
-            .env
-            .into_iter()
-            .map(|entry| PipelineEnvVar {
-                key: entry.key,
-                value: entry.value,
-            })
-            .collect(),
-        artifact_patterns: parsed.artifacts.patterns,
-    })
+    parse_repository_pipeline_yaml(raw).map_err(anyhow::Error::msg)
 }
 
 fn build_default_command_with_args(base: &str, args: &[String]) -> String {
@@ -1602,6 +1996,43 @@ fn load_ui_execution_config(
     normalize_execution_config(parsed)
 }
 
+fn apply_run_platform_selection(
+    mut config: PipelineExecutionConfig,
+    snapshot: &serde_json::Value,
+) -> anyhow::Result<PipelineExecutionConfig> {
+    let Some(raw) = snapshot.get("selected_platforms") else {
+        return Ok(config);
+    };
+    if raw.is_null() {
+        return Ok(config);
+    }
+
+    let selected: Vec<BuildPlatform> = serde_json::from_value(raw.clone())
+        .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}"))?;
+    if selected.is_empty() {
+        anyhow::bail!("selected_platforms must include at least one target");
+    }
+    let has_duplicate = selected
+        .iter()
+        .enumerate()
+        .any(|(index, platform)| selected[..index].contains(platform));
+    if has_duplicate
+        || selected
+            .iter()
+            .any(|platform| !config.platforms.contains(platform))
+    {
+        anyhow::bail!("selected_platforms must be unique and configured by the workflow");
+    }
+    if selected.len() < config.platforms.len() && !config.commands.build.is_empty() {
+        anyhow::bail!(
+            "Per-run platform selection requires platform_commands or default platform commands; shared commands.build cannot be filtered safely"
+        );
+    }
+
+    config.platforms = selected;
+    Ok(config)
+}
+
 fn resolve_execution_plan(
     workspace: &Path,
     snapshot: &serde_json::Value,
@@ -1618,17 +2049,35 @@ fn resolve_execution_plan(
         .to_string();
 
     let candidate_paths: Vec<String> = if config_path_explicit {
+        validate_repository_config_path(&snapshot_config_path)
+            .map_err(|error| anyhow::anyhow!("Invalid explicit repository config path: {error}"))?;
         vec![snapshot_config_path]
     } else {
         AUTO_CONFIG_PATHS.iter().map(|p| p.to_string()).collect()
     };
 
     let fvmrc_version = read_fvmrc_version(workspace)?;
+    let canonical_workspace = workspace
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("Failed to resolve build workspace: {error}"))?;
 
     for rel_path in &candidate_paths {
         let full_path = workspace.join(rel_path);
         if !full_path.exists() {
             continue;
+        }
+
+        let canonical_path = full_path.canonicalize().map_err(|error| {
+            anyhow::anyhow!(
+                "Failed to resolve repository config file {}: {error}",
+                full_path.display()
+            )
+        })?;
+        if !canonical_path.starts_with(&canonical_workspace) {
+            anyhow::bail!(
+                "Repository config path resolves outside the build workspace: {}",
+                full_path.display()
+            );
         }
 
         let content = fs::read_to_string(&full_path).map_err(|e| {
@@ -1637,6 +2086,7 @@ fn resolve_execution_plan(
         let file_config = parse_repo_config_file(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
+        let file_config = apply_run_platform_selection(file_config, snapshot)?;
         let resolved_flutter_version = fvmrc_version
             .clone()
             .or_else(|| file_config.flutter_version.clone());
@@ -1657,7 +2107,7 @@ fn resolve_execution_plan(
         });
     }
 
-    let fallback = load_ui_execution_config(snapshot)?;
+    let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
     let resolved_flutter_version = fvmrc_version.or_else(|| fallback.flutter_version.clone());
     let mut stage_commands = materialize_stage_commands(&fallback, true);
     if let Some(version) = resolved_flutter_version {
@@ -1686,6 +2136,9 @@ async fn check_build_active(
             daemon_url, config.runner_id, build_id
         ))
         .bearer_auth(&config.runner_token)
+        .json(&ClaimJobRequest {
+            protocol_version: RUNNER_PROTOCOL_VERSION,
+        })
         .send()
         .await;
 
@@ -1797,6 +2250,24 @@ fi
     anyhow::bail!("Build has neither commit_sha nor branch — cannot checkout source")
 }
 
+fn add_checkout_proxy_config(
+    checkout: &mut CheckoutInvocation,
+    proxy_url: &str,
+    runner_token: &str,
+) {
+    checkout.env.extend([
+        ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+        (
+            "GIT_CONFIG_KEY_0".to_string(),
+            format!("http.{proxy_url}.extraHeader"),
+        ),
+        (
+            "GIT_CONFIG_VALUE_0".to_string(),
+            format!("Authorization: Bearer {runner_token}"),
+        ),
+    ]);
+}
+
 async fn execute_build(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -1840,13 +2311,23 @@ async fn execute_build(
         );
     }
 
+    let proxy_path = snapshot.get("checkout_proxy_path").and_then(|v| v.as_str());
+    let effective_repo_url = proxy_path
+        .map(|path| format!("{}{}", daemon_url.trim_end_matches('/'), path))
+        .unwrap_or_else(|| repo_url.to_string());
+
     let start = now_unix();
-    let checkout =
-        match build_checkout_invocation(repo_url, job.commit_sha.as_deref(), job.branch.as_deref())
-        {
-            Ok(checkout) => checkout,
-            Err(e) => return (steps, Err(e)),
-        };
+    let mut checkout = match build_checkout_invocation(
+        &effective_repo_url,
+        job.commit_sha.as_deref(),
+        job.branch.as_deref(),
+    ) {
+        Ok(checkout) => checkout,
+        Err(e) => return (steps, Err(e)),
+    };
+    if proxy_path.is_some() {
+        add_checkout_proxy_config(&mut checkout, &effective_repo_url, &config.runner_token);
+    }
 
     let _ = append_runner_log_line(
         client,
@@ -2133,11 +2614,6 @@ async fn execute_build(
         ios_signing_bundle.as_ref(),
         ios_signing_materialization.as_ref(),
     ) {
-        // Pin the exact signing identity via environment variable so xcodebuild doesn't
-        // accidentally pick a different distribution certificate from the user's login keychain.
-        if let Some(ref sha1) = materialization.signing_identity_sha1 {
-            step_env.push(("CODE_SIGN_IDENTITY".to_string(), sha1.clone()));
-        }
         let _ = append_runner_log_line(
             client,
             daemon_url,
@@ -2176,6 +2652,7 @@ async fn execute_build(
     };
 
     let mut ios_signing_command_applied = false;
+    let mut signed_ios_app_metadata: Option<IosAppMetadata> = None;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -2341,6 +2818,98 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                         };
                         return (steps, Err(err));
                     }
+                    if command_applied {
+                        let Some(materialization) = ios_signing_materialization.as_ref() else {
+                            return (
+                                steps,
+                                Err(anyhow::anyhow!(
+                                    "iOS signing command ran without prepared signing material"
+                                )),
+                            );
+                        };
+                        let signing_step_name = "ios-sign";
+                        let signing_started = now_unix();
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_start_marker(
+                                signing_step_name,
+                                "Sign and package iOS archive with managed credentials",
+                            ),
+                        )
+                        .await;
+                        let signing_result = manually_sign_ios_archive(&workspace, materialization);
+                        let signing_finished = now_unix();
+                        let signing_succeeded = signing_result.is_ok();
+                        steps.push(StepResult {
+                            name: signing_step_name.to_string(),
+                            status: if signing_succeeded {
+                                "succeeded"
+                            } else {
+                                "failed"
+                            }
+                            .to_string(),
+                            exit_code: if signing_succeeded { Some(0) } else { Some(1) },
+                            started_at: signing_started,
+                            finished_at: signing_finished,
+                            duration_ms: (signing_finished - signing_started) * 1000,
+                        });
+                        match signing_result {
+                            Ok(signed_archive) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stdout",
+                                    &format!(
+                                        "[oore-signing] Signed IPA created at {}",
+                                        signed_archive.ipa_path.display()
+                                    ),
+                                )
+                                .await;
+                                signed_ios_app_metadata = Some(signed_archive.app);
+                            }
+                            Err(error) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stderr",
+                                    &format!("[oore-signing] {error:#}"),
+                                )
+                                .await;
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stdout",
+                                    &step_end_marker(signing_step_name, "failed", Some(1)),
+                                )
+                                .await;
+                                return (steps, Err(error));
+                            }
+                        }
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_end_marker(signing_step_name, "succeeded", Some(0)),
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -2360,6 +2929,12 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         .zip(ios_signing_materialization.as_ref())
         .map(|(bundle, materialization)| {
             serde_json::json!({
+                "ios_app": signed_ios_app_metadata.as_ref().map(|app| serde_json::json!({
+                    "bundle_identifier": app.bundle_identifier,
+                    "display_name": app.display_name,
+                    "version": app.version,
+                    "build_number": app.build_number,
+                })),
                 "ios_signing": {
                     "source": ios_signing_source.unwrap_or("pipeline_profile"),
                     "mode": match bundle.mode {
@@ -2391,7 +2966,8 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
             })
         });
 
-    scan_and_upload_artifacts(
+    let artifacts_started = now_unix();
+    let artifact_result = scan_and_upload_artifacts(
         workspace.as_path(),
         client,
         daemon_url,
@@ -2401,6 +2977,23 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         ios_artifact_metadata.as_ref(),
     )
     .await;
+    let artifacts_finished = now_unix();
+    steps.push(StepResult {
+        name: "artifacts".to_string(),
+        status: if artifact_result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        }
+        .to_string(),
+        exit_code: artifact_result.as_ref().err().map(|_| 1),
+        started_at: artifacts_started,
+        finished_at: artifacts_finished,
+        duration_ms: (artifacts_finished - artifacts_started) * 1000,
+    });
+    if let Err(error) = artifact_result {
+        return (steps, Err(error));
+    }
 
     drop(ios_signing_cleanup);
 
@@ -2625,16 +3218,22 @@ fn artifact_type_for_extension(ext: &str) -> Option<&'static str> {
     }
 }
 
-fn walk_dir_files(dir: &std::path::Path) -> Vec<PathBuf> {
+fn walk_artifact_candidates(dir: &Path) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    fn walk(dir: &std::path::Path, result: &mut Vec<PathBuf>) {
+    fn walk(dir: &Path, result: &mut Vec<PathBuf>) {
         let entries = match fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
                 let is_hidden_dir = path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -2642,8 +3241,12 @@ fn walk_dir_files(dir: &std::path::Path) -> Vec<PathBuf> {
                 if is_hidden_dir {
                     continue;
                 }
+                if path.extension().and_then(|ext| ext.to_str()) == Some("app") {
+                    result.push(path);
+                    continue;
+                }
                 walk(&path, result);
-            } else if path.is_file() {
+            } else if file_type.is_file() {
                 result.push(path);
             }
         }
@@ -2668,6 +3271,17 @@ fn compute_file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+fn runner_artifact_upload_url(daemon_url: &str, upload_url: &str) -> String {
+    const LOCAL_UPLOAD_PATH: &str = "/v1/artifacts/local-upload/";
+    match upload_url.split_once(LOCAL_UPLOAD_PATH) {
+        Some((_, token)) => format!(
+            "{}{LOCAL_UPLOAD_PATH}{token}",
+            daemon_url.trim_end_matches('/')
+        ),
+        None => upload_url.to_string(),
+    }
+}
+
 async fn scan_and_upload_artifacts(
     workspace: &std::path::Path,
     client: &reqwest::Client,
@@ -2676,48 +3290,79 @@ async fn scan_and_upload_artifacts(
     build_id: &str,
     artifact_patterns: &[String],
     ios_metadata: Option<&serde_json::Value>,
-) {
-    let all_files = walk_dir_files(workspace);
+) -> anyhow::Result<()> {
+    if artifact_patterns.is_empty() {
+        return Ok(());
+    }
 
-    let custom_extensions: Vec<String> = artifact_patterns
-        .iter()
-        .filter_map(|pat| pat.strip_prefix("*."))
-        .map(|ext| ext.to_lowercase())
-        .collect();
+    let mut artifacts: Vec<(PathBuf, String, String)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in walk_artifact_candidates(workspace) {
+        let relative = path
+            .strip_prefix(workspace)
+            .ok()
+            .and_then(Path::to_str)
+            .map(|value| value.replace(std::path::MAIN_SEPARATOR, "/"));
+        let Some(relative) = relative else { continue };
+        if !artifact_patterns
+            .iter()
+            .any(|pattern| artifact_pattern_matches(pattern, &relative))
+            || !seen.insert(relative)
+        {
+            continue;
+        }
 
-    let mut artifacts: Vec<(PathBuf, String)> = Vec::new();
-
-    for path in &all_files {
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if let Some(art_type) = artifact_type_for_extension(ext) {
-                artifacts.push((path.clone(), art_type.to_string()));
-            } else if custom_extensions.contains(&ext.to_lowercase()) {
-                artifacts.push((path.clone(), "generic".to_string()));
+        if path.extension().and_then(|ext| ext.to_str()) == Some("app") && path.is_dir() {
+            let bundle_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("app.app");
+            let package_dir = workspace.join(".oore-artifacts");
+            fs::create_dir_all(&package_dir)?;
+            let package_path = package_dir.join(format!("{bundle_name}.zip"));
+            let status = tokio::process::Command::new("ditto")
+                .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
+                .arg(&path)
+                .arg(&package_path)
+                .status()
+                .await
+                .context("failed to package .app bundle with ditto")?;
+            if !status.success() {
+                anyhow::bail!("failed to package .app bundle {}", path.display());
             }
+            artifacts.push((
+                package_path,
+                "app".to_string(),
+                format!("{bundle_name}.zip"),
+            ));
+        } else {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("artifact")
+                .to_string();
+            let artifact_type = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .and_then(artifact_type_for_extension)
+                .unwrap_or("generic")
+                .to_string();
+            artifacts.push((path, artifact_type, name));
         }
     }
 
     if artifacts.is_empty() {
-        return;
+        anyhow::bail!(
+            "artifact patterns matched no files: {}",
+            artifact_patterns.join(", ")
+        );
     }
 
     println!("Found {} artifact(s) to upload", artifacts.len());
 
-    for (path, artifact_type) in &artifacts {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-
+    for (path, artifact_type, name) in &artifacts {
         let file_size = fs::metadata(path).map(|m| m.len() as i64).ok();
-
-        let checksum = match compute_file_sha256(path) {
-            Ok(c) => Some(c),
-            Err(e) => {
-                eprintln!("Warning: failed to compute checksum for {}: {}", name, e);
-                None
-            }
-        };
+        let checksum = Some(compute_file_sha256(path)?);
 
         let metadata = match ios_metadata {
             Some(value) if artifact_type == "ipa" => value.clone(),
@@ -2732,7 +3377,7 @@ async fn scan_and_upload_artifacts(
             "metadata": metadata,
         });
 
-        let resp = match client
+        let resp = client
             .post(format!(
                 "{}/v1/runners/{}/jobs/{}/artifacts",
                 daemon_url, config.runner_id, build_id
@@ -2741,68 +3386,92 @@ async fn scan_and_upload_artifacts(
             .json(&body)
             .send()
             .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Warning: failed to register artifact {}: {}", name, e);
-                continue;
-            }
-        };
+            .with_context(|| format!("failed to reserve artifact {name}"))?;
 
         if !resp.status().is_success() {
-            eprintln!(
-                "Warning: artifact registration failed for {} (HTTP {})",
-                name,
+            anyhow::bail!(
+                "artifact reservation failed for {name} (HTTP {})",
                 resp.status()
             );
-            continue;
         }
 
-        let create_resp: serde_json::Value = match resp.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "Warning: failed to parse artifact response for {}: {}",
-                    name, e
-                );
-                continue;
-            }
-        };
-
-        let upload_url = create_resp
-            .get("upload_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let create_resp: oore_contract::CreateArtifactResponse = resp.json().await?;
+        let artifact_id = create_resp.artifact.id;
+        let upload_url = runner_artifact_upload_url(daemon_url, &create_resp.upload_url);
 
         if upload_url.is_empty() {
-            println!(
-                "  Registered artifact {} (no S3 upload URL — storage not configured)",
-                name
-            );
-            continue;
+            abort_artifact(
+                client,
+                daemon_url,
+                config,
+                build_id,
+                &artifact_id,
+                "artifact storage is not configured",
+            )
+            .await;
+            anyhow::bail!("artifact storage is not configured for {name}");
         }
 
-        match tokio::fs::read(path).await {
-            Ok(bytes) => match client.put(upload_url).body(bytes).send().await {
-                Ok(r) if r.status().is_success() => {
-                    println!("  Uploaded artifact {}", name);
-                }
-                Ok(r) => {
-                    eprintln!(
-                        "Warning: S3 upload failed for {} (HTTP {})",
-                        name,
-                        r.status()
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Warning: S3 upload failed for {}: {}", name, e);
-                }
-            },
-            Err(e) => {
-                eprintln!("Warning: failed to read artifact file {}: {}", name, e);
+        let upload = async {
+            let bytes = tokio::fs::read(path).await?;
+            let response = client.put(&upload_url).body(bytes).send().await?;
+            if !response.status().is_success() {
+                anyhow::bail!("upload returned HTTP {}", response.status());
             }
+            let response = client
+                .post(format!(
+                    "{}/v1/runners/{}/jobs/{}/artifacts/{}/complete",
+                    daemon_url, config.runner_id, build_id, artifact_id
+                ))
+                .bearer_auth(&config.runner_token)
+                .json(&CompleteArtifactRequest {
+                    error_message: None,
+                })
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                anyhow::bail!("completion returned HTTP {}", response.status());
+            }
+            let _: CompleteArtifactResponse = response.json().await?;
+            Ok::<_, anyhow::Error>(())
         }
+        .await;
+        if let Err(error) = upload {
+            abort_artifact(
+                client,
+                daemon_url,
+                config,
+                build_id,
+                &artifact_id,
+                &error.to_string(),
+            )
+            .await;
+            return Err(error.context(format!("failed to finalize artifact {name}")));
+        }
+        println!("  Uploaded artifact {}", name);
     }
+    Ok(())
+}
+
+async fn abort_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    artifact_id: &str,
+    error_message: &str,
+) {
+    let _ = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/artifacts/{}/abort",
+            daemon_url, config.runner_id, build_id, artifact_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(&CompleteArtifactRequest {
+            error_message: Some(error_message.to_string()),
+        })
+        .send()
+        .await;
 }
 
 struct StatusReport<'a> {
@@ -3018,6 +3687,35 @@ mod tests {
         dir
     }
 
+    #[tokio::test]
+    async fn reported_capabilities_include_runner_version() {
+        let capabilities = detect_capabilities().await;
+        assert!(
+            capabilities
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|version| !version.is_empty())
+        );
+    }
+
+    #[test]
+    fn local_artifact_uploads_use_the_runner_daemon_url() {
+        assert_eq!(
+            runner_artifact_upload_url(
+                "http://127.0.0.1:8787",
+                "https://ci.example.com/v1/artifacts/local-upload/token"
+            ),
+            "http://127.0.0.1:8787/v1/artifacts/local-upload/token"
+        );
+        assert_eq!(
+            runner_artifact_upload_url(
+                "http://127.0.0.1:8787",
+                "https://s3.example.com/bucket/artifact?signature=abc"
+            ),
+            "https://s3.example.com/bucket/artifact?signature=abc"
+        );
+    }
+
     fn cleanup_workspace(path: &Path) {
         let _ = fs::remove_dir_all(path);
     }
@@ -3203,6 +3901,31 @@ mod tests {
     }
 
     #[test]
+    fn checkout_proxy_scopes_runner_token_to_daemon_url() {
+        let mut checkout =
+            build_checkout_invocation("http://127.0.0.1:8787/proxy/repo.git", None, Some("main"))
+                .expect("checkout invocation");
+        add_checkout_proxy_config(
+            &mut checkout,
+            "http://127.0.0.1:8787/proxy/repo.git",
+            "runner-secret",
+        );
+
+        assert!(checkout.env.contains(&(
+            "GIT_CONFIG_KEY_0".to_string(),
+            "http.http://127.0.0.1:8787/proxy/repo.git.extraHeader".to_string(),
+        )));
+        assert!(
+            !checkout
+                .env
+                .iter()
+                .any(|(_, value)| value == "http.extraHeader")
+        );
+        assert!(!checkout.preview_command.contains("runner-secret"));
+        assert!(!checkout.shell_script.contains("runner-secret"));
+    }
+
+    #[test]
     fn checkout_branch_materializes_nested_submodules() {
         let fixture_root = temp_workspace();
         let fixture = create_nested_submodule_fixture(&fixture_root);
@@ -3235,6 +3958,12 @@ mod tests {
     fn checkout_sha_materializes_nested_submodules() {
         let fixture_root = temp_workspace();
         let fixture = create_nested_submodule_fixture(&fixture_root);
+        add_commit(
+            &fixture.root_repo,
+            "AFTER_PIN.md",
+            "created after the build was queued\n",
+            "advance branch after pin",
+        );
         let workspace = fixture_root.join("checkout-sha");
         fs::create_dir_all(&workspace).expect("create checkout workspace");
 
@@ -3252,6 +3981,7 @@ mod tests {
         );
 
         assert!(workspace.join("deps/child/README.md").exists());
+        assert!(!workspace.join("AFTER_PIN.md").exists());
         assert!(
             workspace
                 .join("deps/child/deps/grandchild/README.md")
@@ -3346,6 +4076,27 @@ mod tests {
         assert!(key_properties.contains("keyPassword=key-pass"));
         assert!(key_properties.contains("keyAlias=upload"));
         assert!(key_properties.contains("storeFile=oore-upload-keystore.jks"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&keystore_path)
+                    .expect("keystore metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&key_properties_path)
+                    .expect("key.properties metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
 
         cleanup_workspace(&workspace);
     }
@@ -3454,6 +4205,50 @@ mod tests {
         assert_eq!(plan.artifact_patterns, vec!["*.zip".to_string()]);
 
         cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn explicit_config_path_must_stay_within_workspace() {
+        let workspace = temp_workspace();
+        let snapshot = serde_json::json!({
+            "config_path_explicit": true,
+            "config_path": "../outside.oore.yaml",
+        });
+
+        let error = resolve_execution_plan(&workspace, &snapshot).expect_err("path must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid explicit repository config path")
+        );
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_config_symlink_must_stay_within_workspace() {
+        let workspace = temp_workspace();
+        let outside = temp_workspace();
+        let outside_config = outside.join(".oore.yaml");
+        fs::write(
+            &outside_config,
+            "version: 1\nplatforms: [android]\nartifacts:\n  patterns: [\"*.apk\"]\n",
+        )
+        .expect("write outside config");
+        std::os::unix::fs::symlink(&outside_config, workspace.join(".oore.yaml"))
+            .expect("link outside config");
+
+        let error = resolve_execution_plan(&workspace, &serde_json::json!({}))
+            .expect_err("symlink escape must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("resolves outside the build workspace")
+        );
+
+        cleanup_workspace(&workspace);
+        cleanup_workspace(&outside);
     }
 
     #[test]
@@ -3633,6 +4428,33 @@ mod tests {
     }
 
     #[test]
+    fn ui_fallback_accepts_workspace_relative_artifact_patterns() {
+        let workspace = temp_workspace();
+        let snapshot = serde_json::json!({
+            "config_path_explicit": false,
+            "ui_execution_config": {
+                "platforms": ["android", "ios"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": [
+                    "build/app/outputs/bundle/release/*.aab",
+                    "build/ios/ipa/*.ipa"
+                ]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve UI fallback");
+        assert_eq!(
+            plan.artifact_patterns,
+            vec![
+                "build/app/outputs/bundle/release/*.aab".to_string(),
+                "build/ios/ipa/*.ipa".to_string(),
+            ]
+        );
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
     fn multi_platform_default_command_order_is_sequential() {
         let config = PipelineExecutionConfig {
             platforms: vec![
@@ -3656,6 +4478,59 @@ mod tests {
                 "flutter build macos --release".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn per_run_platform_selection_filters_repository_platform_commands() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join(".oore.yml"),
+            "version: 1\nplatforms: [android, ios]\nplatform_commands:\n  android: flutter build apk --release --target lib/main_adhoc.dart\n  ios: flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart\nartifacts:\n  patterns: [\"build/**/*.apk\", \"build/**/*.ipa\"]\n",
+        )
+        .expect("write combined workflow");
+        let snapshot = serde_json::json!({
+            "config_path_explicit": true,
+            "config_path": ".oore.yml",
+            "selected_platforms": ["ios"],
+            "ui_execution_config": {
+                "platforms": ["android", "ios"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": ["build/**/*.apk", "build/**/*.ipa"]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
+        assert_eq!(
+            plan.stage_commands.build,
+            vec![
+                "flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart"
+                    .to_string()
+            ]
+        );
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn per_run_platform_selection_rejects_shared_build_commands() {
+        let workspace = temp_workspace();
+        fs::write(
+            workspace.join(".oore.yml"),
+            "version: 1\nplatforms: [android, ios]\ncommands:\n  build: [\"flutter build ipa --release\"]\nartifacts:\n  patterns: [\"build/**/*.ipa\"]\n",
+        )
+        .expect("write workflow");
+        let snapshot = serde_json::json!({
+            "config_path_explicit": true,
+            "config_path": ".oore.yml",
+            "selected_platforms": ["ios"]
+        });
+
+        let error = resolve_execution_plan(&workspace, &snapshot).expect_err("must reject");
+        assert!(
+            error
+                .to_string()
+                .contains("shared commands.build cannot be filtered safely")
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]
@@ -3858,15 +4733,42 @@ mod tests {
         assert_eq!(choose_ios_export_method(help), "ad-hoc");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn adapts_flutter_build_ios_to_signed_ipa_command() {
+    fn reads_install_metadata_from_signed_app_info_plist() {
+        let workspace = temp_workspace();
+        let app = workspace.join("Kite.app");
+        fs::create_dir_all(&app).expect("create app bundle");
+        fs::write(
+            app.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.kite</string>
+<key>CFBundleDisplayName</key><string>Kite QA</string>
+<key>CFBundleShortVersionString</key><string>3.2.1</string>
+<key>CFBundleVersion</key><string>42</string>
+</dict></plist>"#,
+        )
+        .expect("write Info.plist");
+
+        let metadata = read_ios_app_metadata(&app).expect("read app metadata");
+        assert_eq!(metadata.bundle_identifier, "com.example.kite");
+        assert_eq!(metadata.display_name, "Kite QA");
+        assert_eq!(metadata.version, "3.2.1");
+        assert_eq!(metadata.build_number, "42");
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn adapts_flutter_build_ios_to_signed_ipa_export() {
         let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
         let command = "flutter build ios --release --no-codesign";
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.starts_with("flutter build ipa --release"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(!adapted.contains("--export-options-plist"));
     }
 
     #[test]
@@ -3886,8 +4788,8 @@ mod tests {
         let adapted =
             adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
         assert!(adapted.contains("flutter build ipa --release"));
-        assert!(!adapted.contains("--no-codesign"));
-        assert!(adapted.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(!adapted.contains("--export-options-plist"));
     }
 
     #[test]
@@ -3904,9 +4806,9 @@ mod tests {
 
         assert!(signing_applied);
         assert!(normalized.contains("flutter build ipa --release"));
-        assert!(!normalized.contains("--no-codesign"));
+        assert!(normalized.contains("--no-codesign"));
         assert!(normalized.contains("--dart-define-from-file=.env"));
-        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(!normalized.contains("--export-options-plist"));
     }
 
     #[test]
@@ -3928,7 +4830,7 @@ mod tests {
     #[test]
     fn normalizes_wrapped_ipa_command_and_marks_signing_applied() {
         let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
-        let command = "env FOO=bar fvm flutter build ipa --release";
+        let command = "env FOO=bar fvm flutter build ipa --release --export-method ad-hoc";
         let (normalized, signing_applied) = normalize_stage_command_for_execution(
             "build",
             command,
@@ -3939,7 +4841,46 @@ mod tests {
 
         assert!(signing_applied);
         assert!(normalized.contains("fvm flutter build ipa --release"));
-        assert!(normalized.contains("--export-options-plist=/tmp/ExportOptions.plist"));
+        assert!(!normalized.contains("--export-method"));
+        assert!(normalized.contains("--no-codesign"));
+        assert!(!normalized.contains("--export-options-plist"));
+    }
+
+    #[test]
+    fn replaces_pipeline_export_options_with_oore_signed_export() {
+        let export_plist = PathBuf::from("/tmp/OoreExportOptions.plist");
+        let command =
+            "fvm flutter build ipa --release --codesign --export-options-plist /tmp/repo.plist";
+        let adapted =
+            adapt_ios_command_for_signing(command, export_plist.as_path()).expect("adapt");
+
+        assert!(!adapted.contains("/tmp/repo.plist"));
+        assert!(!adapted.contains("--codesign"));
+        assert!(adapted.contains("--no-codesign"));
+        assert!(!adapted.contains("--export-options-plist"));
+    }
+
+    #[test]
+    fn converts_bundle_ids_to_xcode_build_setting_identifiers() {
+        assert_eq!(
+            xcode_build_setting_identifier("com.example.app-share"),
+            "com_example_app_share"
+        );
+    }
+
+    #[test]
+    fn selects_only_the_direct_app_from_an_xcarchive() {
+        let workspace = temp_workspace();
+        let applications = workspace.join("Products/Applications");
+        let app = applications.join("Runner.app");
+        let nested_app = app.join("Watch/Companion.app");
+        fs::create_dir_all(&nested_app).expect("create archive apps");
+
+        assert_eq!(
+            find_direct_path_with_extension(&applications, "app").expect("find main app"),
+            app
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]
@@ -3958,16 +4899,29 @@ mod tests {
     }
 
     #[test]
-    fn parses_valid_codesigning_identity_hashes() {
+    fn parses_imported_distribution_certificate() {
         let output = r#"
-  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Distribution: Example (TEAM1234)"
-     1 valid identities found
+SHA-256 hash: 7C16B3FEEB8C0DD77E73D2714F4E63C4F4EBB57CDAF72F11F121AF610AB1647F
+SHA-1 hash: 0ADDF2727054A792183CF51F72B687DCA1D35C6B
+keychain: "/tmp/oore-ci-build.keychain-db"
+attributes:
+    "alis"<blob>="Apple Distribution: Zerodha Broking Limited (843ED8PUW8)"
 "#;
-        let hashes = parse_codesigning_identity_hashes(output);
-        assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes[0], "0123456789ABCDEF0123456789ABCDEF01234567");
+        assert_eq!(
+            parse_distribution_certificate(output),
+            Some((
+                "0ADDF2727054A792183CF51F72B687DCA1D35C6B".to_string(),
+                "Apple Distribution: Zerodha Broking Limited (843ED8PUW8)".to_string()
+            ))
+        );
+        assert_eq!(parse_distribution_certificate("no certificates"), None);
+    }
 
-        let none = parse_codesigning_identity_hashes("  0 valid identities found");
-        assert!(none.is_empty());
+    #[test]
+    fn parses_default_keychain_path_for_restore() {
+        assert_eq!(
+            parse_keychain_list("    \"/Users/runner/Library/Keychains/login.keychain-db\"\n"),
+            vec!["/Users/runner/Library/Keychains/login.keychain-db"]
+        );
     }
 }

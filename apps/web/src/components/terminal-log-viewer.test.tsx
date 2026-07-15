@@ -1,0 +1,192 @@
+import { act, render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+
+import TerminalLogViewer from '@/components/terminal-log-viewer'
+import {
+  defaultSelectedStep,
+  findFirstErrorIndex,
+  groupLogs,
+  isErrorLine,
+} from '@/components/terminal-log-viewer/log-model'
+
+describe('TerminalLogViewer', () => {
+  it('groups marker-delimited logs while step results remain status truth', () => {
+    const grouped = groupLogs(
+      [
+        {
+          sequence: 1,
+          content:
+            '[oore-step] {"event":"start","name":"Build","command":"bun run build"}',
+          stream: 'stdout',
+        },
+        { sequence: 2, content: 'Compiling', stream: 'stdout' },
+        {
+          sequence: 3,
+          content:
+            '[oore-step] {"event":"end","name":"Build","status":"succeeded"}',
+          stream: 'stdout',
+        },
+      ],
+      [
+        {
+          name: 'Build',
+          status: 'failed',
+          started_at: 1,
+          finished_at: 2,
+          duration_ms: 1000,
+        },
+      ],
+    )
+
+    expect(grouped.allVisibleLogs.map((log) => log.content)).toEqual([
+      'Compiling',
+    ])
+    expect(grouped.stepGroups[0]).toMatchObject({
+      name: 'Build',
+      status: 'failed',
+      command: 'bun run build',
+      durationMs: 1000,
+      logs: [{ sequence: 2, content: 'Compiling', stream: 'stdout' }],
+    })
+  })
+
+  it('shows all logs when completed steps have no log markers', async () => {
+    await act(async () => {
+      render(
+        <TerminalLogViewer
+          logs={[{ sequence: 1, content: 'Build output', stream: 'stdout' }]}
+          stepResults={[
+            {
+              name: 'Build Android',
+              status: 'succeeded',
+              started_at: 1,
+              finished_at: 2,
+              duration_ms: 1000,
+            },
+          ]}
+          isStreaming={false}
+          isTerminal
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByRole('combobox', { name: 'Build step' })).toBeNull()
+    expect(
+      screen.getByRole('region', { name: 'Build log output' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Download raw logs' }),
+    ).toBeTruthy()
+  })
+
+  it('keeps build steps in a compact navigation rail', async () => {
+    await act(async () => {
+      render(
+        <TerminalLogViewer
+          logs={[
+            {
+              sequence: 1,
+              content:
+                '[oore-step] {"event":"start","name":"Checkout","command":"git checkout"}',
+              stream: 'stdout',
+            },
+            { sequence: 2, content: 'Checked out', stream: 'stdout' },
+            {
+              sequence: 3,
+              content:
+                '[oore-step] {"event":"end","name":"Checkout","status":"succeeded"}',
+              stream: 'stdout',
+            },
+          ]}
+          stepResults={[
+            {
+              name: 'Checkout',
+              status: 'succeeded',
+              started_at: 1,
+              finished_at: 3,
+              duration_ms: 2000,
+            },
+          ]}
+          isStreaming={false}
+          isTerminal
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    expect(screen.getByRole('navigation', { name: 'Build steps' })).toBeTruthy()
+    expect(
+      screen
+        .getByRole('tab', { name: /Full log/ })
+        .getAttribute('aria-selected'),
+    ).toBe('true')
+    expect(
+      screen
+        .getByRole('tab', { name: /Checkout/ })
+        .getAttribute('aria-selected'),
+    ).toBe('false')
+  })
+
+  it('opens the complete log for a finished successful build', () => {
+    expect(
+      defaultSelectedStep(
+        [
+          {
+            name: 'Checkout',
+            status: 'succeeded',
+            logs: [{ sequence: 1, content: 'Cloning', stream: 'stderr' }],
+          },
+          {
+            name: 'Build Android',
+            status: 'succeeded',
+            logs: [{ sequence: 2, content: 'Assembling', stream: 'stdout' }],
+          },
+        ],
+        null,
+      ),
+    ).toBe('all')
+  })
+
+  it('does not treat stderr transport as error severity', () => {
+    expect(
+      findFirstErrorIndex([
+        {
+          sequence: 1,
+          content: 'Receiving objects: 100% (25/25)',
+          stream: 'stderr',
+        },
+      ]),
+    ).toBe(-1)
+
+    expect(
+      findFirstErrorIndex([
+        { sequence: 1, content: 'Build started', stream: 'stdout' },
+        {
+          sequence: 2,
+          content: 'fatal: repository could not be cloned',
+          stream: 'stderr',
+        },
+      ]),
+    ).toBe(1)
+
+    expect(isErrorLine('$ flutter analyze --no-fatal-infos')).toBe(false)
+  })
+
+  it('does not claim terminal logs are absent while they are loading', () => {
+    render(
+      <TerminalLogViewer
+        logs={[]}
+        stepResults={[]}
+        isStreaming={false}
+        isLoading
+        isTerminal
+      />,
+    )
+
+    expect(screen.getByText('Loading build logs...')).toBeTruthy()
+    expect(
+      screen.queryByText('This build completed without recorded logs.'),
+    ).toBeNull()
+  })
+})

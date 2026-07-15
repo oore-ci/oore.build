@@ -21,7 +21,6 @@ function cleanupOidcSessionStorage() {
     sessionStorage.removeItem('oore_oidc_state')
     sessionStorage.removeItem('oore_oidc_instance')
     sessionStorage.removeItem('oore_oidc_flow')
-    sessionStorage.removeItem('oore_setup_session_token')
   } catch {
     // ignore
   }
@@ -46,12 +45,10 @@ function AuthCallbackPage() {
     let storedState: string | null = null
     let instanceId: string | null = null
     let flow: string | null = null
-    let setupSessionToken: string | null = null
     try {
       storedState = sessionStorage.getItem('oore_oidc_state')
       instanceId = sessionStorage.getItem('oore_oidc_instance')
       flow = sessionStorage.getItem('oore_oidc_flow')
-      setupSessionToken = sessionStorage.getItem('oore_setup_session_token')
     } catch {
       failAuth(
         'Unable to access browser session storage. Restart sign-in from the app.',
@@ -76,7 +73,7 @@ function AuthCallbackPage() {
 
     // Route based on flow type
     if (precheck.flow === 'setup_owner') {
-      handleSetupOwnerFlow(precheck.code, precheck.state, setupSessionToken)
+      handleSetupOwnerFlow(precheck.code, precheck.state)
     } else {
       handleAuthFlow(precheck.code, precheck.state, instanceId)
     }
@@ -84,30 +81,20 @@ function AuthCallbackPage() {
 
   function failAuth(message: string, flow: string | null, hint: string) {
     cleanupOidcSessionStorage()
-    setError(message)
-    setErrorHint(hint)
+    setError(() => message)
+    setErrorHint(() => hint)
     setErrorTarget(flow === 'setup_owner' ? '/setup/owner' : '/login')
   }
 
   function handleSetupOwnerFlow(
     code: string | undefined,
     state: string | undefined,
-    setupSessionToken: string | null,
   ) {
     if (!code || !state) {
       failAuth(
         'Missing callback parameters. Restart setup authentication.',
         'setup_owner',
         'missing_setup_callback_params',
-      )
-      return
-    }
-
-    if (!setupSessionToken) {
-      failAuth(
-        'Missing setup session token. Restart setup from the token step.',
-        'setup_owner',
-        'missing_setup_session_token',
       )
       return
     }
@@ -129,7 +116,6 @@ function AuthCallbackPage() {
     // POST to verify-oidc with the setup session token
     setupOidcVerify(
       resolveRequiredInstanceApiBaseUrl(instance),
-      setupSessionToken,
       code,
       state,
     )
@@ -219,11 +205,11 @@ function AuthCallbackPage() {
 
   if (error) {
     const actionLabel =
-      errorTarget === '/setup/owner' ? 'Back to Setup Owner' : 'Back to Login'
+      errorTarget === '/setup/owner' ? 'Back to setup owner' : 'Back to login'
     const title =
       errorTarget === '/setup/owner'
-        ? 'Setup Authentication Failed'
-        : 'Authentication Failed'
+        ? 'Setup authentication failed'
+        : 'Authentication failed'
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6">
         <PageMeta title="Signing In" />

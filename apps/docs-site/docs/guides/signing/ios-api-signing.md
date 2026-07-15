@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Use App Store Connect API for automatic iOS signing in Oore CI."
+description: 'Use App Store Connect API for automatic iOS signing in Oore CI.'
 ---
 
 # iOS App Store Connect API Signing
@@ -62,11 +62,11 @@ API signing is appropriate when:
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `PUT` | `/v1/pipelines/{pipeline_id}/ios-signing` | Configure API signing |
+| Method | Path                                           | Description                 |
+| ------ | ---------------------------------------------- | --------------------------- |
+| `PUT`  | `/v1/pipelines/{pipeline_id}/ios-signing`      | Configure API signing       |
 | `POST` | `/v1/pipelines/{pipeline_id}/ios-signing/sync` | Sync from App Store Connect |
-| `GET` | `/v1/pipelines/{pipeline_id}/ios-signing` | Get current config |
+| `GET`  | `/v1/pipelines/{pipeline_id}/ios-signing`      | Get current config          |
 
 ## Reference
 

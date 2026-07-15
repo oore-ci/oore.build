@@ -41,24 +41,26 @@ oore update
 
 Choosing the right authentication mode depends on where you access your daemon from.
 
-| Mode | Access | Auth | Use case |
-|---|---|---|---|
-| **Local Only** | Loopback only | Loopback local login, no passwords | Fast local evaluation or local operator access |
-| **Remote OIDC** | HTTPS | Any OIDC-compatible provider | Team access without an identity proxy |
+| Mode                     | Access                       | Auth                                                               | Use case                                        |
+| ------------------------ | ---------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
+| **Local Only**           | Loopback only                | Loopback local login, no passwords                                 | Fast local evaluation or local operator access  |
+| **Remote OIDC**          | HTTPS                        | Any OIDC-compatible provider                                       | Team access without an identity proxy           |
 | **Remote Trusted Proxy** | HTTPS through identity proxy | Forwarded identity header plus shared secret on trusted proxy hops | Private networks or enterprise identity proxies |
 
 ## Supported onboarding paths
 
 Choosing the right path depends on how your browser reaches the backend. The backend owns setup and auth; the hosted or local frontend only drives the backend setup API.
 
-| Path            | Use When        | Requirements       | Tradeoffs           |
-| --------------- | --------------- | ------------------ | ------------------- |
-| **Local-first** | Fast local eval | macOS, loopback    | No remote access    |
-| **Hosted UI + Remote OIDC** | Teams without an identity proxy | macOS backend, HTTPS URL, OIDC app | Requires provider setup |
-| **Hosted UI + Remote Trusted Proxy** | Private/proxied deployments | macOS backend behind HTTPS identity proxy | Proxy must forward a trusted identity header |
-| **Split frontend/backend** | Browser-facing UI runs on another host | macOS backend plus `frontend` role host | More moving parts, cleaner network boundary |
+| Path                                 | Use When                               | Requirements                              | Tradeoffs                                    |
+| ------------------------------------ | -------------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| **Local-first**                      | Fast local eval                        | macOS, loopback                           | No remote access                             |
+| **Hosted UI + Remote OIDC**          | Teams without an identity proxy        | macOS backend, HTTPS URL, OIDC app        | Requires provider setup                      |
+| **Hosted UI + Remote Trusted Proxy** | Private/proxied deployments            | macOS backend behind HTTPS identity proxy | Proxy must forward a trusted identity header |
+| **Split frontend/backend**           | Browser-facing UI runs on another host | macOS backend plus `frontend` role host   | More moving parts, cleaner network boundary  |
 
 ![Oore CI Dashboard screenshot](/demo-dashboard.webp)
+
+> The public demo uses rich fixed sample data and never persists mutations. Try Owner, Admin, Developer, and QA Viewer with `demo+<role>@oore.build`; every account uses password `owner`. Allowed mutation controls remain explorable, but attempts show `Action not allowed on demo.`
 
 ### Path A: Local-first (no HTTPS required)
 
@@ -170,4 +172,4 @@ Use:
 ## How to report issues and security findings
 
 - Bugs/UX issues: GitHub issues (use the [Alpha Feedback Playbook](/getting-started/alpha-feedback-playbook))
-- Security reports: follow [SECURITY.md](https://github.com/devaryakjha/oore.build/blob/master/SECURITY.md) (private disclosure)
+- Security reports: follow [SECURITY.md](https://github.com/oore-ci/oore.build/blob/master/SECURITY.md) (private disclosure)

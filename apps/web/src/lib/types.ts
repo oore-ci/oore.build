@@ -5,6 +5,7 @@ export interface Instance {
   label: string
   url: string
   icon?: string
+  qaPreviewSourceId?: string
   addedAt: number
 }
 
@@ -186,6 +187,12 @@ export interface ReEnableUserResponse {
   user: User
 }
 
+export interface PreviewQaUserResponse {
+  session_token: string
+  expires_at: number
+  user: AuthenticatedUser
+}
+
 export interface ListUsersResponse {
   users: Array<User>
 }
@@ -196,6 +203,24 @@ export interface UserProfileResponse {
 
 export interface LogoutResponse {
   ok: boolean
+}
+
+export interface RuntimeUpdateStatus {
+  phase: 'idle' | 'updating' | 'restarting' | 'failed'
+  error?: string | null
+  managed_service: boolean
+}
+
+export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
+  version: string
+  latest_version: string
+  channel: string
+  github_repo: string
+  update_available: boolean
+  release_name: string
+  release_notes: string
+  release_url: string
+  changelog_url: string
 }
 
 // ── Structured API error ────────────────────────────────────────
@@ -211,10 +236,7 @@ export interface ApiError {
 export type ScmProvider = 'github' | 'gitlab' | 'local_git'
 
 export type IntegrationAuthMode =
-  | 'github_app'
-  | 'oauth_app'
-  | 'personal_token'
-  | 'local_path'
+  'github_app' | 'oauth_app' | 'personal_token' | 'local_path'
 
 export type IntegrationStatus = 'active' | 'inactive' | 'error'
 
@@ -248,6 +270,7 @@ export interface IntegrationRepository {
   full_name: string
   default_branch?: string
   is_private: boolean
+  avatar_url?: string
   created_at: number
   updated_at: number
 }
@@ -407,9 +430,12 @@ export interface Build {
   trigger_ref?: string
   commit_sha?: string
   branch?: string
+  changelog?: string
   source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
+  /** Optional display context supplied by newer backend responses. */
+  context?: BuildContext
   step_results?: Array<StepResult>
   exit_code?: number
   queued_at: number
@@ -417,6 +443,12 @@ export interface Build {
   finished_at?: number
   created_at: number
   updated_at: number
+}
+
+export interface BuildContext {
+  project_name?: string
+  pipeline_name?: string
+  runner_name?: string
 }
 
 export interface BuildEvent {
@@ -431,13 +463,21 @@ export interface BuildEvent {
 
 export interface CreateBuildRequest {
   pipeline_id: string
+  platforms?: Array<BuildPlatform>
   branch?: string
   commit_sha?: string
   trigger_ref?: string
+  changelog?: string
 }
 
 export interface CreateBuildResponse {
   build: Build
+}
+
+export interface BuildChangelogPreviewResponse {
+  base_commit?: string
+  target_commit: string
+  markdown: string
 }
 
 export interface BuildDetailResponse {
@@ -496,8 +536,22 @@ export interface ListArtifactsResponse {
   artifacts: Array<Artifact>
 }
 
+export interface ListBuildArtifactsRequest {
+  build_ids: Array<string>
+}
+
 export interface ArtifactDownloadLinkResponse {
   download_url: string
+  expires_at: number
+}
+
+export type ArtifactInstallPlatform = 'android' | 'ios'
+
+export interface ArtifactInstallLinkResponse {
+  platform: ArtifactInstallPlatform
+  install_url: string
+  download_url: string
+  manifest_url?: string
   expires_at: number
 }
 
@@ -587,6 +641,7 @@ export type ExternalAccessNetworkSource = 'database' | 'environment' | 'default'
 
 export interface ExternalAccessNetworkSettings {
   public_url?: string
+  artifact_delivery_url?: string
   allowed_origins: Array<string>
   source: ExternalAccessNetworkSource
   updated_at?: number
@@ -598,6 +653,7 @@ export interface ExternalAccessNetworkSettingsResponse {
 
 export interface UpdateExternalAccessNetworkSettingsRequest {
   public_url?: string
+  artifact_delivery_url?: string
   allowed_origins: Array<string>
 }
 
@@ -642,6 +698,8 @@ export interface TrustedProxySettingsPublic {
   user_email_header: string
   trusted_proxy_cidrs: Array<string>
   has_shared_secret: boolean
+  has_warpgate_ticket: boolean
+  warpgate_ticket_source?: 'database' | 'environment'
   updated_at?: number
 }
 
@@ -653,6 +711,7 @@ export interface UpdateTrustedProxySettingsRequest {
   user_email_header?: string
   trusted_proxy_cidrs: Array<string>
   shared_secret?: string
+  warpgate_ticket?: string
 }
 
 export interface InstancePreferences {
@@ -680,11 +739,15 @@ export interface Project {
   name: string
   description?: string
   repository_id?: string
+  repository_full_name?: string
+  repository_avatar_url?: string
+  repository_provider?: ScmProvider
   settings: Record<string, unknown>
   default_branch?: string
   created_by: string
   created_at: number
   updated_at: number
+  current_user_role?: ProjectRole
 }
 
 export interface CreateProjectRequest {
@@ -710,11 +773,47 @@ export interface ProjectDetailResponse {
   project: Project
   pipeline_count: number
   build_count: number
+  current_user_role?: ProjectRole
 }
 
 export interface ListProjectsResponse {
   projects: Array<Project>
   total: number
+}
+
+export type ProjectRole = 'maintainer' | 'developer' | 'viewer'
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  user_id: string
+  role: ProjectRole
+  user_email: string
+  user_display_name?: string
+  user_avatar_url?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface AddProjectMemberRequest {
+  user_id: string
+  role: ProjectRole
+}
+
+export interface AddProjectMemberResponse {
+  member: ProjectMember
+}
+
+export interface UpdateProjectMemberRequest {
+  role: ProjectRole
+}
+
+export interface UpdateProjectMemberResponse {
+  member: ProjectMember
+}
+
+export interface ListProjectMembersResponse {
+  members: Array<ProjectMember>
 }
 
 // ── Pipeline domain types ───────────────────────────────────────
@@ -762,6 +861,31 @@ export interface PipelineExecutionConfig {
   platform_commands?: PlatformBuildCommands
   env?: Array<PipelineEnvVar>
   artifact_patterns: Array<string>
+}
+
+export interface RepositoryWorkflowExecutionPreview {
+  platforms: Array<BuildPlatform>
+  flutter_version?: string
+  commands: PipelineCommandStages
+  platform_build_args: PlatformBuildArgs
+  platform_commands: PlatformBuildCommands
+  env_keys: Array<string>
+  artifact_patterns: Array<string>
+}
+
+export interface RepositoryWorkflowPreview {
+  path: string
+  valid: boolean
+  errors: Array<string>
+  execution?: RepositoryWorkflowExecutionPreview
+}
+
+export interface DiscoverRepositoryWorkflowsResponse {
+  project_id: string
+  provider: 'github' | 'gitlab' | 'local_git'
+  reference: string
+  workflows: Array<RepositoryWorkflowPreview>
+  truncated: boolean
 }
 
 export interface Pipeline {

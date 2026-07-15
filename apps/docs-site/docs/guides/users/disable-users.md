@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Disable or remove user accounts from your Oore CI instance."
+description: 'Disable or remove user accounts from your Oore CI instance.'
 ---
 
 # Disable and Re-enable Users
@@ -59,7 +59,7 @@ The user's status returns to `active` and they can sign in again.
 
 ## API endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `DELETE` | `/v1/users/{user_id}` | Disable a user |
-| `POST` | `/v1/users/{user_id}/enable` | Re-enable a user |
+| Method   | Path                         | Description      |
+| -------- | ---------------------------- | ---------------- |
+| `DELETE` | `/v1/users/{user_id}`        | Disable a user   |
+| `POST`   | `/v1/users/{user_id}/enable` | Re-enable a user |

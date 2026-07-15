@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure Gradle signing for Android builds in Oore CI pipelines."
+description: 'Configure Gradle signing for Android builds in Oore CI pipelines.'
 ---
 
 # Configure Gradle Signing
@@ -18,25 +18,37 @@ This guide covers advanced Gradle signing configuration for Android builds in Oo
 When a pipeline has Android signing configured, the runner:
 
 1. Retrieves the keystore file and credentials from the daemon at build time
-2. Places the keystore in a temporary location on the runner
-3. Sets the signing configuration so Gradle can find it
+2. Writes `android/app/oore-upload-keystore.jks` and a compatible
+   `android/key.properties` inside the runner's temporary checkout
+3. Exposes the same signing values through `OORE_ANDROID_*` environment variables
 4. Executes the build command (e.g., `flutter build apk --release`)
 5. Cleans up the keystore after the build completes
 
-You don't need to modify your `build.gradle` for basic signing — Oore CI handles it automatically.
+You don't need to modify the conventional Flutter `build.gradle` for basic
+signing. Oore's generated files exist only in the temporary checkout and never
+change or get pushed to your repository.
 
 ## Custom Gradle configuration
 
-If your project requires custom signing configuration (e.g., multiple flavors with different keystores), you can reference environment variables in your `build.gradle`:
+For an explicit CI/local boundary, or for custom signing such as multiple
+flavors, select Oore's environment variables when `CI=true` and retain your
+existing local configuration otherwise:
 
 ```groovy
 android {
     signingConfigs {
         release {
-            storeFile file(System.getenv("OORE_KEYSTORE_PATH"))
-            storePassword System.getenv("OORE_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("OORE_KEY_ALIAS")
-            keyPassword System.getenv("OORE_KEY_PASSWORD")
+            if (System.getenv("CI")?.toBoolean() && System.getenv("OORE_ANDROID_KEYSTORE_PATH")) {
+                storeFile file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
+                storePassword System.getenv("OORE_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("OORE_ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("OORE_ANDROID_KEY_PASSWORD")
+            } else {
+                storeFile file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+            }
         }
     }
     buildTypes {
@@ -47,7 +59,9 @@ android {
 }
 ```
 
-These environment variables are set by the runner when Android signing is configured for the pipeline.
+The runner sets `CI=true` and these environment variables when Android signing
+is configured for the pipeline. Oore still creates the conventional temporary
+files so projects without this branch continue to work with zero configuration.
 
 ## Verify
 

@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Configure manual iOS code signing with certificates and provisioning profiles."
+description: 'Configure manual iOS code signing with certificates and provisioning profiles.'
 ---
 
 # iOS Manual Signing
@@ -13,6 +13,11 @@ Upload your signing certificate and provisioning profile directly to Oore CI for
 - A `.p12` signing certificate and its export password (see [Acquire iOS Certificates](/guides/signing/ios-certificates))
 - A `.mobileprovision` provisioning profile (see [Acquire iOS Certificates](/guides/signing/ios-certificates))
 - A [pipeline](/guides/projects/pipeline-config) configured for iOS builds
+- A macOS runner started with `oore runner install-service` in an interactive login session
+
+::: warning Runner session
+iOS signing cannot run inside the `oored` system LaunchDaemon. Configure the backend with `OORED_RUNNER_MODE=external`, register the Mac as an external runner, and install its user service. The user may connect over SSH, but an interactive macOS login session must remain active for Apple Keychain code signing.
+:::
 
 ## Steps
 

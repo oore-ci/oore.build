@@ -1,10 +1,25 @@
 import { HttpResponse, delay, http } from 'msw'
 import { demoUsers } from '../data/users'
 import { ago } from '../seed'
+import { getDemoPersonaFromRequest } from '../personas'
+
+function requireAdmin(request: Request): Response | null {
+  const { role } = getDemoPersonaFromRequest(request)
+  if (role === 'owner' || role === 'admin') return null
+  return HttpResponse.json(
+    {
+      error: 'You do not have permission to access this resource.',
+      code: 'forbidden',
+    },
+    { status: 403 },
+  )
+}
 
 export const userHandlers = [
-  http.get('/v1/users', async () => {
+  http.get('/v1/users', async ({ request }) => {
     await delay(150)
+    const forbidden = requireAdmin(request)
+    if (forbidden) return forbidden
     return HttpResponse.json({ users: demoUsers })
   }),
 

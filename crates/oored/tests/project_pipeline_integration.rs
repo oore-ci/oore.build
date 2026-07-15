@@ -748,6 +748,214 @@ async fn test_update_pipeline() {
 }
 
 #[tokio::test]
+async fn test_pipeline_config_path_rejects_unsafe_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let token = create_session_token(&pool, &user_id).await;
+
+    let (_, json) = json_request(
+        &app,
+        "POST",
+        "/v1/projects",
+        &token,
+        Some(serde_json::json!({
+            "name": "Config Path Project",
+            "local_repository_path": repo_path.to_string_lossy().to_string(),
+        })),
+    )
+    .await;
+    let project_id = json["project"]["id"].as_str().unwrap();
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/pipelines"),
+        &token,
+        Some(serde_json::json!({
+            "name": "Unsafe Create",
+            "config_path": "../.oore.yaml",
+            "config_path_explicit": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "create: {json}");
+    assert_eq!(json["code"].as_str(), Some("invalid_config_path"));
+
+    let (_, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/pipelines"),
+        &token,
+        Some(serde_json::json!({
+            "name": "Safe Pipeline",
+            "config_path": ".oore/mobile.yaml",
+            "config_path_explicit": true,
+        })),
+    )
+    .await;
+    let pipeline_id = json["pipeline"]["id"].as_str().unwrap();
+
+    let (status, json) = json_request(
+        &app,
+        "PATCH",
+        &format!("/v1/pipelines/{pipeline_id}"),
+        &token,
+        Some(serde_json::json!({ "config_path": "/etc/oore.yaml" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "update: {json}");
+    assert_eq!(json["code"].as_str(), Some("invalid_config_path"));
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        "/v1/pipelines/validate",
+        &token,
+        Some(serde_json::json!({
+            "config_path": ".oore\\mobile.yaml",
+            "config_path_explicit": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "validate: {json}");
+    assert!(!json["valid"].as_bool().unwrap());
+    assert!(json["errors"].as_array().unwrap().iter().any(|error| {
+        error
+            .as_str()
+            .is_some_and(|value| value.contains("separators"))
+    }));
+}
+
+#[tokio::test]
+async fn test_local_repository_workflow_discovery_is_bounded_sanitized_and_rbac_protected() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo_path = init_test_git_repo(dir.path());
+    Command::new("git")
+        .args([
+            "-C",
+            repo_path.to_str().unwrap(),
+            "checkout",
+            "-b",
+            "develop",
+        ])
+        .output()
+        .expect("create develop branch");
+    std::fs::create_dir_all(repo_path.join(".oore")).unwrap();
+    std::fs::create_dir_all(repo_path.join("ci")).unwrap();
+    std::fs::write(
+        repo_path.join(".oore.yaml"),
+        "version: 1\nplatforms: [android]\nenv:\n  - key: API_TOKEN\n    value: never-return-this\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo_path.join(".oore/ios.yml"),
+        "version: 1\nplatforms: [ios]\nunsupported: true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo_path.join("ci/release.yml"),
+        "version: 1\nplatforms: [android, ios]\n",
+    )
+    .unwrap();
+    let commit = Command::new("git")
+        .args([
+            "-C",
+            repo_path.to_str().unwrap(),
+            "-c",
+            "user.name=Oore Test",
+            "-c",
+            "user.email=oore@example.com",
+            "add",
+            ".",
+        ])
+        .output()
+        .expect("stage repository configs");
+    assert!(commit.status.success());
+    let commit = Command::new("git")
+        .args([
+            "-C",
+            repo_path.to_str().unwrap(),
+            "-c",
+            "user.name=Oore Test",
+            "-c",
+            "user.email=oore@example.com",
+            "commit",
+            "-m",
+            "test configs",
+        ])
+        .output()
+        .expect("commit repository configs");
+    assert!(commit.status.success());
+
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let token = create_session_token(&pool, &user_id).await;
+    let (status, project) = json_request(
+        &app,
+        "POST",
+        "/v1/projects",
+        &token,
+        Some(serde_json::json!({
+            "name": "Workflow discovery",
+            "local_repository_path": repo_path.to_string_lossy(),
+            "default_branch": "develop",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create project: {project}");
+    let project_id = project["project"]["id"].as_str().unwrap();
+
+    let (status, discovery) = json_request(
+        &app,
+        "GET",
+        &format!(
+            "/v1/projects/{project_id}/repository-workflows?path=ci%2Frelease.yml&ref=develop"
+        ),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "discover workflows: {discovery}");
+    assert_eq!(discovery["provider"].as_str(), Some("local_git"));
+    assert_eq!(discovery["reference"].as_str(), Some("develop"));
+    assert_eq!(discovery["workflows"].as_array().unwrap().len(), 3);
+    assert!(!discovery.to_string().contains("never-return-this"));
+    let root = discovery["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workflow| workflow["path"] == ".oore.yaml")
+        .unwrap();
+    assert_eq!(root["execution"]["env_keys"][0], "API_TOKEN");
+    let invalid = discovery["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workflow| workflow["path"] == ".oore/ios.yml")
+        .unwrap();
+    assert_eq!(invalid["valid"].as_bool(), Some(false));
+
+    let viewer_id = seed_user_with_role(&pool, "viewer@example.com", "qa_viewer").await;
+    seed_project_member(&pool, project_id, &viewer_id, &user_id, "viewer").await;
+    let viewer_token = create_session_token(&pool, &viewer_id).await;
+    let (status, _) = json_request(
+        &app,
+        "GET",
+        &format!("/v1/projects/{project_id}/repository-workflows"),
+        &viewer_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
@@ -755,7 +963,7 @@ async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
     let pool = connect_pool(&db_path).await;
     let owner_id = seed_test_user(&pool).await;
     let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
-    let (_project_id, pipeline_id) =
+    let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &owner_id, "org/private-project").await;
 
     let outsider_id = seed_user_with_role(&pool, "outsider@example.com", "developer").await;
@@ -826,6 +1034,99 @@ async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
         let (status, json) = json_request(&app, method, &uri, &outsider_token, body).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {json}");
     }
+
+    let viewer_id = seed_user_with_role(&pool, "viewer@example.com", "qa_viewer").await;
+    seed_project_member(&pool, &project_id, &viewer_id, &owner_id, "viewer").await;
+    let viewer_token = create_session_token(&pool, &viewer_id).await;
+    for uri in [
+        format!("/v1/pipelines/{pipeline_id}/android-signing"),
+        format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+        format!("/v1/pipelines/{pipeline_id}/ios-signing/devices"),
+    ] {
+        let (status, json) = json_request(&app, "GET", &uri, &viewer_token, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "GET {uri}: {json}");
+    }
+}
+
+#[tokio::test]
+async fn test_qa_session_is_capped_at_viewer_for_legacy_elevated_membership() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/qa-cap").await;
+    let qa_id = seed_user_with_role(&pool, "qa-cap@example.com", "qa_viewer").await;
+
+    // Simulate a stale row written before QA assignments were restricted to Viewer.
+    seed_project_member(&pool, &project_id, &qa_id, &owner_id, "developer").await;
+    let qa_token = create_session_token(&pool, &qa_id).await;
+
+    let (status, response) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/builds"),
+        &qa_token,
+        Some(serde_json::json!({ "pipeline_id": pipeline_id })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "response: {response}");
+    assert_eq!(response["code"], "permission_denied");
+}
+
+#[tokio::test]
+async fn test_qa_project_assignment_is_viewer_only_and_can_precede_first_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let owner_token = create_session_token(&pool, &owner_id).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/qa-assignment").await;
+    let qa_id = seed_user_with_role(&pool, "qa-invited@example.com", "qa_viewer").await;
+    sqlx::query("UPDATE users SET status = 'invited' WHERE id = ?1")
+        .bind(&qa_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, response) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/members"),
+        &owner_token,
+        Some(serde_json::json!({ "user_id": qa_id, "role": "developer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "response: {response}");
+    assert_eq!(response["code"], "invalid_project_role");
+
+    let (status, response) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/members"),
+        &owner_token,
+        Some(serde_json::json!({ "user_id": qa_id, "role": "viewer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "response: {response}");
+    assert_eq!(response["member"]["role"], "viewer");
+
+    let (status, response) = json_request(
+        &app,
+        "PATCH",
+        &format!("/v1/projects/{project_id}/members/{qa_id}"),
+        &owner_token,
+        Some(serde_json::json!({ "role": "maintainer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "response: {response}");
+    assert_eq!(response["code"], "invalid_project_role");
 }
 
 #[tokio::test]
@@ -1983,7 +2284,7 @@ async fn test_register_ios_device_surfaces_apple_error() {
 }
 
 #[tokio::test]
-async fn test_sync_ios_signing_falls_back_when_certificate_creation_conflicts() {
+async fn test_sync_ios_signing_fails_when_certificate_creation_conflicts() {
     let dir = tempfile::tempdir().unwrap();
     let repo_path = init_test_git_repo(dir.path());
     let db_path = dir.path().join("test.db");
@@ -2140,18 +2441,12 @@ async fn test_sync_ios_signing_falls_back_when_certificate_creation_conflicts() 
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "sync ios signing: {json}");
-    assert_eq!(json["ok"].as_bool(), Some(true));
-    assert_eq!(json["updated_profiles"].as_u64(), Some(1));
-    let warnings = json["warnings"].as_array().cloned().unwrap_or_default();
-    assert!(
-        warnings.iter().any(|item| {
-            item.as_str()
-                .unwrap_or_default()
-                .contains("Could not generate a new iOS certificate bundle")
-        }),
-        "expected certificate generation fallback warning: {json}"
+    assert_eq!(
+        status,
+        StatusCode::BAD_GATEWAY,
+        "sync must fail when Oore cannot create certificate material it owns: {json}"
     );
+    assert_eq!(json["code"].as_str(), Some("apple_api_error"));
     let captured_body = certificate_create_body
         .lock()
         .expect("read captured cert create body")

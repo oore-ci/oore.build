@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "Switch between multiple Oore CI instances in the web UI."
+description: 'Switch between multiple Oore CI instances in the web UI.'
 ---
 
 # Switch Between Instances
@@ -19,12 +19,12 @@ When you have multiple Oore CI backend instances connected, you can switch betwe
 
 ## What happens when you switch
 
-| Aspect | Behavior |
-|---|---|
+| Aspect             | Behavior                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | **Authentication** | Each instance has its own session. If you're not signed in to the target instance, you'll be redirected to sign in. |
-| **Data** | Projects, builds, pipelines, and settings are loaded from the selected instance. |
-| **Query cache** | The cache is partitioned by instance ID — switching instances loads a separate cache. |
-| **URL** | API requests are routed to the selected instance's backend URL. |
+| **Data**           | Projects, builds, pipelines, and settings are loaded from the selected instance.                                    |
+| **Query cache**    | The cache is partitioned by instance ID — switching instances loads a separate cache.                               |
+| **URL**            | API requests are routed to the selected instance's backend URL.                                                     |
 
 ## Session persistence
 

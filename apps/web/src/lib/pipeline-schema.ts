@@ -1,7 +1,6 @@
-import z from 'zod'
+import * as z from 'zod'
 
 export const TRIGGER_EVENTS = ['push', 'pull_request', 'tag_push'] as const
-export const STEP_LABELS = ['Basics', 'Build Setup', 'Triggers'] as const
 
 export const pipelineFormSchema = z
   .object({

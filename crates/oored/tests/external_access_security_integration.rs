@@ -246,6 +246,128 @@ async fn upsert_trusted_proxy_settings_with_secret(
     .expect("failed to upsert trusted proxy settings");
 }
 
+#[tokio::test]
+async fn warpgate_install_ticket_requires_matching_remote_proxy_mode() {
+    let _env_guard = env_lock().lock().await;
+    let _ticket = EnvVarGuard::set("OORE_WARPGATE_TICKET", "environment-ticket");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let _app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings(&pool, "x-warpgate-username", "[]").await;
+    assert_eq!(
+        oored::instance_settings::load_warpgate_install_ticket(
+            &pool,
+            &common::TEST_ENCRYPTION_KEY,
+        )
+        .await
+        .expect("load Warpgate ticket")
+        .as_deref(),
+        Some("environment-ticket")
+    );
+
+    upsert_trusted_proxy_settings(&pool, "x-company-user-email", "[]").await;
+    assert!(
+        oored::instance_settings::load_warpgate_install_ticket(
+            &pool,
+            &common::TEST_ENCRYPTION_KEY,
+        )
+        .await
+        .expect("load generic proxy ticket")
+        .is_none()
+    );
+
+    upsert_trusted_proxy_settings(&pool, "x-warpgate-username", "[]").await;
+    set_runtime_and_remote_auth_mode(&pool, "remote", "oidc").await;
+    assert!(
+        oored::instance_settings::load_warpgate_install_ticket(
+            &pool,
+            &common::TEST_ENCRYPTION_KEY,
+        )
+        .await
+        .expect("load OIDC ticket")
+        .is_none()
+    );
+}
+
+#[tokio::test]
+async fn owner_can_store_warpgate_install_ticket_without_disclosing_it() {
+    let _env_guard = env_lock().lock().await;
+    let _ticket = EnvVarGuard::unset("OORE_WARPGATE_TICKET");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    mark_setup_ready(&pool).await;
+    set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
+    let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+
+    let request = Request::builder()
+        .uri("/v1/settings/external-access/trusted-proxy")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43120))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "user_email_header": "x-warpgate-username",
+                "trusted_proxy_cidrs": ["127.0.0.1/32"],
+                "shared_secret": "proxy-secret",
+                "warpgate_ticket": "database-ticket"
+            }))
+            .expect("serialize trusted proxy settings"),
+        ))
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("trusted proxy update response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response.into_body()).await;
+    assert_eq!(body["settings"]["has_warpgate_ticket"], true);
+    assert_eq!(body["settings"]["warpgate_ticket_source"], "database");
+    assert!(!body.to_string().contains("database-ticket"));
+
+    let encrypted: String = sqlx::query_scalar(
+        "SELECT encrypted_warpgate_ticket FROM trusted_proxy_settings WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("stored Warpgate ticket");
+    assert_ne!(encrypted, "database-ticket");
+    assert_eq!(
+        oored::crypto::decrypt(&encrypted, &common::TEST_ENCRYPTION_KEY)
+            .expect("decrypt Warpgate ticket"),
+        "database-ticket"
+    );
+    assert_eq!(
+        oored::instance_settings::load_warpgate_install_ticket(
+            &pool,
+            &common::TEST_ENCRYPTION_KEY,
+        )
+        .await
+        .expect("load stored Warpgate ticket")
+        .as_deref(),
+        Some("database-ticket")
+    );
+
+    let audit_details: String = sqlx::query_scalar(
+        "SELECT details FROM audit_logs WHERE action = 'external_access_trusted_proxy_settings_updated' ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("trusted proxy audit entry");
+    assert!(!audit_details.contains("database-ticket"));
+}
+
 async fn seed_user_with_role_and_status(
     pool: &sqlx::SqlitePool,
     email: &str,
@@ -537,6 +659,7 @@ async fn test_external_access_network_settings_update_requires_owner() {
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
                 "public_url": "https://ci.oore.test",
+                "artifact_delivery_url": "https://install.ci.oore.test",
                 "allowed_origins": ["https://ci.oore.test"]
             }))
             .expect("serialize request"),
@@ -654,6 +777,7 @@ async fn test_external_access_network_settings_update_and_readback() {
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
                 "public_url": "https://ci.oore.test",
+                "artifact_delivery_url": "https://install.ci.oore.test",
                 "allowed_origins": ["https://ci.oore.test"]
             }))
             .expect("serialize request"),
@@ -672,6 +796,10 @@ async fn test_external_access_network_settings_update_and_readback() {
         Some("https://ci.oore.test")
     );
     assert_eq!(put_body["settings"]["source"], "database");
+    assert_eq!(
+        put_body["settings"]["artifact_delivery_url"].as_str(),
+        Some("https://install.ci.oore.test")
+    );
     let origins = put_body["settings"]["allowed_origins"]
         .as_array()
         .expect("allowed origins array");
@@ -706,7 +834,69 @@ async fn test_external_access_network_settings_update_and_readback() {
         get_body["settings"]["public_url"].as_str(),
         Some("https://ci.oore.test")
     );
+    assert_eq!(
+        get_body["settings"]["artifact_delivery_url"].as_str(),
+        Some("https://install.ci.oore.test")
+    );
     assert_eq!(get_body["settings"]["source"], "database");
+
+    let invalid_delivery_req = Request::builder()
+        .uri("/v1/settings/external-access/network")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41103))))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "public_url": "https://ci.oore.test",
+                "artifact_delivery_url": "http://install.ci.oore.test",
+                "allowed_origins": ["https://ci.oore.test"]
+            }))
+            .expect("serialize request"),
+        ))
+        .unwrap();
+    let invalid_delivery_resp = app
+        .oneshot(invalid_delivery_req)
+        .await
+        .expect("invalid delivery URL response");
+    assert_eq!(invalid_delivery_resp.status(), StatusCode::BAD_REQUEST);
+    let invalid_delivery_body = body_json(invalid_delivery_resp.into_body()).await;
+    assert_eq!(
+        invalid_delivery_body["code"],
+        "artifact_delivery_https_required"
+    );
+}
+
+#[tokio::test]
+async fn test_artifact_delivery_env_fills_empty_database_field() {
+    let _env_guard = env_lock().lock().await;
+    let _delivery_url =
+        EnvVarGuard::set("OORE_ARTIFACT_DELIVERY_URL", "https://install.ci.oore.test");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let _app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO external_access_network_settings \
+         (id, public_url, allowed_origins_json, created_at, updated_at) \
+         VALUES (1, 'https://ci.oore.test', '[\"https://ci.oore.test\"]', ?1, ?1)",
+    )
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("seed network settings");
+
+    let settings = oored::instance_settings::load_effective_external_access_network_settings(&pool)
+        .await
+        .expect("load network settings");
+    assert_eq!(
+        settings.artifact_delivery_url.as_deref(),
+        Some("https://install.ci.oore.test")
+    );
 }
 
 #[tokio::test]

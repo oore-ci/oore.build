@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{ffi::OsStr, fs};
@@ -10,7 +10,7 @@ use oored::build_router;
 use oored::crypto;
 use oored::observability;
 use oored::store::SetupStore;
-use tracing::info;
+use tracing::{error, info};
 
 // ── CLI ──────────────────────────────────────────────────────────
 
@@ -62,6 +62,14 @@ struct InstallServiceArgs {
     /// Write the launchd plist without starting the service.
     #[arg(long)]
     no_start: bool,
+
+    /// Install a boot-time LaunchDaemon instead of a GUI-session LaunchAgent.
+    #[arg(long)]
+    system: bool,
+
+    /// User account that runs a system LaunchDaemon.
+    #[arg(long, requires = "system")]
+    user: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -69,6 +77,10 @@ struct UninstallServiceArgs {
     /// launchd label to remove.
     #[arg(long, default_value = "build.oore.oored")]
     label: String,
+
+    /// Remove the boot-time LaunchDaemon instead of the user LaunchAgent.
+    #[arg(long)]
+    system: bool,
 }
 
 // ── Server bootstrap ─────────────────────────────────────────────
@@ -124,19 +136,40 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         "encryption key ready"
     );
 
-    // Start embedded local runner in default mode so single-host installations
-    // can execute queued builds without a separate `oore runner start` process.
-    let daemon_url = format!("http://127.0.0.1:{}", addr.port());
-    let _embedded_runner =
-        oored::embedded_runner::start_if_enabled(store.pool().clone(), daemon_url)
-            .await
-            .context("failed to initialize embedded runner")?;
-
+    let runner_pool = store.pool().clone();
     let app = build_router(store, runtime_key.key, metrics_handle).await;
 
     info!(listen = %addr, "starting oored daemon");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    if let Some(loopback_addr) = loopback_companion_addr(addr) {
+        let loopback_listener = tokio::net::TcpListener::bind(loopback_addr)
+            .await
+            .with_context(|| {
+                format!("failed to bind loopback companion address: {loopback_addr}")
+            })?;
+        let loopback_app = app.clone();
+
+        info!(listen = %loopback_addr, "also listening on loopback for local runner and CLI access");
+        tokio::spawn(async move {
+            if let Err(error) = axum::serve(
+                loopback_listener,
+                loopback_app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            {
+                error!(%error, "loopback oored listener stopped");
+            }
+        });
+    }
+
+    // The embedded runner always reaches the daemon through loopback. Keep a
+    // loopback listener alongside a private (for example, NetBird) bind.
+    let daemon_url = embedded_runner_url(addr);
+    let _embedded_runner = oored::embedded_runner::start_if_enabled(runner_pool, daemon_url)
+        .await
+        .context("failed to initialize embedded runner")?;
+
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -148,6 +181,22 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
     observability::shutdown_tracing();
 
     Ok(())
+}
+
+fn loopback_companion_addr(addr: SocketAddr) -> Option<SocketAddr> {
+    match addr.ip() {
+        ip if ip.is_loopback() || ip.is_unspecified() => None,
+        IpAddr::V4(_) => Some(SocketAddr::from(([127, 0, 0, 1], addr.port()))),
+        IpAddr::V6(_) => Some(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], addr.port()))),
+    }
+}
+
+fn embedded_runner_url(addr: SocketAddr) -> String {
+    let loopback = match addr.ip() {
+        IpAddr::V4(_) => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(_) => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+    };
+    format!("http://{}", SocketAddr::new(loopback, addr.port()))
 }
 
 fn read_trimmed_file(path: &std::path::Path) -> Option<String> {
@@ -203,6 +252,11 @@ fn launch_agent_plist_path(label: &str) -> anyhow::Result<PathBuf> {
     Ok(launch_agent_dir()?.join(format!("{label}.plist")))
 }
 
+fn launch_daemon_plist_path(label: &str) -> anyhow::Result<PathBuf> {
+    validate_launchd_label(label)?;
+    Ok(PathBuf::from("/Library/LaunchDaemons").join(format!("{label}.plist")))
+}
+
 fn xml_escape(raw: &str) -> String {
     let mut escaped = String::with_capacity(raw.len());
     for ch in raw.chars() {
@@ -252,6 +306,8 @@ fn service_environment(overrides: &[String]) -> anyhow::Result<BTreeMap<String, 
         "OORE_DATA_DIR",
         "OORE_SETUP_STATE_FILE",
         "OORE_PUBLIC_URL",
+        "OORE_WARPGATE_TICKET",
+        "OORE_ARTIFACT_DELIVERY_URL",
         "OORE_CORS_ORIGINS",
         "OORE_CORS_ORIGIN",
         "OORE_COOKIE_SECURE",
@@ -281,6 +337,7 @@ fn render_launchd_plist(
     env: &BTreeMap<String, String>,
     log_path: &Path,
     working_dir: &Path,
+    user: Option<&str>,
 ) -> String {
     let mut out = String::from(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -293,6 +350,12 @@ fn render_launchd_plist(
         "    <key>Label</key>\n    <string>{}</string>\n",
         xml_escape(label)
     ));
+    if let Some(user) = user {
+        out.push_str(&format!(
+            "    <key>UserName</key>\n    <string>{}</string>\n",
+            xml_escape(user)
+        ));
+    }
     out.push_str("    <key>ProgramArguments</key>\n    <array>\n");
     for arg in program_args {
         out.push_str(&format!("      <string>{}</string>\n", xml_escape(arg)));
@@ -343,10 +406,24 @@ fn launchctl(args: &[&str]) -> anyhow::Result<std::process::Output> {
         .with_context(|| format!("failed to run launchctl {}", args.join(" ")))
 }
 
-fn launchctl_success(args: &[&str]) -> bool {
-    launchctl(args)
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+fn launchctl_checked(args: &[&str]) -> anyhow::Result<()> {
+    let output = launchctl(args)?;
+    check_launchctl_output(args, &output)
+}
+
+fn check_launchctl_output(args: &[&str], output: &std::process::Output) -> anyhow::Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    anyhow::bail!("launchctl {} failed: {detail}", args.join(" "))
 }
 
 fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
@@ -355,14 +432,31 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
     }
 
     validate_launchd_label(&args.label)?;
-    let install_root = resolve_install_root()?;
     let bin = std::env::current_exe().context("failed to resolve current executable")?;
+    let install_root = if args.system {
+        if current_uid()? != "0" {
+            anyhow::bail!("system service installation requires root; rerun with sudo");
+        }
+        bin.parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .context("failed to derive install root from oored binary")?
+    } else {
+        resolve_install_root()?
+    };
     let log_dir = install_root.join("logs");
     let log_path = log_dir.join("oored.log");
-    let plist_path = launch_agent_plist_path(&args.label)?;
+    let plist_path = if args.system {
+        launch_daemon_plist_path(&args.label)?
+    } else {
+        launch_agent_plist_path(&args.label)?
+    };
 
     fs::create_dir_all(&log_dir).context("failed to create oored log directory")?;
-    fs::create_dir_all(launch_agent_dir()?).context("failed to create LaunchAgents directory")?;
+    if !args.system {
+        fs::create_dir_all(launch_agent_dir()?)
+            .context("failed to create LaunchAgents directory")?;
+    }
 
     let mut program_args = vec![
         bin.display().to_string(),
@@ -376,13 +470,27 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
     }
 
     let env = service_environment(&args.env)?;
-    let plist = render_launchd_plist(&args.label, &program_args, &env, &log_path, &install_root);
+    let service_user = args.user.as_deref();
+    if args.system && service_user.is_none() {
+        anyhow::bail!("--user is required with --system");
+    }
+    let plist = render_launchd_plist(
+        &args.label,
+        &program_args,
+        &env,
+        &log_path,
+        &install_root,
+        service_user,
+    );
     fs::write(&plist_path, plist)
         .with_context(|| format!("failed to write {}", plist_path.display()))?;
 
-    let uid = current_uid()?;
-    let service = format!("gui/{uid}/{}", args.label);
-    let domain = format!("gui/{uid}");
+    let (service, domain) = if args.system {
+        (format!("system/{}", args.label), "system".to_string())
+    } else {
+        let uid = current_uid()?;
+        (format!("gui/{uid}/{}", args.label), format!("gui/{uid}"))
+    };
 
     if args.no_start {
         println!("Installed launchd service plist: {}", plist_path.display());
@@ -395,14 +503,12 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
 
     let _ = launchctl(&["bootout", &service]);
     let plist_str = plist_path.display().to_string();
-    let bootstrapped = launchctl_success(&["bootstrap", &domain, &plist_str]);
-    if !bootstrapped && !launchctl_success(&["load", "-w", &plist_str]) {
-        anyhow::bail!(
-            "failed to bootstrap launchd service. Try: launchctl bootstrap {domain} {}",
-            plist_path.display()
-        );
+    if launchctl_checked(&["bootstrap", &domain, &plist_str]).is_err() {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        launchctl_checked(&["bootstrap", &domain, &plist_str])?;
     }
-    let _ = launchctl(&["kickstart", "-k", &service]);
+    launchctl_checked(&["kickstart", "-k", &service])?;
+    launchctl_checked(&["print", &service])?;
 
     println!("Installed and started launchd service: {}", args.label);
     println!("Plist: {}", plist_path.display());
@@ -417,9 +523,20 @@ fn uninstall_service(args: UninstallServiceArgs) -> anyhow::Result<()> {
     }
 
     validate_launchd_label(&args.label)?;
-    let plist_path = launch_agent_plist_path(&args.label)?;
-    let uid = current_uid()?;
-    let service = format!("gui/{uid}/{}", args.label);
+    if args.system && current_uid()? != "0" {
+        anyhow::bail!("system service removal requires root; rerun with sudo");
+    }
+    let plist_path = if args.system {
+        launch_daemon_plist_path(&args.label)?
+    } else {
+        launch_agent_plist_path(&args.label)?
+    };
+    let service = if args.system {
+        format!("system/{}", args.label)
+    } else {
+        let uid = current_uid()?;
+        format!("gui/{uid}/{}", args.label)
+    };
 
     let _ = launchctl(&["bootout", &service]);
     let _ = launchctl(&["remove", &args.label]);
@@ -463,6 +580,22 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn launchctl_failure_reports_command_and_stderr() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"Bootstrap failed: 5: Input/output error\n".to_vec(),
+        };
+
+        let error = check_launchctl_output(&["bootstrap", "system", "/tmp/oored.plist"], &output)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("launchctl bootstrap system /tmp/oored.plist failed"));
+        assert!(error.contains("Bootstrap failed: 5: Input/output error"));
+    }
 
     #[test]
     fn launchd_plist_escapes_program_args_and_env() {
@@ -482,6 +615,7 @@ mod tests {
             &env,
             Path::new("/tmp/oore<log>.log"),
             Path::new("/tmp/oore&root"),
+            None,
         );
 
         assert!(plist.contains("<string>build.oore.oored</string>"));
@@ -489,6 +623,17 @@ mod tests {
         assert!(plist.contains("https://ci.example.com?a=1&amp;b=2"));
         assert!(plist.contains("/tmp/oore&lt;log&gt;.log"));
         assert!(plist.contains("/tmp/oore&amp;root"));
+        assert!(!plist.contains("<key>UserName</key>"));
+
+        let system_plist = render_launchd_plist(
+            "build.oore.oored",
+            &args,
+            &env,
+            Path::new("/tmp/oore.log"),
+            Path::new("/Users/appbuilder/.oore"),
+            Some("appbuilder"),
+        );
+        assert!(system_plist.contains("<key>UserName</key>\n    <string>appbuilder</string>"));
     }
 
     #[test]
@@ -510,5 +655,24 @@ mod tests {
         );
         assert!(parse_env_assignment("1BAD=value").is_err());
         assert!(parse_env_assignment("MISSING_VALUE").is_err());
+    }
+
+    #[test]
+    fn adds_loopback_companion_only_for_specific_non_loopback_binds() {
+        let netbird: SocketAddr = "100.107.193.1:8787".parse().unwrap();
+        let loopback: SocketAddr = "127.0.0.1:8787".parse().unwrap();
+        let wildcard: SocketAddr = "0.0.0.0:8787".parse().unwrap();
+
+        assert_eq!(
+            loopback_companion_addr(netbird),
+            Some("127.0.0.1:8787".parse().unwrap())
+        );
+        assert_eq!(loopback_companion_addr(loopback), None);
+        assert_eq!(loopback_companion_addr(wildcard), None);
+        assert_eq!(embedded_runner_url(netbird), "http://127.0.0.1:8787");
+        assert_eq!(
+            embedded_runner_url("[fd00::1]:8787".parse().unwrap()),
+            "http://[::1]:8787"
+        );
     }
 }

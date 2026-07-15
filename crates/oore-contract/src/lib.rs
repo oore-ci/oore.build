@@ -68,6 +68,17 @@ pub struct SetupStatus {
     pub is_configured: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct FrontendPairRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct FrontendPairResponse {
+    pub backend_proof: String,
+    pub user_email_header: String,
+}
+
 impl SetupStatus {
     pub fn from_state(
         instance_id: impl Into<String>,
@@ -353,6 +364,23 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdatePhase {
+    Idle,
+    Updating,
+    Restarting,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RuntimeUpdateStatus {
+    pub phase: RuntimeUpdatePhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub managed_service: bool,
+}
+
 // ── User management types ───────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -447,6 +475,13 @@ pub struct UpdateUserRoleResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ReEnableUserResponse {
     pub user: User,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PreviewQaUserResponse {
+    pub session_token: String,
+    pub expires_at: i64,
+    pub user: AuthenticatedUser,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -589,6 +624,8 @@ pub struct IntegrationRepository {
     pub full_name: String,
     pub default_branch: Option<String>,
     pub is_private: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -952,11 +989,15 @@ pub struct Build {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runner_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<BuildContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step_results: Option<Vec<StepResult>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -968,6 +1009,16 @@ pub struct Build {
     pub finished_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildContext {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runner_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -989,17 +1040,30 @@ pub struct BuildEvent {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateBuildRequest {
     pub pipeline_id: String,
+    /// Optional one-run platform selection. Omitted builds every platform configured by the pipeline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<BuildPlatform>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateBuildResponse {
     pub build: Build,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BuildChangelogPreviewResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    pub target_commit: String,
+    pub markdown: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1099,6 +1163,13 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
 }
 
+pub const RUNNER_PROTOCOL_VERSION: u32 = 2;
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ClaimJobRequest {
+    pub protocol_version: u32,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct UpdateRunnerRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1177,6 +1248,7 @@ pub struct Artifact {
     #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub created_at: i64,
+    pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
 }
@@ -1201,6 +1273,22 @@ pub struct CreateArtifactResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CompleteArtifactRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CompleteArtifactResponse {
+    pub artifact: Artifact,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildArtifactsRequest {
+    pub build_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListArtifactsResponse {
     pub artifacts: Vec<Artifact>,
 }
@@ -1208,6 +1296,23 @@ pub struct ListArtifactsResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ArtifactDownloadLinkResponse {
     pub download_url: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactInstallPlatform {
+    Android,
+    Ios,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ArtifactInstallLinkResponse {
+    pub platform: ArtifactInstallPlatform,
+    pub install_url: String,
+    pub download_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_url: Option<String>,
     pub expires_at: i64,
 }
 
@@ -1458,6 +1563,8 @@ pub enum ExternalAccessNetworkSource {
 pub struct ExternalAccessNetworkSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
     pub source: ExternalAccessNetworkSource,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1473,6 +1580,8 @@ pub struct ExternalAccessNetworkSettingsResponse {
 pub struct UpdateExternalAccessNetworkSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
 }
 
@@ -1526,8 +1635,18 @@ pub struct TrustedProxySettingsPublic {
     pub user_email_header: String,
     pub trusted_proxy_cidrs: Vec<String>,
     pub has_shared_secret: bool,
+    pub has_warpgate_ticket: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warpgate_ticket_source: Option<WarpgateTicketSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpgateTicketSource {
+    Database,
+    Environment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -1543,6 +1662,8 @@ pub struct UpdateTrustedProxySettingsRequest {
     pub trusted_proxy_cidrs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warpgate_ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -1579,6 +1700,12 @@ pub struct Project {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_full_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_provider: Option<String>,
     #[schema(value_type = Object)]
     pub settings: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1723,6 +1850,7 @@ pub enum BuildPlatform {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PipelineCommandStages {
     #[serde(default)]
     pub pre_build: Vec<String>,
@@ -1733,6 +1861,7 @@ pub struct PipelineCommandStages {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PlatformBuildArgs {
     #[serde(default)]
     pub android: Vec<String>,
@@ -1743,6 +1872,7 @@ pub struct PlatformBuildArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PlatformBuildCommands {
     #[serde(default)]
     pub android: Option<String>,
@@ -1753,6 +1883,7 @@ pub struct PlatformBuildCommands {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PipelineEnvVar {
     pub key: String,
     pub value: String,
@@ -1776,12 +1907,260 @@ pub struct PipelineExecutionConfig {
     pub artifact_patterns: Vec<String>,
 }
 
+/// Secret-free representation of a repository-owned pipeline config.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryWorkflowPreview {
+    pub path: String,
+    pub valid: bool,
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<RepositoryWorkflowExecutionPreview>,
+}
+
+/// Pipeline behavior safe to show before import. Environment values are never returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryWorkflowExecutionPreview {
+    pub platforms: Vec<BuildPlatform>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flutter_version: Option<String>,
+    pub commands: PipelineCommandStages,
+    pub platform_build_args: PlatformBuildArgs,
+    pub platform_commands: PlatformBuildCommands,
+    pub env_keys: Vec<String>,
+    pub artifact_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DiscoverRepositoryWorkflowsResponse {
+    pub project_id: String,
+    pub provider: ScmProvider,
+    /// Branch, tag, or commit requested for discovery.
+    pub reference: String,
+    pub workflows: Vec<RepositoryWorkflowPreview>,
+    /// True when more matching files existed than the bounded response could inspect.
+    pub truncated: bool,
+}
+
 fn default_platforms() -> Vec<BuildPlatform> {
     vec![BuildPlatform::Android]
 }
 
 fn default_artifact_patterns() -> Vec<String> {
-    vec!["*.apk".to_string()]
+    vec!["build/app/outputs/flutter-apk/*.apk".to_string()]
+}
+
+pub fn default_artifact_patterns_for_platforms(platforms: &[BuildPlatform]) -> Vec<String> {
+    let mut patterns = Vec::new();
+    if platforms.contains(&BuildPlatform::Android) {
+        patterns.extend([
+            "build/app/outputs/flutter-apk/*.apk".to_string(),
+            "build/app/outputs/bundle/**/*.aab".to_string(),
+        ]);
+    }
+    if platforms.contains(&BuildPlatform::Ios) {
+        patterns.push("build/ios/ipa/*.ipa".to_string());
+    }
+    if platforms.contains(&BuildPlatform::Macos) {
+        patterns.push("build/macos/Build/Products/Release/*.app".to_string());
+    }
+    patterns
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryPipelineConfig {
+    version: u32,
+    platforms: Vec<BuildPlatform>,
+    #[serde(default)]
+    flutter_version: Option<String>,
+    #[serde(default)]
+    commands: PipelineCommandStages,
+    #[serde(default)]
+    platform_build_args: PlatformBuildArgs,
+    #[serde(default)]
+    platform_commands: PlatformBuildCommands,
+    #[serde(default)]
+    env: Vec<PipelineEnvVar>,
+    #[serde(default)]
+    artifacts: Option<RepositoryArtifacts>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryArtifacts {
+    #[serde(default)]
+    patterns: Vec<String>,
+}
+
+pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConfig, String> {
+    let parsed: RepositoryPipelineConfig =
+        serde_yaml::from_str(raw).map_err(|error| format!("YAML parse error: {error}"))?;
+    if parsed.version != 1 {
+        return Err(format!(
+            "unsupported config version {}, expected 1",
+            parsed.version
+        ));
+    }
+
+    let artifact_patterns = parsed.artifacts.map_or_else(
+        || default_artifact_patterns_for_platforms(&parsed.platforms),
+        |artifacts| artifacts.patterns,
+    );
+    let config = PipelineExecutionConfig {
+        platforms: parsed.platforms,
+        flutter_version: parsed.flutter_version,
+        commands: parsed.commands,
+        platform_build_args: parsed.platform_build_args,
+        platform_commands: parsed.platform_commands,
+        env: parsed.env,
+        artifact_patterns,
+    };
+    let errors = validate_repository_execution_config(&config);
+    if errors.is_empty() {
+        Ok(config)
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+pub fn validate_artifact_pattern(pattern: &str) -> Result<(), String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if pattern.len() > 512 {
+        return Err("is too long (max 512 chars)".to_string());
+    }
+    if !pattern.contains(['*', '?']) {
+        return Err("must contain '*' or '?'".to_string());
+    }
+    if pattern.contains('\\') || pattern.starts_with('/') {
+        return Err("must be a workspace-relative path using '/' separators".to_string());
+    }
+    if pattern
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("must not contain empty, '.' or '..' path segments".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_repository_config_path(path: &str) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if path.len() > 512 {
+        return Err("is too long (max 512 chars)".to_string());
+    }
+    if path.starts_with('/') {
+        return Err("must be a repository-relative path".to_string());
+    }
+    if path.contains('\\') {
+        return Err("must use '/' separators".to_string());
+    }
+    if path
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("must not contain empty, '.' or '..' path segments".to_string());
+    }
+    Ok(())
+}
+
+pub fn artifact_pattern_matches(pattern: &str, relative_path: &str) -> bool {
+    fn segment_matches(pattern: &[u8], value: &[u8]) -> bool {
+        let (mut p, mut v, mut star, mut retry) = (0, 0, None, 0);
+        while v < value.len() {
+            if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == value[v]) {
+                p += 1;
+                v += 1;
+            } else if p < pattern.len() && pattern[p] == b'*' {
+                star = Some(p);
+                p += 1;
+                retry = v;
+            } else if let Some(star_pos) = star {
+                p = star_pos + 1;
+                retry += 1;
+                v = retry;
+            } else {
+                return false;
+            }
+        }
+        while p < pattern.len() && pattern[p] == b'*' {
+            p += 1;
+        }
+        p == pattern.len()
+    }
+
+    fn path_matches(pattern: &[&str], path: &[&str]) -> bool {
+        match pattern.split_first() {
+            None => path.is_empty(),
+            Some((&"**", rest)) => {
+                path_matches(rest, path) || (!path.is_empty() && path_matches(pattern, &path[1..]))
+            }
+            Some((segment, rest)) => {
+                !path.is_empty()
+                    && segment_matches(segment.as_bytes(), path[0].as_bytes())
+                    && path_matches(rest, &path[1..])
+            }
+        }
+    }
+
+    let pattern = pattern.trim();
+    if !pattern.contains('/') {
+        return relative_path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| segment_matches(pattern.as_bytes(), name.as_bytes()));
+    }
+    path_matches(
+        &pattern.split('/').collect::<Vec<_>>(),
+        &relative_path.split('/').collect::<Vec<_>>(),
+    )
+}
+
+fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec<String> {
+    fn valid_env_key(key: &str) -> bool {
+        let mut chars = key.chars();
+        chars
+            .next()
+            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+            && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+    }
+    let mut errors = Vec::new();
+    if config.platforms.is_empty() {
+        errors.push("platforms must include at least one target".to_string());
+    }
+    for (stage, commands) in [
+        ("pre_build", &config.commands.pre_build),
+        ("build", &config.commands.build),
+        ("post_build", &config.commands.post_build),
+    ] {
+        for (index, command) in commands.iter().enumerate() {
+            if command.trim().is_empty() {
+                errors.push(format!("commands.{stage}[{index}] must not be empty"));
+            }
+        }
+    }
+    for (index, pattern) in config.artifact_patterns.iter().enumerate() {
+        if let Err(error) = validate_artifact_pattern(pattern) {
+            errors.push(format!("artifacts.patterns[{index}] {error}"));
+        }
+    }
+    let mut env_keys = std::collections::HashSet::new();
+    for (index, entry) in config.env.iter().enumerate() {
+        let key = entry.key.trim();
+        if !valid_env_key(key) {
+            errors.push(format!(
+                "env[{index}].key must match [A-Za-z_][A-Za-z0-9_]*"
+            ));
+        } else if !env_keys.insert(key) {
+            errors.push(format!("env contains duplicate key '{key}'"));
+        }
+    }
+    errors
 }
 
 impl Default for PipelineExecutionConfig {
@@ -1877,6 +2256,8 @@ pub struct ValidatePipelineRequest {
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_yaml: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -2464,7 +2845,75 @@ mod tests {
         assert!(cfg.platform_build_args.android.is_empty());
         assert!(cfg.platform_commands.android.is_none());
         assert!(cfg.env.is_empty());
-        assert_eq!(cfg.artifact_patterns, vec!["*.apk".to_string()]);
+        assert_eq!(
+            cfg.artifact_patterns,
+            vec!["build/app/outputs/flutter-apk/*.apk".to_string()]
+        );
+    }
+
+    #[test]
+    fn repository_pipeline_yaml_and_artifact_globs_share_the_runtime_contract() {
+        let config = parse_repository_pipeline_yaml(
+            r#"
+version: 1
+platforms: [android, ios, macos]
+commands:
+  build: ["flutter test"]
+artifacts:
+  patterns:
+    - "*.apk"
+    - "build/ios/**/*.ipa"
+    - "build/macos/Build/Products/Release/*.app"
+"#,
+        )
+        .expect("valid repository config");
+        assert_eq!(config.artifact_patterns.len(), 3);
+        assert!(artifact_pattern_matches(
+            "*.apk",
+            "build/app/outputs/app.apk"
+        ));
+        assert!(artifact_pattern_matches(
+            "build/ios/**/*.ipa",
+            "build/ios/ipa/app.ipa"
+        ));
+        assert!(!artifact_pattern_matches(
+            "build/ios/*.ipa",
+            "build/ios/ipa/app.ipa"
+        ));
+    }
+
+    #[test]
+    fn repository_pipeline_yaml_rejects_unsupported_fields_and_unsafe_globs() {
+        let triggers = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\ntriggers: { events: [push] }\n",
+        )
+        .expect_err("triggers are managed by the pipeline, not repository YAML");
+        assert!(triggers.contains("unknown field `triggers`"));
+
+        let traversal = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nartifacts: { patterns: ['../*.apk'] }\n",
+        )
+        .expect_err("parent traversal must fail");
+        assert!(traversal.contains("'..'"));
+    }
+
+    #[test]
+    fn repository_config_paths_must_stay_within_the_checkout() {
+        for path in [".oore.yaml", ".oore/mobile.yaml", "ci/release.yml"] {
+            assert!(validate_repository_config_path(path).is_ok(), "{path}");
+        }
+
+        for path in [
+            "",
+            "/etc/oore.yaml",
+            "../.oore.yaml",
+            "./.oore.yaml",
+            ".oore//mobile.yaml",
+            ".oore\\mobile.yaml",
+            &"a".repeat(513),
+        ] {
+            assert!(validate_repository_config_path(path).is_err(), "{path}");
+        }
     }
 
     #[test]

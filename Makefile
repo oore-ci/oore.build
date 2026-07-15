@@ -1,6 +1,6 @@
-.PHONY: dev-web dev-docs dev-site build-web build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build check \
-		       test-web lint-web fix-web \
-		       test-docs lint-docs fix-docs test-rust \
+.PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index web-performance-baseline test-web-performance-baseline test-web-runtime-performance build check \
+		       test-web test-demo lint-web fix-web \
+		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
@@ -27,9 +27,14 @@ PAGES_PROJECT_WEB ?= oore-ci
 PAGES_PROJECT_DEMO ?= oore-demo
 PAGES_PROJECT_SITE ?= oore
 PAGES_PROJECT_DOCS ?= oore-docs
+PAGES_PROJECT_RELEASES ?= oore-releases
+PAGES_RELEASES_BRANCH ?= production
 PAGES_BRANCH ?=
 PAGES_COMMIT_HASH ?=
 PAGES_COMMIT_MESSAGE ?=
+RELEASE_INDEX_SOURCE ?= dist/github-releases.json
+RELEASE_INDEX_OUTPUT ?= dist/release-index
+RELEASE_INDEX_REPOSITORY ?= oore-ci/oore.build
 
 # If PAGES_BRANCH is set (e.g. alpha/beta), deploy to a Pages preview branch.
 # Important: avoid leaving behind extra whitespace in the shell command when unset.
@@ -44,6 +49,9 @@ dev-web:
 
 build-web:
 	bun run build:web
+
+bundle-check: build-web
+	bun run bundle:check
 
 deploy-web: build-web
 	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
@@ -62,6 +70,9 @@ deploy-demo-only:
 
 test-web:
 	cd apps/web && bun run test
+
+test-demo:
+	cd apps/web && bun run test src/demo/demo.test.ts src/hooks/use-permissions.test.ts
 
 lint-web:
 	cd apps/web && bun run lint
@@ -93,6 +104,25 @@ deploy-docs: build-docs
 
 deploy-docs-only:
 	$(WRANGLER) pages deploy apps/docs-site/docs/.vitepress/dist --project-name=$(PAGES_PROJECT_DOCS)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
+
+# ── Release discovery index ───────────────────────────────────────
+build-release-index:
+	bun tools/generate-release-index.ts $(RELEASE_INDEX_SOURCE) $(RELEASE_INDEX_OUTPUT) $(RELEASE_INDEX_REPOSITORY)
+
+deploy-release-index-only:
+	$(WRANGLER) pages deploy $(RELEASE_INDEX_OUTPUT) --project-name=$(PAGES_PROJECT_RELEASES) --branch=$(PAGES_RELEASES_BRANCH)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
+
+test-release-index:
+	bun test tools/generate-release-index.test.ts
+
+web-performance-baseline:
+	bun tools/web-performance-baseline.ts
+
+test-web-performance-baseline:
+	bun test tools/web-performance-baseline.test.ts
+
+test-web-runtime-performance:
+	bun tools/web-runtime-performance.ts
 
 test-docs:
 	cd apps/docs-site && bun run test
@@ -141,6 +171,9 @@ install-local:
 test-rust:
 	cargo test -p oored --features test-support
 
+test-install:
+	bash scripts/install-acceptance.sh
+
 # ── Rust: Lint/Fmt/Clippy/Test ───────────────────────────────────
 fmt-rust:
 	cargo fmt
@@ -176,6 +209,15 @@ docs-check:
 ui-init:
 	bun run ui:init
 
+ui-diff:
+	bun run ui:diff
+
+ui-update:
+	bun run ui:update
+
+deps-update:
+	bun run deps:update
+
 # ── Portless (named .localhost URLs for dev) ─────────────────────
 # Start the portless reverse proxy (run once, stays in background)
 portless-proxy:
@@ -196,9 +238,9 @@ check: lint-web cargo-check
 
 lint: lint-web lint-docs fmt-rust-check
 
-test: test-web test-docs test-rust-workspace
+test: test-web test-demo test-docs test-release-index test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
-validate: docs-check lint test clippy-rust build-web build-docs build-site cargo-check
+validate: docs-check lint test clippy-rust bundle-check build-docs build-site cargo-check
 
 validate-ci:
 	bash tools/validate-ci.sh

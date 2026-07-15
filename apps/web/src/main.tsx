@@ -6,7 +6,6 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
 
 import './styles.css'
-import reportWebVitals from './reportWebVitals.ts'
 
 function createAppRouter() {
   return createRouter({
@@ -26,6 +25,7 @@ declare module '@tanstack/react-router' {
   }
   interface StaticDataRouteOption {
     breadcrumbLabel?: string
+    breadcrumbParent?: { label: string; to: string }
   }
 }
 
@@ -55,5 +55,23 @@ async function boot() {
 
 void boot()
 
-// Report Core Web Vitals to console in development
-reportWebVitals(import.meta.env.DEV ? console.log : undefined)
+const startPerformanceMonitoring = () => {
+  void import('./web-performance')
+    .then(({ startWebPerformanceMonitoring }) =>
+      startWebPerformanceMonitoring(),
+    )
+    .catch(() => {
+      // Monitoring is best-effort and must not affect app startup.
+    })
+}
+
+const requestIdleCallback = (
+  window as unknown as {
+    requestIdleCallback?: Window['requestIdleCallback']
+  }
+).requestIdleCallback
+if (requestIdleCallback) {
+  requestIdleCallback(startPerformanceMonitoring, { timeout: 2_000 })
+} else {
+  setTimeout(startPerformanceMonitoring, 0)
+}

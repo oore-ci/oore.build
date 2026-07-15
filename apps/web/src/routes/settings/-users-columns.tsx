@@ -2,6 +2,7 @@ import {
   ArrowUpDownIcon,
   Cancel01Icon,
   MoreHorizontalCircle01Icon,
+  PlayIcon,
   UserCheck01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -50,13 +51,22 @@ const STATUS_BADGE_VARIANT: Record<string, 'success' | 'info' | 'destructive'> =
 
 export interface UserColumnOptions {
   authUserId: string | undefined
+  canPreviewQa: boolean
   onRoleChange: (userId: string, email: string, newRole: UserRole) => void
+  onPreviewQa: (userId: string, email: string) => void
   onDisable: (userId: string, email: string) => void
   onReEnable: (userId: string, email: string) => void
 }
 
 export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
-  const { authUserId, onRoleChange, onDisable, onReEnable } = options
+  const {
+    authUserId,
+    canPreviewQa,
+    onRoleChange,
+    onPreviewQa,
+    onDisable,
+    onReEnable,
+  } = options
 
   return [
     {
@@ -94,7 +104,7 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
           onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
         >
           Email
-          <HugeiconsIcon icon={ArrowUpDownIcon} size={14} />
+          <HugeiconsIcon icon={ArrowUpDownIcon} />
         </Button>
       ),
       cell: ({ row }) => {
@@ -119,7 +129,7 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
           onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
         >
           Role
-          <HugeiconsIcon icon={ArrowUpDownIcon} size={14} />
+          <HugeiconsIcon icon={ArrowUpDownIcon} />
         </Button>
       ),
       cell: ({ row }) => {
@@ -164,17 +174,37 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
           <div className="text-right">
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button variant="ghost" size="icon-sm" />}
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Open user actions"
+                    title="Open user actions"
+                  />
+                }
               >
-                <HugeiconsIcon icon={MoreHorizontalCircle01Icon} size={16} />
+                <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
                 <span className="sr-only">Open menu</span>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-auto">
                 {!isDisabled ? (
                   <>
+                    {canPreviewQa &&
+                    user.role === 'qa_viewer' &&
+                    user.status === 'active' ? (
+                      <>
+                        <DropdownMenuItem
+                          onClick={() => onPreviewQa(user.id, user.email)}
+                        >
+                          <HugeiconsIcon icon={PlayIcon} size={14} />
+                          Preview as QA
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    ) : null}
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger>
-                        Change Role
+                        Change role
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent>
                         <DropdownMenuRadioGroup value={user.role}>
@@ -202,7 +232,7 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
                       onClick={() => onDisable(user.id, user.email)}
                     >
                       <HugeiconsIcon icon={Cancel01Icon} size={14} />
-                      Disable User
+                      Disable user
                     </DropdownMenuItem>
                   </>
                 ) : (

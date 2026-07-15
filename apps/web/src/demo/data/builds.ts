@@ -56,6 +56,7 @@ export const demoBuilds: Array<Build> = [
     trigger_actor: USER_IDS.developer,
     commit_sha: 'f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9',
     branch: 'main',
+    changelog: 'Adds receipt sharing and improves payment retry messaging.',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macMini,
     step_results: [
@@ -86,6 +87,7 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'refs/heads/main',
     commit_sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
     branch: 'main',
+    changelog: 'Adds wishlist sharing and smoother cart updates.',
     config_snapshot: {},
     queued_at: ago(60),
     created_at: ago(60),
@@ -104,6 +106,8 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'refs/heads/main',
     commit_sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1',
     branch: 'main',
+    changelog:
+      'Faster checkout, clearer payment errors, and fixes for saved delivery addresses.',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     step_results: [
@@ -194,6 +198,8 @@ export const demoBuilds: Array<Build> = [
     trigger_actor: USER_IDS.owner,
     commit_sha: 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
     branch: 'main',
+    changelog:
+      'Faster checkout, clearer payment errors, and fixes for saved delivery addresses.',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     step_results: [
@@ -413,6 +419,53 @@ export const demoBuilds: Array<Build> = [
     finished_at: ago(114900),
     created_at: ago(115200),
     updated_at: ago(114900),
+  },
+  {
+    id: BUILD_IDS.succeeded6,
+    project_id: PROJECT_IDS.nativePayments,
+    pipeline_id: PIPELINE_IDS.paymentsAll,
+    build_number: 44,
+    status: 'succeeded',
+    trigger_type: 'manual',
+    trigger_actor: USER_IDS.developer,
+    commit_sha: 'e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
+    branch: 'release/3.2.0',
+    changelog:
+      'Adds saved payment methods, improves receipt sharing, and refreshes retry guidance.',
+    config_snapshot: {},
+    runner_id: RUNNER_IDS.macStudio,
+    step_results: [
+      {
+        name: 'flutter analyze',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(172500),
+        finished_at: ago(172440),
+        duration_ms: 60000,
+      },
+      {
+        name: 'Android release',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(172440),
+        finished_at: ago(172080),
+        duration_ms: 360000,
+      },
+      {
+        name: 'iOS release',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(172080),
+        finished_at: ago(171540),
+        duration_ms: 540000,
+      },
+    ],
+    exit_code: 0,
+    queued_at: ago(172560),
+    started_at: ago(172500),
+    finished_at: ago(171540),
+    created_at: ago(172560),
+    updated_at: ago(171540),
   },
 ]
 

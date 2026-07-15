@@ -1,11 +1,7 @@
-import { useMemo, useState } from 'react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import z from 'zod'
+import { lazy, Suspense, useMemo, useState } from 'react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
   Delete02Icon,
   InformationCircleIcon,
   PlayIcon,
@@ -17,14 +13,10 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
-import { useHasPermission } from '@/hooks/use-permissions'
-import { usePipelines } from '@/hooks/use-pipelines'
-import {
-  useDeleteProject,
-  useProject,
-  useUpdateProject,
-} from '@/hooks/use-projects'
-import { getStatusVariant } from '@/lib/status-variants'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
+import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
+import { useDeleteProject, useProject } from '@/hooks/use-projects'
+import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -46,41 +38,49 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import PipelineCard from '@/components/pipeline-card'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import { ProjectBuildsTab, ProjectPipelinesTab } from './project-detail-tabs'
+
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
+const loadProjectSettingsForm = () => import('./project-settings-form')
+const ProjectSettingsForm = lazy(() =>
+  loadProjectSettingsForm().then((module) => ({
+    default: module.ProjectSettingsForm,
+  })),
+)
+const loadProjectAccessCard = () => import('./-project-access-card')
+const ProjectAccessCard = lazy(() =>
+  loadProjectAccessCard().then((module) => ({
+    default: module.ProjectAccessCard,
+  })),
+)
 
 const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
-const tabSearch = z.object({
-  tab: z.enum(TAB_VALUES).optional().catch(undefined),
-})
+function validateTabSearch(search: Record<string, unknown>): {
+  tab?: TabValue
+} {
+  const tab = search.tab
+  return {
+    tab:
+      typeof tab === 'string' && TAB_VALUES.includes(tab as TabValue)
+        ? (tab as TabValue)
+        : undefined,
+  }
+}
 
 export const Route = createFileRoute('/projects/$projectId/')({
-  staticData: { breadcrumbLabel: 'Details' },
-  validateSearch: tabSearch,
+  staticData: {
+    breadcrumbLabel: 'Details',
+    breadcrumbParent: { label: 'Projects', to: '/projects' },
+  },
+  validateSearch: validateTabSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -88,128 +88,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
   component: ProjectDetailPage,
 })
 
-/* ------------------------------------------------------------------ */
-/*  Settings tab: inline project edit form                             */
-/* ------------------------------------------------------------------ */
-
-const editProjectSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  description: z.string().optional(),
-  default_branch: z.string().optional(),
-})
-
-type EditProjectForm = z.infer<typeof editProjectSchema>
-
-function ProjectSettingsForm({
-  projectId,
-  currentValues,
-}: {
-  projectId: string
-  currentValues: { name: string; description?: string; default_branch?: string }
-}) {
-  const updateMutation = useUpdateProject()
-
-  const form = useForm<EditProjectForm>({
-    resolver: zodResolver(editProjectSchema),
-    defaultValues: {
-      name: currentValues.name,
-      description: currentValues.description ?? '',
-      default_branch: currentValues.default_branch ?? '',
-    },
-    values: {
-      name: currentValues.name,
-      description: currentValues.description ?? '',
-      default_branch: currentValues.default_branch ?? '',
-    },
-    mode: 'onBlur',
-  })
-
-  function onSubmit(data: EditProjectForm) {
-    updateMutation.mutate(
-      {
-        projectId,
-        data: {
-          name: data.name.trim(),
-          description: data.description?.trim() || undefined,
-          default_branch: data.default_branch?.trim() || undefined,
-        },
-      },
-      {
-        onSuccess: () => toast.success('Project updated'),
-        onError: (err) =>
-          toast.error(`Failed to update project: ${err.message}`),
-      },
-    )
-  }
-
-  return (
-    <Card>
-      <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Name</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="default_branch"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default Branch</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="flex justify-end">
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? (
-                  <>
-                    <Spinner className="size-4" />
-                    Saving...
-                  </>
-                ) : (
-                  'Save'
-                )}
-              </Button>
-            </div>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Main page                                                          */
-/* ------------------------------------------------------------------ */
-
-function ProjectDetailPage() {
+function useProjectDetailPageState() {
   const { projectId } = Route.useParams()
   const { tab } = Route.useSearch()
   const navigate = useNavigate()
@@ -220,10 +99,34 @@ function ProjectDetailPage() {
     { refetchInterval: 15_000 },
   )
   const deleteMutation = useDeleteProject()
-  const canWriteProjects = useHasPermission('projects', 'write')
-  const canDeleteProjects = useHasPermission('projects', 'delete')
-  const canWritePipelines = useHasPermission('pipelines', 'write')
-  const canTriggerBuild = useHasPermission('builds', 'write')
+  const canWriteProjectsGlobally = useHasPermission('projects', 'write')
+  const canDeleteProjectsGlobally = useHasPermission('projects', 'delete')
+  const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
+  const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const projectRole = data?.current_user_role ?? data?.project.current_user_role
+  const canWriteProjects =
+    canWriteProjectsGlobally &&
+    hasProjectPermission(projectRole, 'projects', 'write')
+  const canDeleteProjects =
+    canDeleteProjectsGlobally &&
+    hasProjectPermission(projectRole, 'projects', 'delete')
+  const canWritePipelines =
+    canWritePipelinesGlobally &&
+    hasProjectPermission(projectRole, 'pipelines', 'write')
+  const canTriggerBuild =
+    canTriggerBuildGlobally &&
+    hasProjectPermission(projectRole, 'builds', 'write')
+  const authRole = useAuthStore((state) => state.user?.role)
+  const canManageAccess = authRole === 'owner' || authRole === 'admin'
+  const shouldDiscoverWorkflows =
+    canWritePipelines &&
+    !!data?.project.repository_id &&
+    (pipelinesData?.pipelines.length ?? 0) === 0
+  const repositoryWorkflowsQuery = useRepositoryWorkflows(
+    projectId,
+    undefined,
+    { enabled: shouldDiscoverWorkflows },
+  )
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [dangerOpen, setDangerOpen] = useState(false)
@@ -232,40 +135,45 @@ function ProjectDetailPage() {
     string | undefined
   >()
 
+  const builds = useMemo(() => buildsData?.builds ?? [], [buildsData?.builds])
+  const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
+    const byPipeline = new Map<string, { status: string; time: number }>()
+    let latestSucceeded: (typeof builds)[number] | null = null
+
+    for (const build of builds) {
+      if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
+        byPipeline.set(build.pipeline_id, {
+          status: build.status,
+          time: build.queued_at,
+        })
+      }
+      if (latestSucceeded === null && build.status === 'succeeded') {
+        latestSucceeded = build
+      }
+    }
+
+    return {
+      lastBuildByPipeline: byPipeline,
+      latestSucceededBuild: latestSucceeded,
+    }
+  }, [builds])
+
   const activeTab: TabValue = tab ?? 'pipelines'
 
   const label = data?.project.name ?? 'Project Details'
 
   if (isLoading) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-56 w-full" />
-      </PageLayout>
-    )
+    return { status: 'loading' as const, label }
   }
 
   if (error) {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={label} noindex />
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load project: {error.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
+    return { status: 'error' as const, label, message: error.message }
   }
 
-  if (!data) return null
+  if (!data) return { status: 'missing' as const }
 
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
-  const builds = buildsData?.builds ?? []
   const projectHasSource = !!project.repository_id
 
   function setTab(value: TabValue) {
@@ -290,38 +198,118 @@ function ProjectDetailPage() {
   }
 
   function openTriggerBuild(pipelineId?: string) {
-    setTriggerPipelineId(pipelineId)
+    setTriggerPipelineId(() => pipelineId)
     setTriggerBuildOpen(true)
   }
 
-  const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
-    const byPipeline = new Map<string, { status: string; time: number }>()
-    let latestSucceeded: (typeof builds)[number] | null = null
+  return {
+    status: 'ready' as const,
+    activeTab,
+    builds,
+    canDeleteProjects,
+    canManageAccess,
+    canTriggerBuild,
+    canWritePipelines,
+    canWriteProjects,
+    dangerOpen,
+    deleteMutation,
+    deleteOpen,
+    handleDelete,
+    label,
+    lastBuildByPipeline,
+    latestSucceededBuild,
+    navigate,
+    openTriggerBuild,
+    pipelines,
+    project,
+    projectHasSource,
+    projectId,
+    repositoryWorkflowsQuery,
+    setDangerOpen,
+    setDeleteOpen,
+    setTab,
+    setTriggerBuildOpen,
+    setTriggerPipelineId,
+    triggerBuildOpen,
+    triggerPipelineId,
+  }
+}
 
-    for (const build of builds) {
-      if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
-        byPipeline.set(build.pipeline_id, {
-          status: build.status,
-          time: build.queued_at,
-        })
-      }
-      if (latestSucceeded === null && build.status === 'succeeded') {
-        latestSucceeded = build
-      }
-    }
+function ProjectDetailPage() {
+  const pageState = useProjectDetailPageState()
 
-    return {
-      lastBuildByPipeline: byPipeline,
-      latestSucceededBuild: latestSucceeded,
-    }
-  }, [builds])
+  if (pageState.status === 'loading') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-10 w-72" />
+        <Skeleton className="h-56 w-full" />
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={pageState.label} noindex />
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Failed to load project: {pageState.message}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'missing') return null
+
+  const {
+    activeTab,
+    builds,
+    canDeleteProjects,
+    canManageAccess,
+    canTriggerBuild,
+    canWritePipelines,
+    canWriteProjects,
+    dangerOpen,
+    deleteMutation,
+    deleteOpen,
+    handleDelete,
+    label,
+    lastBuildByPipeline,
+    latestSucceededBuild,
+    navigate,
+    openTriggerBuild,
+    pipelines,
+    project,
+    projectHasSource,
+    projectId,
+    repositoryWorkflowsQuery,
+    setDangerOpen,
+    setDeleteOpen,
+    setTab,
+    setTriggerBuildOpen,
+    setTriggerPipelineId,
+    triggerBuildOpen,
+    triggerPipelineId,
+  } = pageState
+
+  const openBuild = (buildId: string) => {
+    void navigate({ to: '/builds/$buildId', params: { buildId } })
+  }
+
+  function preloadProjectSettings() {
+    if (canManageAccess) void loadProjectAccessCard()
+    if (canWriteProjects) void loadProjectSettingsForm()
+  }
 
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
       <PageHeader
         title={project.name}
-        back={{ to: '/projects', label: 'Projects' }}
         description={project.description}
         meta={
           <>
@@ -329,6 +317,17 @@ function ProjectDetailPage() {
               <Badge variant="outline" className="font-mono text-[11px]">
                 {project.default_branch}
               </Badge>
+            ) : null}
+            {project.repository_full_name ? (
+              <span className="flex items-center gap-1.5">
+                <RepositoryAvatar
+                  fullName={project.repository_full_name}
+                  avatarUrl={project.repository_avatar_url}
+                  repositoryId={project.repository_id}
+                  provider={project.repository_provider}
+                />
+                {project.repository_full_name}
+              </span>
             ) : null}
             <span>Updated {relativeTime(project.updated_at)}</span>
           </>
@@ -347,11 +346,13 @@ function ProjectDetailPage() {
                   }
                 >
                   <Button
+                    onMouseEnter={() => void loadTriggerBuildDialog()}
+                    onFocus={() => void loadTriggerBuildDialog()}
                     onClick={() => openTriggerBuild()}
                     disabled={pipelines.length === 0 || !projectHasSource}
                   >
-                    <HugeiconsIcon icon={PlayIcon} size={16} />
-                    Run Build
+                    <HugeiconsIcon icon={PlayIcon} />
+                    Run build
                   </Button>
                 </span>
               ) : null}
@@ -360,7 +361,7 @@ function ProjectDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} size={16} />
+                  <HugeiconsIcon icon={Delete02Icon} />
                   Delete
                 </Button>
               ) : null}
@@ -386,185 +387,71 @@ function ProjectDetailPage() {
           <TabsTrigger value="builds">
             Builds{builds.length > 0 ? ` (${builds.length})` : ''}
           </TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger
+            value="settings"
+            onMouseEnter={preloadProjectSettings}
+            onFocus={preloadProjectSettings}
+          >
+            Settings
+          </TabsTrigger>
         </TabsList>
 
-        {/* ---- Pipelines tab ---- */}
-        <TabsContent value="pipelines">
-          <div className="space-y-4 pt-2">
-            {canWritePipelines ? (
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  render={
-                    <Link
-                      to="/projects/$projectId/pipelines/new"
-                      params={{ projectId }}
-                    />
-                  }
-                >
-                  <HugeiconsIcon icon={Add01Icon} size={14} />
-                  Add Pipeline
-                </Button>
-              </div>
-            ) : null}
+        <ProjectPipelinesTab
+          canTriggerBuild={canTriggerBuild}
+          canWritePipelines={canWritePipelines}
+          defaultBranch={project.default_branch}
+          hasValidRepositoryWorkflow={
+            repositoryWorkflowsQuery.data?.workflows.some(
+              (workflow) => workflow.valid,
+            ) ?? false
+          }
+          lastBuildByPipeline={lastBuildByPipeline}
+          onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
+          onTriggerBuild={openTriggerBuild}
+          pipelines={pipelines}
+          projectHasSource={projectHasSource}
+          projectId={projectId}
+          workflowDiscoveryFailed={!!repositoryWorkflowsQuery.error}
+          workflowDiscoveryLoading={repositoryWorkflowsQuery.isLoading}
+        />
 
-            {pipelines.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                {canWritePipelines
-                  ? 'No pipelines yet. Add one to start building.'
-                  : 'No pipelines yet. Ask a developer or admin to add one.'}
-              </p>
-            ) : (
-              pipelines.map((pipeline) => {
-                const lb = lastBuildByPipeline.get(pipeline.id)
-                return (
-                  <PipelineCard
-                    key={pipeline.id}
-                    pipeline={pipeline}
-                    projectId={projectId}
-                    defaultBranch={project.default_branch}
-                    canWrite={canWritePipelines}
-                    canTriggerBuild={canTriggerBuild && projectHasSource}
-                    lastBuildStatus={lb?.status}
-                    lastBuildTime={lb?.time}
-                  />
-                )
-              })
-            )}
-          </div>
-        </TabsContent>
-
-        {/* ---- Builds tab ---- */}
-        <TabsContent value="builds">
-          <div className="pt-2">
-            <Card>
-              <CardContent>
-                {(() => {
-                  if (!latestSucceededBuild) return null
-                  return (
-                    <div className="mb-3 flex items-center gap-2 text-sm">
-                      <Badge variant="default" className="text-[10px]">
-                        Latest
-                      </Badge>
-                      <Link
-                        to="/builds/$buildId"
-                        params={{ buildId: latestSucceededBuild.id }}
-                        className="font-mono text-xs text-primary hover:underline"
-                      >
-                        Build #{latestSucceededBuild.build_number}
-                      </Link>
-                      <span className="text-xs text-muted-foreground">
-                        on {latestSucceededBuild.branch ?? 'n/a'} ·{' '}
-                        {relativeTime(latestSucceededBuild.queued_at)}
-                      </span>
-                    </div>
-                  )
-                })()}
-                {builds.length === 0 ? (
-                  <div className="space-y-2 py-6 text-center">
-                    <p className="text-sm text-muted-foreground">
-                      {canTriggerBuild
-                        ? 'No builds yet.'
-                        : 'No builds yet. Builds will appear here once triggered by a developer.'}
-                    </p>
-                    {canTriggerBuild &&
-                    pipelines.length > 0 &&
-                    projectHasSource ? (
-                      <Button size="sm" onClick={() => openTriggerBuild()}>
-                        <HugeiconsIcon icon={PlayIcon} size={14} />
-                        Trigger first build
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Build</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Trigger</TableHead>
-                        <TableHead>Branch</TableHead>
-                        <TableHead>Commit</TableHead>
-                        <TableHead>Queued</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {builds.map((build) => (
-                        <TableRow
-                          key={build.id}
-                          className="group cursor-pointer"
-                          role="link"
-                          tabIndex={0}
-                          onClick={() =>
-                            void navigate({
-                              to: '/builds/$buildId',
-                              params: { buildId: build.id },
-                            })
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault()
-                              void navigate({
-                                to: '/builds/$buildId',
-                                params: { buildId: build.id },
-                              })
-                            }
-                          }}
-                        >
-                          <TableCell className="font-mono text-sm group-hover:underline">
-                            #{build.build_number}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={getStatusVariant(build.status)}>
-                              {build.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {build.trigger_type}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {build.branch ?? 'n/a'}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {build.commit_sha
-                              ? build.commit_sha.slice(0, 10)
-                              : 'n/a'}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {relativeTime(build.queued_at)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+        <ProjectBuildsTab
+          builds={builds}
+          canTriggerBuild={canTriggerBuild}
+          latestSucceededBuild={latestSucceededBuild}
+          onOpenBuild={openBuild}
+          onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
+          onTriggerBuild={() => openTriggerBuild()}
+          pipelineCount={pipelines.length}
+          projectHasSource={projectHasSource}
+        />
 
         {/* ---- Settings tab ---- */}
         <TabsContent value="settings">
           <div className="space-y-4 pt-2">
-            {canWriteProjects ? (
-              <ProjectSettingsForm
-                projectId={projectId}
-                currentValues={{
-                  name: project.name,
-                  description: project.description,
-                  default_branch: project.default_branch,
-                }}
-              />
-            ) : (
-              <Card>
-                <CardContent className="text-sm text-muted-foreground">
-                  You do not have permission to edit this project.
-                </CardContent>
-              </Card>
-            )}
+            {activeTab === 'settings' ? (
+              <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+                {canManageAccess ? (
+                  <ProjectAccessCard projectId={projectId} />
+                ) : null}
+                {canWriteProjects ? (
+                  <ProjectSettingsForm
+                    projectId={projectId}
+                    currentValues={{
+                      name: project.name,
+                      description: project.description,
+                      default_branch: project.default_branch,
+                    }}
+                  />
+                ) : (
+                  <Card>
+                    <CardContent className="text-sm text-muted-foreground">
+                      You do not have permission to edit this project.
+                    </CardContent>
+                  </Card>
+                )}
+              </Suspense>
+            ) : null}
 
             {canDeleteProjects ? (
               <Collapsible open={dangerOpen} onOpenChange={setDangerOpen}>
@@ -586,8 +473,8 @@ function ProjectDetailPage() {
                           variant="destructive"
                           onClick={() => setDeleteOpen(true)}
                         >
-                          <HugeiconsIcon icon={Delete02Icon} size={16} />
-                          Delete Project
+                          <HugeiconsIcon icon={Delete02Icon} />
+                          Delete project
                         </Button>
                       </div>
                     </CollapsibleContent>
@@ -600,20 +487,24 @@ function ProjectDetailPage() {
       </Tabs>
 
       {/* Dialogs */}
-      <TriggerBuildDialog
-        open={triggerBuildOpen}
-        onOpenChange={(nextOpen) => {
-          setTriggerBuildOpen(nextOpen)
-          if (!nextOpen) setTriggerPipelineId(undefined)
-        }}
-        fixedProjectId={projectId}
-        defaultPipelineId={triggerPipelineId}
-        defaultBranch={project.default_branch}
-        description="Run this project's pipeline now."
-        onBuildCreated={(buildId) => {
-          void navigate({ to: '/builds/$buildId', params: { buildId } })
-        }}
-      />
+      {triggerBuildOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={(nextOpen) => {
+              setTriggerBuildOpen(() => nextOpen)
+              if (!nextOpen) setTriggerPipelineId(undefined)
+            }}
+            fixedProjectId={projectId}
+            defaultPipelineId={triggerPipelineId}
+            defaultBranch={project.default_branch}
+            description="Run this project's pipeline now."
+            onBuildCreated={(buildId) => {
+              void navigate({ to: '/builds/$buildId', params: { buildId } })
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
@@ -626,10 +517,7 @@ function ProjectDetailPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={handleDelete}>
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>

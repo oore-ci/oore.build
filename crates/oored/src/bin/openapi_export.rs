@@ -18,7 +18,7 @@ use utoipa::OpenApi;
         title = "Oore CI API",
         version = "1.0.0",
         description = "REST API for Oore CI — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support local-mode login and OIDC login/logout flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince Oore CI is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
-        license(name = "MIT", url = "https://github.com/devaryakjha/oore.build/blob/master/LICENSE"),
+        license(name = "MIT", url = "https://github.com/oore-ci/oore.build/blob/master/LICENSE"),
         contact(name = "Oore CI", url = "https://oore.build"),
     ),
     servers(
@@ -30,6 +30,7 @@ use utoipa::OpenApi;
         paths::healthz,
         // ── Setup ──
         paths::get_setup_status,
+        paths::frontend_pair,
         paths::verify_bootstrap_token,
         paths::setup_preferences,
         paths::configure_oidc,
@@ -46,10 +47,14 @@ use utoipa::OpenApi;
         paths::local_login,
         paths::trusted_proxy_login,
         paths::logout,
+        // ── Runtime updates ──
+        paths::get_runtime_update_status,
+        paths::start_runtime_update,
         // ── Users ──
         paths::get_me,
         paths::list_users,
         paths::invite_user,
+        paths::preview_qa_user,
         paths::update_user_role,
         paths::delete_user,
         paths::re_enable_user,
@@ -78,6 +83,7 @@ use utoipa::OpenApi;
         paths::get_integration,
         paths::delete_integration,
         paths::list_repositories,
+        paths::repository_avatar,
         paths::list_installations,
         paths::sync_installations,
         paths::github_start,
@@ -94,6 +100,7 @@ use utoipa::OpenApi;
         paths::get_project,
         paths::update_project,
         paths::delete_project,
+        paths::discover_repository_workflows,
         // ── Project Members ──
         paths::list_project_members,
         paths::add_project_member,
@@ -117,6 +124,7 @@ use utoipa::OpenApi;
         paths::register_pipeline_ios_device,
         // ── Builds ──
         paths::create_build,
+        paths::preview_build_changelog,
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
@@ -134,6 +142,8 @@ use utoipa::OpenApi;
         paths::update_runner,
         paths::runner_heartbeat,
         paths::claim_job,
+        paths::gitlab_checkout_discovery,
+        paths::gitlab_checkout_upload_pack,
         paths::update_job_status,
         paths::get_job_status,
         // ── Build Logs ──
@@ -143,8 +153,14 @@ use utoipa::OpenApi;
         paths::create_stream_token,
         // ── Artifacts ──
         paths::create_artifact,
+        paths::complete_artifact,
+        paths::abort_artifact,
         paths::list_artifacts,
+        paths::list_project_artifacts,
+        paths::list_build_artifacts,
         paths::generate_download_link,
+        paths::create_artifact_install_link,
+        paths::get_ios_install_manifest,
         // ── Scoped Download Tokens (OOR-140) ──
         paths::create_scoped_download_token,
         paths::list_scoped_download_tokens,
@@ -166,6 +182,8 @@ use utoipa::OpenApi;
         // Setup
         oore_contract::SetupState,
         oore_contract::SetupStatus,
+        oore_contract::FrontendPairRequest,
+        oore_contract::FrontendPairResponse,
         oore_contract::BootstrapTokenVerifyRequest,
         oore_contract::BootstrapTokenVerifyResponse,
         oore_contract::SetupPreferencesRequest,
@@ -191,6 +209,9 @@ use utoipa::OpenApi;
         oore_contract::LocalLoginResponse,
         oore_contract::AuthenticatedUser,
         oore_contract::LogoutResponse,
+        // Runtime updates
+        oore_contract::RuntimeUpdatePhase,
+        oore_contract::RuntimeUpdateStatus,
         // Users
         oore_contract::UserRole,
         oore_contract::UserStatus,
@@ -201,6 +222,7 @@ use utoipa::OpenApi;
         oore_contract::UpdateUserRoleResponse,
         oore_contract::ReEnableUserResponse,
         oore_contract::ListUsersResponse,
+        oore_contract::PreviewQaUserResponse,
         oore_contract::UserProfileResponse,
         // Integrations
         oore_contract::ScmProvider,
@@ -235,6 +257,9 @@ use utoipa::OpenApi;
         oore_contract::UpdateProjectRequest,
         oore_contract::ProjectDetailResponse,
         oore_contract::ListProjectsResponse,
+        oore_contract::RepositoryWorkflowExecutionPreview,
+        oore_contract::RepositoryWorkflowPreview,
+        oore_contract::DiscoverRepositoryWorkflowsResponse,
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
@@ -286,6 +311,7 @@ use utoipa::OpenApi;
         oore_contract::BuildEvent,
         oore_contract::CreateBuildRequest,
         oore_contract::CreateBuildResponse,
+        oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
@@ -299,6 +325,7 @@ use utoipa::OpenApi;
         oore_contract::RunnerHeartbeatRequest,
         oore_contract::UpdateRunnerRequest,
         oore_contract::UpdateRunnerResponse,
+        oore_contract::ClaimJobRequest,
         oore_contract::ClaimJobResponse,
         oore_contract::ClaimedJob,
         oore_contract::UpdateJobStatusRequest,
@@ -311,8 +338,13 @@ use utoipa::OpenApi;
         oore_contract::Artifact,
         oore_contract::CreateArtifactRequest,
         oore_contract::CreateArtifactResponse,
+        oore_contract::CompleteArtifactRequest,
+        oore_contract::CompleteArtifactResponse,
+        oore_contract::ListBuildArtifactsRequest,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
+        oore_contract::ArtifactInstallPlatform,
+        oore_contract::ArtifactInstallLinkResponse,
         oore_contract::CreateScopedDownloadTokenRequest,
         oore_contract::CreateScopedDownloadTokenResponse,
         oore_contract::ArtifactDownloadTokenSummary,
@@ -447,6 +479,23 @@ mod paths {
         )
     )]
     pub(super) async fn get_setup_status() {}
+
+    /// Exchange a frontend pairing code
+    ///
+    /// Exchanges a short-lived, single-use code created by `oore frontend invite`
+    /// for the backend trusted-proxy proof and configured identity header. This
+    /// endpoint accepts requests only from configured trusted-proxy peer CIDRs.
+    #[utoipa::path(post, path = "/v1/frontend/pair", tag = "Setup",
+        request_body = FrontendPairRequest,
+        responses(
+            (status = 200, description = "Frontend paired with backend", body = FrontendPairResponse),
+            (status = 401, description = "Invalid, expired, or consumed pairing code", body = ApiError),
+            (status = 403, description = "Request peer is not allowlisted", body = ApiError),
+            (status = 409, description = "Backend setup or trusted proxy configuration is incomplete", body = ApiError),
+            (status = 500, description = "Internal error", body = ApiError),
+        )
+    )]
+    pub(super) async fn frontend_pair() {}
 
     /// Verify bootstrap token
     ///
@@ -681,6 +730,37 @@ mod paths {
     )]
     pub(super) async fn logout() {}
 
+    // ── Runtime updates ──
+
+    /// Get backend update state
+    ///
+    /// Reports whether the backend is managed by the supported macOS launchd
+    /// service and whether an update is currently running. Requires owner role.
+    #[utoipa::path(get, path = "/v1/system/update", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Backend update state", body = RuntimeUpdateStatus),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_runtime_update_status() {}
+
+    /// Start a backend update
+    ///
+    /// Runs the installed updater and hands restart control to the managed
+    /// macOS launchd service. Requires owner role.
+    #[utoipa::path(post, path = "/v1/system/update", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 202, description = "Backend update started", body = RuntimeUpdateStatus),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+            (status = 409, description = "Managed updater unavailable or already running", body = ApiError),
+        )
+    )]
+    pub(super) async fn start_runtime_update() {}
+
     // ── Users ──
 
     /// Get current user
@@ -721,6 +801,22 @@ mod paths {
         )
     )]
     pub(super) async fn invite_user() {}
+
+    /// Preview QA user access
+    ///
+    /// Creates a short-lived session for an active QA Viewer. Owner only.
+    #[utoipa::path(post, path = "/v1/users/{user_id}/preview", tag = "Users",
+        params(("user_id" = String, Path, description = "QA user ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "QA preview session", body = PreviewQaUserResponse),
+            (status = 400, description = "Target is not a QA Viewer", body = ApiError),
+            (status = 403, description = "Owner access required", body = ApiError),
+            (status = 404, description = "User not found", body = ApiError),
+            (status = 409, description = "QA user is not active", body = ApiError),
+        )
+    )]
+    pub(super) async fn preview_qa_user() {}
 
     /// Update user role
     ///
@@ -1031,6 +1127,18 @@ mod paths {
     )]
     pub(super) async fn list_repositories() {}
 
+    /// Fetch a private GitLab repository avatar through Oore
+    #[utoipa::path(get, path = "/v1/integration-repositories/{id}/avatar", tag = "Integrations",
+        params(("id" = String, Path, description = "Integration repository ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Repository avatar image", content_type = "image/*"),
+            (status = 404, description = "Avatar not found", body = ApiError),
+            (status = 502, description = "GitLab avatar unavailable", body = ApiError),
+        )
+    )]
+    pub(super) async fn repository_avatar() {}
+
     /// List integration installations
     #[utoipa::path(get, path = "/v1/integrations/{id}/installations", tag = "Integrations",
         params(("id" = String, Path, description = "Integration ID")),
@@ -1272,6 +1380,28 @@ mod paths {
     )]
     pub(super) async fn remove_project_member() {}
 
+    /// Discover repository-owned workflows
+    ///
+    /// Reads supported Oore workflow files from the linked repository without
+    /// modifying it. The response contains validated behavior but never raw YAML,
+    /// environment values, or source credentials.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/repository-workflows", tag = "Pipelines",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("ref" = Option<String>, Query, description = "Branch, tag, or commit; defaults to the project branch"),
+            ("path" = Option<String>, Query, description = "Additional explicit repository-relative config path"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret-free repository workflow previews", body = DiscoverRepositoryWorkflowsResponse),
+            (status = 400, description = "Invalid ref or config path", body = ApiError),
+            (status = 403, description = "Manage Pipelines permission required", body = ApiError),
+            (status = 404, description = "Project source not found", body = ApiError),
+            (status = 502, description = "Source provider request failed", body = ApiError),
+        )
+    )]
+    pub(super) async fn discover_repository_workflows() {}
+
     // ── Pipelines ──
 
     /// Create pipeline
@@ -1451,6 +1581,23 @@ mod paths {
     )]
     pub(super) async fn create_build() {}
 
+    /// Preview a Markdown changelog for a manual build.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/builds/changelog-preview", tag = "Builds",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("pipeline_id" = String, Query, description = "Pipeline ID"),
+            ("branch" = Option<String>, Query, description = "Target branch"),
+            ("commit_sha" = Option<String>, Query, description = "Target commit"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Generated changelog draft", body = BuildChangelogPreviewResponse),
+            (status = 400, description = "Invalid revision", body = ApiError),
+            (status = 404, description = "Project or pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn preview_build_changelog() {}
+
     /// List builds
     ///
     /// Returns builds, optionally filtered by project, pipeline, or status.
@@ -1573,12 +1720,47 @@ mod paths {
     /// Runner claims the next queued build. Returns `null` job if no builds are available.
     #[utoipa::path(post, path = "/v1/runners/{runner_id}/claim", tag = "Runners",
         params(("runner_id" = String, Path, description = "Runner ID")),
+        request_body = ClaimJobRequest,
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Job claimed (or null)", body = ClaimJobResponse),
         )
     )]
     pub(super) async fn claim_job() {}
+
+    /// Discover a private GitLab repository for checkout
+    ///
+    /// Internal Git smart-HTTP endpoint. The runner token is accepted only for
+    /// the repository assigned to this job; GitLab credentials remain server-side.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{git_path}", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("git_path" = String, Path, description = "Assigned repository info/refs path"),
+            ("service" = String, Query, description = "Must be git-upload-pack"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Git upload-pack discovery response"),
+            (status = 403, description = "Repository path does not match the assigned job", body = ApiError),
+        )
+    )]
+    pub(super) async fn gitlab_checkout_discovery() {}
+
+    /// Stream a private GitLab upload-pack request
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/gitlab/{git_path}", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("git_path" = String, Path, description = "Assigned repository git-upload-pack path"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Git upload-pack response"),
+            (status = 403, description = "Repository path does not match the assigned job", body = ApiError),
+        )
+    )]
+    pub(super) async fn gitlab_checkout_upload_pack() {}
 
     /// Update job status
     ///
@@ -1693,6 +1875,30 @@ mod paths {
     )]
     pub(super) async fn create_artifact() {}
 
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/complete", tag = "Artifacts",
+        params(
+            ("runner_id" = String, Path),
+            ("job_id" = String, Path),
+            ("artifact_id" = String, Path),
+        ),
+        request_body = CompleteArtifactRequest,
+        security(("bearer_auth" = [])),
+        responses((status = 200, body = CompleteArtifactResponse))
+    )]
+    pub(super) async fn complete_artifact() {}
+
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/artifacts/{artifact_id}/abort", tag = "Artifacts",
+        params(
+            ("runner_id" = String, Path),
+            ("job_id" = String, Path),
+            ("artifact_id" = String, Path),
+        ),
+        request_body = CompleteArtifactRequest,
+        security(("bearer_auth" = [])),
+        responses((status = 200, body = CompleteArtifactResponse))
+    )]
+    pub(super) async fn abort_artifact() {}
+
     /// List build artifacts
     #[utoipa::path(get, path = "/v1/builds/{build_id}/artifacts", tag = "Artifacts",
         params(("build_id" = String, Path, description = "Build ID")),
@@ -1702,6 +1908,27 @@ mod paths {
         )
     )]
     pub(super) async fn list_artifacts() {}
+
+    /// List available artifacts across a project
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Project artifact list", body = ListArtifactsResponse),
+        )
+    )]
+    pub(super) async fn list_project_artifacts() {}
+
+    /// List available artifacts for a bounded set of builds
+    #[utoipa::path(post, path = "/v1/artifacts/query", tag = "Artifacts",
+        request_body = ListBuildArtifactsRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Artifact list", body = ListArtifactsResponse),
+            (status = 400, description = "Too many build IDs", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_build_artifacts() {}
 
     /// Generate download link
     ///
@@ -1715,6 +1942,37 @@ mod paths {
         )
     )]
     pub(super) async fn generate_download_link() {}
+
+    /// Create device install link
+    ///
+    /// Creates a one-hour install session for an APK or install-ready signed IPA.
+    /// QA viewers may use this endpoint through their artifact read permission.
+    #[utoipa::path(post, path = "/v1/artifacts/{artifact_id}/install-link", tag = "Artifacts",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Device install session", body = ArtifactInstallLinkResponse),
+            (status = 404, description = "Artifact not found", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+            (status = 412, description = "External HTTPS access is not ready", body = ApiError),
+            (status = 422, description = "Artifact is not install-ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_artifact_install_link() {}
+
+    /// Get iOS OTA install manifest
+    ///
+    /// Returns an Apple property-list manifest authorized by the scoped token in the URL.
+    #[utoipa::path(get, path = "/install/ios/{token}/manifest.plist", tag = "Artifacts",
+        params(("token" = String, Path, description = "Artifact install token")),
+        responses(
+            (status = 200, description = "Apple OTA installation manifest", content_type = "application/xml"),
+            (status = 401, description = "Invalid or expired token", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+            (status = 422, description = "IPA is not install-ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_ios_install_manifest() {}
 
     // ── Scoped Download Tokens (OOR-140) ──
 
@@ -1763,7 +2021,7 @@ mod paths {
     ///
     /// Downloads an artifact using a scoped download token. No session auth required —
     /// the token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.
-    #[utoipa::path(get, path = "/v1/artifacts/dl/{token}", tag = "Scoped Download Tokens",
+    #[utoipa::path(get, path = "/install/artifact/{token}", tag = "Scoped Download Tokens",
         params(("token" = String, Path, description = "Scoped download token")),
         responses(
             (status = 302, description = "Redirect to presigned download URL"),

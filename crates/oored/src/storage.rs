@@ -5,8 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use aws_config::BehaviorVersion;
-use aws_sdk_s3::config::{Credentials, Region};
+use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::presigning::PresigningConfig;
 use oore_contract::{ArtifactStorageProvider, ArtifactStorageSettings, ArtifactStorageSource};
 use sqlx::Row;
@@ -236,7 +235,31 @@ impl LocalStorageClient {
 
     pub async fn generate_download_url(&self, key: &str, ttl_secs: u64) -> String {
         let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
-        format!("{}/v1/artifacts/download/{}", self.public_base_url, token)
+        format!("{}/v1/artifacts/download/{token}", self.public_base_url)
+    }
+
+    pub async fn generate_download_url_with_base(
+        &self,
+        key: &str,
+        ttl_secs: u64,
+        public_base_url: Option<&str>,
+        query_pair: Option<(&str, &str)>,
+    ) -> String {
+        let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
+        let base = public_base_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&self.public_base_url)
+            .trim_end_matches('/');
+        let mut url = format!("{base}/install/download/{token}");
+        if let Some((key, value)) = query_pair {
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair(key, value)
+                .finish();
+            url.push('?');
+            url.push_str(&query);
+        }
+        url
     }
 
     pub async fn handle_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
@@ -349,6 +372,24 @@ impl StorageBackend {
             Self::Disabled => Ok(None),
             Self::S3(client) => client.generate_download_url(key, ttl_secs).await.map(Some),
             Self::Local(client) => Ok(Some(client.generate_download_url(key, ttl_secs).await)),
+        }
+    }
+
+    pub async fn generate_download_url_with_base(
+        &self,
+        key: &str,
+        ttl_secs: u64,
+        public_base_url: Option<&str>,
+        query_pair: Option<(&str, &str)>,
+    ) -> Result<Option<String>, anyhow::Error> {
+        match self {
+            Self::Disabled => Ok(None),
+            Self::S3(client) => client.generate_download_url(key, ttl_secs).await.map(Some),
+            Self::Local(client) => Ok(Some(
+                client
+                    .generate_download_url_with_base(key, ttl_secs, public_base_url, query_pair)
+                    .await,
+            )),
         }
     }
 
@@ -565,5 +606,32 @@ pub async fn load_backend(
             warn!(error = %e, "failed to load artifact storage config; using disabled backend");
             StorageBackend::Disabled
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_download_can_use_artifact_delivery_origin() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client = LocalStorageClient::new(
+            temp.path().to_path_buf(),
+            Some("https://ci.example.com".to_string()),
+        )
+        .expect("local storage");
+
+        let url = client
+            .generate_download_url_with_base(
+                "builds/kite.ipa",
+                900,
+                Some("https://install.ci.example.com"),
+                Some(("warpgate-ticket", "ticket with /?")),
+            )
+            .await;
+
+        assert!(url.starts_with("https://install.ci.example.com/install/download/"));
+        assert!(url.ends_with("?warpgate-ticket=ticket+with+%2F%3F"));
     }
 }

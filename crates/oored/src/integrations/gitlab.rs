@@ -2,15 +2,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::extract::{Path, Query, RawQuery, State};
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use base64::Engine;
 use oore_contract::{
     ApiError, GitLabAuthorizeRequest, GitLabAuthorizeResponse, GitLabCompleteResponse,
     GitLabStartRequest, Integration, IntegrationInstallation,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -19,6 +21,7 @@ use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
+use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -26,12 +29,435 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 /// Maximum age (seconds) for a GitLab OAuth state token.
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
+const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+
+fn avatar_content_type(declared: Option<&str>, body: &[u8]) -> Option<&'static str> {
+    match declared.map(str::trim) {
+        Some("image/png") => Some("image/png"),
+        Some("image/jpeg" | "image/jpg") => Some("image/jpeg"),
+        Some("image/gif") => Some("image/gif"),
+        Some("image/webp") => Some("image/webp"),
+        Some("image/avif") => Some("image/avif"),
+        Some("image/svg+xml") => Some("image/svg+xml"),
+        Some("application/octet-stream" | "binary/octet-stream") | None => {
+            sniff_avatar_content_type(body)
+        }
+        _ => None,
+    }
+}
+
+fn sniff_avatar_content_type(body: &[u8]) -> Option<&'static str> {
+    if body.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if body.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if body.starts_with(b"GIF87a") || body.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if body.len() >= 12 && body.starts_with(b"RIFF") && &body[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if body.len() >= 12
+        && &body[4..8] == b"ftyp"
+        && matches!(&body[8..12], b"avif" | b"avis")
+    {
+        Some("image/avif")
+    } else {
+        None
+    }
+}
 
 fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
         .build()
+}
+
+async fn access_token(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let encrypted: Option<String> = sqlx::query_scalar(
+        "SELECT encrypted_value FROM integration_credentials \
+         WHERE integration_id = ?1 AND credential_type = 'access_token'",
+    )
+    .bind(integration_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch GitLab access token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch source credentials",
+        )
+    })?;
+    let encrypted = encrypted.ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "missing_credentials",
+            "GitLab access token is missing; reconnect or re-authorize the source",
+        )
+    })?;
+    crypto::decrypt(&encrypted, encryption_key).map_err(|e| {
+        error!(error = %e, "failed to decrypt GitLab access token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to decrypt source credentials",
+        )
+    })
+}
+
+pub(crate) async fn fetch_repository_avatar(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    host_url: &str,
+    auth_mode: &str,
+    repository_external_id: &str,
+    avatar_url: &str,
+) -> Result<(String, Vec<u8>), (StatusCode, Json<ApiError>)> {
+    let host_origin = normalize_gitlab_host_url(host_url)?;
+    let parsed_avatar_url = url::Url::parse(avatar_url).map_err(|_| {
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_invalid",
+            "GitLab returned an invalid repository avatar URL",
+        )
+    })?;
+    if !matches!(parsed_avatar_url.scheme(), "http" | "https")
+        || parsed_avatar_url.host_str().is_none()
+        || !parsed_avatar_url.username().is_empty()
+        || parsed_avatar_url.password().is_some()
+        || parsed_avatar_url.origin().ascii_serialization() != host_origin
+    {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_invalid",
+            "GitLab returned an untrusted repository avatar URL",
+        ));
+    }
+
+    let path_segments = parsed_avatar_url
+        .path_segments()
+        .map(Iterator::collect::<Vec<_>>)
+        .unwrap_or_default();
+    let group_id = path_segments
+        .windows(3)
+        .find(|segments| segments[0] == "group" && segments[1] == "avatar")
+        .map(|segments| segments[2])
+        .filter(|id| !id.is_empty() && id.chars().all(|character| character.is_ascii_digit()));
+    let avatar_api_url = if let Some(group_id) = group_id {
+        format!("{host_origin}/api/v4/groups/{group_id}/avatar")
+    } else {
+        format!(
+            "{host_origin}/api/v4/projects/{}/avatar",
+            urlencoding::encode(repository_external_id)
+        )
+    };
+
+    let token = access_token(pool, encryption_key, integration_id).await?;
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab avatar client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitLab client",
+        )
+    })?;
+    let mut request = client
+        .get(avatar_api_url)
+        .header("User-Agent", "oore-ci")
+        .header("Accept", "image/*");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+
+    let mut response = request.send().await.map_err(|e| {
+        error!(error = %e, "failed to fetch GitLab repository avatar");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_unavailable",
+            "Failed to fetch the GitLab repository avatar",
+        )
+    })?;
+    if !response.status().is_success() {
+        error!(status = %response.status(), "GitLab repository avatar request failed");
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_unavailable",
+            "Failed to fetch the GitLab repository avatar",
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_AVATAR_BYTES as u64)
+    {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_too_large",
+            "GitLab repository avatar exceeds the size limit",
+        ));
+    }
+
+    let declared_content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .map(str::to_string);
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| {
+        error!(error = %e, "failed to read GitLab repository avatar");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_avatar_unavailable",
+            "Failed to fetch the GitLab repository avatar",
+        )
+    })? {
+        if body.len() + chunk.len() > MAX_AVATAR_BYTES {
+            return Err(api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_avatar_too_large",
+                "GitLab repository avatar exceeds the size limit",
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let content_type = avatar_content_type(declared_content_type.as_deref(), &body)
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_avatar_invalid",
+                "GitLab returned an unsupported repository avatar",
+            )
+        })?
+        .to_string();
+
+    Ok((content_type, body))
+}
+
+pub(crate) async fn resolve_branch_commit(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    host_url: &str,
+    auth_mode: &str,
+    repository_external_id: &str,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let token = access_token(pool, encryption_key, integration_id).await?;
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitLab client",
+        )
+    })?;
+    let mut request = client
+        .get(format!(
+            "{}/api/v4/projects/{}/repository/commits/{}",
+            host_url.trim_end_matches('/'),
+            urlencoding::encode(repository_external_id),
+            urlencoding::encode(branch)
+        ))
+        .header("User-Agent", "oore-ci");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request.send().await.map_err(|e| {
+        error!(error = %e, "failed to resolve GitLab branch");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            "Failed to resolve the GitLab branch",
+        )
+    })?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_ref",
+            format!("Branch '{branch}' was not found in the linked repository"),
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            format!(
+                "GitLab returned {} while resolving the branch",
+                response.status()
+            ),
+        ));
+    }
+
+    #[derive(Deserialize)]
+    struct CommitResponse {
+        id: String,
+    }
+    response
+        .json::<CommitResponse>()
+        .await
+        .map(|response| response.id)
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitLab commit response");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_parse_error",
+                "Failed to parse GitLab commit response",
+            )
+        })
+}
+
+pub(crate) async fn compare_commits(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    target: (&str, &str, &str),
+    base: &str,
+    head: &str,
+) -> Result<Vec<super::CommitSummary>, (StatusCode, Json<ApiError>)> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        commits: Vec<CompareCommit>,
+    }
+    #[derive(Deserialize)]
+    struct CompareCommit {
+        author_name: String,
+        title: String,
+    }
+
+    let (host_url, auth_mode, repository_external_id) = target;
+    let token = access_token(pool, encryption_key, integration_id).await?;
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitLab client",
+        )
+    })?;
+    let mut request = client
+        .get(format!(
+            "{}/api/v4/projects/{}/repository/compare",
+            host_url.trim_end_matches('/'),
+            urlencoding::encode(repository_external_id)
+        ))
+        .query(&[("from", base), ("to", head), ("straight", "true")])
+        .header("User-Agent", "oore-ci");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request.send().await.map_err(|e| {
+        error!(error = %e, "failed to compare GitLab commits");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            "Failed to compare repository revisions",
+        )
+    })?;
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_api_error",
+            format!(
+                "GitLab returned {} while comparing revisions",
+                response.status()
+            ),
+        ));
+    }
+    response
+        .json::<CompareResponse>()
+        .await
+        .map(|response| {
+            response
+                .commits
+                .into_iter()
+                .map(|commit| super::CommitSummary {
+                    title: commit.title,
+                    author: commit.author_name,
+                })
+                .collect()
+        })
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitLab comparison");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_parse_error",
+                "Failed to read repository comparison",
+            )
+        })
+}
+
+fn normalize_gitlab_host_url(raw: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let parsed = url::Url::parse(raw.trim()).map_err(|_| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "host_url must be an http or https origin",
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !matches!(parsed.path(), "" | "/")
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "host_url must be an http or https origin without credentials, a path, query, or fragment",
+        ));
+    }
+    Ok(parsed.origin().ascii_serialization())
+}
+
+fn oauth_callback_url(redirect_url: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let parsed = url::Url::parse(redirect_url).map_err(|_| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_redirect_url",
+            "redirect_url is not a valid URL",
+        )
+    })?;
+    Ok(format!(
+        "{}/v1/integrations/gitlab/callback",
+        parsed.origin().ascii_serialization()
+    ))
+}
+
+fn git_checkout_request_allowed(
+    method: &Method,
+    git_path: &str,
+    query: Option<&str>,
+    content_type: Option<&str>,
+    full_name: &str,
+) -> bool {
+    match *method {
+        Method::GET => {
+            git_path == format!("{full_name}.git/info/refs")
+                && query == Some("service=git-upload-pack")
+        }
+        Method::POST => {
+            git_path == format!("{full_name}.git/git-upload-pack")
+                && query.is_none()
+                && content_type == Some("application/x-git-upload-pack-request")
+        }
+        _ => false,
+    }
 }
 
 /// Sync a GitLab integration by refreshing repositories for all installations.
@@ -80,38 +506,7 @@ pub(crate) async fn perform_sync_installations(
     let auth_mode: String = row.get("auth_mode");
     let use_bearer_auth = auth_mode == "oauth_app";
 
-    let encrypted_access_token: Option<String> = sqlx::query_scalar(
-        "SELECT encrypted_value FROM integration_credentials \
-         WHERE integration_id = ?1 AND credential_type = 'access_token'",
-    )
-    .bind(integration_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch GitLab access token");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to fetch credentials",
-        )
-    })?;
-
-    let encrypted_access_token = encrypted_access_token.ok_or_else(|| {
-        api_err(
-            StatusCode::CONFLICT,
-            "missing_credentials",
-            "GitLab access token is missing; re-connect or re-authorize the integration",
-        )
-    })?;
-
-    let token = crypto::decrypt(&encrypted_access_token, encryption_key).map_err(|e| {
-        error!(error = %e, "failed to decrypt GitLab access token");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "encryption_error",
-            "Failed to decrypt credentials",
-        )
-    })?;
+    let token = access_token(pool, encryption_key, integration_id).await?;
 
     let installation_rows = sqlx::query(
         "SELECT * FROM integration_installations WHERE integration_id = ?1 ORDER BY created_at DESC",
@@ -181,22 +576,7 @@ pub async fn gitlab_start(
     };
     require_remote_mode(&pool).await?;
 
-    // Validate host URL
-    let host_url = req.host_url.trim_end_matches('/').to_string();
-    if host_url.is_empty() {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "host_url is required",
-        ));
-    }
-    if url::Url::parse(&host_url).is_err() {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "host_url is not a valid URL",
-        ));
-    }
+    let host_url = normalize_gitlab_host_url(&req.host_url)?;
 
     if req.webhook_secret.trim().is_empty() {
         return Err(api_err(
@@ -554,36 +934,6 @@ async fn sync_gitlab_projects(
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let api_base = format!("{}/api/v4", host_url);
 
-    let mut req_builder = client
-        .get(format!(
-            "{api_base}/projects?membership=true&per_page=100&simple=true"
-        ))
-        .header("User-Agent", "oore-ci");
-
-    if use_bearer_auth {
-        req_builder = req_builder.header("Authorization", format!("Bearer {token}"));
-    } else {
-        req_builder = req_builder.header("PRIVATE-TOKEN", token);
-    }
-
-    let resp = req_builder.send().await.map_err(|e| {
-        error!(error = %e, "GitLab projects API failed");
-        api_err(
-            StatusCode::BAD_GATEWAY,
-            "gitlab_api_error",
-            "Failed to list GitLab projects",
-        )
-    })?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        return Err(api_err(
-            StatusCode::BAD_GATEWAY,
-            "gitlab_api_error",
-            format!("GitLab returned {status}"),
-        ));
-    }
-
     #[derive(serde::Deserialize)]
     struct GitLabProject {
         id: i64,
@@ -591,14 +941,74 @@ async fn sync_gitlab_projects(
         default_branch: Option<String>,
         visibility: Option<String>,
         web_url: Option<String>,
+        avatar_url: Option<String>,
+        namespace: Option<GitLabNamespace>,
     }
 
-    let projects: Vec<GitLabProject> = resp.json().await.map_err(|e| {
-        error!(error = %e, "failed to parse GitLab projects");
+    #[derive(serde::Deserialize)]
+    struct GitLabNamespace {
+        avatar_url: Option<String>,
+    }
+
+    let mut projects = Vec::new();
+    let mut page = 1usize;
+    loop {
+        let mut req_builder = client
+            .get(format!(
+                "{api_base}/projects?membership=true&per_page=100&simple=true&page={page}"
+            ))
+            .header("User-Agent", "oore-ci");
+
+        if use_bearer_auth {
+            req_builder = req_builder.header("Authorization", format!("Bearer {token}"));
+        } else {
+            req_builder = req_builder.header("PRIVATE-TOKEN", token);
+        }
+
+        let resp = req_builder.send().await.map_err(|e| {
+            error!(error = %e, page, "GitLab projects API failed");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_api_error",
+                "Failed to list GitLab projects",
+            )
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            return Err(api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_api_error",
+                format!("GitLab returned {status}"),
+            ));
+        }
+
+        let next_page = resp
+            .headers()
+            .get("x-next-page")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|next| *next > page);
+        let mut response_projects: Vec<GitLabProject> = resp.json().await.map_err(|e| {
+            error!(error = %e, page, "failed to parse GitLab projects");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "gitlab_parse_error",
+                "Failed to parse GitLab response",
+            )
+        })?;
+        projects.append(&mut response_projects);
+
+        let Some(next_page) = next_page else { break };
+        page = next_page;
+    }
+
+    let mut tx = pool.begin().await.map_err(|e| {
+        error!(error = %e, "failed to start GitLab repository sync transaction");
         api_err(
-            StatusCode::BAD_GATEWAY,
-            "gitlab_parse_error",
-            "Failed to parse GitLab response",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to sync projects",
         )
     })?;
 
@@ -606,11 +1016,11 @@ async fn sync_gitlab_projects(
         let is_private = project.visibility.as_deref() != Some("public");
 
         sqlx::query(
-            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, is_private, html_url, avatar_url, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9) \
              ON CONFLICT(installation_id, external_id) DO UPDATE SET \
              full_name = excluded.full_name, default_branch = excluded.default_branch, \
-             is_private = excluded.is_private, html_url = excluded.html_url, updated_at = excluded.updated_at",
+             is_private = excluded.is_private, html_url = excluded.html_url, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(installation_id)
@@ -619,8 +1029,14 @@ async fn sync_gitlab_projects(
         .bind(&project.default_branch)
         .bind(is_private as i32)
         .bind(&project.web_url)
+        .bind(
+            project
+                .avatar_url
+                .as_ref()
+                .or_else(|| project.namespace.as_ref().and_then(|namespace| namespace.avatar_url.as_ref())),
+        )
         .bind(now)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, project = %project.path_with_namespace, "failed to upsert GitLab project");
@@ -628,8 +1044,217 @@ async fn sync_gitlab_projects(
         })?;
     }
 
+    let external_ids: Vec<String> = projects.iter().map(|p| p.id.to_string()).collect();
+    for prefix in [
+        "UPDATE projects SET repository_id = NULL WHERE repository_id IN (SELECT id FROM integration_repositories WHERE installation_id = ",
+        "DELETE FROM integration_repositories WHERE installation_id = ",
+    ] {
+        let mut query = QueryBuilder::<Sqlite>::new(prefix);
+        query.push_bind(installation_id);
+        if !external_ids.is_empty() {
+            query.push(" AND external_id NOT IN (");
+            let mut separated = query.separated(", ");
+            for external_id in &external_ids {
+                separated.push_bind(external_id);
+            }
+            separated.push_unseparated(")");
+        }
+        if prefix.starts_with("UPDATE") {
+            query.push(")");
+        }
+        query.build().execute(&mut *tx).await.map_err(|e| {
+            error!(error = %e, "failed to remove stale GitLab projects");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to sync projects",
+            )
+        })?;
+    }
+
+    tx.commit().await.map_err(|e| {
+        error!(error = %e, "failed to commit GitLab repository sync");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to sync projects",
+        )
+    })?;
+
     info!(project_count = projects.len(), "GitLab projects synced");
     Ok(())
+}
+
+/// Stream Git smart-HTTP through the daemon so runner jobs can clone private
+/// repositories without SCM credentials entering build snapshots or logs.
+pub async fn proxy_git_checkout(
+    State(state): State<Arc<AppState>>,
+    Path((runner_id, job_id, git_path)): Path<(String, String, String)>,
+    runner_auth: RunnerAuth,
+    method: Method,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
+    if runner_auth.runner_id != runner_id {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "runner_mismatch",
+            "Runner token does not match the requested runner ID",
+        ));
+    }
+    if !matches!(method, Method::GET | Method::POST)
+        || git_path
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+        || git_path.contains('\\')
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_git_request",
+            "Invalid Git checkout request",
+        ));
+    }
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let row = sqlx::query(
+        "SELECT i.host_url, r.full_name, c.encrypted_value \
+         FROM builds b \
+         JOIN projects p ON p.id = b.project_id \
+         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         JOIN integration_credentials c ON c.integration_id = i.id \
+         WHERE b.id = ?1 AND b.runner_id = ?2 AND i.provider = 'gitlab' \
+         AND i.status = 'active' AND c.credential_type = 'access_token'",
+    )
+    .bind(&job_id)
+    .bind(&runner_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, job_id = %job_id, "failed to resolve GitLab checkout");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve checkout",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "checkout_not_found",
+            "GitLab checkout not found",
+        )
+    })?;
+
+    let host_url: String = row.get("host_url");
+    let full_name: String = row.get("full_name");
+    let encrypted_token: String = row.get("encrypted_value");
+
+    if !git_checkout_request_allowed(
+        &method,
+        &git_path,
+        query.as_deref(),
+        headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        &full_name,
+    ) {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "checkout_path_forbidden",
+            "Git checkout request does not match the assigned repository",
+        ));
+    }
+
+    let token = crypto::decrypt(&encrypted_token, &state.encryption_key).map_err(|e| {
+        error!(error = %e, job_id = %job_id, "failed to decrypt GitLab checkout token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to authorize checkout",
+        )
+    })?;
+
+    let mut upstream = url::Url::parse(&host_url).map_err(|_| {
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid_host",
+            "GitLab host is invalid",
+        )
+    })?;
+    upstream
+        .path_segments_mut()
+        .map_err(|_| {
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid_host",
+                "GitLab host is invalid",
+            )
+        })?
+        .extend(git_path.split('/'));
+    upstream.set_query(query.as_deref());
+
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("oauth2:{token}"));
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitLab checkout client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create checkout client",
+        )
+    })?;
+    let mut request = client
+        .request(method, upstream)
+        .header("Authorization", format!("Basic {basic}"))
+        .header("User-Agent", "oore-ci");
+    if headers.get("content-type").is_some() {
+        request = request.body(reqwest::Body::wrap_stream(body.into_data_stream()));
+    }
+    for name in ["accept", "content-type", "git-protocol"] {
+        if let Some(value) = headers.get(name) {
+            request = request.header(name, value);
+        }
+    }
+
+    let response = request.send().await.map_err(|e| {
+        error!(error = %e, job_id = %job_id, "GitLab checkout proxy failed");
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_checkout_failed",
+            "GitLab checkout failed",
+        )
+    })?;
+    if response.status().is_redirection() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "gitlab_redirect_rejected",
+            "GitLab checkout host redirected unexpectedly",
+        ));
+    }
+
+    let status = response.status();
+    let response_headers = response.headers().clone();
+    let mut downstream = Response::builder().status(status);
+    for name in ["content-type", "cache-control", "etag", "expires", "pragma"] {
+        if let Some(value) = response_headers.get(name) {
+            downstream = downstream.header(name, value);
+        }
+    }
+    downstream
+        .body(Body::from_stream(response.bytes_stream()))
+        .map_err(|e| {
+            error!(error = %e, "failed to build GitLab checkout response");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_error",
+                "Failed to stream checkout",
+            )
+        })
 }
 
 // ── GitLab OAuth flow ────────────────────────────────────────────
@@ -639,6 +1264,8 @@ async fn sync_gitlab_projects(
 struct GitLabOAuthState {
     integration_id: String,
     redirect_url: String,
+    #[serde(default)]
+    callback_url: String,
     created_at: i64,
 }
 
@@ -653,7 +1280,16 @@ fn seal_gitlab_state(state: &GitLabOAuthState, key: &[u8]) -> Result<String, any
 fn open_gitlab_state(token: &str, key: &[u8]) -> Result<GitLabOAuthState, String> {
     let decoded = urlencoding::decode(token).map_err(|e| format!("url decode: {e}"))?;
     let json = crypto::decrypt(&decoded, key).map_err(|e| format!("decrypt: {e}"))?;
-    let state: GitLabOAuthState = serde_json::from_str(&json).map_err(|e| format!("parse: {e}"))?;
+    let mut state: GitLabOAuthState =
+        serde_json::from_str(&json).map_err(|e| format!("parse: {e}"))?;
+
+    if state.callback_url.is_empty() {
+        let parsed = url::Url::parse(&state.redirect_url).map_err(|e| format!("redirect: {e}"))?;
+        state.callback_url = format!(
+            "{}/v1/integrations/gitlab/callback",
+            parsed.origin().ascii_serialization()
+        );
+    }
 
     let now = now_unix();
     if now - state.created_at > STATE_MAX_AGE_SECS {
@@ -805,22 +1441,15 @@ pub async fn gitlab_authorize(
         )
     })?;
 
-    // Build callback URL
-    let public_url = state
-        .public_url
-        .read()
-        .await
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:8787".to_string());
-    let callback_url = format!(
-        "{}/v1/integrations/gitlab/callback",
-        public_url.trim_end_matches('/')
-    );
+    // The browser reaches the callback through the validated frontend proxy,
+    // not necessarily through the daemon's own public URL.
+    let callback_url = oauth_callback_url(&req.redirect_url)?;
 
     // Seal the state token
     let oauth_state = GitLabOAuthState {
         integration_id: req.integration_id.clone(),
         redirect_url: req.redirect_url,
+        callback_url: callback_url.clone(),
         created_at: now_unix(),
     };
 
@@ -835,7 +1464,7 @@ pub async fn gitlab_authorize(
 
     // Build the authorize URL
     let authorize_url = format!(
-        "{}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&state={}&scope=api+read_user",
+        "{}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&state={}&scope=read_api+read_repository",
         host_url,
         urlencoding::encode(&client_id),
         urlencoding::encode(&callback_url),
@@ -940,7 +1569,14 @@ pub async fn gitlab_callback(
     }
 
     // Exchange code for tokens
-    match exchange_gitlab_code(&state, &code, &oauth_state.integration_id).await {
+    match exchange_gitlab_code(
+        &state,
+        &code,
+        &oauth_state.integration_id,
+        &oauth_state.callback_url,
+    )
+    .await
+    {
         Ok(()) => {
             info!(
                 integration_id = %oauth_state.integration_id,
@@ -980,6 +1616,7 @@ async fn exchange_gitlab_code(
     app_state: &Arc<AppState>,
     code: &str,
     integration_id: &str,
+    callback_url: &str,
 ) -> Result<(), String> {
     // ── Phase 1: Read credentials from DB (short lock) ──────────
     let (host_url, client_id, client_secret, pool) = {
@@ -1026,17 +1663,6 @@ async fn exchange_gitlab_code(
     };
 
     // ── Phase 2: Outbound HTTP — token exchange (no lock held) ──
-    let public_url = app_state
-        .public_url
-        .read()
-        .await
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:8787".to_string());
-    let callback_url = format!(
-        "{}/v1/integrations/gitlab/callback",
-        public_url.trim_end_matches('/')
-    );
-
     let http_client =
         build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
@@ -1055,7 +1681,7 @@ async fn exchange_gitlab_code(
             ("client_id", client_id.as_str()),
             ("client_secret", client_secret.as_str()),
             ("code", code),
-            ("redirect_uri", &callback_url),
+            ("redirect_uri", callback_url),
             ("grant_type", "authorization_code"),
         ])
         .header("User-Agent", "oore-ci")
@@ -1065,8 +1691,7 @@ async fn exchange_gitlab_code(
 
     if !token_resp.status().is_success() {
         let status = token_resp.status();
-        let body = token_resp.text().await.unwrap_or_default();
-        error!(status = %status, body = %body, "GitLab token exchange failed");
+        error!(status = %status, "GitLab token exchange failed");
         return Err(format!("GitLab returned {status}"));
     }
 
@@ -1222,7 +1847,258 @@ async fn exchange_gitlab_code(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_redirect_origin;
+    use super::{
+        build_http_client, fetch_repository_avatar, git_checkout_request_allowed,
+        normalize_gitlab_host_url, oauth_callback_url, sync_gitlab_projects,
+        validate_redirect_origin,
+    };
+    use crate::crypto;
+    use axum::Json;
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, Method};
+    use axum::routing::get;
+    use std::collections::HashMap;
+
+    #[test]
+    fn gitlab_host_accepts_http_and_https_origins() {
+        assert_eq!(
+            normalize_gitlab_host_url("https://gitlab.example.com/").unwrap(),
+            "https://gitlab.example.com"
+        );
+        assert_eq!(
+            normalize_gitlab_host_url("http://gitlab.internal:8080").unwrap(),
+            "http://gitlab.internal:8080"
+        );
+    }
+
+    #[test]
+    fn gitlab_host_rejects_non_origins() {
+        for host in [
+            "ftp://gitlab.example.com",
+            "https://user:pass@gitlab.example.com",
+            "https://gitlab.example.com/gitlab",
+            "https://gitlab.example.com?x=1",
+            "https://gitlab.example.com/#x",
+        ] {
+            assert!(normalize_gitlab_host_url(host).is_err(), "accepted {host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn repository_avatar_uses_gitlab_credentials_and_sniffs_generic_content_type() {
+        let avatar = b"\x89PNG\r\n\x1a\navatar".to_vec();
+        let app = axum::Router::new().route(
+            "/api/v4/projects/42/avatar",
+            get(move |headers: HeaderMap| {
+                let avatar = avatar.clone();
+                async move {
+                    assert_eq!(
+                        headers
+                            .get("PRIVATE-TOKEN")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("gitlab-token")
+                    );
+                    ([("content-type", "application/octet-stream")], avatar)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE integration_credentials (
+                integration_id TEXT NOT NULL, credential_type TEXT NOT NULL,
+                encrypted_value TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let key = [7_u8; 32];
+        let encrypted = crypto::encrypt("gitlab-token", &key).unwrap();
+        sqlx::query(
+            "INSERT INTO integration_credentials VALUES ('integration-1', 'access_token', ?1)",
+        )
+        .bind(encrypted)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (content_type, body) = fetch_repository_avatar(
+            &pool,
+            &key,
+            "integration-1",
+            &host,
+            "personal_token",
+            "42",
+            &format!("{host}/uploads/avatar.png"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(content_type, "image/png");
+        assert_eq!(body, b"\x89PNG\r\n\x1a\navatar");
+        server.abort();
+    }
+
+    #[test]
+    fn oauth_callback_uses_frontend_origin() {
+        assert_eq!(
+            oauth_callback_url("https://oore.example.com/settings/integrations?tab=gitlab")
+                .unwrap(),
+            "https://oore.example.com/v1/integrations/gitlab/callback"
+        );
+    }
+
+    #[test]
+    fn checkout_proxy_only_allows_assigned_repository_upload_pack() {
+        assert!(git_checkout_request_allowed(
+            &Method::GET,
+            "group/app.git/info/refs",
+            Some("service=git-upload-pack"),
+            None,
+            "group/app",
+        ));
+        assert!(git_checkout_request_allowed(
+            &Method::POST,
+            "group/app.git/git-upload-pack",
+            None,
+            Some("application/x-git-upload-pack-request"),
+            "group/app",
+        ));
+        assert!(!git_checkout_request_allowed(
+            &Method::GET,
+            "group/other.git/info/refs",
+            Some("service=git-upload-pack"),
+            None,
+            "group/app",
+        ));
+        assert!(!git_checkout_request_allowed(
+            &Method::GET,
+            "group/app.git/info/refs",
+            Some("service=git-receive-pack"),
+            None,
+            "group/app",
+        ));
+    }
+
+    #[tokio::test]
+    async fn project_sync_paginates_and_removes_stale_repositories() {
+        let app = axum::Router::new().route(
+            "/api/v4/projects",
+            get(|Query(params): Query<HashMap<String, String>>| async move {
+                let page = params.get("page").map(String::as_str).unwrap_or("1");
+                let projects: Vec<_> = if page == "1" {
+                    (1..=100)
+                        .map(|id| {
+                            serde_json::json!({
+                                "id": id,
+                                "path_with_namespace": format!("group/repo-{id}"),
+                                "default_branch": "main",
+                                "visibility": "private",
+                                "web_url": format!("https://gitlab.example/group/repo-{id}"),
+                                "avatar_url": if id == 1 { Some("https://gitlab.example/project-avatar.png") } else { None },
+                                "namespace": { "avatar_url": "https://gitlab.example/namespace-avatar.png" },
+                            })
+                        })
+                        .collect()
+                } else {
+                    vec![serde_json::json!({
+                        "id": 101,
+                        "path_with_namespace": "group/repo-101",
+                        "default_branch": "main",
+                        "visibility": "private",
+                        "web_url": "https://gitlab.example/group/repo-101",
+                        "namespace": { "avatar_url": "https://gitlab.example/namespace-avatar.png" },
+                    })]
+                };
+                let mut headers = axum::http::HeaderMap::new();
+                if page == "1" {
+                    headers.insert("x-next-page", "2".parse().unwrap());
+                }
+                (headers, Json(projects))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE integration_repositories (
+                id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, external_id TEXT NOT NULL,
+                full_name TEXT NOT NULL, default_branch TEXT, is_private INTEGER NOT NULL,
+                html_url TEXT, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                UNIQUE(installation_id, external_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, repository_id TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO integration_repositories VALUES ('stale', 'install', 'stale', 'group/stale', 'main', 1, NULL, NULL, 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO projects VALUES ('project', 'stale')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sync_gitlab_projects(
+            &build_http_client().unwrap(),
+            &pool,
+            &host,
+            "token",
+            "install",
+            false,
+            2,
+        )
+        .await
+        .unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM integration_repositories WHERE installation_id = 'install'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = 'project'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 101);
+        let first_avatar: Option<String> = sqlx::query_scalar(
+            "SELECT avatar_url FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let fallback_avatar: Option<String> = sqlx::query_scalar(
+            "SELECT avatar_url FROM integration_repositories WHERE external_id = '101'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            first_avatar.as_deref(),
+            Some("https://gitlab.example/project-avatar.png")
+        );
+        assert_eq!(
+            fallback_avatar.as_deref(),
+            Some("https://gitlab.example/namespace-avatar.png")
+        );
+        assert!(linked.is_none());
+        server.abort();
+    }
 
     #[test]
     fn redirect_origin_accepts_default_localhost_origin() {

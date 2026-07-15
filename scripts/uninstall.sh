@@ -12,6 +12,9 @@ DAEMON_LAUNCH_AGENT_LABEL="build.oore.oored"
 DAEMON_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$DAEMON_LAUNCH_AGENT_LABEL.plist"
 WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
 WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
+WEB_SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+WEB_SYSTEMD_SERVICE_NAME="oore-web.service"
+WEB_SYSTEMD_SERVICE_FILE="$WEB_SYSTEMD_USER_DIR/$WEB_SYSTEMD_SERVICE_NAME"
 UI_RESET=""
 UI_BOLD=""
 UI_DIM=""
@@ -233,7 +236,13 @@ stop_daemon() {
 }
 
 remove_daemon_launch_agent() {
+  local install_mode=""
+  [[ -f "$OORE_INSTALL_ROOT/INSTALL_MODE" ]] && install_mode="$(cat "$OORE_INSTALL_ROOT/INSTALL_MODE")"
+
   if [[ -x "$BIN_DIR/oored" ]]; then
+    if [[ "$install_mode" == "backend" ]]; then
+      sudo "$BIN_DIR/oored" uninstall-service --system >/dev/null 2>&1 || true
+    fi
     "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
   fi
 
@@ -284,6 +293,24 @@ remove_local_web_launch_agent() {
   if [[ -f "$WEB_LAUNCH_AGENT_PLIST" ]]; then
     log "Removing launch agent: $WEB_LAUNCH_AGENT_PLIST"
     rm -f "$WEB_LAUNCH_AGENT_PLIST"
+  fi
+}
+
+remove_local_web_systemd_user_service() {
+  [[ "$(uname -s)" == "Linux" ]] || return 0
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user disable --now "$WEB_SYSTEMD_SERVICE_NAME" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -f "$WEB_SYSTEMD_SERVICE_FILE" ]]; then
+    log "Removing systemd user service: $WEB_SYSTEMD_SERVICE_FILE"
+    rm -f "$WEB_SYSTEMD_SERVICE_FILE"
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    systemctl --user reset-failed "$WEB_SYSTEMD_SERVICE_NAME" >/dev/null 2>&1 || true
   fi
 }
 
@@ -356,7 +383,7 @@ main() {
 
   print_uninstall_intro
 
-  if [[ ! -d "$OORE_INSTALL_ROOT" ]] && ! grep -rqF "$BIN_DIR" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" 2>/dev/null; then
+  if [[ ! -d "$OORE_INSTALL_ROOT" ]] && [[ ! -f "$WEB_SYSTEMD_SERVICE_FILE" ]] && ! grep -rqF "$BIN_DIR" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" 2>/dev/null; then
     log "Oore CI does not appear to be installed."
     exit 0
   fi
@@ -372,6 +399,7 @@ main() {
   stop_daemon
   stop_local_web
   remove_local_web_launch_agent
+  remove_local_web_systemd_user_service
   remove_from_path
   remove_install_dir
   remove_data_dir

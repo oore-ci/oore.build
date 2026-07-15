@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: "How Oore CI generates signed download links for build artifacts."
+description: 'How Oore CI generates signed download links for build artifacts.'
 ---
 
 # Artifact Access Model
@@ -11,11 +11,11 @@ How Oore CI stores, secures, and serves build artifacts.
 
 Oore CI supports three artifact storage backends:
 
-| Backend | Description | Best for |
-|---------|-------------|----------|
-| `local` | Files stored on the daemon's filesystem | Development, single-machine setups |
-| `s3` | Amazon S3 or S3-compatible storage | Production deployments |
-| `r2` | Cloudflare R2 | Production deployments with Cloudflare |
+| Backend | Description                             | Best for                               |
+| ------- | --------------------------------------- | -------------------------------------- |
+| `local` | Files stored on the daemon's filesystem | Development, single-machine setups     |
+| `s3`    | Amazon S3 or S3-compatible storage      | Production deployments                 |
+| `r2`    | Cloudflare R2                           | Production deployments with Cloudflare |
 
 Configure storage via the [Settings API](/reference/api/settings#update-artifact-storage) or the web UI. See the [Configure Storage guide](/guides/artifacts/configure-storage) for step-by-step instructions.
 
@@ -35,7 +35,12 @@ When a runner produces a build artifact:
    - Maximum file size: 512 MiB
    - The upload URL is single-use and time-limited
 
-4. **Daemon records the artifact** with its storage location and metadata
+4. **Runner finalizes the reservation**
+   - `POST .../artifacts/{artifact_id}/complete` makes the artifact available
+   - `POST .../artifacts/{artifact_id}/abort` records a failed upload
+   - Pending and failed artifacts are not listed or downloadable
+
+Declared artifact patterns are part of build success: an empty pattern list requires no artifact, while a non-empty list must produce at least one finalized artifact. Missing matches and upload/finalization failures fail the build.
 
 ## Download flow
 
@@ -59,17 +64,31 @@ When a user wants to download an artifact:
 
 Signed URLs are the core security mechanism for artifact access:
 
-| Property | Upload | Download |
-|----------|--------|----------|
-| **TTL** | 30 minutes | 15 minutes |
-| **Auth required to generate** | Runner token | User session + `builds:read` |
-| **URL reusable** | No (single-use for S3) | Until expiry |
-| **Accessible without session** | Yes (presigned) | Yes (presigned) |
+| Property                       | Upload                 | Download                     |
+| ------------------------------ | ---------------------- | ---------------------------- |
+| **TTL**                        | 30 minutes             | 15 minutes                   |
+| **Auth required to generate**  | Runner token           | User session + `builds:read` |
+| **URL reusable**               | No (single-use for S3) | Until expiry                 |
+| **Accessible without session** | Yes (presigned)        | Yes (presigned)              |
 
 The presigned URL model means:
+
 - **No credentials in URLs**: S3 access keys are never exposed to runners or users
 - **Time-limited access**: URLs expire, preventing stale links from being shared indefinitely
 - **No proxy bottleneck**: Downloads go directly to S3/R2, not through the daemon
+
+## Device installation flow
+
+APK and signed ad-hoc IPA artifacts can use the install flow in addition to ordinary downloads:
+
+1. An authenticated user with artifact read access requests `POST /v1/artifacts/{artifact_id}/install-link`.
+2. Oore creates a reusable, artifact-scoped token that expires after one hour or when the artifact expires.
+3. Android receives the scoped APK download URL directly.
+4. iOS receives an `itms-services` URL whose HTTPS manifest references the scoped IPA download URL.
+
+The iOS token must be reusable because the phone fetches the manifest and IPA separately. The public manifest endpoint validates but does not consume the token. Oore only creates iOS install links for signed ad-hoc artifacts carrying bundle identifier, app name, version, and build number metadata from the current runner.
+
+See [Install Mobile Builds](/guides/artifacts/install-mobile-builds) for device instructions.
 
 ## Local backend tokens
 
@@ -87,7 +106,7 @@ This provides equivalent security to S3 presigned URLs for local deployments.
 Artifact access is protected by multiple layers:
 
 1. **Runner assignment**: Only the runner assigned to a build can create artifacts for that build
-2. **RBAC permissions**: Only users with `builds:read` permission can request download links
+2. **RBAC permissions**: Users with artifact read access can download and install; artifact write access is required to administer reusable external share links
 3. **Signed URLs**: Time-limited, so sharing a link has a bounded exposure window
 4. **Audit trail**: Download link generation is logged for accountability
 5. **Checksum deduplication**: Prevents duplicate artifact uploads within a build

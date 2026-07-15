@@ -11,15 +11,18 @@ OORE_DAEMON_URL_WAS_SET=0
 [[ -n "${OORE_DAEMON_URL+x}" ]] && OORE_DAEMON_URL_WAS_SET=1
 OORE_INSTALL_MODE="${OORE_INSTALL_MODE:-auto}"
 OORE_INSTALL_ROOT="${OORE_INSTALL_ROOT:-$HOME/.oore}"
-OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-devaryakjha/oore.build}"
+OORE_GITHUB_REPO="${OORE_GITHUB_REPO:-oore-ci/oore.build}"
 OORE_RELEASE_BASE_URL="${OORE_RELEASE_BASE_URL:-https://github.com/$OORE_GITHUB_REPO/releases/download}"
-OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases/latest}"
-OORE_RELEASES_LIST_URL="${OORE_RELEASES_LIST_URL:-https://api.github.com/repos/$OORE_GITHUB_REPO/releases?per_page=100}"
+OORE_RELEASE_INDEX_BASE_URL="${OORE_RELEASE_INDEX_BASE_URL:-https://releases.oore.build}"
+OORE_RELEASE_MANIFEST_URL="${OORE_RELEASE_MANIFEST_URL:-$OORE_RELEASE_INDEX_BASE_URL/latest/$OORE_CHANNEL.json}"
 OORE_NONINTERACTIVE="${OORE_NONINTERACTIVE:-0}"
+OORE_OPEN_BROWSER="${OORE_OPEN_BROWSER:-}"
 OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_INSTALL_DAEMON_SERVICE="${OORE_INSTALL_DAEMON_SERVICE:-}"
 OORE_DAEMON_LISTEN="${OORE_DAEMON_LISTEN:-}"
 OORE_PUBLIC_URL="${OORE_PUBLIC_URL:-}"
+OORE_WARPGATE_TICKET="${OORE_WARPGATE_TICKET:-}"
+OORE_ARTIFACT_DELIVERY_URL="${OORE_ARTIFACT_DELIVERY_URL:-}"
 OORE_CORS_ORIGINS="${OORE_CORS_ORIGINS:-}"
 OORE_ENABLE_LINGER="${OORE_ENABLE_LINGER:-}"
 OORE_HOSTED_UI="${OORE_HOSTED_UI:-https://ci.oore.build}"
@@ -33,6 +36,7 @@ OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER="${OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HE
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET="${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET:-}"
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE:-}"
 OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER="${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER:-x-oore-web-trusted-proxy-secret}"
+OORE_FRONTEND_PAIRING_CODE="${OORE_FRONTEND_PAIRING_CODE:-}"
 OORE_DAEMON_URL="${OORE_DAEMON_URL:-http://127.0.0.1:8787}"
 OORE_WEB_BACKEND_URL="${OORE_WEB_BACKEND_URL:-$OORE_DAEMON_URL}"
 OORE_LOCAL_WEB_MODE="${OORE_LOCAL_WEB_MODE:-}"
@@ -72,6 +76,8 @@ UI_ACCENT=""
 UI_SUCCESS=""
 UI_WARNING=""
 UI_ERROR=""
+OORE_ADVANCED=0
+OORE_NO_OPEN=0
 
 print_help() {
   cat <<'EOF'
@@ -79,6 +85,8 @@ Oore CI installer
 
 Usage:
   ./scripts/install.sh
+  ./scripts/install.sh --advanced
+  ./scripts/install.sh --no-open
   ./scripts/install.sh --help
 
 Environment overrides:
@@ -87,13 +95,17 @@ Environment overrides:
   OORE_INSTALL_MODE          Install mode: auto|all|backend|frontend (default: auto; full is a legacy alias for all)
   OORE_INSTALL_ROOT          Install root (default: ~/.oore)
   OORE_NONINTERACTIVE        Non-interactive mode (true/false)
+  OORE_OPEN_BROWSER          Open the local web root after install (true/false; defaults to true only for interactive local installs)
   OORE_DAEMON_LISTEN         Daemon listen address for all/backend installs (default: from OORE_DAEMON_URL)
   OORE_START_DAEMON          Start daemon in non-interactive mode (true/false)
   OORE_INSTALL_DAEMON_SERVICE Install oored as a launchd service in all/backend mode (true/false)
   OORE_PUBLIC_URL            Browser-visible HTTPS origin for remote access
+  OORE_WARPGATE_TICKET       Optional Warpgate access ticket for iOS OTA installs
+  OORE_ARTIFACT_DELIVERY_URL Optional token-only HTTPS origin for artifact installs behind an auth proxy
   OORE_CORS_ORIGINS          Comma-separated allowed browser origins (default: OORE_PUBLIC_URL when set)
   OORE_DAEMON_URL            Daemon URL used by all/backend setup helpers (default: http://127.0.0.1:8787)
   OORE_WEB_BACKEND_URL       Backend URL proxied by oore-web (default: OORE_DAEMON_URL)
+  OORE_FRONTEND_PAIRING_CODE Short-lived code from `oore frontend invite`
   OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
   OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
   OORE_ENABLE_LINGER         Enable systemd lingering for Linux frontend login service (true/false)
@@ -108,11 +120,37 @@ Environment overrides:
   OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET Secret your auth proxy sends to oore-web before identity headers are forwarded
   OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE File containing the auth proxy -> oore-web proof secret
   OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER Header carrying the auth proxy -> oore-web proof secret
-  OORE_GITHUB_REPO           GitHub repo (default: devaryakjha/oore.build)
+  OORE_GITHUB_REPO           GitHub repo used to download assets (default: oore-ci/oore.build)
   OORE_RELEASE_BASE_URL      Release asset base URL (default: GitHub Releases download base)
-  OORE_RELEASE_MANIFEST_URL  Release metadata URL for latest tag resolution (default: GitHub Releases API)
-  OORE_RELEASES_LIST_URL     Release list URL for prerelease channel resolution (default: GitHub Releases API list)
+  OORE_RELEASE_INDEX_BASE_URL Static release index origin (default: https://releases.oore.build)
+  OORE_RELEASE_MANIFEST_URL  Latest channel manifest override (default: <index>/latest/<channel>.json)
 EOF
+}
+
+is_default_local_install() {
+  [[ "$RELEASE_OS" == "darwin" && "$OORE_ADVANCED" -eq 0 && "$OORE_INSTALL_MODE" == "all" ]]
+}
+
+should_open_browser() {
+  [[ "$OORE_NO_OPEN" -eq 0 ]] || return 1
+
+  if [[ -n "$OORE_OPEN_BROWSER" ]]; then
+    normalize_bool "$OORE_OPEN_BROWSER"
+    return $?
+  fi
+
+  ! is_noninteractive
+}
+
+report_component_failure() {
+  local component="$1"
+  local log_path="$2"
+  local retry_command="$3"
+  local expected_url="$4"
+
+  log "$component failed. Logs: $log_path"
+  log "Retry: $retry_command"
+  log "Expected URL: $expected_url"
 }
 
 step() {
@@ -196,6 +234,9 @@ print_install_summary() {
     printf '  Daemon listen: %s\n' "$OORE_DAEMON_LISTEN"
     if [[ -n "$OORE_PUBLIC_URL" ]]; then
       printf '  Public URL:    %s\n' "$OORE_PUBLIC_URL"
+    fi
+    if [[ -n "$OORE_ARTIFACT_DELIVERY_URL" ]]; then
+      printf '  Delivery URL:  %s\n' "$OORE_ARTIFACT_DELIVERY_URL"
     fi
     if [[ -n "$OORE_CORS_ORIGINS" ]]; then
       printf '  CORS origins:  %s\n' "$OORE_CORS_ORIGINS"
@@ -319,6 +360,62 @@ ensure_frontend_secret_files() {
     OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$(upstream_trusted_proxy_secret_file_path)"
     write_secret_file "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET"
   fi
+
+  if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+    [[ -s "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
+      || die "Backend Trusted Proxy proof file is missing or empty: $OORE_TRUSTED_PROXY_SHARED_SECRET_FILE"
+    if [[ -z "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+      OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET="$(generate_shared_secret)"
+      OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE="$(upstream_trusted_proxy_secret_file_path)"
+      write_secret_file "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET"
+      log "Generated auth-proxy proof: $OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
+    fi
+    [[ -s "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] \
+      || die "Auth-proxy proof file is missing or empty: $OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
+    local backend_proof upstream_proof
+    backend_proof="$(< "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE")"
+    upstream_proof="$(< "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE")"
+    backend_proof="${backend_proof#"${backend_proof%%[![:space:]]*}"}"
+    backend_proof="${backend_proof%"${backend_proof##*[![:space:]]}"}"
+    upstream_proof="${upstream_proof#"${upstream_proof%%[![:space:]]*}"}"
+    upstream_proof="${upstream_proof%"${upstream_proof##*[![:space:]]}"}"
+    [[ -n "$backend_proof" ]] || die 'Backend Trusted Proxy proof file is empty after trimming whitespace.'
+    [[ -n "$upstream_proof" ]] || die 'Auth-proxy proof file is empty after trimming whitespace.'
+    if [[ "$backend_proof" == "$upstream_proof" ]]; then
+      die 'Backend and auth-proxy proof files must contain different values.'
+    fi
+    unset backend_proof upstream_proof
+  elif [[ -n "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+    die 'Auth-proxy proof requires a backend Trusted Proxy proof. Set OORE_TRUSTED_PROXY_SHARED_SECRET or OORE_TRUSTED_PROXY_SHARED_SECRET_FILE.'
+  fi
+}
+
+pair_frontend_with_backend() {
+  local code="$1"
+  local response=""
+  local backend_proof=""
+  local email_header=""
+
+  [[ "$code" == fp_* ]] || die 'Frontend pairing code must start with fp_.'
+  response="$(printf '{\"code\":\"%s\"}' "$code" | \
+    curl -fsS --connect-timeout 10 --max-time 30 \
+      -H 'content-type: application/json' \
+      --data-binary @- \
+      "${OORE_WEB_BACKEND_URL%/}/v1/frontend/pair")" \
+    || die 'Frontend pairing failed. Create a new code on the Mac with: oore frontend invite'
+
+  backend_proof="$(printf '%s' "$response" | sed -n 's/.*"backend_proof"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  email_header="$(printf '%s' "$response" | sed -n 's/.*"user_email_header"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  [[ -n "$backend_proof" && -n "$email_header" ]] \
+    || die 'Frontend pairing returned an invalid response.'
+
+  OORE_TRUSTED_PROXY_SHARED_SECRET="$backend_proof"
+  OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER="$email_header"
+  if [[ -z "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" && -z "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
+    OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET="$(generate_shared_secret)"
+  fi
+  OORE_FRONTEND_PAIRING_CODE=""
+  log 'Frontend paired with backend.'
 }
 
 launchd_env_entry() {
@@ -713,6 +810,11 @@ normalize_runtime_config() {
 configure_install_mode() {
   normalize_install_mode
 
+  if [[ "$OORE_ADVANCED" -eq 0 && "$RELEASE_OS" == "darwin" && "$OORE_INSTALL_MODE" == "auto" ]]; then
+    OORE_INSTALL_MODE="all"
+    return 0
+  fi
+
   if [[ "$OORE_INSTALL_MODE" == "auto" ]]; then
     case "$RELEASE_OS" in
       linux)
@@ -749,6 +851,17 @@ configure_backend_install() {
     OORE_DAEMON_LISTEN="$(url_to_host_port "$DAEMON_URL")"
   fi
   [[ -n "$OORE_DAEMON_LISTEN" ]] || OORE_DAEMON_LISTEN="127.0.0.1:8787"
+
+  if is_default_local_install; then
+    OORE_DAEMON_LISTEN="127.0.0.1:8787"
+    OORE_DAEMON_URL="http://127.0.0.1:8787"
+    DAEMON_URL="$OORE_DAEMON_URL"
+    OORE_WEB_BACKEND_URL="$DAEMON_URL"
+    WEB_BACKEND_URL="$DAEMON_URL"
+    OORE_INSTALL_DAEMON_SERVICE=true
+    OORE_START_DAEMON=true
+    return 0
+  fi
 
   if ! is_noninteractive && has_prompt_tty; then
     local listen_default="$OORE_DAEMON_LISTEN"
@@ -828,9 +941,17 @@ configure_backend_install() {
 }
 
 configure_frontend_install() {
-  [[ "$OORE_INSTALL_MODE" == "frontend" ]] || return 0
+  is_web_install || return 0
 
-  if ! is_noninteractive && has_prompt_tty; then
+  if is_default_local_install; then
+    OORE_LOCAL_WEB_LISTEN="127.0.0.1:4173"
+    OORE_LOCAL_WEB_MODE=login
+    WEB_BACKEND_URL="$DAEMON_URL"
+    resolve_local_web_url
+    return 0
+  fi
+
+  if [[ "$OORE_INSTALL_MODE" == "frontend" ]] && ! is_noninteractive && has_prompt_tty; then
     local backend_default="$WEB_BACKEND_URL"
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
       backend_default=""
@@ -879,12 +1000,24 @@ configure_frontend_install() {
     fi
 
     if [[ -z "$OORE_TRUSTED_PROXY_SHARED_SECRET" && -z "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
-      OORE_TRUSTED_PROXY_SHARED_SECRET="$(
-        prompt_text \
-          "Backend Trusted Proxy shared secret. Use the value from the backend host; leave blank to disable trusted-proxy identity forwarding here." \
-          "$OORE_TRUSTED_PROXY_SHARED_SECRET" \
-          "optional"
-      )"
+      if [[ -z "$OORE_FRONTEND_PAIRING_CODE" ]]; then
+        OORE_FRONTEND_PAIRING_CODE="$(
+          prompt_text \
+            "Frontend pairing code from 'oore frontend invite' on the backend Mac. Leave blank only for OIDC or manual proof setup." \
+            "" \
+            "optional"
+        )"
+      fi
+      if [[ -n "$OORE_FRONTEND_PAIRING_CODE" ]]; then
+        pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
+      else
+        OORE_TRUSTED_PROXY_SHARED_SECRET="$(
+          prompt_text \
+            "Backend Trusted Proxy shared secret. Use the value from the backend host; leave blank to disable trusted-proxy identity forwarding here." \
+            "$OORE_TRUSTED_PROXY_SHARED_SECRET" \
+            "optional"
+        )"
+      fi
     fi
 
     if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET" || -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
@@ -902,15 +1035,20 @@ configure_frontend_install() {
           prompt_text \
             "Auth proxy -> oore-web proof secret. Configure your auth proxy to send this in ${OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER} with the user email header." \
             "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET" \
-            "optional"
+            "required"
         )"
       fi
     fi
-  else
+  elif [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
       die 'Frontend-only non-interactive install requires OORE_WEB_BACKEND_URL, for example http://<backend-host>:8787.'
     fi
+    if [[ -n "$OORE_FRONTEND_PAIRING_CODE" ]]; then
+      pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
+    fi
   fi
+
+  [[ "$OORE_INSTALL_MODE" == "frontend" ]] || return 0
 
   ensure_frontend_secret_files
   WEB_BACKEND_URL="$OORE_WEB_BACKEND_URL"
@@ -919,6 +1057,8 @@ configure_frontend_install() {
 
 configure_setup_prefill() {
   is_daemon_install || return 0
+
+  is_default_local_install && return 0
 
   if ! is_noninteractive && has_prompt_tty; then
     print_prompt_section \
@@ -988,117 +1128,19 @@ infer_channel_from_tag() {
   fi
 }
 
-resolve_latest_channel_tag_from_list() {
-  local json_file="$1"
-  local channel="$2"
-  local want_re=""
-
-  case "$channel" in
-    alpha) want_re='-alpha\.' ;;
-    beta) want_re='-beta\.' ;;
-    *) die "resolve_latest_channel_tag_from_list: unsupported channel: $channel" ;;
-  esac
-
-  # GitHub's release API order is not stable after release edits.
-  # Collect all matching prerelease tags and choose the highest version.
-  local candidates=()
-  local tag=""
-  local draft=""
-  local prerelease=""
-  local line=""
-  while IFS= read -r line; do
-    if [[ -z "$tag" ]]; then
-      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$draft" ]]; then
-      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$prerelease" ]]; then
-      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-
-    if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
-      if [[ "$draft" == "false" && "$prerelease" == "true" ]] && echo "$tag" | grep -qE -- "$want_re"; then
-        candidates+=("$tag")
-      fi
-      tag=""
-      draft=""
-      prerelease=""
-    fi
-  done < "$json_file"
-
-  if [[ "${#candidates[@]}" -eq 0 ]]; then
-    return 1
-  fi
-
-  printf '%s\n' "${candidates[@]}" | sort -V | tail -n1
-}
-
-resolve_latest_stable_tag_from_list() {
-  local json_file="$1"
-
-  # GitHub's release API order is not stable after release edits.
-  # Collect all stable tags and choose the highest version.
-  local candidates=()
-  local tag=""
-  local draft=""
-  local prerelease=""
-  local line=""
-  while IFS= read -r line; do
-    if [[ -z "$tag" ]]; then
-      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$draft" ]]; then
-      draft="$(sed -n 's/.*"draft"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-    if [[ -z "$prerelease" ]]; then
-      prerelease="$(sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\([^,}]*\).*/\1/p' <<<"$line" | head -n1)"
-    fi
-
-    if [[ -n "$tag" && -n "$draft" && -n "$prerelease" ]]; then
-      if [[ "$draft" == "false" && "$prerelease" == "false" ]]; then
-        candidates+=("$tag")
-      fi
-      tag=""
-      draft=""
-      prerelease=""
-    fi
-  done < "$json_file"
-
-  if [[ "${#candidates[@]}" -eq 0 ]]; then
-    return 1
-  fi
-
-  printf '%s\n' "${candidates[@]}" | sort -V | tail -n1
-}
-
 resolve_release_tag() {
   local tag=""
   if [[ "$OORE_VERSION" == "latest" ]]; then
-    if [[ "$OORE_CHANNEL" == "stable" ]]; then
-      local manifest_file="$TMP_DIR/latest.json"
-      if curl -fsSL --retry 3 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL"; then
-        # GitHub API returns "tag_name": "vX.Y.Z"
-        tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
-        [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
-      else
-        # GitHub returns 404 when there are no releases yet.
-        local list_file="$TMP_DIR/releases.json"
-        log "No stable release manifest found. Falling back to release list."
-        curl -fsSL --retry 3 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
-          || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
+    local manifest_file="$TMP_DIR/latest.json"
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$manifest_file" "$OORE_RELEASE_MANIFEST_URL" \
+      || die "Unable to fetch latest $OORE_CHANNEL release manifest: $OORE_RELEASE_MANIFEST_URL"
 
-        tag="$(resolve_latest_stable_tag_from_list "$list_file" || true)"
-        [[ -n "$tag" ]] || die "No stable releases found. Try a prerelease channel: OORE_CHANNEL=beta (or alpha)."
-      fi
-    else
-      local list_file="$TMP_DIR/releases.json"
-      curl -fsSL --retry 3 --output "$list_file" "$OORE_RELEASES_LIST_URL" \
-        || die "Unable to fetch release list: $OORE_RELEASES_LIST_URL"
-
-      tag="$(resolve_latest_channel_tag_from_list "$list_file" "$OORE_CHANNEL" || true)"
-      [[ -n "$tag" ]] || die "Unable to resolve latest $OORE_CHANNEL release from: $OORE_RELEASES_LIST_URL"
+    tag="$(sed -n 's/.*"tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
+    # Preserve compatibility with custom manifests using GitHub's older field name.
+    if [[ -z "$tag" ]]; then
+      tag="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest_file" | head -n1)"
     fi
+    [[ -n "$tag" ]] || die "Unable to parse tag from release manifest: $OORE_RELEASE_MANIFEST_URL"
   else
     if [[ "$OORE_VERSION" == v* ]]; then
       tag="$OORE_VERSION"
@@ -1147,9 +1189,9 @@ download_release_assets() {
   local checksum_url="$base_url/$checksum_name"
 
   log "Downloading release assets for $RELEASE_TAG ($OORE_INSTALL_MODE/$RELEASE_OS/$RELEASE_ARCH)..."
-  curl -fsSL --retry 3 --output "$TMP_DIR/$archive_name" "$archive_url" \
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 600 --output "$TMP_DIR/$archive_name" "$archive_url" \
     || die "Failed to download release archive: $archive_url"
-  curl -fsSL --retry 3 --output "$TMP_DIR/$checksum_name" "$checksum_url" \
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 --output "$TMP_DIR/$checksum_name" "$checksum_url" \
     || die "Failed to download checksum file: $checksum_url"
 }
 
@@ -1259,6 +1301,14 @@ verify_archive_checksum() {
   log "Checksum verified for $archive_name."
 }
 
+install_executable() {
+  local source="$1"
+  local destination="$2"
+  local staged="${destination}.install.$$"
+  install -m 0755 "$source" "$staged"
+  mv -f "$staged" "$destination"
+}
+
 install_binaries() {
   local archive_name
   local extract_dir="$TMP_DIR/extract"
@@ -1279,13 +1329,11 @@ install_binaries() {
 
   mkdir -p "$BIN_DIR" "$LOG_DIR"
   if is_daemon_install; then
-    cp "$extract_dir/bin/oored" "$BIN_DIR/oored"
-    cp "$extract_dir/bin/oore" "$BIN_DIR/oore"
-    chmod +x "$BIN_DIR/oored" "$BIN_DIR/oore"
+    install_executable "$extract_dir/bin/oored" "$BIN_DIR/oored"
+    install_executable "$extract_dir/bin/oore" "$BIN_DIR/oore"
   fi
   if is_web_install; then
-    cp "$extract_dir/bin/oore-web" "$WEB_BINARY"
-    chmod +x "$WEB_BINARY"
+    install_executable "$extract_dir/bin/oore-web" "$WEB_BINARY"
     rm -rf "$WEB_DIST_DIR"
     cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
   else
@@ -1377,22 +1425,50 @@ start_daemon() {
     return 0
   fi
 
-  log "Daemon failed to start. Check logs: $DAEMON_LOG"
+  report_component_failure \
+    "oored" \
+    "$DAEMON_LOG" \
+    "$BIN_DIR/oored run --listen $OORE_DAEMON_LISTEN" \
+    "$DAEMON_URL/healthz"
   return 1
 }
 
 install_daemon_service() {
   local cmd=("$BIN_DIR/oored" "install-service" "--listen" "$OORE_DAEMON_LISTEN")
+  local retry_cmd="$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN"
+
+  if [[ "$OORE_INSTALL_MODE" == "backend" ]]; then
+    ensure_dependency sudo
+    local service_user
+    service_user="$(id -un)"
+    "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
+    cmd=(sudo "$BIN_DIR/oored" "install-service" "--system" "--user" "$service_user" "--listen" "$OORE_DAEMON_LISTEN")
+    cmd+=("--env" "HOME=$HOME")
+    retry_cmd="sudo $BIN_DIR/oored install-service --system --user $service_user --listen $OORE_DAEMON_LISTEN --env HOME=$HOME"
+  fi
 
   if [[ -n "$OORE_PUBLIC_URL" ]]; then
     cmd+=("--env" "OORE_PUBLIC_URL=$OORE_PUBLIC_URL")
+  fi
+  if [[ -n "$OORE_WARPGATE_TICKET" ]]; then
+    cmd+=("--env" "OORE_WARPGATE_TICKET=$OORE_WARPGATE_TICKET")
+  fi
+  if [[ -n "$OORE_ARTIFACT_DELIVERY_URL" ]]; then
+    cmd+=("--env" "OORE_ARTIFACT_DELIVERY_URL=$OORE_ARTIFACT_DELIVERY_URL")
   fi
   if [[ -n "$OORE_CORS_ORIGINS" ]]; then
     cmd+=("--env" "OORE_CORS_ORIGINS=$OORE_CORS_ORIGINS")
   fi
   cmd+=("--env" "RUST_LOG=${RUST_LOG:-info}")
 
-  "${cmd[@]}" || return 1
+  if ! "${cmd[@]}"; then
+    report_component_failure \
+      "oored launchd service" \
+      "$DAEMON_LOG" \
+      "$retry_cmd" \
+      "$DAEMON_URL/healthz"
+    return 1
+  fi
 
   local i
   for i in $(seq 1 15); do
@@ -1404,6 +1480,15 @@ install_daemon_service() {
     fi
     sleep 1
   done
+
+  if is_default_local_install; then
+    report_component_failure \
+      "oored launchd service" \
+      "$DAEMON_LOG" \
+      "$retry_cmd" \
+      "$DAEMON_URL/healthz"
+    return 1
+  fi
 
   log "Daemon service was installed, but this host could not reach $DAEMON_URL/healthz. Continuing; check logs if clients cannot connect."
   DAEMON_STARTED=1
@@ -1520,11 +1605,34 @@ is_local_web_healthy() {
   curl_quick "${LOCAL_WEB_URL}/__oore_web_healthz" >/dev/null 2>&1
 }
 
+preflight_local_web_listen() {
+  # A healthy existing oore-web instance already owns this address.
+  is_local_web_healthy && return 0
+
+  local port="${OORE_LOCAL_WEB_LISTEN##*:}"
+  [[ "$port" =~ ^[0-9]+$ ]] || die "OORE_LOCAL_WEB_LISTEN must include a numeric port (got: $OORE_LOCAL_WEB_LISTEN)"
+
+  local listeners=""
+  if have_cmd lsof; then
+    listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  elif have_cmd ss; then
+    if ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .; then
+      listeners=1
+    fi
+  else
+    die "Cannot check whether $OORE_LOCAL_WEB_LISTEN is available: install lsof or ss."
+  fi
+
+  [[ -z "$listeners" ]] || die "Cannot start oore-web: $OORE_LOCAL_WEB_LISTEN is already in use. Set OORE_LOCAL_WEB_LISTEN to an available host:port."
+}
+
 start_local_web() {
   if ! has_local_web_bundle; then
     log "Bundled local web UI not found in this release."
     return 1
   fi
+
+  preflight_local_web_listen
 
   mkdir -p "$LOG_DIR"
 
@@ -1560,7 +1668,11 @@ start_local_web() {
     sleep 1
   done
 
-  log "Local web UI failed to become healthy. Check logs: $WEB_LOG"
+  report_component_failure \
+    "oore-web" \
+    "$WEB_LOG" \
+    "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR" \
+    "$LOCAL_WEB_URL"
   return 1
 }
 
@@ -1569,6 +1681,8 @@ install_local_web_launch_agent() {
     log "Cannot install launch agent: bundled local web UI is unavailable."
     return 1
   fi
+
+  preflight_local_web_listen
 
   mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
   cat > "$WEB_LAUNCH_AGENT_PLIST" <<EOF
@@ -1607,8 +1721,14 @@ EOF
 
   if ! launchctl bootstrap "gui/$uid" "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
     # Fallback for older macOS launchctl variants.
-    launchctl load -w "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1 \
-      || return 1
+    if ! launchctl load -w "$WEB_LAUNCH_AGENT_PLIST" >/dev/null 2>&1; then
+      report_component_failure \
+        "oore-web launch agent" \
+        "$WEB_LOG" \
+        "launchctl load -w $WEB_LAUNCH_AGENT_PLIST" \
+        "$LOCAL_WEB_URL"
+      return 1
+    fi
   fi
 
   launchctl kickstart -k "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 \
@@ -1623,6 +1743,9 @@ install_local_web_systemd_user_service() {
     log "Cannot install systemd user service: bundled web UI is unavailable."
     return 1
   fi
+
+  preflight_local_web_listen
+
   if ! have_cmd systemctl; then
     log "Cannot install systemd user service: systemctl is unavailable."
     return 1
@@ -1723,7 +1846,7 @@ configure_local_web_noninteractive() {
     login)
       install_local_web_autostart \
         || die "Failed to install local web autostart in non-interactive mode."
-      start_local_web || true
+      start_local_web
       ;;
     *)
       die 'OORE_LOCAL_WEB_MODE must be one of: off,run,login.'
@@ -1910,6 +2033,7 @@ print_next_steps() {
     printf 'Backend proxy target: %s\n\n' "$WEB_BACKEND_URL"
     if "$local_web_running"; then
       printf 'Frontend status: running\n'
+      printf 'Verify frontend + backend: oore-web status --url %s\n' "$LOCAL_WEB_URL"
     else
       printf 'Start the frontend:\n'
       printf '  oore-web --listen %s --backend-url %s\n' "$OORE_LOCAL_WEB_LISTEN" "$WEB_BACKEND_URL"
@@ -1923,6 +2047,8 @@ print_next_steps() {
     printf 'In the UI, add an instance with Backend URL empty so browser API calls use this frontend proxy.\n'
     if [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]]; then
       printf 'Trusted Proxy identity headers are forwarded only when your auth proxy also sends %s.\n' "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER"
+      printf 'Auth proxy proof file: %s\n' "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SHARED_SECRET_FILE"
+      printf 'Keep the proof private; configure HAProxy to read it through your service-secret mechanism.\n'
     fi
     printf '\nDocs: https://docs.oore.build\n'
     return 0
@@ -1942,6 +2068,9 @@ print_next_steps() {
     fi
     if [[ "$BACKEND_SETUP_INITIALIZED" -eq 1 ]]; then
       printf 'Setup is initialized. Sign in through your configured auth path.\n'
+    elif is_default_local_install; then
+      printf 'Open the local web UI and use loopback local login:\n'
+      printf '  %s\n' "$LOCAL_WEB_URL"
     else
       printf 'Complete setup:\n'
       if has_local_web_bundle; then
@@ -1998,17 +2127,24 @@ cleanup() {
 }
 
 main() {
-  if [[ $# -gt 0 ]]; then
+  while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
         print_help
         return 0
         ;;
+      --advanced)
+        OORE_ADVANCED=1
+        ;;
+      --no-open)
+        OORE_NO_OPEN=1
+        ;;
       *)
         die "Unknown argument: $1 (use --help)"
         ;;
     esac
-  fi
+    shift
+  done
 
   trap cleanup EXIT
   init_ui_theme
@@ -2018,6 +2154,7 @@ main() {
   validate_optional_bool_env OORE_START_DAEMON "$OORE_START_DAEMON"
   validate_optional_bool_env OORE_INSTALL_DAEMON_SERVICE "$OORE_INSTALL_DAEMON_SERVICE"
   validate_optional_bool_env OORE_ENABLE_LINGER "$OORE_ENABLE_LINGER"
+  validate_optional_bool_env OORE_OPEN_BROWSER "$OORE_OPEN_BROWSER"
 
   if normalize_bool "$OORE_NONINTERACTIVE"; then
     :
@@ -2099,8 +2236,11 @@ main() {
     # Step 5: Non-interactive daemon handling
     if should_install_daemon_service; then
       step "Installing daemon service..."
-      install_daemon_service || die "Daemon service startup failed. Check logs: $DAEMON_LOG"
+      install_daemon_service || exit 1
       initialize_backend_setup_if_requested
+      if is_default_local_install; then
+        configure_local_web_noninteractive || exit 1
+      fi
       if [[ "$DAEMON_HEALTH_REACHABLE" -eq 1 ]]; then
         step_done "$DAEMON_URL (launchd)"
       else
@@ -2109,7 +2249,7 @@ main() {
     elif [[ -n "$OORE_START_DAEMON" ]]; then
       if normalize_bool "$OORE_START_DAEMON"; then
         step "Starting daemon..."
-        start_daemon || die "Daemon startup failed. Check logs: $DAEMON_LOG"
+        start_daemon || exit 1
         initialize_backend_setup_if_requested
         if is_localhost_backend; then
           configure_local_web_noninteractive
@@ -2136,6 +2276,9 @@ main() {
       step "Installing daemon service..."
       if install_daemon_service; then
         initialize_backend_setup_if_requested
+        if is_default_local_install; then
+          configure_local_web_noninteractive
+        fi
         daemon_started=0
       else
         daemon_started=1
@@ -2165,6 +2308,9 @@ main() {
       if [[ "$BACKEND_SETUP_INITIALIZED" -eq 1 ]]; then
         printf '\n'
         log "Backend setup was initialized by the installer."
+      elif is_default_local_install; then
+        printf '\n'
+        log "Local web UI is ready. Loopback local login will complete first-run setup."
       elif ! is_already_configured; then
         printf '\n'
         generate_setup_token || true
@@ -2186,6 +2332,19 @@ main() {
   fi
 
   print_next_steps
+
+  if is_default_local_install && should_open_browser; then
+    if is_local_web_healthy; then
+      open "$LOCAL_WEB_URL" >/dev/null 2>&1 || log "Could not open browser. Open: $LOCAL_WEB_URL"
+    else
+      report_component_failure \
+        "oore-web" \
+        "$WEB_LOG" \
+        "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR" \
+        "$LOCAL_WEB_URL"
+      return 1
+    fi
+  fi
 }
 
 main "$@"

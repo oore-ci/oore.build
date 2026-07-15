@@ -1,78 +1,38 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import z from 'zod'
+import { useState } from 'react'
+import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 
+import { GitLabAuthStep } from './-gitlab-auth-step'
+import { GitLabHostStep } from './-gitlab-host-step'
+import { generateWebhookSecret, gitLabSetupSchema } from './-gitlab-setup'
+import { GitLabVerificationStep } from './-gitlab-verification-step'
+import { GitLabWebhookSecretField } from './-gitlab-webhook-secret-field'
+import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Form } from '@/components/ui/form'
+import PageHeader from '@/components/page-header'
+import PageLayout from '@/components/page-layout'
+import {
+  useExternalAccessNetworkSettings,
+  useInstancePreferences,
+} from '@/hooks/use-artifact-storage'
+import { useGitLabStart } from '@/hooks/use-integrations'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useInstancePreferences } from '@/hooks/use-artifact-storage'
-import { useGitLabStart } from '@/hooks/use-integrations'
+import { gitLabPublicEndpoints, normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
-import SetupHint from '@/components/setup-hint'
-import { Button } from '@/components/ui/button'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
-import PageHeader from '@/components/page-header'
-import PageLayout from '@/components/page-layout'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-
-const gitLabSetupSchema = z
-  .object({
-    host_url: z.string().trim().min(1, 'Host URL is required'),
-    auth_mode: z.enum(['personal_token', 'oauth_app']),
-    webhook_secret: z.string().trim().min(1, 'Webhook secret is required'),
-    access_token: z.string().optional(),
-    client_id: z.string().optional(),
-    client_secret: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.auth_mode === 'personal_token' && !value.access_token?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Access token is required',
-        path: ['access_token'],
-      })
-    }
-
-    if (value.auth_mode === 'oauth_app' && !value.client_id?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Client ID is required',
-        path: ['client_id'],
-      })
-    }
-
-    if (value.auth_mode === 'oauth_app' && !value.client_secret?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Client secret is required',
-        path: ['client_secret'],
-      })
-    }
-  })
-
-type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
 
 export const Route = createFileRoute('/settings/integrations/gitlab')({
-  staticData: { breadcrumbLabel: 'GitLab' },
+  staticData: {
+    breadcrumbLabel: 'GitLab',
+    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -85,29 +45,39 @@ function GitLabSetupPage() {
   const startMutation = useGitLabStart()
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
+  const { data: networkSettings } = useExternalAccessNetworkSettings()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
-
+  const [webhookSecret] = useState(generateWebhookSecret)
+  const [hostKind, setSelectedHostKind] = useState<GitLabHostKind>('gitlab_com')
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
     mode: 'onBlur',
     defaultValues: {
       host_url: 'https://gitlab.com',
       auth_mode: 'personal_token',
-      webhook_secret: '',
+      webhook_secret: webhookSecret,
       access_token: '',
       client_id: '',
       client_secret: '',
     },
   })
-
   const authMode = form.watch('auth_mode')
   const hostUrl = form.watch('host_url')
+  const normalizedHostUrl =
+    normalizeGitLabHostUrl(hostUrl) ?? 'https://gitlab.com'
+  const { callbackUrl, webhookUrl } = gitLabPublicEndpoints(
+    networkSettings?.settings.public_url,
+    window.location.origin,
+  )
 
   function handleSubmit(data: GitLabSetupForm) {
     if (!remoteEnabled) return
+    const submittedHostUrl = normalizeGitLabHostUrl(data.host_url)
+    if (!submittedHostUrl) return
+
     startMutation.mutate(
       {
-        host_url: data.host_url.trim(),
+        host_url: submittedHostUrl,
         auth_mode: data.auth_mode,
         webhook_secret: data.webhook_secret.trim(),
         access_token:
@@ -125,25 +95,54 @@ function GitLabSetupPage() {
       },
       {
         onSuccess: (response) => {
+          const displayName = response.integration.display_name ?? 'GitLab'
           if (response.integration.status === 'inactive') {
             toast.message(
-              `Saved: ${response.integration.display_name ?? 'GitLab'} - authorize on GitLab to complete setup.`,
+              `Host verified. Authorize ${displayName} to complete setup.`,
             )
-            void navigate({
-              to: '/settings/integrations/$integrationId',
-              params: { integrationId: response.integration.id },
-            })
           } else {
-            toast.success(
-              `Connected: ${response.integration.display_name ?? 'GitLab'}`,
-            )
-            void navigate({ to: '/settings/integrations' })
+            toast.success(`Source verified: ${displayName}`)
           }
+          void navigate({
+            to: '/settings/integrations/$integrationId',
+            params: { integrationId: response.integration.id },
+          })
         },
-        onError: (err) => {
-          toast.error(`Failed to connect GitLab: ${err.message}`)
-        },
+        onError: (err) =>
+          toast.error(`Failed to connect GitLab: ${err.message}`),
       },
+    )
+  }
+
+  function normalizeHostUrl() {
+    const normalized = normalizeGitLabHostUrl(form.getValues('host_url'))
+    if (normalized)
+      form.setValue('host_url', normalized, { shouldValidate: true })
+  }
+
+  function selectHostKind(value: GitLabHostKind | null) {
+    if (!value) return
+    setSelectedHostKind(() => value)
+    if (value === 'gitlab_com') {
+      form.setValue('host_url', 'https://gitlab.com', {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+    }
+  }
+
+  function replaceWebhookSecret() {
+    form.setValue('webhook_secret', generateWebhookSecret(), {
+      shouldDirty: true,
+      shouldTouch: true,
+      shouldValidate: true,
+    })
+  }
+
+  function copyWebhookSecret() {
+    void navigator.clipboard.writeText(form.getValues('webhook_secret')).then(
+      () => toast.success('Webhook secret copied'),
+      () => toast.error('Could not copy webhook secret'),
     )
   }
 
@@ -152,10 +151,8 @@ function GitLabSetupPage() {
       <PageMeta title="Connect GitLab Source" noindex />
       <PageHeader
         title="Connect GitLab Source"
-        description="Connect gitlab.com or a self-managed GitLab source for repositories and webhook events."
-        back={{ to: '/settings/integrations', label: 'Sources' }}
+        description="Connect GitLab.com or a self-managed GitLab host for repository discovery and webhook-triggered builds."
       />
-
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
@@ -174,166 +171,38 @@ function GitLabSetupPage() {
           <Form {...form}>
             <form
               onSubmit={form.handleSubmit(handleSubmit)}
-              className="space-y-4"
+              className="space-y-6"
             >
-              <FormField
-                control={form.control}
-                name="host_url"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>GitLab host URL</FormLabel>
-                    <FormControl>
-                      <Input {...field} placeholder="https://gitlab.com" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+              <GitLabHostStep
+                form={form}
+                hostKind={hostKind}
+                onHostKindChange={selectHostKind}
+                onHostUrlBlur={normalizeHostUrl}
               />
-
-              <FormField
-                control={form.control}
-                name="auth_mode"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Authentication method</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={{
-                        personal_token: 'Personal Access Token',
-                        oauth_app: 'OAuth Application',
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="personal_token">
-                          Personal Access Token
-                        </SelectItem>
-                        <SelectItem value="oauth_app">
-                          OAuth Application
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
+              <GitLabAuthStep
+                form={form}
+                authMode={authMode}
+                hostUrl={normalizedHostUrl}
+                callbackUrl={callbackUrl}
               />
-
-              <FormField
-                control={form.control}
-                name="webhook_secret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Webhook secret</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        {...field}
-                        placeholder="Shared secret for GitLab webhook settings"
-                      />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">
-                      Use the same secret when creating the webhook in GitLab.
-                    </p>
-                    <SetupHint
-                      title="Where this goes in GitLab"
-                      items={[
-                        'Project Settings -> Webhooks -> Secret token.',
-                        'Use the Oore GitLab webhook URL from the connected source details page after this source is saved.',
-                      ]}
-                    />
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              {authMode === 'personal_token' ? (
-                <FormField
-                  control={form.control}
-                  name="access_token"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Access token</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          {...field}
-                          placeholder="glpat-..."
-                        />
-                      </FormControl>
-                      <SetupHint
-                        title="Required GitLab PAT scopes"
-                        items={[
-                          <span>
-                            Select <code>read_user</code>,{' '}
-                            <code>read_api</code>, and{' '}
-                            <code>read_repository</code>.
-                          </span>,
-                          <span>
-                            Do not select full <code>api</code> unless you are
-                            testing a future write-capable GitLab feature.
-                          </span>,
-                          <span>
-                            Create it at{' '}
-                            <code>
-                              {hostUrl || 'https://gitlab.com'}
-                              /-/user_settings/personal_access_tokens
-                            </code>
-                            .
-                          </span>,
-                        ]}
-                      />
-                      <FormMessage />
-                    </FormItem>
-                  )}
+              <GitLabVerificationStep authMode={authMode} />
+              <section className="space-y-4 border-t border-border/60 pt-6">
+                <div>
+                  <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                    4. Set up webhooks
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Save the source first, then add this endpoint and secret in
+                    each GitLab project.
+                  </p>
+                </div>
+                <GitLabWebhookSecretField
+                  form={form}
+                  webhookUrl={webhookUrl}
+                  onCopy={copyWebhookSecret}
+                  onRegenerate={replaceWebhookSecret}
                 />
-              ) : (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="client_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Client ID</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Application ID" />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">
-                          Create a GitLab OAuth application and paste its
-                          Application ID here.
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="client_secret"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Client secret</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="password"
-                            {...field}
-                            placeholder="Application secret"
-                          />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">
-                          Use the Secret from the same GitLab OAuth
-                          application.
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              )}
-
+              </section>
               <Button
                 type="submit"
                 disabled={
@@ -345,10 +214,12 @@ function GitLabSetupPage() {
                 {preferencesLoading
                   ? 'Checking access...'
                   : !remoteEnabled
-                    ? 'External Access Required'
+                    ? 'External access required'
                     : startMutation.isPending
                       ? 'Connecting...'
-                      : 'Connect GitLab'}
+                      : authMode === 'personal_token'
+                        ? 'Verify and save GitLab source'
+                        : 'Save and authorize on GitLab'}
               </Button>
             </form>
           </Form>

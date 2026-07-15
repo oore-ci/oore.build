@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
@@ -22,14 +22,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 
 interface PipelineCardProps {
   pipeline: Pipeline
   projectId: string
-  defaultBranch?: string
   canWrite: boolean
   canTriggerBuild: boolean
+  onPreloadTriggerBuild: () => void
+  onTriggerBuild: (pipelineId: string) => void
   lastBuildStatus?: string
   lastBuildTime?: number
 }
@@ -37,16 +37,15 @@ interface PipelineCardProps {
 export default function PipelineCard({
   pipeline,
   projectId,
-  defaultBranch,
   canWrite,
   canTriggerBuild,
+  onPreloadTriggerBuild,
+  onTriggerBuild,
   lastBuildStatus,
   lastBuildTime,
 }: PipelineCardProps) {
-  const navigate = useNavigate()
   const updateMutation = useUpdatePipeline()
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const [triggerOpen, setTriggerOpen] = useState(false)
 
   function handleToggle() {
     updateMutation.mutate(
@@ -115,9 +114,14 @@ export default function PipelineCard({
           {/* Actions */}
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
             {canTriggerBuild ? (
-              <Button size="sm" onClick={() => setTriggerOpen(true)}>
-                <HugeiconsIcon icon={PlayIcon} size={14} />
-                Run
+              <Button
+                size="sm"
+                onMouseEnter={onPreloadTriggerBuild}
+                onFocus={onPreloadTriggerBuild}
+                onClick={() => onTriggerBuild(pipeline.id)}
+              >
+                <HugeiconsIcon icon={PlayIcon} />
+                Run build
               </Button>
             ) : null}
             {canWrite ? (
@@ -128,11 +132,12 @@ export default function PipelineCard({
                   <Link
                     to="/projects/$projectId/pipelines/$pipelineId/edit"
                     params={{ projectId, pipelineId: pipeline.id }}
+                    search={{}}
                   />
                 }
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={Edit02Icon} size={14} />
+                <HugeiconsIcon icon={Edit02Icon} />
                 Edit
               </Button>
             ) : null}
@@ -157,7 +162,7 @@ export default function PipelineCard({
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Link01Icon} size={14} />
+              <HugeiconsIcon icon={Link01Icon} />
               Permalink
             </Button>
 
@@ -169,7 +174,6 @@ export default function PipelineCard({
             >
               <HugeiconsIcon
                 icon={detailsOpen ? ArrowDown01Icon : ArrowRight01Icon}
-                size={14}
               />
               Details
             </Button>
@@ -276,19 +280,6 @@ export default function PipelineCard({
           </Collapsible>
         </CardContent>
       </Card>
-
-      <TriggerBuildDialog
-        open={triggerOpen}
-        onOpenChange={setTriggerOpen}
-        fixedProjectId={projectId}
-        fixedPipelineId={pipeline.id}
-        fixedPipelineName={pipeline.name}
-        defaultBranch={defaultBranch}
-        description={`Run "${pipeline.name}" now.`}
-        onBuildCreated={(buildId) => {
-          void navigate({ to: '/builds/$buildId', params: { buildId } })
-        }}
-      />
     </>
   )
 }

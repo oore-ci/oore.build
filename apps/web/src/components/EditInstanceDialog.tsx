@@ -1,6 +1,6 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import z from 'zod'
+import * as z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import type { Instance } from '@/lib/types'
 import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
@@ -148,9 +148,11 @@ export default function EditInstanceDialog({
                       : ''
                   }
                   onClick={() => setValue('icon', entry.key)}
+                  aria-label={`Select ${entry.label} icon`}
+                  aria-pressed={selectedIcon === entry.key}
                   title={entry.label}
                 >
-                  <HugeiconsIcon icon={entry.icon} size={16} />
+                  <HugeiconsIcon icon={entry.icon} />
                 </Button>
               ))}
             </div>

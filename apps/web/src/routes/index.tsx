@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -14,20 +14,15 @@ import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
+import {
+  DashboardGettingStarted,
+  DashboardRecentBuilds,
+} from '@/components/dashboard-sections'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
@@ -35,13 +30,18 @@ import { useBuilds } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
+import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
-import { getStatusVariant } from '@/lib/status-variants'
-import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
+
+const loadQaReleasesPage = () => import('@/components/qa-releases-page')
+const QaReleasesPage = lazy(loadQaReleasesPage)
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute('/')({
   staticData: { breadcrumbLabel: 'Dashboard' },
@@ -100,15 +100,25 @@ function IndexPage() {
 
   useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
-    if (!isLoopbackHostname(window.location.hostname)) return
 
     autoDetectAttemptedRef.current = true
     setIsDetectingLocalInstance(true)
 
-    void detectReachableLocalDaemonUrl()
-      .then((detectedUrl) => {
-        if (!detectedUrl) return
+    void Promise.all([
+      isManagedFrontend(),
+      isLoopbackHostname(window.location.hostname)
+        ? detectReachableLocalDaemonUrl()
+        : Promise.resolve(null),
+    ])
+      .then(([managedFrontend, detectedUrl]) => {
         const store = useInstanceStore.getState()
+        if (Object.keys(store.instances).length > 0) return
+        if (managedFrontend) {
+          const instanceId = store.addInstance(window.location.hostname, '')
+          store.setActiveInstance(instanceId)
+          return
+        }
+        if (!detectedUrl) return
         const existingInstance = Object.values(store.instances).find(
           (candidate) =>
             normalizeUrl(candidate.url) === normalizeUrl(detectedUrl),
@@ -185,8 +195,8 @@ function IndexPage() {
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
-                <HugeiconsIcon icon={Add01Icon} size={16} />
-                Add Instance
+                <HugeiconsIcon icon={Add01Icon} />
+                Add instance
               </Button>
             </CardContent>
           </Card>
@@ -233,6 +243,20 @@ function IndexPage() {
   }
 
   if (status?.is_configured) {
+    if (authUser?.role === 'qa_viewer') {
+      return (
+        <Suspense
+          fallback={
+            <PageLayout width="wide">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-64 w-full" />
+            </PageLayout>
+          }
+        >
+          <QaReleasesPage />
+        </Suspense>
+      )
+    }
     return (
       <>
         <PageMeta />
@@ -293,6 +317,7 @@ function ConfiguredDashboard({
     [projectsQuery.data?.projects],
   )
   const integrationsQuery = useIntegrations()
+  const runnersQuery = useRunners()
   const integrations = useMemo(
     () => integrationsQuery.data?.integrations ?? [],
     [integrationsQuery.data?.integrations],
@@ -304,16 +329,17 @@ function ConfiguredDashboard({
     [integrations],
   )
 
-  const activeBuildsQuery = useBuilds({ limit: 10 })
-  const activeBuilds = useMemo(() => {
-    const all = activeBuildsQuery.data?.builds ?? []
-    return all.filter((b) => b.status === 'queued' || b.status === 'running')
-  }, [activeBuildsQuery.data?.builds])
-
   const recentBuildsQuery = useBuilds({ limit: 50 })
   const recentBuilds = useMemo(
     () => recentBuildsQuery.data?.builds ?? [],
     [recentBuildsQuery.data?.builds],
+  )
+  const activeBuilds = useMemo(
+    () =>
+      recentBuilds.filter(
+        (build) => build.status === 'queued' || build.status === 'running',
+      ),
+    [recentBuilds],
   )
   const hasProjects = projects.length > 0
   const integrationsResolved =
@@ -323,7 +349,12 @@ function ConfiguredDashboard({
     integrationsResolved &&
     activeIntegrationsCount === 0
   const integrationConnectTo = '/settings/integrations'
-  const canShowRunBuild = canWriteBuilds && hasProjects
+  const noOnlineRunners =
+    !!runnersQuery.data &&
+    !runnersQuery.data.runners.some(
+      (runner) => runner.status === 'online' || runner.status === 'busy',
+    )
+  const canShowRunBuild = canWriteBuilds && hasProjects && !noOnlineRunners
 
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
@@ -337,7 +368,7 @@ function ConfiguredDashboard({
   }, [recentBuilds])
 
   function handleTriggerForProject(projectId: string) {
-    setTriggerProjectId(projectId)
+    setTriggerProjectId(() => projectId)
     setTriggerOpen(true)
   }
 
@@ -353,9 +384,13 @@ function ConfiguredDashboard({
         description="Project overview and build activity."
         actions={
           canShowRunBuild ? (
-            <Button onClick={handleGlobalTrigger}>
-              <HugeiconsIcon icon={PlayIcon} size={16} />
-              Run Build
+            <Button
+              onMouseEnter={() => void loadTriggerBuildDialog()}
+              onFocus={() => void loadTriggerBuildDialog()}
+              onClick={handleGlobalTrigger}
+            >
+              <HugeiconsIcon icon={PlayIcon} />
+              Run build
             </Button>
           ) : undefined
         }
@@ -383,6 +418,16 @@ function ConfiguredDashboard({
             >
               Dismiss
             </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {noOnlineRunners ? (
+        <Alert variant="destructive">
+          <AlertTitle>No runner is available</AlertTitle>
+          <AlertDescription>
+            Builds cannot run until a runner checks in. Verify that the Oore
+            daemon is running on the runner host.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -422,7 +467,7 @@ function ConfiguredDashboard({
             nativeButton={false}
           >
             View all
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+            <HugeiconsIcon icon={ArrowRight01Icon} />
           </Button>
         </div>
 
@@ -433,106 +478,13 @@ function ConfiguredDashboard({
             <Skeleton className="h-32" />
           </div>
         ) : projects.length === 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Getting Started
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <ol className="space-y-3 text-sm">
-                  {runtimeMode === 'remote' && noConnectedSources ? (
-                    <li className="flex items-start gap-3">
-                      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
-                        1
-                      </span>
-                      <div className="space-y-1.5">
-                        <p className="font-medium">Connect a source</p>
-                        <p className="text-xs text-muted-foreground">
-                          Link GitHub or GitLab to import repositories and
-                          enable webhook-triggered builds.
-                        </p>
-                        {canWriteIntegrations ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            render={<Link to={integrationConnectTo} />}
-                            nativeButton={false}
-                          >
-                            Connect Source
-                          </Button>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            Ask an admin to connect a source.
-                          </p>
-                        )}
-                      </div>
-                    </li>
-                  ) : null}
-                  <li className="flex items-start gap-3">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
-                      {runtimeMode === 'remote' && noConnectedSources
-                        ? '2'
-                        : '1'}
-                    </span>
-                    <div className="space-y-1.5">
-                      <p className="font-medium">Create a project</p>
-                      <p className="text-xs text-muted-foreground">
-                        {runtimeMode === 'local'
-                          ? 'Point to a local Flutter repository to get started.'
-                          : 'Pick a repository from a connected source or use a local path.'}
-                      </p>
-                      {canWriteProjects ? (
-                        <Button
-                          size="sm"
-                          render={
-                            <Link to="/projects" search={{ openCreate: '1' }} />
-                          }
-                          nativeButton={false}
-                        >
-                          <HugeiconsIcon icon={Add01Icon} size={14} />
-                          Create Project
-                        </Button>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          Ask a developer or admin to create a project.
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
-                      {runtimeMode === 'remote' && noConnectedSources
-                        ? '3'
-                        : '2'}
-                    </span>
-                    <div className="space-y-1.5">
-                      <p className="font-medium">Add a pipeline</p>
-                      <p className="text-xs text-muted-foreground">
-                        Configure which platforms to build (Android, iOS, macOS)
-                        and signing settings.
-                      </p>
-                    </div>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
-                      {runtimeMode === 'remote' && noConnectedSources
-                        ? '4'
-                        : '3'}
-                    </span>
-                    <div className="space-y-1.5">
-                      <p className="font-medium">Run your first build</p>
-                      <p className="text-xs text-muted-foreground">
-                        Trigger a build manually or push to your repository to
-                        start automatically.
-                      </p>
-                    </div>
-                  </li>
-                </ol>
-              </div>
-            </CardContent>
-          </Card>
+          <DashboardGettingStarted
+            canWriteIntegrations={canWriteIntegrations}
+            canWriteProjects={canWriteProjects}
+            integrationConnectTo={integrationConnectTo}
+            noConnectedSources={noConnectedSources}
+            runtimeMode={runtimeMode}
+          />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
@@ -540,6 +492,7 @@ function ConfiguredDashboard({
                 key={project.id}
                 project={project}
                 lastBuildStatus={lastBuildByProject.get(project.id)}
+                onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
                 onTriggerBuild={handleTriggerForProject}
               />
             ))}
@@ -547,113 +500,34 @@ function ConfiguredDashboard({
         )}
       </section>
 
-      {/* Recent Builds */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Recent Builds
-          </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            render={<Link to="/builds" />}
-            nativeButton={false}
-          >
-            View all
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
-          </Button>
-        </div>
-
-        {recentBuildsQuery.isLoading ? (
-          <Card>
-            <CardContent className="space-y-3">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </CardContent>
-          </Card>
-        ) : recentBuilds.length === 0 ? (
-          <Card>
-            <CardContent>
-              <div className="py-4 text-center">
-                <p className="text-sm text-muted-foreground">No builds yet.</p>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Build</TableHead>
-                    <TableHead>Project</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Branch</TableHead>
-                    <TableHead>Commit</TableHead>
-                    <TableHead>When</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recentBuilds.map((build) => {
-                    const projectName =
-                      projects.find((p) => p.id === build.project_id)?.name ??
-                      build.project_id.slice(0, 8)
-                    return (
-                      <TableRow
-                        key={build.id}
-                        className="group cursor-pointer"
-                        onClick={() =>
-                          void navigate({
-                            to: '/builds/$buildId',
-                            params: { buildId: build.id },
-                          })
-                        }
-                      >
-                        <TableCell className="font-mono text-sm group-hover:underline">
-                          #{build.build_number}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {projectName}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getStatusVariant(build.status)}>
-                            {build.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {build.branch ?? 'n/a'}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {build.commit_sha
-                            ? build.commit_sha.slice(0, 8)
-                            : 'n/a'}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {relativeTime(build.created_at)}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-      </section>
-
-      <TriggerBuildDialog
-        open={triggerOpen}
-        onOpenChange={setTriggerOpen}
-        fixedProjectId={triggerProjectId}
-        description="Choose a project and pipeline to run a manual build."
-        onBuildCreated={(buildId) => {
+      <DashboardRecentBuilds
+        builds={recentBuilds}
+        isLoading={recentBuildsQuery.isLoading}
+        onOpenBuild={(buildId) =>
           void navigate({
             to: '/builds/$buildId',
             params: { buildId },
           })
-        }}
+        }
+        projects={projects}
       />
+
+      {triggerOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={setTriggerOpen}
+            fixedProjectId={triggerProjectId}
+            description="Choose a project and pipeline to run a manual build."
+            onBuildCreated={(buildId) => {
+              void navigate({
+                to: '/builds/$buildId',
+                params: { buildId },
+              })
+            }}
+          />
+        </Suspense>
+      ) : null}
     </PageLayout>
   )
 }
