@@ -2488,6 +2488,7 @@ async fn build_router_inner(
             "/v1/projects/{project_id}/artifacts",
             get(artifacts::list_project_artifacts),
         )
+        .route("/v1/artifacts/query", post(artifacts::list_build_artifacts))
         .route(
             "/v1/artifacts/{artifact_id}/download-link",
             post(artifacts::generate_download_link),

@@ -191,4 +191,24 @@ export const buildHandlers = [
       ),
     })
   }),
+
+  http.post('/v1/artifacts/query', async ({ request }) => {
+    await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    const body = (await request.json()) as { build_ids: Array<string> }
+    const visibleBuildIds = new Set(
+      demoBuilds
+        .filter(
+          (build) =>
+            body.build_ids.includes(build.id) &&
+            getDemoProjectRole(persona, build.project_id),
+        )
+        .map((build) => build.id),
+    )
+    return HttpResponse.json({
+      artifacts: [...visibleBuildIds].flatMap(
+        (buildId) => demoArtifacts[buildId] ?? [],
+      ),
+    })
+  }),
 ]

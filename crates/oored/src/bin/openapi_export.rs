@@ -157,6 +157,7 @@ use utoipa::OpenApi;
         paths::abort_artifact,
         paths::list_artifacts,
         paths::list_project_artifacts,
+        paths::list_build_artifacts,
         paths::generate_download_link,
         paths::create_artifact_install_link,
         paths::get_ios_install_manifest,
@@ -339,6 +340,7 @@ use utoipa::OpenApi;
         oore_contract::CreateArtifactResponse,
         oore_contract::CompleteArtifactRequest,
         oore_contract::CompleteArtifactResponse,
+        oore_contract::ListBuildArtifactsRequest,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
         oore_contract::ArtifactInstallPlatform,
@@ -1916,6 +1918,17 @@ mod paths {
         )
     )]
     pub(super) async fn list_project_artifacts() {}
+
+    /// List available artifacts for a bounded set of builds
+    #[utoipa::path(post, path = "/v1/artifacts/query", tag = "Artifacts",
+        request_body = ListBuildArtifactsRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Artifact list", body = ListArtifactsResponse),
+            (status = 400, description = "Too many build IDs", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_build_artifacts() {}
 
     /// Generate download link
     ///

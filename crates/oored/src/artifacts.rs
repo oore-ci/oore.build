@@ -8,8 +8,9 @@ use axum::response::{IntoResponse, Response};
 use oore_contract::{
     ApiError, Artifact, ArtifactDownloadLinkResponse, CompleteArtifactRequest,
     CompleteArtifactResponse, CreateArtifactRequest, CreateArtifactResponse, ListArtifactsResponse,
+    ListBuildArtifactsRequest,
 };
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -36,6 +37,9 @@ pub const MAX_LOCAL_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 
 /// Valid artifact types.
 const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
+
+/// Keep artifact batches aligned with the maximum build-list page used by the UI.
+const MAX_ARTIFACT_BUILD_IDS: usize = 200;
 
 fn is_unique_constraint(err: &sqlx::Error) -> bool {
     match err {
@@ -488,6 +492,74 @@ pub async fn list_project_artifacts(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
             "Failed to list project artifacts",
+        )
+    })?;
+
+    let artifacts = rows.iter().map(row_to_artifact).collect();
+    Ok(Json(ListArtifactsResponse { artifacts }))
+}
+
+/// `POST /v1/artifacts/query` — list available artifacts for a bounded build set.
+pub async fn list_build_artifacts(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<ListBuildArtifactsRequest>,
+) -> ApiResult<ListArtifactsResponse> {
+    if req.build_ids.len() > MAX_ARTIFACT_BUILD_IDS {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "too_many_build_ids",
+            format!("At most {MAX_ARTIFACT_BUILD_IDS} build IDs may be requested"),
+        ));
+    }
+
+    let mut build_ids = req
+        .build_ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect::<Vec<_>>();
+    build_ids.sort_unstable();
+    build_ids.dedup();
+    if build_ids.is_empty() {
+        return Ok(Json(ListArtifactsResponse { artifacts: vec![] }));
+    }
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let is_instance_admin = auth.0.role == "owner" || auth.0.role == "admin";
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT a.* FROM artifacts a JOIN builds b ON b.id = a.build_id \
+         WHERE a.state = 'available' AND b.id IN (",
+    );
+    {
+        let mut ids = query.separated(", ");
+        for build_id in &build_ids {
+            ids.push_bind(build_id);
+        }
+    }
+    query.push(")");
+
+    // Every project role can read artifacts. Instance owners/admins have implicit
+    // access; all other identities must still have an explicit project membership.
+    if !is_instance_admin {
+        query.push(
+            " AND EXISTS (SELECT 1 FROM project_members pm \
+             WHERE pm.project_id = b.project_id AND pm.user_id = ",
+        );
+        query.push_bind(&auth.0.user_id);
+        query.push(")");
+    }
+    query.push(" ORDER BY a.created_at DESC");
+
+    let rows = query.build().fetch_all(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to list artifacts for build batch");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list artifacts",
         )
     })?;
 

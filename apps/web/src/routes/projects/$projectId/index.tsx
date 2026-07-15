@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -43,10 +43,22 @@ import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
-import { ProjectSettingsForm } from './project-settings-form'
-import { ProjectAccessCard } from './-project-access-card'
 import { ProjectBuildsTab, ProjectPipelinesTab } from './project-detail-tabs'
+
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
+const loadProjectSettingsForm = () => import('./project-settings-form')
+const ProjectSettingsForm = lazy(() =>
+  loadProjectSettingsForm().then((module) => ({
+    default: module.ProjectSettingsForm,
+  })),
+)
+const loadProjectAccessCard = () => import('./-project-access-card')
+const ProjectAccessCard = lazy(() =>
+  loadProjectAccessCard().then((module) => ({
+    default: module.ProjectAccessCard,
+  })),
+)
 
 const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
@@ -288,6 +300,11 @@ function ProjectDetailPage() {
     void navigate({ to: '/builds/$buildId', params: { buildId } })
   }
 
+  function preloadProjectSettings() {
+    if (canManageAccess) void loadProjectAccessCard()
+    if (canWriteProjects) void loadProjectSettingsForm()
+  }
+
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
@@ -329,6 +346,8 @@ function ProjectDetailPage() {
                   }
                 >
                   <Button
+                    onMouseEnter={() => void loadTriggerBuildDialog()}
+                    onFocus={() => void loadTriggerBuildDialog()}
                     onClick={() => openTriggerBuild()}
                     disabled={pipelines.length === 0 || !projectHasSource}
                   >
@@ -368,7 +387,13 @@ function ProjectDetailPage() {
           <TabsTrigger value="builds">
             Builds{builds.length > 0 ? ` (${builds.length})` : ''}
           </TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger
+            value="settings"
+            onMouseEnter={preloadProjectSettings}
+            onFocus={preloadProjectSettings}
+          >
+            Settings
+          </TabsTrigger>
         </TabsList>
 
         <ProjectPipelinesTab
@@ -381,6 +406,8 @@ function ProjectDetailPage() {
             ) ?? false
           }
           lastBuildByPipeline={lastBuildByPipeline}
+          onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
+          onTriggerBuild={openTriggerBuild}
           pipelines={pipelines}
           projectHasSource={projectHasSource}
           projectId={projectId}
@@ -393,6 +420,7 @@ function ProjectDetailPage() {
           canTriggerBuild={canTriggerBuild}
           latestSucceededBuild={latestSucceededBuild}
           onOpenBuild={openBuild}
+          onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
           onTriggerBuild={() => openTriggerBuild()}
           pipelineCount={pipelines.length}
           projectHasSource={projectHasSource}
@@ -401,25 +429,29 @@ function ProjectDetailPage() {
         {/* ---- Settings tab ---- */}
         <TabsContent value="settings">
           <div className="space-y-4 pt-2">
-            {canManageAccess ? (
-              <ProjectAccessCard projectId={projectId} />
+            {activeTab === 'settings' ? (
+              <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+                {canManageAccess ? (
+                  <ProjectAccessCard projectId={projectId} />
+                ) : null}
+                {canWriteProjects ? (
+                  <ProjectSettingsForm
+                    projectId={projectId}
+                    currentValues={{
+                      name: project.name,
+                      description: project.description,
+                      default_branch: project.default_branch,
+                    }}
+                  />
+                ) : (
+                  <Card>
+                    <CardContent className="text-sm text-muted-foreground">
+                      You do not have permission to edit this project.
+                    </CardContent>
+                  </Card>
+                )}
+              </Suspense>
             ) : null}
-            {canWriteProjects ? (
-              <ProjectSettingsForm
-                projectId={projectId}
-                currentValues={{
-                  name: project.name,
-                  description: project.description,
-                  default_branch: project.default_branch,
-                }}
-              />
-            ) : (
-              <Card>
-                <CardContent className="text-sm text-muted-foreground">
-                  You do not have permission to edit this project.
-                </CardContent>
-              </Card>
-            )}
 
             {canDeleteProjects ? (
               <Collapsible open={dangerOpen} onOpenChange={setDangerOpen}>
@@ -455,20 +487,24 @@ function ProjectDetailPage() {
       </Tabs>
 
       {/* Dialogs */}
-      <TriggerBuildDialog
-        open={triggerBuildOpen}
-        onOpenChange={(nextOpen) => {
-          setTriggerBuildOpen(() => nextOpen)
-          if (!nextOpen) setTriggerPipelineId(undefined)
-        }}
-        fixedProjectId={projectId}
-        defaultPipelineId={triggerPipelineId}
-        defaultBranch={project.default_branch}
-        description="Run this project's pipeline now."
-        onBuildCreated={(buildId) => {
-          void navigate({ to: '/builds/$buildId', params: { buildId } })
-        }}
-      />
+      {triggerBuildOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={(nextOpen) => {
+              setTriggerBuildOpen(() => nextOpen)
+              if (!nextOpen) setTriggerPipelineId(undefined)
+            }}
+            fixedProjectId={projectId}
+            defaultPipelineId={triggerPipelineId}
+            defaultBranch={project.default_branch}
+            description="Run this project's pipeline now."
+            onBuildCreated={(buildId) => {
+              void navigate({ to: '/builds/$buildId', params: { buildId } })
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

@@ -144,9 +144,6 @@ export default defineConfig({
 
           // Toast notifications
           if (id.includes('/sonner/')) return 'sonner'
-
-          // Icon library
-          if (id.includes('/@hugeicons/')) return 'icons'
         },
       },
     },

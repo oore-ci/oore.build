@@ -1,4 +1,4 @@
-import z from 'zod'
+import * as z from 'zod'
 
 export const TRIGGER_EVENTS = ['push', 'pull_request', 'tag_push'] as const
 

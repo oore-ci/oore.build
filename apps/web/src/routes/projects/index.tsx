@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -13,7 +13,6 @@ import {
   Link04Icon,
 } from '@hugeicons/core-free-icons'
 
-import CreateProjectDialog from './-create-project-dialog'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -47,6 +46,9 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import RepositoryAvatar from '@/components/repository-avatar'
+
+const loadCreateProjectDialog = () => import('./-create-project-dialog')
+const CreateProjectDialog = lazy(loadCreateProjectDialog)
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
@@ -116,7 +118,11 @@ function ProjectsListPage() {
         description="Repository and pipeline entry points for your build system."
         actions={
           projects.length > 0 && canWriteProjects ? (
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button
+              onMouseEnter={() => void loadCreateProjectDialog()}
+              onFocus={() => void loadCreateProjectDialog()}
+              onClick={() => setCreateOpen(true)}
+            >
               <HugeiconsIcon icon={Add01Icon} />
               New project
             </Button>
@@ -175,7 +181,11 @@ function ProjectsListPage() {
                   </p>
                 )
               ) : canWriteProjects ? (
-                <Button onClick={() => setCreateOpen(true)}>
+                <Button
+                  onMouseEnter={() => void loadCreateProjectDialog()}
+                  onFocus={() => void loadCreateProjectDialog()}
+                  onClick={() => setCreateOpen(true)}
+                >
                   <HugeiconsIcon icon={Add01Icon} />
                   Create project
                 </Button>
@@ -272,10 +282,11 @@ function ProjectsListPage() {
         </Card>
       ) : null}
 
-      <CreateProjectDialog
-        open={isCreateOpen}
-        onOpenChange={handleCreateOpenChange}
-      />
+      {isCreateOpen ? (
+        <Suspense fallback={null}>
+          <CreateProjectDialog open onOpenChange={handleCreateOpenChange} />
+        </Suspense>
+      ) : null}
     </PageLayout>
   )
 }

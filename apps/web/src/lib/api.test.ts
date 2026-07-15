@@ -17,6 +17,7 @@ import {
   getPipeline,
   getRepositoryAvatar,
   getSetupStatus,
+  listBuildArtifacts,
   listBuilds,
   listProjectMembers,
   listPipelines,
@@ -168,6 +169,31 @@ describe('query cancellation', () => {
         headers: { Authorization: 'Bearer token' },
         signal: controller.signal,
       }),
+    )
+  })
+
+  it('queries an artifact batch with bearer auth and cancellation', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, { artifacts: [] }))
+
+    await listBuildArtifacts(
+      'https://ci.example.com',
+      'token',
+      { build_ids: ['build-1', 'build-2'] },
+      { signal: controller.signal },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/artifacts/query',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ build_ids: ['build-1', 'build-2'] }),
+        signal: controller.signal,
+      },
     )
   })
 })

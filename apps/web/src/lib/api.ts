@@ -41,6 +41,7 @@ import type {
   InviteUserResponse,
   ListApiTokensResponse,
   ListArtifactsResponse,
+  ListBuildArtifactsRequest,
   ListAuditLogsResponse,
   ListBuildsResponse,
   ListInstallationsResponse,
@@ -1009,6 +1010,20 @@ export function listProjectArtifacts(
     `/v1/projects/${projectId}/artifacts`,
     { headers: authHeaders(token), signal: options?.signal },
   )
+}
+
+export function listBuildArtifacts(
+  baseUrl: string,
+  token: string,
+  data: ListBuildArtifactsRequest,
+  options?: RequestOptions,
+): Promise<ListArtifactsResponse> {
+  return request<ListArtifactsResponse>(baseUrl, '/v1/artifacts/query', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+    signal: options?.signal,
+  })
 }
 
 export function getArtifactDownloadLink(

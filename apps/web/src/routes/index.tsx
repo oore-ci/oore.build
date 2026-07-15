@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useMemo, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -14,8 +14,6 @@ import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import ProjectCard from '@/components/project-card'
-import QaReleasesPage from '@/components/qa-releases-page'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import {
   DashboardGettingStarted,
   DashboardRecentBuilds,
@@ -39,6 +37,11 @@ import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
+
+const loadQaReleasesPage = () => import('@/components/qa-releases-page')
+const QaReleasesPage = lazy(loadQaReleasesPage)
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute('/')({
   staticData: { breadcrumbLabel: 'Dashboard' },
@@ -241,7 +244,18 @@ function IndexPage() {
 
   if (status?.is_configured) {
     if (authUser?.role === 'qa_viewer') {
-      return <QaReleasesPage />
+      return (
+        <Suspense
+          fallback={
+            <PageLayout width="wide">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-64 w-full" />
+            </PageLayout>
+          }
+        >
+          <QaReleasesPage />
+        </Suspense>
+      )
     }
     return (
       <>
@@ -370,7 +384,11 @@ function ConfiguredDashboard({
         description="Project overview and build activity."
         actions={
           canShowRunBuild ? (
-            <Button onClick={handleGlobalTrigger}>
+            <Button
+              onMouseEnter={() => void loadTriggerBuildDialog()}
+              onFocus={() => void loadTriggerBuildDialog()}
+              onClick={handleGlobalTrigger}
+            >
               <HugeiconsIcon icon={PlayIcon} />
               Run build
             </Button>
@@ -474,6 +492,7 @@ function ConfiguredDashboard({
                 key={project.id}
                 project={project}
                 lastBuildStatus={lastBuildByProject.get(project.id)}
+                onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
                 onTriggerBuild={handleTriggerForProject}
               />
             ))}
@@ -493,18 +512,22 @@ function ConfiguredDashboard({
         projects={projects}
       />
 
-      <TriggerBuildDialog
-        open={triggerOpen}
-        onOpenChange={setTriggerOpen}
-        fixedProjectId={triggerProjectId}
-        description="Choose a project and pipeline to run a manual build."
-        onBuildCreated={(buildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId },
-          })
-        }}
-      />
+      {triggerOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={setTriggerOpen}
+            fixedProjectId={triggerProjectId}
+            description="Choose a project and pipeline to run a manual build."
+            onBuildCreated={(buildId) => {
+              void navigate({
+                to: '/builds/$buildId',
+                params: { buildId },
+              })
+            }}
+          />
+        </Suspense>
+      ) : null}
     </PageLayout>
   )
 }

@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/select'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import QaReleasesPage from '@/components/qa-releases-page'
 import SetupHint from '@/components/setup-hint'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -60,9 +59,13 @@ import {
 } from '@/components/ui/pagination'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import type { Build, Project } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth-store'
+
+const loadQaReleasesPage = () => import('@/components/qa-releases-page')
+const QaReleasesPage = lazy(loadQaReleasesPage)
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 const PAGE_SIZE = 20
 
@@ -92,6 +95,7 @@ function BuildsHistoryCard({
   canTriggerBuild,
   onOpenBuild,
   onOpenTrigger,
+  onPreloadTrigger,
   projects,
   total,
 }: {
@@ -99,6 +103,7 @@ function BuildsHistoryCard({
   canTriggerBuild: boolean
   onOpenBuild: (buildId: string) => void
   onOpenTrigger: () => void
+  onPreloadTrigger: () => void
   projects: Array<Project>
   total: number
 }) {
@@ -126,7 +131,12 @@ function BuildsHistoryCard({
             </EmptyHeader>
             {canTriggerBuild ? (
               <EmptyContent>
-                <Button size="sm" onClick={onOpenTrigger}>
+                <Button
+                  size="sm"
+                  onMouseEnter={onPreloadTrigger}
+                  onFocus={onPreloadTrigger}
+                  onClick={onOpenTrigger}
+                >
                   <HugeiconsIcon icon={PlayIcon} />
                   Run first build
                 </Button>
@@ -294,7 +304,20 @@ function useBuildsListPageState() {
 
 function BuildsListPage() {
   const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
-  return isQaViewer ? <QaReleasesPage /> : <OperationsBuildsPage />
+  return isQaViewer ? (
+    <Suspense
+      fallback={
+        <PageLayout width="wide">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-64 w-full" />
+        </PageLayout>
+      }
+    >
+      <QaReleasesPage />
+    </Suspense>
+  ) : (
+    <OperationsBuildsPage />
+  )
 }
 
 function OperationsBuildsPage() {
@@ -344,7 +367,11 @@ function OperationsBuildsPage() {
         }
         actions={
           !missingProjects && canTriggerBuild ? (
-            <Button onClick={() => setTriggerBuildOpen(true)}>
+            <Button
+              onMouseEnter={() => void loadTriggerBuildDialog()}
+              onFocus={() => void loadTriggerBuildDialog()}
+              onClick={() => setTriggerBuildOpen(true)}
+            >
               <HugeiconsIcon icon={PlayIcon} />
               Run build
             </Button>
@@ -512,6 +539,7 @@ function OperationsBuildsPage() {
             canTriggerBuild={canTriggerBuild}
             onOpenBuild={openBuild}
             onOpenTrigger={() => setTriggerBuildOpen(true)}
+            onPreloadTrigger={() => void loadTriggerBuildDialog()}
             projects={projects}
             total={total}
           />
@@ -585,17 +613,21 @@ function OperationsBuildsPage() {
         </div>
       ) : null}
 
-      <TriggerBuildDialog
-        open={triggerBuildOpen}
-        onOpenChange={setTriggerBuildOpen}
-        description="Choose a project and pipeline to run a manual build."
-        onBuildCreated={(buildId) => {
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId },
-          })
-        }}
-      />
+      {triggerBuildOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={setTriggerBuildOpen}
+            description="Choose a project and pipeline to run a manual build."
+            onBuildCreated={(buildId) => {
+              void navigate({
+                to: '/builds/$buildId',
+                params: { buildId },
+              })
+            }}
+          />
+        </Suspense>
+      ) : null}
     </PageLayout>
   )
 }

@@ -7,7 +7,9 @@ const manifest = JSON.parse(
   readFileSync(resolve(distDir, '.vite/manifest.json'), 'utf8'),
 )
 
-const entryKey = Object.entries(manifest).find(([, chunk]) => chunk.isEntry)?.[0]
+const entryKey = Object.entries(manifest).find(
+  ([, chunk]) => chunk.isEntry,
+)?.[0]
 if (!entryKey) throw new Error('Vite manifest has no entry chunk')
 
 function assetsFor(entryKeys) {
@@ -40,20 +42,20 @@ function gzipKiB(assetPaths) {
 const assets = assetsFor([entryKey])
 const jsKiB = gzipKiB(assets.js)
 const cssKiB = gzipKiB(assets.css)
-const jsBudgetKiB = Number(process.env.OORE_WEB_JS_BUDGET_KIB ?? 190)
+const jsBudgetKiB = Number(process.env.OORE_WEB_JS_BUDGET_KIB ?? 165)
 const cssBudgetKiB = Number(process.env.OORE_WEB_CSS_BUDGET_KIB ?? 22)
 
 const profiles = [
   {
     name: 'Field metrics after idle',
     entries: ['src/web-performance.ts'],
-    budgetKiB: Number(process.env.OORE_WEB_FIELD_METRICS_BUDGET_KIB ?? 170),
+    budgetKiB: Number(process.env.OORE_WEB_FIELD_METRICS_BUDGET_KIB ?? 165),
     includeDynamic: true,
   },
   {
     name: 'Mobile shell',
     entries: ['src/components/ui/sidebar-mobile.tsx'],
-    budgetKiB: Number(process.env.OORE_WEB_MOBILE_SHELL_BUDGET_KIB ?? 195),
+    budgetKiB: Number(process.env.OORE_WEB_MOBILE_SHELL_BUDGET_KIB ?? 185),
   },
   {
     name: 'Admin shell interactions',
@@ -62,12 +64,12 @@ const profiles = [
       'src/components/nav-user-menu.tsx',
       'src/components/ui/sidebar-menu-tooltip.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_ADMIN_SHELL_BUDGET_KIB ?? 230),
+    budgetKiB: Number(process.env.OORE_WEB_ADMIN_SHELL_BUDGET_KIB ?? 225),
   },
   {
     name: 'Admin command palette',
     entries: ['src/components/command-palette.tsx'],
-    budgetKiB: Number(process.env.OORE_WEB_COMMAND_PALETTE_BUDGET_KIB ?? 215),
+    budgetKiB: Number(process.env.OORE_WEB_COMMAND_PALETTE_BUDGET_KIB ?? 210),
   },
   {
     name: 'Operator build detail',
@@ -75,7 +77,7 @@ const profiles = [
       'src/routes/builds/$buildId.tsx?tsr-split=component',
       'src/components/build-details/build-detail-page.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_BUILD_DETAIL_BUDGET_KIB ?? 240),
+    budgetKiB: Number(process.env.OORE_WEB_BUILD_DETAIL_BUDGET_KIB ?? 210),
   },
   {
     name: 'Operator artifact sharing',
@@ -84,7 +86,7 @@ const profiles = [
       'src/components/build-details/build-detail-page.tsx',
       'src/components/build-details/artifact-share-menu.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_ARTIFACT_SHARE_BUDGET_KIB ?? 275),
+    budgetKiB: Number(process.env.OORE_WEB_ARTIFACT_SHARE_BUDGET_KIB ?? 270),
   },
   {
     name: 'QA artifact install',
@@ -92,7 +94,7 @@ const profiles = [
       'src/routes/builds/$buildId.tsx?tsr-split=component',
       'src/components/build-details/artifact-install-page.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 195),
+    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 175),
   },
   {
     name: 'QA install with changelog',
@@ -101,7 +103,42 @@ const profiles = [
       'src/components/build-details/artifact-install-page.tsx',
       'src/components/build-details/changelog-markdown.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 215),
+    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 210),
+  },
+  {
+    name: 'Projects cold route',
+    entries: ['src/routes/projects/index.tsx?tsr-split=component'],
+    budgetKiB: Number(process.env.OORE_WEB_PROJECTS_ROUTE_BUDGET_KIB ?? 175),
+  },
+  {
+    name: 'Build history cold route',
+    entries: ['src/routes/builds/index.tsx?tsr-split=component'],
+    budgetKiB: Number(process.env.OORE_WEB_BUILDS_ROUTE_BUDGET_KIB ?? 225),
+  },
+  {
+    name: 'Owner dashboard route',
+    entries: ['src/routes/index.tsx?tsr-split=component'],
+    budgetKiB: Number(process.env.OORE_WEB_DASHBOARD_ROUTE_BUDGET_KIB ?? 235),
+  },
+  {
+    name: 'Project detail route',
+    entries: ['src/routes/projects/$projectId/index.tsx?tsr-split=component'],
+    budgetKiB: Number(process.env.OORE_WEB_PROJECT_ROUTE_BUDGET_KIB ?? 215),
+  },
+  {
+    name: 'Pipeline detail route',
+    entries: [
+      'src/routes/projects/$projectId/pipelines/$pipelineId.tsx?tsr-split=component',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_PIPELINE_ROUTE_BUDGET_KIB ?? 205),
+  },
+  {
+    name: 'QA dashboard route',
+    entries: [
+      'src/routes/index.tsx?tsr-split=component',
+      'src/components/qa-releases-page.tsx',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_QA_ROUTE_BUDGET_KIB ?? 245),
   },
 ]
 

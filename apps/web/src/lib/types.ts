@@ -536,6 +536,10 @@ export interface ListArtifactsResponse {
   artifacts: Array<Artifact>
 }
 
+export interface ListBuildArtifactsRequest {
+  build_ids: Array<string>
+}
+
 export interface ArtifactDownloadLinkResponse {
   download_url: string
   expires_at: number

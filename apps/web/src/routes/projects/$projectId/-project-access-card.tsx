@@ -4,7 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
-import z from 'zod'
+import * as z from 'zod'
 
 import type { ProjectMember, ProjectRole, User } from '@/lib/types'
 import { useUsers } from '@/hooks/use-auth'
