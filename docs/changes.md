@@ -18,6 +18,7 @@ Rules:
   - Project Settings now exposes explicit member management for owners and admins, including pre-login assignment for invited users. QA members are limited to Viewer, and backend authorization caps QA sessions at Viewer even if legacy membership data contains an elevated project role.
   - QA users now land on a build-first surface with build-only navigation and a truthful no-project-access state, keeping project, source, pipeline, and instance administration out of their default experience while preserving artifact install/download access for assigned projects.
   - Owners can start an audited 10-minute QA preview from Users without changing stored roles. The frontend isolates the preview in a clearly labeled instance session and restores the untouched owner session when preview ends or expires.
+  - Build detail actions now follow the same permission boundary as the build list: QA Viewers can inspect logs and install or download artifacts, but do not see re-run or cancel controls that the backend would reject.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-ad-hoc-app-installation-18011ca32086
   - Linear RBAC ADR: https://linear.app/oorebuild/document/adr-0002-rbac-implementation-strategy-28554f736e4a
 
