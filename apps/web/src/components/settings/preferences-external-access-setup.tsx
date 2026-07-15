@@ -136,6 +136,17 @@ export function ExternalAccessSetup({
                     ? 'Stored'
                     : 'Missing'}
                 </p>
+                {trustedProxySettings.user_email_header ===
+                'x-warpgate-username' ? (
+                  <p>
+                    <span className="font-medium text-foreground">
+                      iOS installs:
+                    </span>{' '}
+                    {trustedProxySettings.has_warpgate_ticket
+                      ? `Ticket from ${trustedProxySettings.warpgate_ticket_source === 'environment' ? 'environment' : 'encrypted settings'}`
+                      : 'Ticket missing'}
+                  </p>
+                ) : null}
                 <p>
                   <span className="font-medium text-foreground">
                     Peer CIDRs:

@@ -116,6 +116,7 @@ pub async fn create_download_token(
 pub struct ValidatedDownloadToken {
     pub token_hash: String,
     pub artifact_id: String,
+    pub artifact_type: String,
     pub file_path: String,
     pub artifact_name: String,
     pub single_use: bool,
@@ -130,7 +131,7 @@ pub async fn validate_download_token(
 
     let row = sqlx::query(
         "SELECT t.token_hash, t.artifact_id, t.single_use, t.used_at, \
-                a.file_path, a.name AS artifact_name, a.expires_at AS artifact_expires_at \
+                a.artifact_type, a.file_path, a.name AS artifact_name, a.expires_at AS artifact_expires_at \
          FROM artifact_download_tokens t \
          JOIN artifacts a ON a.id = t.artifact_id \
          WHERE t.token_hash = ?1 \
@@ -147,6 +148,7 @@ pub async fn validate_download_token(
     Ok(row.map(|r| ValidatedDownloadToken {
         token_hash: r.get("token_hash"),
         artifact_id: r.get("artifact_id"),
+        artifact_type: r.get("artifact_type"),
         file_path: r.get("file_path"),
         artifact_name: r.get("artifact_name"),
         single_use: r.get::<i32, _>("single_use") != 0,
@@ -505,6 +507,20 @@ pub async fn download_via_scoped_token(
                 )
             })?;
     let storage = state.storage.read().await;
+    let warpgate_ticket = if validated.artifact_type == "ipa" {
+        crate::instance_settings::load_warpgate_install_ticket(&pool, &state.encryption_key)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load Warpgate install ticket");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "warpgate_ticket_error",
+                    "Failed to load Warpgate install configuration",
+                )
+            })?
+    } else {
+        None
+    };
 
     // S3/R2 returns a presigned object URL; local storage returns a second,
     // short-lived token URL on the artifact delivery origin.
@@ -516,6 +532,9 @@ pub async fn download_via_scoped_token(
                 .artifact_delivery_url
                 .as_deref()
                 .or(network_settings.public_url.as_deref()),
+            warpgate_ticket
+                .as_deref()
+                .map(|ticket| ("warpgate-ticket", ticket)),
         )
         .await
         .map_err(|e| {

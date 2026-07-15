@@ -36,6 +36,7 @@ let trustedProxySettings: TrustedProxySettingsPublic = {
   user_email_header: 'x-oore-user-email',
   trusted_proxy_cidrs: [],
   has_shared_secret: false,
+  has_warpgate_ticket: false,
   updated_at: ago(86400 * 30),
 }
 
@@ -221,6 +222,7 @@ export const settingsHandlers = [
         user_email_header?: string
         trusted_proxy_cidrs: Array<string>
         shared_secret?: string
+        warpgate_ticket?: string
       }
       trustedProxySettings = {
         ...trustedProxySettings,
@@ -229,6 +231,17 @@ export const settingsHandlers = [
         trusted_proxy_cidrs: body.trusted_proxy_cidrs,
         has_shared_secret:
           trustedProxySettings.has_shared_secret || !!body.shared_secret,
+        has_warpgate_ticket:
+          body.warpgate_ticket === ''
+            ? false
+            : trustedProxySettings.has_warpgate_ticket ||
+              !!body.warpgate_ticket,
+        warpgate_ticket_source:
+          body.warpgate_ticket === ''
+            ? undefined
+            : body.warpgate_ticket
+              ? 'database'
+              : trustedProxySettings.warpgate_ticket_source,
         updated_at: now(),
       }
       return HttpResponse.json({ settings: trustedProxySettings })

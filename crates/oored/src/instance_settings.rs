@@ -16,7 +16,7 @@ use oore_contract::{
     TestOidcConnectionRequest, TestOidcConnectionResponse, TrustedProxySettingsPublic,
     TrustedProxySettingsResponse, UpdateArtifactStorageSettingsRequest,
     UpdateExternalAccessNetworkSettingsRequest, UpdateInstancePreferencesRequest,
-    UpdateTrustedProxySettingsRequest,
+    UpdateTrustedProxySettingsRequest, WarpgateTicketSource,
 };
 use sqlx::Row;
 use tracing::{error, info};
@@ -42,6 +42,21 @@ fn trim_opt(value: Option<String>) -> Option<String> {
     })
 }
 
+fn warpgate_ticket_from_env() -> anyhow::Result<Option<String>> {
+    let ticket = std::env::var(WARPGATE_TICKET_ENV)
+        .ok()
+        .and_then(|value| trim_opt(Some(value)));
+    if ticket
+        .as_ref()
+        .is_some_and(|value| value.len() > MAX_WARPGATE_TICKET_LEN)
+    {
+        anyhow::bail!(
+            "{WARPGATE_TICKET_ENV} must be {MAX_WARPGATE_TICKET_LEN} characters or fewer"
+        );
+    }
+    Ok(ticket)
+}
+
 pub const DEFAULT_ALLOWED_ORIGINS: [&str; 4] = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -50,6 +65,9 @@ pub const DEFAULT_ALLOWED_ORIGINS: [&str; 4] = [
 ];
 pub const DEFAULT_TRUSTED_PROXY_EMAIL_HEADER: &str = "x-oore-user-email";
 pub const TRUSTED_PROXY_SHARED_SECRET_HEADER: &str = "x-oore-trusted-proxy-secret";
+pub const WARPGATE_USER_EMAIL_HEADER: &str = "x-warpgate-username";
+const WARPGATE_TICKET_ENV: &str = "OORE_WARPGATE_TICKET";
+const MAX_WARPGATE_TICKET_LEN: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct EffectiveExternalAccessNetworkSettings {
@@ -68,6 +86,9 @@ pub struct EffectiveTrustedProxySettings {
     pub trusted_proxy_networks: Vec<IpNet>,
     pub has_shared_secret: bool,
     pub encrypted_shared_secret: Option<String>,
+    pub has_warpgate_ticket: bool,
+    pub warpgate_ticket_source: Option<WarpgateTicketSource>,
+    pub encrypted_warpgate_ticket: Option<String>,
     pub configured: bool,
     pub updated_at: Option<i64>,
 }
@@ -272,7 +293,7 @@ pub async fn load_effective_trusted_proxy_settings(
     pool: &sqlx::SqlitePool,
 ) -> anyhow::Result<EffectiveTrustedProxySettings> {
     let row = sqlx::query(
-        "SELECT user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_at \
+        "SELECT user_email_header, setup_owner_email, trusted_proxy_cidrs_json, encrypted_shared_secret, encrypted_warpgate_ticket, updated_at \
          FROM trusted_proxy_settings WHERE id = 1",
     )
     .fetch_optional(pool)
@@ -284,6 +305,11 @@ pub async fn load_effective_trusted_proxy_settings(
             .ok()
             .and_then(|value| normalize_header_name(&value))
             .unwrap_or_else(|| DEFAULT_TRUSTED_PROXY_EMAIL_HEADER.to_string());
+        let environment_warpgate_ticket = if user_email_header == WARPGATE_USER_EMAIL_HEADER {
+            warpgate_ticket_from_env()?
+        } else {
+            None
+        };
         let trusted_proxy_cidrs = row
             .try_get::<String, _>("trusted_proxy_cidrs_json")
             .ok()
@@ -300,6 +326,17 @@ pub async fn load_effective_trusted_proxy_settings(
             .ok()
             .flatten();
         let has_shared_secret = encrypted_shared_secret.is_some();
+        let encrypted_warpgate_ticket = row
+            .try_get::<Option<String>, _>("encrypted_warpgate_ticket")
+            .ok()
+            .flatten();
+        let warpgate_ticket_source = if encrypted_warpgate_ticket.is_some() {
+            Some(WarpgateTicketSource::Database)
+        } else if environment_warpgate_ticket.is_some() {
+            Some(WarpgateTicketSource::Environment)
+        } else {
+            None
+        };
 
         return Ok(EffectiveTrustedProxySettings {
             user_email_header,
@@ -308,6 +345,9 @@ pub async fn load_effective_trusted_proxy_settings(
             trusted_proxy_networks,
             has_shared_secret,
             encrypted_shared_secret,
+            has_warpgate_ticket: warpgate_ticket_source.is_some(),
+            warpgate_ticket_source,
+            encrypted_warpgate_ticket,
             configured: true,
             updated_at: row.try_get::<Option<i64>, _>("updated_at").ok().flatten(),
         });
@@ -321,6 +361,9 @@ pub async fn load_effective_trusted_proxy_settings(
         trusted_proxy_cidrs,
         has_shared_secret: false,
         encrypted_shared_secret: None,
+        has_warpgate_ticket: false,
+        warpgate_ticket_source: None,
+        encrypted_warpgate_ticket: None,
         configured: false,
         updated_at: None,
     })
@@ -428,6 +471,32 @@ pub async fn load_remote_auth_mode(pool: &sqlx::SqlitePool) -> anyhow::Result<Re
     Ok(mode)
 }
 
+pub async fn load_warpgate_install_ticket(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+) -> anyhow::Result<Option<String>> {
+    if load_runtime_mode(pool).await? != RuntimeMode::Remote
+        || load_remote_auth_mode(pool).await? != RemoteAuthMode::TrustedProxy
+    {
+        return Ok(None);
+    }
+
+    let settings = load_effective_trusted_proxy_settings(pool).await?;
+    if settings.user_email_header != WARPGATE_USER_EMAIL_HEADER {
+        return Ok(None);
+    }
+
+    match settings.warpgate_ticket_source {
+        Some(WarpgateTicketSource::Database) => settings
+            .encrypted_warpgate_ticket
+            .as_deref()
+            .map(|encrypted| crypto::decrypt(encrypted, encryption_key))
+            .transpose(),
+        Some(WarpgateTicketSource::Environment) => warpgate_ticket_from_env(),
+        None => Ok(None),
+    }
+}
+
 fn preferences_response(
     mode: KeyStorageMode,
     runtime_mode: RuntimeMode,
@@ -453,6 +522,8 @@ fn trusted_proxy_settings_response(
             user_email_header: settings.user_email_header,
             trusted_proxy_cidrs: settings.trusted_proxy_cidrs,
             has_shared_secret: settings.has_shared_secret,
+            has_warpgate_ticket: settings.has_warpgate_ticket,
+            warpgate_ticket_source: settings.warpgate_ticket_source,
             updated_at: settings.updated_at,
         },
     }
@@ -1189,7 +1260,7 @@ pub async fn update_external_access_trusted_proxy_settings(
     }
 
     let existing_row =
-        sqlx::query("SELECT encrypted_shared_secret, setup_owner_email FROM trusted_proxy_settings WHERE id = 1")
+        sqlx::query("SELECT encrypted_shared_secret, encrypted_warpgate_ticket FROM trusted_proxy_settings WHERE id = 1")
             .fetch_optional(&pool)
             .await
             .map_err(|e| {
@@ -1208,7 +1279,6 @@ pub async fn update_external_access_trusted_proxy_settings(
         .unwrap_or_else(|| DEFAULT_TRUSTED_PROXY_EMAIL_HEADER.to_string());
 
     let trusted_proxy_cidrs = normalize_requested_trusted_proxy_cidrs(req.trusted_proxy_cidrs)?;
-    let trusted_proxy_networks = parse_cidr_list(&trusted_proxy_cidrs);
     let trusted_proxy_cidrs_json = serde_json::to_string(&trusted_proxy_cidrs).map_err(|e| {
         error!(error = %e, "failed to serialize trusted proxy CIDRs");
         api_err(
@@ -1217,15 +1287,6 @@ pub async fn update_external_access_trusted_proxy_settings(
             "Failed to persist trusted proxy CIDRs",
         )
     })?;
-
-    let existing_setup_owner_email = existing_row
-        .as_ref()
-        .and_then(|row| {
-            row.try_get::<Option<String>, _>("setup_owner_email")
-                .ok()
-                .flatten()
-        })
-        .and_then(|value| normalize_email_value(&value));
 
     let encrypted_shared_secret = match req.shared_secret {
         Some(value) => {
@@ -1252,8 +1313,42 @@ pub async fn update_external_access_trusted_proxy_settings(
                 )
             }
         }
-        None => existing_row.and_then(|row| {
+        None => existing_row.as_ref().and_then(|row| {
             row.try_get::<Option<String>, _>("encrypted_shared_secret")
+                .ok()
+                .flatten()
+        }),
+    };
+
+    let encrypted_warpgate_ticket = match req.warpgate_ticket {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                if trimmed.len() > MAX_WARPGATE_TICKET_LEN {
+                    return Err(api_err(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_input",
+                        format!(
+                            "warpgate_ticket must be {MAX_WARPGATE_TICKET_LEN} characters or fewer"
+                        ),
+                    ));
+                }
+                Some(
+                    crypto::encrypt(trimmed, &state.encryption_key).map_err(|e| {
+                        error!(error = %e, "failed to encrypt Warpgate install ticket");
+                        api_err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "encryption_error",
+                            "Failed to persist Warpgate install ticket",
+                        )
+                    })?,
+                )
+            }
+        }
+        None => existing_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("encrypted_warpgate_ticket")
                 .ok()
                 .flatten()
         }),
@@ -1261,18 +1356,20 @@ pub async fn update_external_access_trusted_proxy_settings(
 
     let now = now_unix();
     sqlx::query(
-        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, updated_by, created_at, updated_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?5)
+        "INSERT INTO trusted_proxy_settings (id, user_email_header, trusted_proxy_cidrs_json, encrypted_shared_secret, encrypted_warpgate_ticket, updated_by, created_at, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?6)
          ON CONFLICT(id) DO UPDATE SET
             user_email_header = excluded.user_email_header,
             trusted_proxy_cidrs_json = excluded.trusted_proxy_cidrs_json,
             encrypted_shared_secret = excluded.encrypted_shared_secret,
+            encrypted_warpgate_ticket = excluded.encrypted_warpgate_ticket,
             updated_by = excluded.updated_by,
             updated_at = excluded.updated_at",
     )
     .bind(&user_email_header)
     .bind(&trusted_proxy_cidrs_json)
     .bind(encrypted_shared_secret.clone())
+    .bind(encrypted_warpgate_ticket.clone())
     .bind(&auth.0.user_id)
     .bind(now)
     .execute(&pool)
@@ -1290,6 +1387,9 @@ pub async fn update_external_access_trusted_proxy_settings(
         "user_email_header": user_email_header,
         "trusted_proxy_cidrs": trusted_proxy_cidrs,
         "has_shared_secret": encrypted_shared_secret.is_some(),
+        "has_warpgate_ticket": encrypted_warpgate_ticket.is_some()
+            || (user_email_header == WARPGATE_USER_EMAIL_HEADER
+                && warpgate_ticket_from_env().ok().flatten().is_some()),
     })
     .to_string();
     let _ = write_audit_log(
@@ -1302,18 +1402,18 @@ pub async fn update_external_access_trusted_proxy_settings(
     )
     .await;
 
-    Ok(Json(trusted_proxy_settings_response(
-        EffectiveTrustedProxySettings {
-            user_email_header,
-            setup_owner_email: existing_setup_owner_email,
-            trusted_proxy_cidrs,
-            trusted_proxy_networks,
-            has_shared_secret: encrypted_shared_secret.is_some(),
-            encrypted_shared_secret,
-            configured: true,
-            updated_at: Some(now),
-        },
-    )))
+    let settings = load_effective_trusted_proxy_settings(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to reload trusted proxy settings");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load updated trusted proxy settings",
+            )
+        })?;
+
+    Ok(Json(trusted_proxy_settings_response(settings)))
 }
 
 pub async fn update_external_access_network_settings(

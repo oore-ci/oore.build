@@ -86,3 +86,4 @@ All error codes returned by the Oore CI API, consolidated from all endpoint grou
 | `external_access_required`     | 412         | No artifact delivery or public instance URL is configured |
 | `external_access_invalid`      | 412         | Configured artifact delivery/public URL is invalid        |
 | `ios_install_requires_https`   | 412         | iOS OTA installation requires an HTTPS delivery URL       |
+| `warpgate_ticket_error`        | 500         | Warpgate install-ticket configuration could not be loaded |

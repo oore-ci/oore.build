@@ -18,6 +18,7 @@ All environment variables recognized by Oore CI components.
 | `OORE_SETUP_STATE_FILE`      | Platform default                                                                          | Override SQLite database path                                                                                          |
 | `OORE_PUBLIC_URL`            | —                                                                                         | External Access public base URL fallback (used when DB setting is unset)                                               |
 | `OORE_ARTIFACT_DELIVERY_URL` | `OORE_PUBLIC_URL`                                                                         | Optional alternate HTTPS origin for `/install/` delivery (used when the DB field is empty)                             |
+| `OORE_WARPGATE_TICKET`       | —                                                                                         | Optional Warpgate access ticket fallback for non-interactive iOS OTA installer requests                               |
 | `OORE_CORS_ORIGINS`          | `http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173` | Comma-separated allowed CORS origins fallback (used when DB settings are unset)                                        |
 | `OORE_CORS_ORIGIN`           | —                                                                                         | Single allowed CORS origin fallback (backward compatible)                                                              |
 | `RUST_LOG`                   | `info`                                                                                    | Log level filter (uses `tracing` subscriber)                                                                           |
@@ -32,6 +33,12 @@ Default local artifact path: `<data-root>/artifacts`
 External Access network settings are primarily managed from Preferences UI and
 stored in SQLite. The environment variables above are used as fallback defaults
 when DB-backed settings are not present.
+
+`OORE_WARPGATE_TICKET` is active only when the instance is in Remote mode with
+Trusted Proxy auth and the identity header is `x-warpgate-username`. An owner can
+instead save the ticket in **Preferences → Identity settings**, where Oore stores
+it encrypted; that database value takes precedence over the environment fallback.
+Oore never applies this ticket to Android downloads or non-Warpgate deployments.
 
 ## CLI (oore)
 

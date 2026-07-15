@@ -15,7 +15,9 @@ use url::Url;
 use crate::AppState;
 use crate::artifact_tokens::{create_download_token, validate_download_token};
 use crate::extractors::AuthUser;
-use crate::instance_settings::load_effective_external_access_network_settings;
+use crate::instance_settings::{
+    load_effective_external_access_network_settings, load_warpgate_install_ticket,
+};
 use crate::project_rbac::{
     ProjectPermission, require_project_permission, resolve_effective_project_role,
 };
@@ -247,12 +249,17 @@ async fn artifact_delivery_base_url(
     )
 }
 
-fn public_endpoint(base: &Url, path: &str) -> String {
-    format!(
-        "{}/{}",
-        base.as_str().trim_end_matches('/'),
-        path.trim_start_matches('/')
-    )
+fn public_endpoint(base: &Url, path: &str, warpgate_ticket: Option<&str>) -> String {
+    let mut endpoint = base.clone();
+    endpoint.set_path(&format!("/{}", path.trim_start_matches('/')));
+    endpoint.set_query(None);
+    endpoint.set_fragment(None);
+    if let Some(ticket) = warpgate_ticket {
+        endpoint
+            .query_pairs_mut()
+            .append_pair("warpgate-ticket", ticket);
+    }
+    endpoint.into()
 }
 
 /// `POST /v1/artifacts/{artifact_id}/install-link` — create a device install session.
@@ -303,6 +310,20 @@ pub async fn create_install_link(
 
     let base =
         artifact_delivery_base_url(&pool, matches!(platform, ArtifactInstallPlatform::Ios)).await?;
+    let warpgate_ticket = if matches!(platform, ArtifactInstallPlatform::Ios) {
+        load_warpgate_install_ticket(&pool, &state.encryption_key)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load Warpgate install ticket");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "warpgate_ticket_error",
+                    "Failed to load Warpgate install configuration",
+                )
+            })?
+    } else {
+        None
+    };
     let ttl_secs = artifact
         .expires_at
         .map(|expires_at| (expires_at - now).min(INSTALL_TOKEN_TTL_SECS))
@@ -319,12 +340,19 @@ pub async fn create_install_link(
                 )
             })?;
 
-    let download_url = public_endpoint(&base, &format!("install/artifact/{token}"));
+    let download_url = public_endpoint(
+        &base,
+        &format!("install/artifact/{token}"),
+        warpgate_ticket.as_deref(),
+    );
     let (install_url, manifest_url) = match platform {
         ArtifactInstallPlatform::Android => (download_url.clone(), None),
         ArtifactInstallPlatform::Ios => {
-            let manifest_url =
-                public_endpoint(&base, &format!("install/ios/{token}/manifest.plist"));
+            let manifest_url = public_endpoint(
+                &base,
+                &format!("install/ios/{token}/manifest.plist"),
+                warpgate_ticket.as_deref(),
+            );
             (
                 format!(
                     "itms-services://?action=download-manifest&url={}",
@@ -423,7 +451,21 @@ pub async fn ios_install_manifest(
         )
     })?;
     let base = artifact_delivery_base_url(&pool, true).await?;
-    let download_url = public_endpoint(&base, &format!("install/artifact/{token}"));
+    let warpgate_ticket = load_warpgate_install_ticket(&pool, &state.encryption_key)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load Warpgate install ticket");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "warpgate_ticket_error",
+                "Failed to load Warpgate install configuration",
+            )
+        })?;
+    let download_url = public_endpoint(
+        &base,
+        &format!("install/artifact/{token}"),
+        warpgate_ticket.as_deref(),
+    );
     let manifest = ios_manifest(&metadata, &download_url);
 
     let mut response = (StatusCode::OK, manifest).into_response();

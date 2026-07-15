@@ -679,6 +679,8 @@ export interface TrustedProxySettingsPublic {
   user_email_header: string
   trusted_proxy_cidrs: Array<string>
   has_shared_secret: boolean
+  has_warpgate_ticket: boolean
+  warpgate_ticket_source?: 'database' | 'environment'
   updated_at?: number
 }
 
@@ -690,6 +692,7 @@ export interface UpdateTrustedProxySettingsRequest {
   user_email_header?: string
   trusted_proxy_cidrs: Array<string>
   shared_secret?: string
+  warpgate_ticket?: string
 }
 
 export interface InstancePreferences {

@@ -243,6 +243,7 @@ impl LocalStorageClient {
         key: &str,
         ttl_secs: u64,
         public_base_url: Option<&str>,
+        query_pair: Option<(&str, &str)>,
     ) -> String {
         let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
         let base = public_base_url
@@ -250,7 +251,15 @@ impl LocalStorageClient {
             .filter(|value| !value.is_empty())
             .unwrap_or(&self.public_base_url)
             .trim_end_matches('/');
-        format!("{base}/install/download/{token}")
+        let mut url = format!("{base}/install/download/{token}");
+        if let Some((key, value)) = query_pair {
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair(key, value)
+                .finish();
+            url.push('?');
+            url.push_str(&query);
+        }
+        url
     }
 
     pub async fn handle_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
@@ -371,13 +380,14 @@ impl StorageBackend {
         key: &str,
         ttl_secs: u64,
         public_base_url: Option<&str>,
+        query_pair: Option<(&str, &str)>,
     ) -> Result<Option<String>, anyhow::Error> {
         match self {
             Self::Disabled => Ok(None),
             Self::S3(client) => client.generate_download_url(key, ttl_secs).await.map(Some),
             Self::Local(client) => Ok(Some(
                 client
-                    .generate_download_url_with_base(key, ttl_secs, public_base_url)
+                    .generate_download_url_with_base(key, ttl_secs, public_base_url, query_pair)
                     .await,
             )),
         }
@@ -617,9 +627,11 @@ mod tests {
                 "builds/kite.ipa",
                 900,
                 Some("https://install.ci.example.com"),
+                Some(("warpgate-ticket", "ticket with /?")),
             )
             .await;
 
         assert!(url.starts_with("https://install.ci.example.com/install/download/"));
+        assert!(url.ends_with("?warpgate-ticket=ticket+with+%2F%3F"));
     }
 }

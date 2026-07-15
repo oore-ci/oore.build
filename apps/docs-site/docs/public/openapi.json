@@ -10719,10 +10719,14 @@
         "required": [
           "user_email_header",
           "trusted_proxy_cidrs",
-          "has_shared_secret"
+          "has_shared_secret",
+          "has_warpgate_ticket"
         ],
         "properties": {
           "has_shared_secret": {
+            "type": "boolean"
+          },
+          "has_warpgate_ticket": {
             "type": "boolean"
           },
           "trusted_proxy_cidrs": {
@@ -10740,6 +10744,16 @@
           },
           "user_email_header": {
             "type": "string"
+          },
+          "warpgate_ticket_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WarpgateTicketSource"
+              }
+            ]
           }
         }
       },
@@ -11344,6 +11358,12 @@
               "string",
               "null"
             ]
+          },
+          "warpgate_ticket": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -11512,6 +11532,13 @@
             "type": "boolean"
           }
         }
+      },
+      "WarpgateTicketSource": {
+        "type": "string",
+        "enum": [
+          "database",
+          "environment"
+        ]
       }
     }
   },

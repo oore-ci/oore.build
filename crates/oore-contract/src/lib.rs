@@ -1611,8 +1611,18 @@ pub struct TrustedProxySettingsPublic {
     pub user_email_header: String,
     pub trusted_proxy_cidrs: Vec<String>,
     pub has_shared_secret: bool,
+    pub has_warpgate_ticket: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warpgate_ticket_source: Option<WarpgateTicketSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpgateTicketSource {
+    Database,
+    Environment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -1628,6 +1638,8 @@ pub struct UpdateTrustedProxySettingsRequest {
     pub trusted_proxy_cidrs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warpgate_ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

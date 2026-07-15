@@ -128,6 +128,11 @@ const trustedProxySchema = z.object({
   user_email_header: z.string().trim().min(1, 'User email header is required.'),
   trusted_proxy_cidrs: z.string().optional(),
   shared_secret: z.string().optional(),
+  warpgate_ticket: z
+    .string()
+    .max(1024, 'Warpgate ticket must be 1024 characters or fewer.')
+    .optional(),
+  clear_warpgate_ticket: z.boolean(),
 })
 
 type TrustedProxyFormValues = z.infer<typeof trustedProxySchema>
@@ -322,6 +327,8 @@ function usePreferencesPageState() {
       user_email_header: trustedProxySettings.user_email_header,
       trusted_proxy_cidrs: trustedProxySettings.trusted_proxy_cidrs.join('\n'),
       shared_secret: '',
+      warpgate_ticket: '',
+      clear_warpgate_ticket: false,
     }
   }, [trustedProxySettings])
 
@@ -331,6 +338,8 @@ function usePreferencesPageState() {
       user_email_header: 'x-oore-user-email',
       trusted_proxy_cidrs: '',
       shared_secret: '',
+      warpgate_ticket: '',
+      clear_warpgate_ticket: false,
     },
     values: trustedProxyValues,
     mode: 'onBlur',
@@ -516,17 +525,29 @@ function usePreferencesPageState() {
     if (!isOwner) return
 
     const sharedSecret = values.shared_secret?.trim()
+    const warpgateTicket = values.warpgate_ticket?.trim()
+    const isWarpgate =
+      values.user_email_header.trim().toLowerCase() === 'x-warpgate-username'
     updateTrustedProxyMutation.mutate(
       {
         user_email_header: values.user_email_header.trim(),
         trusted_proxy_cidrs: parseTrustedProxyCidrs(values.trusted_proxy_cidrs),
         ...(sharedSecret ? { shared_secret: sharedSecret } : {}),
+        ...(isWarpgate
+          ? values.clear_warpgate_ticket
+            ? { warpgate_ticket: '' }
+            : warpgateTicket
+              ? { warpgate_ticket: warpgateTicket }
+              : {}
+          : {}),
       },
       {
         onSuccess: () => {
           toast.success('Trusted Proxy settings saved.')
           setTrustedProxyDialogOpen(false)
           trustedProxyForm.setValue('shared_secret', '')
+          trustedProxyForm.setValue('warpgate_ticket', '')
+          trustedProxyForm.setValue('clear_warpgate_ticket', false)
           void preflightQuery.refetch()
         },
         onError: (error) => {
