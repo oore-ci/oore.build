@@ -17,6 +17,7 @@ import { useBuilds } from '@/hooks/use-builds'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
+import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -45,10 +46,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { ProjectSettingsForm } from './project-settings-form'
-import {
-  ProjectBuildsTab,
-  ProjectPipelinesTab,
-} from './project-detail-tabs'
+import { ProjectAccessCard } from './-project-access-card'
+import { ProjectBuildsTab, ProjectPipelinesTab } from './project-detail-tabs'
 
 const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
@@ -70,7 +69,6 @@ export const Route = createFileRoute('/projects/$projectId/')({
   component: ProjectDetailPage,
 })
 
-
 function useProjectDetailPageState() {
   const { projectId } = Route.useParams()
   const { tab } = Route.useSearch()
@@ -86,6 +84,8 @@ function useProjectDetailPageState() {
   const canDeleteProjects = useHasPermission('projects', 'delete')
   const canWritePipelines = useHasPermission('pipelines', 'write')
   const canTriggerBuild = useHasPermission('builds', 'write')
+  const authRole = useAuthStore((state) => state.user?.role)
+  const canManageAccess = authRole === 'owner' || authRole === 'admin'
   const shouldDiscoverWorkflows =
     canWritePipelines &&
     !!data?.project.repository_id &&
@@ -175,6 +175,7 @@ function useProjectDetailPageState() {
     activeTab,
     builds,
     canDeleteProjects,
+    canManageAccess,
     canTriggerBuild,
     canWritePipelines,
     canWriteProjects,
@@ -236,6 +237,7 @@ function ProjectDetailPage() {
     activeTab,
     builds,
     canDeleteProjects,
+    canManageAccess,
     canTriggerBuild,
     canWritePipelines,
     canWriteProjects,
@@ -377,6 +379,9 @@ function ProjectDetailPage() {
         {/* ---- Settings tab ---- */}
         <TabsContent value="settings">
           <div className="space-y-4 pt-2">
+            {canManageAccess ? (
+              <ProjectAccessCard projectId={projectId} />
+            ) : null}
             {canWriteProjects ? (
               <ProjectSettingsForm
                 projectId={projectId}

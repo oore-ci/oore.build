@@ -46,9 +46,13 @@ export default function CommandPalette() {
   const authUser = useAuthStore((s) => s.user)
 
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
+  const isQaViewer = authUser?.role === 'qa_viewer'
   const canWriteProjects = useHasPermission('projects', 'write')
 
-  const { data: projectsData } = useProjects({ limit: 50 })
+  const { data: projectsData } = useProjects(
+    { limit: 50 },
+    { enabled: !isQaViewer },
+  )
   const projects = projectsData?.projects ?? EMPTY_PROJECTS
 
   // Keyboard shortcut to open
@@ -73,20 +77,24 @@ export default function CommandPalette() {
 
   const navItems = useMemo<Array<PaletteItem>>(
     () => [
-      {
-        id: 'nav-dashboard',
-        label: 'Dashboard',
-        icon: Home01Icon,
-        action: () => go('/'),
-        keywords: 'home overview',
-      },
-      {
-        id: 'nav-projects',
-        label: 'Projects',
-        icon: FolderLibraryIcon,
-        action: () => go('/projects'),
-        keywords: 'repositories repos',
-      },
+      ...(!isQaViewer
+        ? [
+            {
+              id: 'nav-dashboard',
+              label: 'Dashboard',
+              icon: Home01Icon,
+              action: () => go('/'),
+              keywords: 'home overview',
+            },
+            {
+              id: 'nav-projects',
+              label: 'Projects',
+              icon: FolderLibraryIcon,
+              action: () => go('/projects'),
+              keywords: 'repositories repos',
+            },
+          ]
+        : []),
       {
         id: 'nav-builds',
         label: 'Builds',
@@ -95,7 +103,7 @@ export default function CommandPalette() {
         keywords: 'queue history runs',
       },
     ],
-    [go],
+    [go, isQaViewer],
   )
 
   const adminItems = useMemo<Array<PaletteItem>>(
@@ -153,20 +161,26 @@ export default function CommandPalette() {
 
   const projectItems = useMemo<Array<PaletteItem>>(
     () =>
-      projects.map((project) => ({
+      (isQaViewer ? [] : projects).map((project) => ({
         id: `project-${project.id}`,
         label: project.name,
         icon: FolderLibraryIcon,
         action: () => go(`/projects/${project.id}`),
         keywords: project.description ?? '',
       })),
-    [go, projects],
+    [go, isQaViewer, projects],
   )
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
       <Command>
-        <CommandInput placeholder="Search projects, pages, actions..." />
+        <CommandInput
+          placeholder={
+            isQaViewer
+              ? 'Search builds and pages...'
+              : 'Search projects, pages, actions...'
+          }
+        />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
           <CommandGroup heading="Navigation">

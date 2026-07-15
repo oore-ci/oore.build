@@ -74,9 +74,9 @@ fn min_project_role(a: ProjectRole, b: ProjectRole) -> ProjectRole {
 /// 2. Explicit `project_members` row → `Member(role)`.
 /// 3. Otherwise → `None`.
 ///
-/// When `auth_source` is `ApiToken`, the resolved project role is capped at
-/// the maximum implied by the token's instance role. This prevents a
-/// downgraded token from inheriting the creator's full project membership.
+/// QA sessions are always capped at Viewer. API tokens are capped at the
+/// maximum implied by the token's instance role. This prevents a stale or
+/// accidentally elevated membership from bypassing the instance-level role.
 pub async fn resolve_effective_project_role(
     pool: &sqlx::SqlitePool,
     user_id: &str,
@@ -113,8 +113,7 @@ pub async fn resolve_effective_project_role(
             )
         })?;
 
-        // For API tokens, cap the project role at the token's instance role
-        let effective = if *auth_source == AuthSource::ApiToken {
+        let effective = if instance_role == "qa_viewer" || *auth_source == AuthSource::ApiToken {
             let cap = max_project_role_for_instance_role(instance_role);
             min_project_role(role, cap)
         } else {

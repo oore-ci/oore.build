@@ -2,6 +2,7 @@ import { HttpResponse, delay, http } from 'msw'
 import { demoProjects } from '../data/projects'
 import { demoPipelines } from '../data/pipelines'
 import { demoBuilds } from '../data/builds'
+import { demoUsers } from '../data/users'
 import { USER_IDS, ago } from '../seed'
 
 export const projectHandlers = [
@@ -27,6 +28,32 @@ export const projectHandlers = [
       pipeline_count: demoPipelines.filter((p) => p.project_id === project.id)
         .length,
       build_count: demoBuilds.filter((b) => b.project_id === project.id).length,
+    })
+  }),
+
+  http.get('/v1/projects/:projectId/members', async ({ params }) => {
+    await delay(120)
+    const projectId = String(params.projectId)
+    const memberRoles = [
+      [USER_IDS.owner, 'maintainer'],
+      [USER_IDS.developer, 'developer'],
+      [USER_IDS.qaViewer, 'viewer'],
+    ] as const
+    return HttpResponse.json({
+      members: memberRoles.map(([userId, role], index) => {
+        const user = demoUsers.find((candidate) => candidate.id === userId)!
+        return {
+          id: `pm-demo-${projectId}-${index}`,
+          project_id: projectId,
+          user_id: userId,
+          role,
+          user_email: user.email,
+          user_display_name: user.display_name,
+          user_avatar_url: user.avatar_url,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        }
+      }),
     })
   }),
 

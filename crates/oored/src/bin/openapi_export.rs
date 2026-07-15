@@ -54,6 +54,7 @@ use utoipa::OpenApi;
         paths::get_me,
         paths::list_users,
         paths::invite_user,
+        paths::preview_qa_user,
         paths::update_user_role,
         paths::delete_user,
         paths::re_enable_user,
@@ -217,6 +218,7 @@ use utoipa::OpenApi;
         oore_contract::UpdateUserRoleResponse,
         oore_contract::ReEnableUserResponse,
         oore_contract::ListUsersResponse,
+        oore_contract::PreviewQaUserResponse,
         oore_contract::UserProfileResponse,
         // Integrations
         oore_contract::ScmProvider,
@@ -793,6 +795,22 @@ mod paths {
         )
     )]
     pub(super) async fn invite_user() {}
+
+    /// Preview QA user access
+    ///
+    /// Creates a short-lived session for an active QA Viewer. Owner only.
+    #[utoipa::path(post, path = "/v1/users/{user_id}/preview", tag = "Users",
+        params(("user_id" = String, Path, description = "QA user ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "QA preview session", body = PreviewQaUserResponse),
+            (status = 400, description = "Target is not a QA Viewer", body = ApiError),
+            (status = 403, description = "Owner access required", body = ApiError),
+            (status = 404, description = "User not found", body = ApiError),
+            (status = 409, description = "QA user is not active", body = ApiError),
+        )
+    )]
+    pub(super) async fn preview_qa_user() {}
 
     /// Update user role
     ///

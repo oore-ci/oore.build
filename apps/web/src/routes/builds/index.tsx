@@ -62,6 +62,7 @@ import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import type { Build, Project } from '@/lib/types'
+import { useAuthStore } from '@/stores/auth-store'
 
 const PAGE_SIZE = 20
 
@@ -246,6 +247,7 @@ function useBuildsListPageState() {
   const canTriggerBuild = useHasPermission('builds', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteIntegrations = useHasPermission('integrations', 'write')
+  const isQaViewer = useAuthStore((s) => s.user?.role === 'qa_viewer')
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
   const builds = useMemo(
@@ -272,6 +274,7 @@ function useBuildsListPageState() {
     error,
     integrationConnectTo,
     isLoading,
+    isQaViewer,
     missingProjects,
     navigate,
     page,
@@ -300,6 +303,7 @@ function BuildsListPage() {
     error,
     integrationConnectTo,
     isLoading,
+    isQaViewer,
     missingProjects,
     navigate,
     page,
@@ -328,7 +332,11 @@ function BuildsListPage() {
       <PageMeta title="Builds" noindex />
       <PageHeader
         title="Builds"
-        description="Queue, execution, and historical run inventory across projects."
+        description={
+          isQaViewer
+            ? 'Build history, logs, and installable app releases available to you.'
+            : 'Queue, execution, and historical run inventory across projects.'
+        }
         actions={
           !missingProjects && canTriggerBuild ? (
             <Button
@@ -424,60 +432,79 @@ function BuildsListPage() {
 
       {!isLoading && !error ? (
         missingProjects ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Create Project First
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {runtimeMode === 'local'
-                  ? 'Builds run through pipelines under projects. Create your first project from a local Git repository.'
-                  : 'Builds run through pipelines under projects. Create your first project before triggering builds.'}
-              </p>
-              <SetupHint
-                title="Fastest path to the first build"
-                items={[
-                  runtimeMode === 'local'
-                    ? 'Create a project from a local repository path on the runner host.'
-                    : 'Connect GitHub or GitLab if you want repository discovery and webhook triggers.',
-                  'Create a pipeline and pick the platforms Oore should build.',
-                  'Trigger the first build from the pipeline page, or let a configured webhook do it.',
-                ]}
-              />
+          isQaViewer ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                  No project access yet
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Ask an owner or admin to add you to a project. Its builds,
+                  logs, and installable artifacts will appear here.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                  Create Project First
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  {runtimeMode === 'local'
+                    ? 'Builds run through pipelines under projects. Create your first project from a local Git repository.'
+                    : 'Builds run through pipelines under projects. Create your first project before triggering builds.'}
+                </p>
+                <SetupHint
+                  title="Fastest path to the first build"
+                  items={[
+                    runtimeMode === 'local'
+                      ? 'Create a project from a local repository path on the runner host.'
+                      : 'Connect GitHub or GitLab if you want repository discovery and webhook triggers.',
+                    'Create a pipeline and pick the platforms Oore should build.',
+                    'Trigger the first build from the pipeline page, or let a configured webhook do it.',
+                  ]}
+                />
 
-              <div className="flex flex-wrap items-center gap-2">
-                {canWriteProjects ? (
-                  <Button render={<Link to="/projects" />} nativeButton={false}>
-                    Go to projects
-                    <HugeiconsIcon icon={ArrowRight01Icon} />
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Ask an owner/admin/developer to create the first project.
-                  </p>
-                )}
-
-                {runtimeMode === 'remote' ? (
-                  canWriteIntegrations ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {canWriteProjects ? (
                     <Button
-                      variant="outline"
-                      render={<Link to={integrationConnectTo} />}
+                      render={<Link to="/projects" />}
                       nativeButton={false}
                     >
-                      <HugeiconsIcon icon={Link04Icon} />
-                      Connect source
+                      Go to projects
+                      <HugeiconsIcon icon={ArrowRight01Icon} />
                     </Button>
                   ) : (
                     <p className="text-xs text-muted-foreground">
-                      Ask an owner/admin to connect a source.
+                      Ask an owner/admin/developer to create the first project.
                     </p>
-                  )
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
+                  )}
+
+                  {runtimeMode === 'remote' ? (
+                    canWriteIntegrations ? (
+                      <Button
+                        variant="outline"
+                        render={<Link to={integrationConnectTo} />}
+                        nativeButton={false}
+                      >
+                        <HugeiconsIcon icon={Link04Icon} />
+                        Connect source
+                      </Button>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Ask an owner/admin to connect a source.
+                      </p>
+                    )
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          )
         ) : (
           <BuildsHistoryCard
             builds={builds}

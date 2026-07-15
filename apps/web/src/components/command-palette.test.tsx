@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CommandPalette from './command-palette'
 import { useUiStore } from '@/stores/ui-store'
 
-const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
+const { navigate, authState } = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  authState: { role: 'owner' },
+}))
 
 vi.stubGlobal(
   'ResizeObserver',
@@ -34,12 +37,13 @@ vi.mock('@/hooks/use-permissions', () => ({
 
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: (selector: (state: unknown) => unknown) =>
-    selector({ user: { role: 'owner' } }),
+    selector({ user: { role: authState.role } }),
 }))
 
 describe('CommandPalette', () => {
   beforeEach(() => {
     navigate.mockReset()
+    authState.role = 'owner'
     useUiStore.setState({ commandPaletteOpen: false })
   })
 
@@ -53,5 +57,17 @@ describe('CommandPalette', () => {
       screen.getByPlaceholderText('Search projects, pages, actions...'),
     ).toBeTruthy()
     expect(screen.getByText('Dashboard')).toBeTruthy()
+  })
+
+  it('shows a build-only navigation surface for QA viewers', async () => {
+    authState.role = 'qa_viewer'
+    render(<CommandPalette />)
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(screen.getByText('Builds')).toBeTruthy()
+    expect(screen.queryByText('Dashboard')).toBeNull()
+    expect(screen.queryByText('Projects')).toBeNull()
   })
 })

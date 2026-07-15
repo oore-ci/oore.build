@@ -106,6 +106,7 @@ export default function NavMain() {
   const location = useLocation()
   const authUser = useAuthStore((s) => s.user)
   const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
+  const isQaViewer = authUser?.role === 'qa_viewer'
   const isDeveloperOrAbove = isAdmin || authUser?.role === 'developer'
   const recentProjects = useRecentProjectsStore((s) => s.projects)
 
@@ -119,6 +120,9 @@ export default function NavMain() {
     if (item.to === '/settings/api-tokens') return isDeveloperOrAbove
     return !item.adminOnly || isAdmin
   })
+  const visiblePrimaryItems = isQaViewer
+    ? PRIMARY_ITEMS.filter((item) => item.to === '/builds')
+    : PRIMARY_ITEMS
 
   return (
     <>
@@ -126,7 +130,7 @@ export default function NavMain() {
         <SidebarGroupLabel>Operations</SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
-            {PRIMARY_ITEMS.map((item) => (
+            {visiblePrimaryItems.map((item) => (
               <SidebarMenuItem key={item.to}>
                 <SidebarMenuButton
                   isActive={isActive(item)}

@@ -6,6 +6,7 @@ import {
   inviteUser,
   listUsers,
   logout,
+  previewQaUser,
   reEnableUser,
   updateUserRole,
 } from '@/lib/api'
@@ -80,6 +81,19 @@ export function useUpdateUserRole() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'users'],
       })
+    },
+  })
+}
+
+export function usePreviewQaUser() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+
+  return useMutation({
+    mutationFn: (userId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return previewQaUser(baseUrl, token, userId)
     },
   })
 }

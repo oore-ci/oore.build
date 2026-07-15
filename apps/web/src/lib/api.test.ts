@@ -4,6 +4,7 @@ import {
   completeSetup,
   configureExternalAccessOidc,
   configureOidc,
+  addProjectMember,
   createArtifactInstallLink,
   createScopedDownloadToken,
   createPipeline,
@@ -16,11 +17,15 @@ import {
   getPipeline,
   getSetupStatus,
   listBuilds,
+  listProjectMembers,
   listPipelines,
   listRunners,
+  previewQaUser,
+  removeProjectMember,
   testOidcConnection,
   updateArtifactStorageSettings,
   updateInstancePreferences,
+  updateProjectMember,
   updatePipeline,
   updateRunner,
   validatePipeline,
@@ -161,6 +166,82 @@ describe('query cancellation', () => {
       expect.objectContaining({
         headers: { Authorization: 'Bearer token' },
         signal: controller.signal,
+      }),
+    )
+  })
+})
+
+describe('QA project access', () => {
+  it('calls the preview and project membership endpoints with bearer auth', async () => {
+    mockFetch
+      .mockReturnValueOnce(mockJsonResponse(200, { session_token: 'preview' }))
+      .mockReturnValueOnce(mockJsonResponse(200, { members: [] }))
+      .mockReturnValueOnce(mockJsonResponse(200, { member: { id: 'm1' } }))
+      .mockReturnValueOnce(mockJsonResponse(200, { member: { id: 'm1' } }))
+      .mockReturnValueOnce(mockJsonResponse(200, { ok: true }))
+
+    await previewQaUser('https://ci.example.com', 'owner-token', 'qa-1')
+    await listProjectMembers(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+    )
+    await addProjectMember(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+      { user_id: 'qa-1', role: 'viewer' },
+    )
+    await updateProjectMember(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+      'qa-1',
+      { role: 'viewer' },
+    )
+    await removeProjectMember(
+      'https://ci.example.com',
+      'owner-token',
+      'project-1',
+      'qa-1',
+    )
+
+    const auth = { Authorization: 'Bearer owner-token' }
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/users/qa-1/preview',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/projects/project-1/members',
+      { headers: auth },
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      3,
+      'https://ci.example.com/v1/projects/project-1/members',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      4,
+      'https://ci.example.com/v1/projects/project-1/members/qa-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      5,
+      'https://ci.example.com/v1/projects/project-1/members/qa-1',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: { ...auth, 'Content-Type': 'application/json' },
       }),
     )
   })

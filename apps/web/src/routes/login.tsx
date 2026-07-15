@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
@@ -84,6 +85,7 @@ function useLoginPageState() {
   const instances = useInstanceStore((s) => s.instances)
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
+  const removeInstance = useInstanceStore((s) => s.removeInstance)
   const navigate = useNavigate()
   const setAuth = useAuthStore((s) => s.setAuth)
   const token = useAuthStore((s) => s.token)
@@ -119,12 +121,22 @@ function useLoginPageState() {
     ? resolveLoginFlow(setupStatusQuery.data, loopbackLocalPath)
     : null
   const localLoginAvailable = loginFlow === 'local' && loopbackLocalPath
-  const trustedProxyLoginAvailable = loginFlow === 'trusted_proxy'
+  const trustedProxyLoginAvailable =
+    loginFlow === 'trusted_proxy' && !instance?.qaPreviewSourceId
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
   useMountEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
+    }
+  })
+
+  useMountEffect(() => {
+    if (!hasValidToken && instance?.qaPreviewSourceId) {
+      removeInstance(instance.id)
+      toast.dismiss()
+      toast.info('QA preview ended. You are back in your owner session.')
+      void navigate({ to: '/settings/users', replace: true })
     }
   })
 
@@ -142,6 +154,11 @@ function useLoginPageState() {
 
   const handleLogin = useCallback(async () => {
     if (!instance) return
+    if (instance.qaPreviewSourceId) {
+      removeInstance(instance.id)
+      void navigate({ to: '/settings/users', replace: true })
+      return
+    }
     const baseUrl = resolveInstanceApiBaseUrl(instance)
     if (!baseUrl) return
     setLoading(true)
@@ -303,7 +320,7 @@ function useLoginPageState() {
       }
       setLoading(false)
     }
-  }, [instance, localEmail, navigate, setAuth])
+  }, [instance, localEmail, navigate, removeInstance, setAuth])
 
   useTrustedProxyAutoLogin({
     enabled:
@@ -311,7 +328,7 @@ function useLoginPageState() {
       !hasValidToken &&
       !loading &&
       setupStatusQuery.data?.is_configured === true &&
-      loginFlow === 'trusted_proxy',
+      trustedProxyLoginAvailable,
     instanceId: instance?.id ?? null,
     onLogin: handleLogin,
   })

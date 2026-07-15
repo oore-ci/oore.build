@@ -478,6 +478,13 @@ pub struct ReEnableUserResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PreviewQaUserResponse {
+    pub session_token: String,
+    pub expires_at: i64,
+    pub user: AuthenticatedUser,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListUsersResponse {
     pub users: Vec<User>,
 }

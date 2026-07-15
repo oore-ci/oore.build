@@ -3,6 +3,8 @@ import type {
   ArtifactDownloadLinkResponse,
   ArtifactInstallLinkResponse,
   ArtifactStorageSettingsResponse,
+  AddProjectMemberRequest,
+  AddProjectMemberResponse,
   BootstrapTokenVerifyResponse,
   BrowseLocalGitDirectoriesResponse,
   BuildDetailResponse,
@@ -46,6 +48,7 @@ import type {
   ListNotificationDeliveriesResponse,
   ListPipelineIosDevicesResponse,
   ListPipelinesResponse,
+  ListProjectMembersResponse,
   ListProjectsResponse,
   ListRepositoriesResponse,
   ListRunnersResponse,
@@ -60,6 +63,7 @@ import type {
   PipelineDetailResponse,
   PipelineIosSigningResponse,
   ProjectDetailResponse,
+  PreviewQaUserResponse,
   ReEnableUserResponse,
   RegisterIosDeviceRequest,
   RegisterIosDeviceResponse,
@@ -93,6 +97,8 @@ import type {
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
+  UpdateProjectMemberRequest,
+  UpdateProjectMemberResponse,
   UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
@@ -366,6 +372,21 @@ export function inviteUser(
     headers: authHeaders(token),
     body: JSON.stringify(data),
   })
+}
+
+export function previewQaUser(
+  baseUrl: string,
+  token: string,
+  userId: string,
+): Promise<PreviewQaUserResponse> {
+  return request<PreviewQaUserResponse>(
+    baseUrl,
+    `/v1/users/${userId}/preview`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  )
 }
 
 export function updateUserRole(
@@ -1005,6 +1026,69 @@ export function getProject(
   return request<ProjectDetailResponse>(baseUrl, `/v1/projects/${projectId}`, {
     headers: authHeaders(token),
   })
+}
+
+export function listProjectMembers(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+): Promise<ListProjectMembersResponse> {
+  return request<ListProjectMembersResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/members`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function addProjectMember(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  data: AddProjectMemberRequest,
+): Promise<AddProjectMemberResponse> {
+  return request<AddProjectMemberResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/members`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function updateProjectMember(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  userId: string,
+  data: UpdateProjectMemberRequest,
+): Promise<UpdateProjectMemberResponse> {
+  return request<UpdateProjectMemberResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/members/${userId}`,
+    {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function removeProjectMember(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  userId: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    baseUrl,
+    `/v1/projects/${projectId}/members/${userId}`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    },
+  )
 }
 
 export function createProject(

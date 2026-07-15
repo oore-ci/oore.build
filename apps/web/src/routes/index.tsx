@@ -239,6 +239,9 @@ function IndexPage() {
   }
 
   if (status?.is_configured) {
+    if (authUser?.role === 'qa_viewer') {
+      return <QaBuildRedirect />
+    }
     return (
       <>
         <PageMeta />
@@ -256,6 +259,23 @@ function IndexPage() {
       <div className="flex items-center gap-3">
         <Spinner className="size-5" />
         <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    </div>
+  )
+}
+
+function QaBuildRedirect() {
+  const navigate = useNavigate()
+  useMountEffect(() => {
+    void navigate({ to: '/builds', replace: true })
+  })
+
+  return (
+    <div className="flex flex-1 items-center justify-center">
+      <PageMeta />
+      <div className="flex items-center gap-3">
+        <Spinner className="size-5" />
+        <p className="text-sm text-muted-foreground">Loading builds...</p>
       </div>
     </div>
   )
@@ -488,7 +508,6 @@ function ConfiguredDashboard({
         }
         projects={projects}
       />
-
 
       <TriggerBuildDialog
         open={triggerOpen}

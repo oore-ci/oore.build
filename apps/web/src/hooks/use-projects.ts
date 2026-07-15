@@ -1,10 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { CreateProjectRequest, UpdateProjectRequest } from '@/lib/types'
+import type {
+  AddProjectMemberRequest,
+  CreateProjectRequest,
+  UpdateProjectMemberRequest,
+  UpdateProjectRequest,
+} from '@/lib/types'
 import {
+  addProjectMember,
   createProject,
   deleteProject,
   getProject,
+  listProjectMembers,
   listProjects,
+  removeProjectMember,
+  updateProjectMember,
   updateProject,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -120,6 +129,84 @@ export function useDeleteProject() {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'projects'],
+      })
+    },
+  })
+}
+
+export function useProjectMembers(projectId: string, enabled = true) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
+    queryFn: () => listProjectMembers(baseUrl!, token!, projectId),
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+  })
+}
+
+export function useAddProjectMember(projectId: string) {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (data: AddProjectMemberRequest) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return addProjectMember(baseUrl, token, projectId, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
+      })
+    },
+  })
+}
+
+export function useUpdateProjectMember(projectId: string) {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: ({
+      userId,
+      data,
+    }: {
+      userId: string
+      data: UpdateProjectMemberRequest
+    }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return updateProjectMember(baseUrl, token, projectId, userId, data)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
+      })
+    },
+  })
+}
+
+export function useRemoveProjectMember(projectId: string) {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: (userId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return removeProjectMember(baseUrl, token, projectId, userId)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
       })
     },
   })

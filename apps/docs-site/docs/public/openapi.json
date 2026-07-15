@@ -6239,6 +6239,84 @@
         ]
       }
     },
+    "/v1/users/{user_id}/preview": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Preview QA user access",
+        "description": "Creates a short-lived session for an active QA Viewer. Owner only.",
+        "operationId": "preview_qa_user",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "QA user ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "QA preview session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewQaUserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Target is not a QA Viewer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "QA user is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users/{user_id}/role": {
       "patch": {
         "tags": [
@@ -9461,6 +9539,26 @@
           }
         },
         "additionalProperties": false
+      },
+      "PreviewQaUserResponse": {
+        "type": "object",
+        "required": [
+          "session_token",
+          "expires_at",
+          "user"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_token": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AuthenticatedUser"
+          }
+        }
       },
       "Project": {
         "type": "object",

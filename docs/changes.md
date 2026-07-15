@@ -14,6 +14,13 @@ Rules:
 
 ## 2026-07-15
 
+- **Project-scoped QA build access and safe role preview**:
+  - Project Settings now exposes explicit member management for owners and admins, including pre-login assignment for invited users. QA members are limited to Viewer, and backend authorization caps QA sessions at Viewer even if legacy membership data contains an elevated project role.
+  - QA users now land on a build-first surface with build-only navigation and a truthful no-project-access state, keeping project, source, pipeline, and instance administration out of their default experience while preserving artifact install/download access for assigned projects.
+  - Owners can start an audited 10-minute QA preview from Users without changing stored roles. The frontend isolates the preview in a clearly labeled instance session and restores the untouched owner session when preview ends or expires.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-ad-hoc-app-installation-18011ca32086
+  - Linear RBAC ADR: https://linear.app/oorebuild/document/adr-0002-rbac-implementation-strategy-28554f736e4a
+
 - **Ad-hoc Android and iOS app installation**:
   - Build artifacts now expose a dedicated mobile-first install page. APKs use protected scoped downloads; signed ad-hoc IPAs use a short-lived tokenized Apple OTA manifest and `itms-services` install URL. The page detects iPhone Safari, blocks misleading install attempts in other iPhone browsers, and gives platform-specific device guidance.
   - The macOS runner attaches bundle identifier, app name, marketing version, and build number to newly signed IPA artifacts, allowing the backend to verify manifest readiness before issuing an install link. Older IPAs remain downloadable and become install-ready after one rebuild.
