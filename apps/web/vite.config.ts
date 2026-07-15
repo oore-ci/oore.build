@@ -83,6 +83,21 @@ function htmlOptimisePlugin(): Plugin {
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_RELEASE_CHANNEL': JSON.stringify(
+      process.env.OORE_WEB_RELEASE_CHANNEL === 'alpha' ||
+        process.env.OORE_WEB_RELEASE_CHANNEL === 'beta' ||
+        process.env.OORE_WEB_RELEASE_CHANNEL === 'stable'
+        ? process.env.OORE_WEB_RELEASE_CHANNEL
+        : process.env.RELEASE_TAG?.includes('-alpha.')
+          ? 'alpha'
+          : process.env.RELEASE_TAG?.includes('-beta.')
+            ? 'beta'
+            : process.env.RELEASE_TAG?.startsWith('v')
+              ? 'stable'
+              : 'dev',
+    ),
+  },
   plugins: [
     devtools(),
     tanstackRouter({
