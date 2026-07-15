@@ -10,7 +10,6 @@ import {
   Settings01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   Command,
@@ -41,7 +40,6 @@ interface PaletteItem {
 export default function CommandPalette() {
   const open = useUiStore((state) => state.commandPaletteOpen)
   const setOpen = useUiStore((state) => state.setCommandPaletteOpen)
-  const toggleOpen = useUiStore((state) => state.toggleCommandPalette)
   const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
 
@@ -54,18 +52,6 @@ export default function CommandPalette() {
     { enabled: !isQaViewer },
   )
   const projects = projectsData?.projects ?? EMPTY_PROJECTS
-
-  // Keyboard shortcut to open
-  useMountEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        toggleOpen()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  })
 
   const go = useCallback(
     (to: string) => {

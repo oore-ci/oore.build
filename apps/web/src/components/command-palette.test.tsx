@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CommandPalette from './command-palette'
@@ -47,10 +47,10 @@ describe('CommandPalette', () => {
     useUiStore.setState({ commandPaletteOpen: false })
   })
 
-  it('opens with Cmd+K and renders searchable commands', async () => {
+  it('renders searchable commands when opened by the app shell', async () => {
     render(<CommandPalette />)
 
-    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    act(() => useUiStore.getState().setCommandPaletteOpen(true))
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     expect(
@@ -63,7 +63,7 @@ describe('CommandPalette', () => {
     authState.role = 'qa_viewer'
     render(<CommandPalette />)
 
-    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    act(() => useUiStore.getState().setCommandPaletteOpen(true))
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     expect(screen.getByText('Builds')).toBeTruthy()

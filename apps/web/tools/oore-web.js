@@ -1036,6 +1036,22 @@ async function proxyRequest(request, backendUrl, url, config) {
   }
 }
 
+export function spaCacheControl(pathname) {
+  if (pathname.startsWith('/assets/')) {
+    return 'public, max-age=31536000, immutable'
+  }
+  if (pathname === '/' || pathname.endsWith('.html')) {
+    return 'public, max-age=0, must-revalidate'
+  }
+  return 'public, max-age=3600, must-revalidate'
+}
+
+function spaFileResponse(filePath, pathname) {
+  return new Response(Bun.file(filePath), {
+    headers: { 'Cache-Control': spaCacheControl(pathname) },
+  })
+}
+
 function serveSpa(distDir, pathname, acceptHeader) {
   const assetPath = resolveAssetPath(distDir, pathname)
   if (!assetPath) {
@@ -1045,12 +1061,12 @@ function serveSpa(distDir, pathname, acceptHeader) {
   if (isDirectory(assetPath)) {
     const indexPath = path.join(assetPath, 'index.html')
     if (fileExists(indexPath)) {
-      return new Response(Bun.file(indexPath))
+      return spaFileResponse(indexPath, '/')
     }
   }
 
   if (fileExists(assetPath)) {
-    return new Response(Bun.file(assetPath))
+    return spaFileResponse(assetPath, pathname)
   }
 
   const wantsHtml =
@@ -1060,7 +1076,7 @@ function serveSpa(distDir, pathname, acceptHeader) {
     if (!fileExists(indexPath)) {
       return new Response('index.html not found', { status: 500 })
     }
-    return new Response(Bun.file(indexPath))
+    return spaFileResponse(indexPath, '/')
   }
 
   return new Response('Not found', { status: 404 })

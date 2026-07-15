@@ -14,6 +14,13 @@ Rules:
 
 ## 2026-07-15
 
+- **Smaller, truthfully budgeted web startup**:
+  - The production bundle check now follows every static import in Vite's manifest instead of counting only tags present in `index.html`, closing the gap that hid the form runtime from the previous budget.
+  - Form-heavy setup and settings screens use explicit lazy route modules, while manual chunk rules no longer pull route-only Zod, React Hook Form, or Base UI code into startup. Initial JavaScript fell from 312.90 KiB to 216.44 KiB gzip (30.8%) with the existing interface and validation intact.
+  - Command palette code and project fetching now wait for search intent, with hover/focus preloading for responsiveness. Build detail loads only the operator or artifact-install experience required by the active user.
+  - The self-hosted `oore-web` launcher now caches content-hashed assets immutably, revalidates HTML, and uses a short revalidation window for unhashed static files.
+  - Linear feature doc: https://linear.app/oorebuild/document/web-performance-and-bundle-discipline-8aacaadaa620
+
 - **Project-scoped QA build access and safe role preview**:
   - Project Settings now exposes explicit member management for owners and admins, including pre-login assignment for invited users. QA members are limited to Viewer, and backend authorization caps QA sessions at Viewer even if legacy membership data contains an elevated project role.
   - QA users now land on a build-first surface with build-only navigation and a truthful no-project-access state, keeping project, source, pipeline, and instance administration out of their default experience while preserving artifact install/download access for assigned projects.

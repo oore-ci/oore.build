@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Delete02Icon,
@@ -52,16 +51,24 @@ import { ProjectBuildsTab, ProjectPipelinesTab } from './project-detail-tabs'
 const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
-const tabSearch = z.object({
-  tab: z.enum(TAB_VALUES).optional().catch(undefined),
-})
+function validateTabSearch(search: Record<string, unknown>): {
+  tab?: TabValue
+} {
+  const tab = search.tab
+  return {
+    tab:
+      typeof tab === 'string' && TAB_VALUES.includes(tab as TabValue)
+        ? (tab as TabValue)
+        : undefined,
+  }
+}
 
 export const Route = createFileRoute('/projects/$projectId/')({
   staticData: {
     breadcrumbLabel: 'Details',
     breadcrumbParent: { label: 'Projects', to: '/projects' },
   },
-  validateSearch: tabSearch,
+  validateSearch: validateTabSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
