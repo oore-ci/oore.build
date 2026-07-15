@@ -13,7 +13,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -61,7 +61,6 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import type { Build, Project } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -127,12 +126,7 @@ function BuildsHistoryCard({
             </EmptyHeader>
             {canTriggerBuild ? (
               <EmptyContent>
-                <Button
-                  size="sm"
-                  onClick={onOpenTrigger}
-                  disabled={isDemoMode}
-                  title={isDemoMode ? READ_ONLY_REASON : undefined}
-                >
+                <Button size="sm" onClick={onOpenTrigger}>
                   <HugeiconsIcon icon={PlayIcon} />
                   Run first build
                 </Button>
@@ -245,7 +239,7 @@ function useBuildsListPageState() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const projectsQuery = useProjects({ limit: 200 })
   const setupStatusQuery = useSetupStatus()
-  const canTriggerBuild = useHasPermission('builds', 'write')
+  const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const isQaViewer = useAuthStore((s) => s.user?.role === 'qa_viewer')
@@ -259,6 +253,11 @@ function useBuildsListPageState() {
     () => projectsQuery.data?.projects ?? [],
     [projectsQuery.data?.projects],
   )
+  const canTriggerBuild =
+    canTriggerBuildGlobally &&
+    projects.some((project) =>
+      hasProjectPermission(project.current_user_role, 'builds', 'write'),
+    )
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const integrationConnectTo = '/settings/integrations'
   const missingProjects =
@@ -345,11 +344,7 @@ function OperationsBuildsPage() {
         }
         actions={
           !missingProjects && canTriggerBuild ? (
-            <Button
-              onClick={() => setTriggerBuildOpen(true)}
-              disabled={isDemoMode}
-              title={isDemoMode ? READ_ONLY_REASON : undefined}
-            >
+            <Button onClick={() => setTriggerBuildOpen(true)}>
               <HugeiconsIcon icon={PlayIcon} />
               Run build
             </Button>

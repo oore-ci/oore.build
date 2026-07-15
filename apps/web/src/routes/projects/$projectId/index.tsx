@@ -13,7 +13,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
 import { useAuthStore } from '@/stores/auth-store'
@@ -87,10 +87,23 @@ function useProjectDetailPageState() {
     { refetchInterval: 15_000 },
   )
   const deleteMutation = useDeleteProject()
-  const canWriteProjects = useHasPermission('projects', 'write')
-  const canDeleteProjects = useHasPermission('projects', 'delete')
-  const canWritePipelines = useHasPermission('pipelines', 'write')
-  const canTriggerBuild = useHasPermission('builds', 'write')
+  const canWriteProjectsGlobally = useHasPermission('projects', 'write')
+  const canDeleteProjectsGlobally = useHasPermission('projects', 'delete')
+  const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
+  const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const projectRole = data?.current_user_role ?? data?.project.current_user_role
+  const canWriteProjects =
+    canWriteProjectsGlobally &&
+    hasProjectPermission(projectRole, 'projects', 'write')
+  const canDeleteProjects =
+    canDeleteProjectsGlobally &&
+    hasProjectPermission(projectRole, 'projects', 'delete')
+  const canWritePipelines =
+    canWritePipelinesGlobally &&
+    hasProjectPermission(projectRole, 'pipelines', 'write')
+  const canTriggerBuild =
+    canTriggerBuildGlobally &&
+    hasProjectPermission(projectRole, 'builds', 'write')
   const authRole = useAuthStore((state) => state.user?.role)
   const canManageAccess = authRole === 'owner' || authRole === 'admin'
   const shouldDiscoverWorkflows =

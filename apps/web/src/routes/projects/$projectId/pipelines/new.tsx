@@ -46,7 +46,6 @@ import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
 import { PageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -908,8 +907,6 @@ function NewPipelinePage() {
                 />
               ) : undefined
             }
-            readOnly={isDemoMode}
-            readOnlyReason={READ_ONLY_REASON}
           />
         </div>
       ) : null}

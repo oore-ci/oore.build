@@ -1,5 +1,6 @@
 import { HttpResponse, delay, http } from 'msw'
 import { ago } from '../seed'
+import { demoArtifacts } from '../data/artifacts'
 
 export const artifactHandlers = [
   http.post('/v1/artifacts/:artifactId/download-link', async () => {
@@ -11,7 +12,10 @@ export const artifactHandlers = [
   }),
   http.post('/v1/artifacts/:artifactId/install-link', async ({ params }) => {
     await delay(200)
-    const ios = params.artifactId === 'art-004'
+    const artifact = Object.values(demoArtifacts)
+      .flat()
+      .find((candidate) => candidate.id === params.artifactId)
+    const ios = artifact?.artifact_type === 'ipa'
     return HttpResponse.json({
       platform: ios ? 'ios' : 'android',
       install_url: ios

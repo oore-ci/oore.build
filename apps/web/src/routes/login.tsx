@@ -30,6 +30,8 @@ import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { resolveLoginFlow } from '@/lib/login-flow'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
+import DemoLoginForm from '@/components/demo-login-form'
+import { isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -380,6 +382,30 @@ function LoginPage() {
     showAddInstance,
     trustedProxyLoginAvailable,
   } = useLoginPageState()
+
+  if (isDemoMode) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
+        <PageMeta title="Demo login" />
+        <div className="w-full max-w-sm space-y-8">
+          <div className="space-y-4 text-center">
+            <div className="mx-auto flex size-14 items-center justify-center">
+              <img src="/logo.svg" alt="Oore logo" className="size-full" />
+            </div>
+            <div className="space-y-1">
+              <h1 className="text-3xl font-bold tracking-tight">
+                Explore the Oore demo
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Choose a role to see its real navigation, data, and permissions.
+              </p>
+            </div>
+          </div>
+          <DemoLoginForm />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6">

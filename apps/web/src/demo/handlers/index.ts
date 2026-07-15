@@ -11,6 +11,7 @@ import { settingsHandlers } from './settings'
 import { notificationHandlers } from './notifications'
 import { retentionHandlers } from './retention'
 import { auditLogHandlers } from './audit-logs'
+import { apiTokenHandlers } from './api-tokens'
 
 export const allHandlers = [
   ...setupHandlers,
@@ -26,4 +27,5 @@ export const allHandlers = [
   ...notificationHandlers,
   ...retentionHandlers,
   ...auditLogHandlers,
+  ...apiTokenHandlers,
 ]

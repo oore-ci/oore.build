@@ -1,13 +1,57 @@
 import { HttpResponse, delay, http } from 'msw'
 import { DEMO_INSTANCE_ID, DEMO_USER_EMAIL } from '../seed'
+import { READ_ONLY_REASON } from '@/lib/demo-mode'
+
+const demoRelease = {
+  phase: 'idle',
+  managed_service: true,
+  version: '0.1.0-alpha.24',
+  latest_version: '0.1.0-alpha.24',
+  channel: 'alpha',
+  github_repo: 'oore-ci/oore.build',
+  update_available: false,
+  release_name: 'Oore CI 0.1.0 Alpha 24',
+  release_notes: 'Role-aware demo data and mobile release workflows.',
+  release_url: 'https://github.com/oore-ci/oore.build/releases',
+  changelog_url: 'https://github.com/oore-ci/oore.build/releases',
+} as const
 
 export const setupHandlers = [
+  http.get('/healthz', () =>
+    HttpResponse.json({
+      ok: true,
+      status: 'ok',
+      package_version: demoRelease.version,
+      version: demoRelease.version,
+      channel: demoRelease.channel,
+      github_repo: demoRelease.github_repo,
+    }),
+  ),
+  http.get('/__oore_web_healthz', () =>
+    HttpResponse.json({
+      ok: true,
+      package_version: demoRelease.version,
+      version: demoRelease.version,
+      channel: demoRelease.channel,
+      github_repo: demoRelease.github_repo,
+    }),
+  ),
+  http.get('/__oore_web_update', () => HttpResponse.json(demoRelease)),
+  http.post('/__oore_web_update', () =>
+    HttpResponse.json(
+      { error: READ_ONLY_REASON, code: 'demo_read_only' },
+      { status: 403 },
+    ),
+  ),
+  http.get('/v1/system/update', () =>
+    HttpResponse.json({ phase: 'idle', managed_service: true }),
+  ),
   http.get('/v1/public/setup-status', async () => {
     await delay(100)
     return HttpResponse.json({
       instance_id: DEMO_INSTANCE_ID,
       state: 'ready',
-      runtime_mode: 'local',
+      runtime_mode: 'remote',
       remote_auth_mode: 'oidc',
       setup_mode: false,
       is_configured: true,

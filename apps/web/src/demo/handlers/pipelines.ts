@@ -1,7 +1,9 @@
 import { HttpResponse, delay, http } from 'msw'
 import { demoPipelines } from '../data/pipelines'
 import { demoBuilds } from '../data/builds'
-import { PIPELINE_IDS, ago } from '../seed'
+import { demoProjects } from '../data/projects'
+import { INTEGRATION_IDS, PIPELINE_IDS, ago } from '../seed'
+import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 
 const iosSigningByPipeline: Partial<Record<string, Record<string, unknown>>> = {
   [PIPELINE_IDS.shopIos]: {
@@ -96,18 +98,80 @@ const iosDevicesByPipeline: Partial<
 }
 
 export const pipelineHandlers = [
-  http.get('/v1/projects/:projectId/pipelines', async ({ params }) => {
+  http.get('/v1/projects/:projectId/pipelines', async ({ params, request }) => {
     await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    if (!getDemoProjectRole(persona, String(params.projectId))) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
     const pipelines = demoPipelines.filter(
       (p) => p.project_id === params.projectId,
     )
     return HttpResponse.json({ pipelines, total: pipelines.length })
   }),
 
-  http.get('/v1/pipelines/:pipelineId', async ({ params }) => {
+  http.get(
+    '/v1/projects/:projectId/repository-workflows',
+    async ({ params, request }) => {
+      await delay(150)
+      const projectId = String(params.projectId)
+      const persona = getDemoPersonaFromRequest(request)
+      const project = demoProjects.find((item) => item.id === projectId)
+      if (!project || !getDemoProjectRole(persona, projectId)) {
+        return HttpResponse.json(
+          { error: 'Project not found', code: 'not_found' },
+          { status: 404 },
+        )
+      }
+
+      const url = new URL(request.url)
+      const requestedPath = url.searchParams.get('path')
+      const workflows = demoPipelines
+        .filter(
+          (pipeline) =>
+            pipeline.project_id === projectId &&
+            (!requestedPath || pipeline.config_path === requestedPath),
+        )
+        .map((pipeline) => ({
+          path: pipeline.config_path,
+          valid: true,
+          errors: [],
+          execution: {
+            platforms: pipeline.execution_config.platforms,
+            flutter_version: pipeline.execution_config.flutter_version,
+            commands: pipeline.execution_config.commands,
+            platform_build_args:
+              pipeline.execution_config.platform_build_args ?? {},
+            platform_commands:
+              pipeline.execution_config.platform_commands ?? {},
+            env_keys:
+              pipeline.execution_config.env?.map((variable) => variable.key) ??
+              [],
+            artifact_patterns: pipeline.execution_config.artifact_patterns,
+          },
+        }))
+
+      return HttpResponse.json({
+        project_id: projectId,
+        provider: project.repository_id?.startsWith(INTEGRATION_IDS.gitlab)
+          ? 'gitlab'
+          : 'github',
+        reference:
+          url.searchParams.get('ref') ?? project.default_branch ?? 'main',
+        workflows,
+        truncated: false,
+      })
+    },
+  ),
+
+  http.get('/v1/pipelines/:pipelineId', async ({ params, request }) => {
     await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
     const pipeline = demoPipelines.find((p) => p.id === params.pipelineId)
-    if (!pipeline) {
+    if (!pipeline || !getDemoProjectRole(persona, pipeline.project_id)) {
       return HttpResponse.json(
         { error: 'Pipeline not found', code: 'not_found' },
         { status: 404 },

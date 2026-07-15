@@ -1,5 +1,5 @@
 .PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index build check \
-		       test-web lint-web fix-web \
+		       test-web test-demo lint-web fix-web \
 		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
@@ -70,6 +70,9 @@ deploy-demo-only:
 
 test-web:
 	cd apps/web && bun run test
+
+test-demo:
+	cd apps/web && bun run test src/demo/demo.test.ts src/hooks/use-permissions.test.ts
 
 lint-web:
 	cd apps/web && bun run lint

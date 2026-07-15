@@ -6,11 +6,9 @@ import z from 'zod'
 import { toast } from 'sonner'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
-import {
-  useBuildChangelogPreview,
-  useCreateBuild,
-} from '@/hooks/use-builds'
+import { useBuildChangelogPreview, useCreateBuild } from '@/hooks/use-builds'
 import { usePipelines } from '@/hooks/use-pipelines'
+import { hasProjectPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -42,7 +40,6 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import type { BuildPlatform } from '@/lib/types'
 
 const platformLabels: Record<BuildPlatform, string> = {
@@ -58,7 +55,10 @@ const triggerBuildSchema = z
     platforms: z.array(z.enum(['android', 'ios', 'macos'])),
     branch: z.string().optional(),
     commit_sha: z.string().optional(),
-    changelog: z.string().max(4000, 'Keep the changelog under 4,000 characters').optional(),
+    changelog: z
+      .string()
+      .max(4000, 'Keep the changelog under 4,000 characters')
+      .optional(),
   })
   .superRefine((data, ctx) => {
     const branch = data.branch?.trim()
@@ -98,8 +98,7 @@ function PlatformSelectionField({
               >
                 <Checkbox
                   checked={
-                    field.value.length === 0 ||
-                    field.value.includes(platform)
+                    field.value.length === 0 || field.value.includes(platform)
                   }
                   onCheckedChange={(checked) => {
                     const current =
@@ -193,7 +192,10 @@ function useTriggerBuildDialogState({
 
   const projectsQuery = useProjects({ limit: 200 }, { enabled: open })
   const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
+    () =>
+      (projectsQuery.data?.projects ?? []).filter((project) =>
+        hasProjectPermission(project.current_user_role, 'builds', 'write'),
+      ),
     [projectsQuery.data?.projects],
   )
 
@@ -236,11 +238,15 @@ function useTriggerBuildDialogState({
     () => selectedPipeline?.execution_config.platforms ?? [],
     [selectedPipeline],
   )
-  const changelogPreviewQuery = useBuildChangelogPreview(projectId, {
-    pipeline_id: selectedPipelineId,
-    branch: form.watch('branch')?.trim() || undefined,
-    commit_sha: form.watch('commit_sha')?.trim() || undefined,
-  }, { enabled: open })
+  const changelogPreviewQuery = useBuildChangelogPreview(
+    projectId,
+    {
+      pipeline_id: selectedPipelineId,
+      branch: form.watch('branch')?.trim() || undefined,
+      commit_sha: form.watch('commit_sha')?.trim() || undefined,
+    },
+    { enabled: open },
+  )
 
   // Auto-select pipeline when project changes
   useMountEffect(() => {
@@ -280,11 +286,11 @@ function useTriggerBuildDialogState({
       data.commit_sha?.trim() ||
       changelogPreviewQuery.data?.target_commit ||
       undefined
-    const changelog = (
-      data.changelog === undefined
+    const changelog =
+      (data.changelog === undefined
         ? changelogPreviewQuery.data?.markdown
         : data.changelog
-    )?.trim() || undefined
+      )?.trim() || undefined
 
     createBuildMutation.mutate(
       {
@@ -627,7 +633,6 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
                 type="button"
                 disabled={
                   createBuildMutation.isPending ||
-                  isDemoMode ||
                   noProjects ||
                   noPipelines ||
                   sourceMissing ||
@@ -636,7 +641,6 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
                 onClick={() => {
                   void form.handleSubmit(onSubmit)()
                 }}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
               >
                 {createBuildMutation.isPending ? (
                   <>
