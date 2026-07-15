@@ -4,41 +4,60 @@ import { demoPipelines } from '../data/pipelines'
 import { demoBuilds } from '../data/builds'
 import { demoUsers } from '../data/users'
 import { USER_IDS, ago } from '../seed'
+import {
+  DEMO_PERSONAS,
+  getDemoPersonaFromRequest,
+  getDemoProjectRole,
+} from '../personas'
 
 export const projectHandlers = [
-  http.get('/v1/projects', async () => {
+  http.get('/v1/projects', async ({ request }) => {
     await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    const projects = demoProjects.flatMap((project) => {
+      const role = getDemoProjectRole(persona, project.id)
+      return role ? [{ ...project, current_user_role: role }] : []
+    })
     return HttpResponse.json({
-      projects: demoProjects,
-      total: demoProjects.length,
+      projects,
+      total: projects.length,
     })
   }),
 
-  http.get('/v1/projects/:projectId', async ({ params }) => {
+  http.get('/v1/projects/:projectId', async ({ params, request }) => {
     await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    const role = getDemoProjectRole(persona, String(params.projectId))
     const project = demoProjects.find((p) => p.id === params.projectId)
-    if (!project) {
+    if (!project || !role) {
       return HttpResponse.json(
         { error: 'Project not found', code: 'not_found' },
         { status: 404 },
       )
     }
     return HttpResponse.json({
-      project,
+      project: { ...project, current_user_role: role },
       pipeline_count: demoPipelines.filter((p) => p.project_id === project.id)
         .length,
       build_count: demoBuilds.filter((b) => b.project_id === project.id).length,
+      current_user_role: role,
     })
   }),
 
-  http.get('/v1/projects/:projectId/members', async ({ params }) => {
+  http.get('/v1/projects/:projectId/members', async ({ params, request }) => {
     await delay(120)
     const projectId = String(params.projectId)
-    const memberRoles = [
-      [USER_IDS.owner, 'maintainer'],
-      [USER_IDS.developer, 'developer'],
-      [USER_IDS.qaViewer, 'viewer'],
-    ] as const
+    const persona = getDemoPersonaFromRequest(request)
+    if (!getDemoProjectRole(persona, projectId)) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const memberRoles = DEMO_PERSONAS.flatMap((candidate) => {
+      const role = getDemoProjectRole(candidate, projectId)
+      return role ? [[candidate.userId, role] as const] : []
+    })
     return HttpResponse.json({
       members: memberRoles.map(([userId, role], index) => {
         const user = demoUsers.find((candidate) => candidate.id === userId)!

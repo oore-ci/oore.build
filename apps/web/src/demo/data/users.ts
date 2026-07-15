@@ -1,10 +1,10 @@
-import { DEMO_USER_EMAIL, USER_IDS, ago } from '../seed'
+import { USER_IDS, ago } from '../seed'
 import type { User } from '@/lib/types'
 
 export const demoUsers: Array<User> = [
   {
     id: USER_IDS.owner,
-    email: DEMO_USER_EMAIL,
+    email: 'demo+owner@oore.build',
     display_name: 'Alex Chen',
     role: 'owner',
     status: 'active',
@@ -13,7 +13,7 @@ export const demoUsers: Array<User> = [
   },
   {
     id: USER_IDS.admin,
-    email: 'jamie@oore.build',
+    email: 'demo+admin@oore.build',
     display_name: 'Jamie Park',
     role: 'admin',
     status: 'active',
@@ -22,7 +22,7 @@ export const demoUsers: Array<User> = [
   },
   {
     id: USER_IDS.developer,
-    email: 'morgan@oore.build',
+    email: 'demo+developer@oore.build',
     display_name: 'Morgan Lee',
     role: 'developer',
     status: 'active',
@@ -31,7 +31,7 @@ export const demoUsers: Array<User> = [
   },
   {
     id: USER_IDS.qaViewer,
-    email: 'taylor@oore.build',
+    email: 'demo+qa@oore.build',
     display_name: 'Taylor Ruiz',
     role: 'qa_viewer',
     status: 'active',

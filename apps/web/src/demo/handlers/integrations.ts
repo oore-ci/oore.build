@@ -57,6 +57,32 @@ export const integrationHandlers = [
     })
   }),
 
+  http.get(
+    '/v1/integration-repositories/:repositoryId/avatar',
+    async ({ params }) => {
+      await delay(80)
+      const repository = Object.values(demoRepositories)
+        .flat()
+        .find((item) => item.id === params.repositoryId)
+      if (!repository) {
+        return HttpResponse.json(
+          { error: 'Repository not found', code: 'not_found' },
+          { status: 404 },
+        )
+      }
+      const initials = repository.full_name
+        .split('/')
+        .at(-1)!
+        .replaceAll(/[^a-z0-9]/gi, '')
+        .slice(0, 2)
+        .toUpperCase()
+      return new HttpResponse(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#e24329"/><text x="32" y="39" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="700" fill="white">${initials}</text></svg>`,
+        { headers: { 'Content-Type': 'image/svg+xml' } },
+      )
+    },
+  ),
+
   http.get('/v1/integrations/:id/installations', async ({ params }) => {
     await delay(150)
     return HttpResponse.json({

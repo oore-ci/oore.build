@@ -18,6 +18,7 @@
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@hookform/resolvers": "^5.4.0",
+    "@mswjs/interceptors": "^0.41.9",
     "@hugeicons/core-free-icons": "^4.2.2",
     "@hugeicons/react": "^1.1.9",
     "@tanstack/react-query": "^5.101.2",
@@ -60,10 +61,5 @@
     "vite": "^8.1.4",
     "vitest": "^4.1.10",
     "web-vitals": "^5.3.0"
-  },
-  "msw": {
-    "workerDirectory": [
-      "public"
-    ]
   }
 }

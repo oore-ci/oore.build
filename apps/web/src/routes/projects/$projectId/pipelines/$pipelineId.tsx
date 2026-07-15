@@ -16,7 +16,7 @@ import {
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuilds } from '@/hooks/use-builds'
 import { useRepositoryProvider } from '@/hooks/use-integrations'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import {
   useDeletePipeline,
   usePipeline,
@@ -89,22 +89,32 @@ function usePipelineDetailPageState() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
-  const canWrite = useHasPermission('pipelines', 'write')
+  const canWriteGlobally = useHasPermission('pipelines', 'write')
+  const canDeleteGlobally = useHasPermission('pipelines', 'delete')
+  const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const { data: projectData } = useProject(projectId)
+  const projectRole =
+    projectData?.current_user_role ?? projectData?.project.current_user_role
+  const canWrite =
+    canWriteGlobally && hasProjectPermission(projectRole, 'pipelines', 'write')
+  const canDelete =
+    canDeleteGlobally &&
+    hasProjectPermission(projectRole, 'pipelines', 'delete')
+  const canTriggerBuild =
+    canTriggerBuildGlobally &&
+    hasProjectPermission(projectRole, 'builds', 'write')
   const signingQuery = usePipelineAndroidSigning(pipelineId, {
     enabled: canWrite,
   })
   const iosSigningQuery = usePipelineIosSigning(pipelineId, {
     enabled: canWrite,
   })
-  const { data: projectData } = useProject(projectId)
   const { data: buildsData } = useBuilds({
     pipeline_id: pipelineId,
     limit: 20,
   })
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
-  const canDelete = useHasPermission('pipelines', 'delete')
-  const canTriggerBuild = useHasPermission('builds', 'write')
   const repoProviderQuery = useRepositoryProvider(
     projectData?.project.repository_id,
   )

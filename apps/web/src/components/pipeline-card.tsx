@@ -23,7 +23,6 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import TriggerBuildDialog from '@/components/trigger-build-dialog'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 interface PipelineCardProps {
   pipeline: Pipeline
@@ -116,12 +115,7 @@ export default function PipelineCard({
           {/* Actions */}
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
             {canTriggerBuild ? (
-              <Button
-                size="sm"
-                onClick={() => setTriggerOpen(true)}
-                disabled={isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
-              >
+              <Button size="sm" onClick={() => setTriggerOpen(true)}>
                 <HugeiconsIcon icon={PlayIcon} />
                 Run build
               </Button>
@@ -148,8 +142,7 @@ export default function PipelineCard({
                 size="sm"
                 variant="outline"
                 onClick={handleToggle}
-                disabled={updateMutation.isPending || isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                disabled={updateMutation.isPending}
               >
                 {pipeline.enabled ? 'Disable' : 'Enable'}
               </Button>

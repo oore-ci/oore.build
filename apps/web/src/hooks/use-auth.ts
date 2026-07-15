@@ -13,6 +13,8 @@ import {
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
+import { isDemoMode } from '@/lib/demo-mode'
+import { useRecentProjectsStore } from '@/stores/recent-projects-store'
 
 function useAuthToken(): string | null {
   const token = useAuthStore((s) => s.token)
@@ -154,6 +156,7 @@ export function useLogout() {
     onSettled: () => {
       clearAuth()
       queryClient.clear()
+      if (isDemoMode) useRecentProjectsStore.getState().clear()
       void router.navigate({ to: '/login', replace: true })
     },
   })

@@ -47,7 +47,6 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import RepositoryAvatar from '@/components/repository-avatar'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/projects/')({
   staticData: { breadcrumbLabel: 'Projects' },
@@ -117,11 +116,7 @@ function ProjectsListPage() {
         description="Repository and pipeline entry points for your build system."
         actions={
           projects.length > 0 && canWriteProjects ? (
-            <Button
-              onClick={() => setCreateOpen(true)}
-              disabled={isDemoMode}
-              title={isDemoMode ? READ_ONLY_REASON : undefined}
-            >
+            <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} />
               New project
             </Button>
@@ -180,11 +175,7 @@ function ProjectsListPage() {
                   </p>
                 )
               ) : canWriteProjects ? (
-                <Button
-                  onClick={() => setCreateOpen(true)}
-                  disabled={isDemoMode}
-                  title={isDemoMode ? READ_ONLY_REASON : undefined}
-                >
+                <Button onClick={() => setCreateOpen(true)}>
                   <HugeiconsIcon icon={Add01Icon} />
                   Create project
                 </Button>

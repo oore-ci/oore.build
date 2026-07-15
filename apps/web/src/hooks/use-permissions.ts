@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth-store'
+import type { ProjectRole } from '@/lib/types'
 
 /**
  * Client-side RBAC matrix mirroring crates/oored/rbac_policy.csv.
@@ -69,7 +70,6 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
   ]),
   developer: new Set([
     'projects:read',
-    'projects:write',
     'pipelines:read',
     'pipelines:write',
     'builds:read',
@@ -90,6 +90,35 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
     'artifacts:read',
     'integrations:read',
   ]),
+}
+
+const PROJECT_RBAC_MATRIX: Record<ProjectRole, Set<string>> = {
+  maintainer: new Set([
+    'projects:write',
+    'projects:delete',
+    'pipelines:write',
+    'pipelines:delete',
+    'builds:write',
+    'builds:cancel',
+    'artifacts:write',
+  ]),
+  developer: new Set([
+    'pipelines:write',
+    'pipelines:delete',
+    'builds:write',
+    'builds:cancel',
+    'artifacts:write',
+  ]),
+  viewer: new Set(),
+}
+
+export function hasProjectPermission(
+  role: ProjectRole | undefined,
+  resource: string,
+  action: string,
+): boolean {
+  if (action === 'read') return role !== undefined
+  return !!role && PROJECT_RBAC_MATRIX[role].has(`${resource}:${action}`)
 }
 
 export function useHasPermission(resource: string, action: string): boolean {

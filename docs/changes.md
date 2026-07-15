@@ -26,6 +26,16 @@ Rules:
   - The self-hosted `oore-web` launcher now caches content-hashed assets immutably, revalidates HTML, and uses a short revalidation window for unhashed static files.
   - Linear feature doc: https://linear.app/oorebuild/document/web-performance-and-bundle-discipline-8aacaadaa620
 
+- **Reliable role-based hosted demo**:
+  - The hosted demo now intercepts API requests in the page process instead of depending on a reclaimable Service Worker. Returning to an idle tab no longer lets API requests fall through to the Cloudflare Pages HTML fallback, and stale demo worker registrations are removed during startup.
+  - Demo sign-in now offers Owner, Admin, Developer, and QA Viewer accounts using `demo+<role>@oore.build` with the shared password `owner`. Switching roles clears query and recent-project state so data from a more privileged session cannot linger.
+  - Project, pipeline, build, artifact, and membership fixtures are filtered by each persona's project assignments. Effective project roles now participate in frontend action gating, including a Developer role on one project and Viewer access on another.
+  - Demo mutation controls remain explorable, but centrally rejected writes surface `Action not allowed on demo.` instead of fake success. The richer QA fixture includes Android and iOS releases across multiple apps.
+  - API token inventory now includes active, expired, and revoked examples and follows the backend's owner/admin versus developer visibility rules instead of falling through to the hosted API.
+  - Runtime update status, repository avatars, and repository workflow discovery are now handled in-process. A focused read-surface contract test prevents demo-visible GET requests from silently falling through to a real backend.
+  - Focused demo tests cover credentials, role-scoped project visibility, JSON 404/403 responses, and project permission behavior.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 - **Project-scoped QA build access and safe role preview**:
   - Project Settings now exposes explicit member management for owners and admins, including pre-login assignment for invited users. QA members are limited to Viewer, and backend authorization caps QA sessions at Viewer even if legacy membership data contains an elevated project role.
   - QA users now land on a build-first surface with build-only navigation and a truthful no-project-access state, keeping project, source, pipeline, and instance administration out of their default experience while preserving artifact install/download access for assigned projects.

@@ -13,6 +13,7 @@ interface RecentProjectsStoreState {
   projects: Array<RecentProject>
   trackVisit: (id: string, name: string) => void
   remove: (id: string) => void
+  clear: () => void
 }
 
 export const useRecentProjectsStore = create<RecentProjectsStoreState>()(
@@ -33,6 +34,7 @@ export const useRecentProjectsStore = create<RecentProjectsStoreState>()(
         set((state) => ({
           projects: state.projects.filter((p) => p.id !== id),
         })),
+      clear: () => set({ projects: [] }),
     }),
     { name: 'oore-recent-projects' },
   ),

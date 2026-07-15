@@ -743,6 +743,7 @@ export interface Project {
   created_by: string
   created_at: number
   updated_at: number
+  current_user_role?: ProjectRole
 }
 
 export interface CreateProjectRequest {
@@ -768,6 +769,7 @@ export interface ProjectDetailResponse {
   project: Project
   pipeline_count: number
   build_count: number
+  current_user_role?: ProjectRole
 }
 
 export interface ListProjectsResponse {

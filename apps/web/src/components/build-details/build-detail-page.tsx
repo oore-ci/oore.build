@@ -24,7 +24,6 @@ import {
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -191,8 +190,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                     },
                   })
                 }}
-                disabled={rerunMutation.isPending || isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                disabled={rerunMutation.isPending}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
@@ -203,8 +201,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 variant="destructive"
                 size="sm"
                 onClick={handleCancel}
-                disabled={cancelMutation.isPending || isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                disabled={cancelMutation.isPending}
               >
                 {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
               </Button>

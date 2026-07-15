@@ -1,4 +1,4 @@
-const READ_ONLY_REASON = 'This demo uses sample data and is read-only.'
+const READ_ONLY_REASON = 'Action not allowed on demo.'
 
 export const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 
