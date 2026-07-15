@@ -307,6 +307,11 @@ Rules:
   - Builds show project context globally and accept optional named project/pipeline/runner context from the backend; terminal details prioritize failure reasons, failed steps, final-log states, and status-appropriate artifact empty states.
   - The hosted demo is explicitly sample-data, read-only UI: common build/project/pipeline mutations are visibly disabled and the API guard rejects all other mutations without returning fake success.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+## 2026-07-13
+
+- **Default-branch release dispatch compatibility**:
+  - The default branch now declares the tag input used by channel Autotag workflows, allowing GitHub to accept release dispatches whose executable workflow revision lives on `alpha`, `beta`, or `stable`.
+  - Linear release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-github-actions-993db297927a
 
 ## 2026-05-22
 
