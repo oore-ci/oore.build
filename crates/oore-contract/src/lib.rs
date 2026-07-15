@@ -1284,6 +1284,11 @@ pub struct CompleteArtifactResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildArtifactsRequest {
+    pub build_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListArtifactsResponse {
     pub artifacts: Vec<Artifact>,
 }

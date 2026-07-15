@@ -3,7 +3,6 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
-  useQueries,
 } from '@tanstack/react-query'
 import type { UseQueryOptions } from '@tanstack/react-query'
 import type {
@@ -26,6 +25,7 @@ import {
   getBuildChangelogPreview,
   getBuildLogs,
   listArtifacts,
+  listBuildArtifacts,
   listProjectArtifacts,
   listBuilds,
   rerunBuild,
@@ -329,19 +329,17 @@ export function useProjectArtifacts(projectId: string) {
   })
 }
 
-export function useArtifactsForProjects(projectIds: Array<string>) {
+export function useArtifactsForBuilds(buildIds: Array<string>) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
-  return useQueries({
-    queries: projectIds.map((projectId) => ({
-      queryKey: [instance?.id ?? '__none__', 'project-artifacts', projectId],
-      queryFn: ({ signal }: { signal: AbortSignal }) =>
-        listProjectArtifacts(baseUrl!, token!, projectId, { signal }),
-      enabled: !!baseUrl && !!token,
-      staleTime: 5_000,
-    })),
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'build-artifacts', buildIds],
+    queryFn: ({ signal }) =>
+      listBuildArtifacts(baseUrl!, token!, { build_ids: buildIds }, { signal }),
+    enabled: !!baseUrl && !!token && buildIds.length > 0,
+    staleTime: 5_000,
   })
 }
 

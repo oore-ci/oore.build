@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -64,8 +64,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { PipelineConfigurationCard } from './pipeline-configuration-card'
+
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId',
@@ -275,6 +277,8 @@ function PipelineDetailPage() {
             <>
               {canTriggerBuild ? (
                 <Button
+                  onMouseEnter={() => void loadTriggerBuildDialog()}
+                  onFocus={() => void loadTriggerBuildDialog()}
                   onClick={() => setTriggerBuildOpen(true)}
                   disabled={!projectHasSource}
                 >
@@ -354,7 +358,12 @@ function PipelineDetailPage() {
               </EmptyHeader>
               {canTriggerBuild && projectHasSource ? (
                 <EmptyContent>
-                  <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                  <Button
+                    size="sm"
+                    onMouseEnter={() => void loadTriggerBuildDialog()}
+                    onFocus={() => void loadTriggerBuildDialog()}
+                    onClick={() => setTriggerBuildOpen(true)}
+                  >
                     <HugeiconsIcon icon={PlayIcon} />
                     Run first build
                   </Button>
@@ -417,18 +426,22 @@ function PipelineDetailPage() {
       </Card>
 
       {/* Dialogs */}
-      <TriggerBuildDialog
-        open={triggerBuildOpen}
-        onOpenChange={setTriggerBuildOpen}
-        fixedProjectId={projectId}
-        fixedPipelineId={pipeline.id}
-        fixedPipelineName={pipeline.name}
-        defaultBranch={projectData?.project.default_branch}
-        description="Run this pipeline now with a branch or pinned commit."
-        onBuildCreated={(buildId) => {
-          void navigate({ to: '/builds/$buildId', params: { buildId } })
-        }}
-      />
+      {triggerBuildOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={setTriggerBuildOpen}
+            fixedProjectId={projectId}
+            fixedPipelineId={pipeline.id}
+            fixedPipelineName={pipeline.name}
+            defaultBranch={projectData?.project.default_branch}
+            description="Run this pipeline now with a branch or pinned commit."
+            onBuildCreated={(buildId) => {
+              void navigate({ to: '/builds/$buildId', params: { buildId } })
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

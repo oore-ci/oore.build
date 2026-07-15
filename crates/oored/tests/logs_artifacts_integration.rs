@@ -253,6 +253,30 @@ async fn complete_artifact(
     assert_eq!(status, StatusCode::OK);
 }
 
+async fn create_available_artifact(
+    app: &axum::Router,
+    runner_id: &str,
+    runner_token: &str,
+    build_id: &str,
+    name: &str,
+) -> String {
+    let (status, body) = json_request(
+        app,
+        "POST",
+        &format!("/v1/runners/{runner_id}/jobs/{build_id}/artifacts"),
+        runner_token,
+        Some(serde_json::json!({
+            "name": name,
+            "artifact_type": "apk"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let artifact_id = body["artifact"]["id"].as_str().unwrap().to_string();
+    complete_artifact(app, runner_id, runner_token, build_id, &artifact_id).await;
+    artifact_id
+}
+
 // ── Log ingestion tests ─────────────────────────────────────────
 
 #[tokio::test]
@@ -1005,6 +1029,105 @@ async fn test_list_artifacts_empty() {
     let json = body_json(resp.into_body()).await;
     let artifacts = json["artifacts"].as_array().unwrap();
     assert_eq!(artifacts.len(), 0);
+}
+
+#[tokio::test]
+async fn test_list_build_artifacts_is_bounded_and_membership_filtered() {
+    let (app, pool, owner_token, runner_id, runner_token, first_build_id) = full_scaffold().await;
+    let first_project_id: String =
+        sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+            .bind(&first_build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let owner_id: String = sqlx::query_scalar("SELECT created_by FROM projects WHERE id = ?1")
+        .bind(&first_project_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let integration_id: String = sqlx::query_scalar(
+        "SELECT ii.integration_id FROM projects p \
+         JOIN integration_repositories ir ON ir.id = p.repository_id \
+         JOIN integration_installations ii ON ii.id = ir.installation_id \
+         WHERE p.id = ?1",
+    )
+    .bind(&first_project_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (second_project_id, second_pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "test/private-artifacts").await;
+    let second_build_id =
+        seed_running_build(&pool, &second_project_id, &second_pipeline_id, &runner_id).await;
+
+    let first_artifact_id = create_available_artifact(
+        &app,
+        &runner_id,
+        &runner_token,
+        &first_build_id,
+        "shared.apk",
+    )
+    .await;
+    let second_artifact_id = create_available_artifact(
+        &app,
+        &runner_id,
+        &runner_token,
+        &second_build_id,
+        "private.apk",
+    )
+    .await;
+
+    let qa_user_id = seed_user_with_role(&pool, "qa-batch@example.com", "qa_viewer").await;
+    seed_project_member(&pool, &first_project_id, &qa_user_id, &owner_id, "viewer").await;
+    let qa_token = create_session_token(&pool, &qa_user_id).await;
+    let query = serde_json::json!({
+        "build_ids": [&first_build_id, &second_build_id]
+    });
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/artifacts/query",
+        &qa_token,
+        Some(query.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let artifacts = body["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0]["id"], first_artifact_id);
+
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/artifacts/query",
+        &owner_token,
+        Some(query),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let artifact_ids = body["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|artifact| artifact["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(artifact_ids.contains(&first_artifact_id.as_str()));
+    assert!(artifact_ids.contains(&second_artifact_id.as_str()));
+
+    let oversized = serde_json::json!({
+        "build_ids": (0..201).map(|index| format!("build-{index}")).collect::<Vec<_>>()
+    });
+    let (status, body) = json_request(
+        &app,
+        "POST",
+        "/v1/artifacts/query",
+        &owner_token,
+        Some(oversized),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "too_many_build_ids");
 }
 
 // ── Artifact download link tests ────────────────────────────────

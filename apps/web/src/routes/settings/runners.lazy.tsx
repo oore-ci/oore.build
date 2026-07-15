@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import z from 'zod'
+import * as z from 'zod'
 import { toast } from 'sonner'
 
 import type { Runner } from '@/lib/types'

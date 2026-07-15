@@ -7,10 +7,10 @@ import {
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 
-import type { Build } from '@/lib/types'
+import type { Artifact, Build } from '@/lib/types'
 import type { InstallDevice } from '@/lib/artifact-install'
 import type { QaRelease } from '@/lib/qa-releases'
-import { useArtifactsForProjects, useBuilds } from '@/hooks/use-builds'
+import { useArtifactsForBuilds, useBuilds } from '@/hooks/use-builds'
 import { useProjects } from '@/hooks/use-projects'
 import {
   detectInstallDevice,
@@ -45,7 +45,7 @@ import {
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 
-const RELEASES_PER_PAGE = 5
+const RELEASES_PER_PAGE = 10
 
 export function QaReleaseRow({
   device,
@@ -129,9 +129,7 @@ function AppTabPanel({
                 <span className="font-medium">
                   {qaBuildVersion(activeBuild, [], versionBase)}
                 </span>{' '}
-                <span className="text-muted-foreground">
-                  is being prepared
-                </span>
+                <span className="text-muted-foreground">is being prepared</span>
               </p>
               {activeBuild.changelog ? (
                 <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
@@ -206,53 +204,62 @@ export default function QaReleasesPage() {
     () => buildsQuery.data?.builds ?? [],
     [buildsQuery.data?.builds],
   )
-  const artifactQueries = useArtifactsForProjects(
-    projects.map((project) => project.id),
-  )
-  const artifactsByProject = new Map(
-    projects.map((project, index) => [
-      project.id,
-      artifactQueries[index]?.data?.artifacts ?? [],
-    ]),
-  )
-  const versionByProject = new Map(
-    projects.map((project) => [
-      project.id,
-      qaProjectVersionBase(artifactsByProject.get(project.id) ?? []),
-    ]),
-  )
-  const releasesByProject = new Map(
-    projects.map((project) => [
-      project.id,
-      selectQaProjectReleases(
-        project.id,
-        builds,
-        artifactsByProject.get(project.id) ?? [],
-      ),
-    ]),
-  )
-  const activeBuildByProject = new Map<string, Build>()
-  for (const build of builds) {
-    if (
-      ['queued', 'scheduled', 'assigned', 'running'].includes(build.status) &&
-      (!activeBuildByProject.has(build.project_id) ||
-        build.created_at >
-          activeBuildByProject.get(build.project_id)!.created_at)
-    ) {
-      activeBuildByProject.set(build.project_id, build)
-    }
-  }
+  const buildIds = useMemo(() => builds.map((build) => build.id), [builds])
+  const artifactsQuery = useArtifactsForBuilds(buildIds)
+  const { activeBuildByProject, releasesByProject, versionByProject } =
+    useMemo(() => {
+      const projectIdByBuild = new Map(
+        builds.map((build) => [build.id, build.project_id]),
+      )
+      const artifactsByProject = new Map<string, Array<Artifact>>(
+        projects.map((project) => [project.id, []]),
+      )
+      for (const artifact of artifactsQuery.data?.artifacts ?? []) {
+        const projectId = projectIdByBuild.get(artifact.build_id)
+        if (projectId) artifactsByProject.get(projectId)?.push(artifact)
+      }
+
+      const activeBuilds = new Map<string, Build>()
+      for (const build of builds) {
+        if (
+          ['queued', 'scheduled', 'assigned', 'running'].includes(
+            build.status,
+          ) &&
+          (!activeBuilds.has(build.project_id) ||
+            build.created_at > activeBuilds.get(build.project_id)!.created_at)
+        ) {
+          activeBuilds.set(build.project_id, build)
+        }
+      }
+
+      return {
+        activeBuildByProject: activeBuilds,
+        releasesByProject: new Map(
+          projects.map((project) => [
+            project.id,
+            selectQaProjectReleases(
+              project.id,
+              builds,
+              artifactsByProject.get(project.id) ?? [],
+            ),
+          ]),
+        ),
+        versionByProject: new Map(
+          projects.map((project) => [
+            project.id,
+            qaProjectVersionBase(artifactsByProject.get(project.id) ?? []),
+          ]),
+        ),
+      }
+    }, [artifactsQuery.data?.artifacts, builds, projects])
   const device = detectInstallDevice(
     typeof navigator === 'undefined' ? '' : navigator.userAgent,
   )
   const isLoading =
     projectsQuery.isLoading ||
     buildsQuery.isLoading ||
-    artifactQueries.some((query) => query.isLoading)
-  const error =
-    projectsQuery.error ??
-    buildsQuery.error ??
-    artifactQueries.find((query) => query.error)?.error
+    (buildIds.length > 0 && artifactsQuery.isLoading)
+  const error = projectsQuery.error ?? buildsQuery.error ?? artifactsQuery.error
 
   return (
     <PageLayout width="wide" className="max-w-4xl px-4 py-6 sm:px-6 sm:py-10">

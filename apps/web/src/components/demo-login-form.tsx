@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
-import { z } from 'zod'
+import * as z from 'zod'
 import { DEMO_PERSONAS, authenticateDemoUser } from '@/demo/personas'
 import { DEMO_PASSWORD } from '@/demo/seed'
 import { queryClient } from '@/lib/query-client'

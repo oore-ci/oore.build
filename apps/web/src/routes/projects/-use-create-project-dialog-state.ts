@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
-import z from 'zod'
+import * as z from 'zod'
 
 import type { ScmProvider } from '@/lib/types'
 import { useCreateProject } from '@/hooks/use-projects'

@@ -372,6 +372,52 @@
         ]
       }
     },
+    "/v1/artifacts/query": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List available artifacts for a bounded set of builds",
+        "operationId": "list_build_artifacts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListBuildArtifactsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Artifact list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Too many build IDs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/artifacts/{artifact_id}/download-link": {
       "post": {
         "tags": [
@@ -2889,6 +2935,43 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/artifacts": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List available artifacts across a project",
+        "operationId": "list_project_artifacts",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project artifact list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/builds": {
       "post": {
         "tags": [
@@ -2951,6 +3034,90 @@
           },
           "409": {
             "description": "Project source is not configured or resolvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/builds/changelog-preview": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Preview a Markdown changelog for a manual build.",
+        "operationId": "preview_build_changelog",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pipeline_id",
+            "in": "query",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "description": "Target branch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "commit_sha",
+            "in": "query",
+            "description": "Target commit",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generated changelog draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildChangelogPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or pipeline not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -7156,6 +7323,12 @@
             "type": "integer",
             "format": "int64"
           },
+          "changelog": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "commit_sha": {
             "type": [
               "string",
@@ -7261,6 +7434,27 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "BuildChangelogPreviewResponse": {
+        "type": "object",
+        "required": [
+          "target_commit",
+          "markdown"
+        ],
+        "properties": {
+          "base_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "target_commit": {
+            "type": "string"
           }
         }
       },
@@ -7686,6 +7880,12 @@
         ],
         "properties": {
           "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changelog": {
             "type": [
               "string",
               "null"
@@ -8792,6 +8992,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListBuildArtifactsRequest": {
+        "type": "object",
+        "required": [
+          "build_ids"
+        ],
+        "properties": {
+          "build_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
-import z from 'zod'
+import * as z from 'zod'
 
 import { useUpdateProject } from '@/hooks/use-projects'
 import { Button } from '@/components/ui/button'

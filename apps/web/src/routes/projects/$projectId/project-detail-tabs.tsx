@@ -33,6 +33,7 @@ export function ProjectBuildsTab({
   canTriggerBuild,
   latestSucceededBuild,
   onOpenBuild,
+  onPreloadTriggerBuild,
   onTriggerBuild,
   pipelineCount,
   projectHasSource,
@@ -41,6 +42,7 @@ export function ProjectBuildsTab({
   canTriggerBuild: boolean
   latestSucceededBuild: Build | null
   onOpenBuild: (buildId: string) => void
+  onPreloadTriggerBuild: () => void
   onTriggerBuild: () => void
   pipelineCount: number
   projectHasSource: boolean
@@ -83,7 +85,12 @@ export function ProjectBuildsTab({
                 </EmptyHeader>
                 {canTriggerBuild && pipelineCount > 0 && projectHasSource ? (
                   <EmptyContent>
-                    <Button size="sm" onClick={onTriggerBuild}>
+                    <Button
+                      size="sm"
+                      onMouseEnter={onPreloadTriggerBuild}
+                      onFocus={onPreloadTriggerBuild}
+                      onClick={onTriggerBuild}
+                    >
                       <HugeiconsIcon icon={PlayIcon} />
                       Run first build
                     </Button>
@@ -157,6 +164,8 @@ export function ProjectPipelinesTab({
   defaultBranch,
   hasValidRepositoryWorkflow,
   lastBuildByPipeline,
+  onPreloadTriggerBuild,
+  onTriggerBuild,
   pipelines,
   projectHasSource,
   projectId,
@@ -168,6 +177,8 @@ export function ProjectPipelinesTab({
   defaultBranch: string | undefined
   hasValidRepositoryWorkflow: boolean
   lastBuildByPipeline: Map<string, { status: string; time: number }>
+  onPreloadTriggerBuild: () => void
+  onTriggerBuild: (pipelineId: string) => void
   pipelines: Array<Pipeline>
   projectHasSource: boolean
   projectId: string
@@ -249,9 +260,10 @@ export function ProjectPipelinesTab({
                 key={pipeline.id}
                 pipeline={pipeline}
                 projectId={projectId}
-                defaultBranch={defaultBranch}
                 canWrite={canWritePipelines}
                 canTriggerBuild={canTriggerBuild && projectHasSource}
+                onPreloadTriggerBuild={onPreloadTriggerBuild}
+                onTriggerBuild={onTriggerBuild}
                 lastBuildStatus={lastBuild?.status}
                 lastBuildTime={lastBuild?.time}
               />
