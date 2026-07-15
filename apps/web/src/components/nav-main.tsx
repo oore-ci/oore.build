@@ -117,11 +117,17 @@ export default function NavMain() {
   }
 
   const visibleAdminItems = ADMIN_ITEMS.filter((item) => {
-    if (item.to === '/settings/api-tokens') return isDeveloperOrAbove
+    if (
+      item.to === '/settings/api-tokens' ||
+      item.to === '/settings/runners' ||
+      item.to === '/settings/integrations'
+    ) {
+      return isDeveloperOrAbove
+    }
     return !item.adminOnly || isAdmin
   })
   const visiblePrimaryItems = isQaViewer
-    ? PRIMARY_ITEMS.filter((item) => item.to === '/builds')
+    ? PRIMARY_ITEMS.filter((item) => item.to === '/')
     : PRIMARY_ITEMS
 
   return (
@@ -172,7 +178,7 @@ export default function NavMain() {
         <>
           <Separator className="mx-2" />
           <SidebarGroup>
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupLabel>Settings</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {visibleAdminItems.map((item) => (

@@ -10,13 +10,12 @@ import { toast } from 'sonner'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
-import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -43,11 +42,11 @@ import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ProjectBuildsTab, ProjectPipelinesTab } from './project-detail-tabs'
+import { ProjectBuildsTab, ProjectPipelinesTab } from './-project-detail-tabs'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
-const loadProjectSettingsForm = () => import('./project-settings-form')
+const loadProjectSettingsForm = () => import('./-project-settings-form')
 const ProjectSettingsForm = lazy(() =>
   loadProjectSettingsForm().then((module) => ({
     default: module.ProjectSettingsForm,
@@ -83,7 +82,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
   validateSearch: validateTabSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
   component: ProjectDetailPage,
 })
@@ -100,24 +99,24 @@ function useProjectDetailPageState() {
   )
   const deleteMutation = useDeleteProject()
   const canWriteProjectsGlobally = useHasPermission('projects', 'write')
-  const canDeleteProjectsGlobally = useHasPermission('projects', 'delete')
   const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const projectRole = data?.current_user_role ?? data?.project.current_user_role
   const canWriteProjects =
     canWriteProjectsGlobally &&
     hasProjectPermission(projectRole, 'projects', 'write')
-  const canDeleteProjects =
-    canDeleteProjectsGlobally &&
-    hasProjectPermission(projectRole, 'projects', 'delete')
+  const canDeleteProjects = hasProjectPermission(
+    projectRole,
+    'projects',
+    'delete',
+  )
   const canWritePipelines =
     canWritePipelinesGlobally &&
     hasProjectPermission(projectRole, 'pipelines', 'write')
   const canTriggerBuild =
     canTriggerBuildGlobally &&
     hasProjectPermission(projectRole, 'builds', 'write')
-  const authRole = useAuthStore((state) => state.user?.role)
-  const canManageAccess = authRole === 'owner' || authRole === 'admin'
+  const canManageAccess = projectRole === 'maintainer'
   const shouldDiscoverWorkflows =
     canWritePipelines &&
     !!data?.project.repository_id &&

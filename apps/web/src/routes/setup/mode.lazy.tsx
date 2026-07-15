@@ -24,6 +24,7 @@ import { useSetupPreferences, useSetupStatus } from '@/hooks/use-setup'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
 import { useSetupStore } from '@/stores/setup-store'
+import { SetupStepError } from '@/components/setup-route-components'
 
 const modeSchema = z.object({
   mode: z.enum(['local', 'remote_oidc', 'remote_trusted']),
@@ -33,19 +34,8 @@ type ModeForm = z.infer<typeof modeSchema>
 
 export const Route = createLazyFileRoute('/setup/mode')({
   component: SetupModeStep,
-  errorComponent: SetupModeError,
+  errorComponent: SetupStepError,
 })
-
-function SetupModeError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
 
 function toModeValue(
   runtimeMode: 'local' | 'remote' | undefined,
@@ -147,7 +137,7 @@ function SetupModeStep() {
                     onValueChange={(value) => field.onChange(value)}
                     disabled={setupModeMutation.isPending}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="Choose mode" />
                     </SelectTrigger>
                     <SelectContent>

@@ -118,9 +118,9 @@ function SetupLayout() {
   useExpiredSetupSessionRedirect(isExpired)
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-6">
+    <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
       <PageMeta title="Setup" />
-      <div className="w-full max-w-lg space-y-8">
+      <div className="w-full max-w-lg space-y-6 sm:space-y-8">
         <div className="text-center space-y-4">
           <div className="mx-auto flex size-14 items-center justify-center">
             <img src="/logo.svg" alt="Oore logo" className="size-full" />

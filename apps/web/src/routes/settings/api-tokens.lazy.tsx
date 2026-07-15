@@ -1,16 +1,26 @@
-import { useState } from 'react'
-import { createLazyFileRoute } from '@tanstack/react-router'
+import { useMemo, useState } from 'react'
+import {
+  createLazyFileRoute,
+  useNavigate,
+  useSearch,
+} from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  InformationCircleIcon,
+  Search01Icon,
+} from '@hugeicons/core-free-icons'
 
 import type { ApiTokenSummary, CreateApiTokenResponse } from '@/lib/types'
 import { getApiErrorMessage } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import { useHasPermission } from '@/hooks/use-permissions'
+import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   useApiTokens,
   useCreateApiToken,
@@ -41,6 +51,15 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -57,9 +76,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import TokenCreatedDialog from '@/components/token-created-dialog'
+import {
+  CollectionPagination,
+  SortableTableHead,
+} from '@/components/collection-controls'
+import type { SortDirection } from '@/components/collection-controls'
+import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
@@ -323,8 +348,79 @@ function CreateTokenDialog({
 
 // ── Main Page ───────────────────────────────────────────────────
 
+const API_TOKEN_SORT_OPTIONS: Record<ApiTokenSort, string> = {
+  created_at: 'Created',
+  last_used_at: 'Last used',
+  name: 'Name',
+  role: 'Role',
+  status: 'Status',
+}
+
+function TokenSearch({
+  initialValue,
+  onSearch,
+}: {
+  initialValue: string
+  onSearch: (value: string) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  const debouncedSearch = useDebouncedCallback(onSearch, 300)
+
+  return (
+    <div className="relative w-full sm:max-w-sm">
+      <HugeiconsIcon
+        icon={Search01Icon}
+        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+        aria-hidden
+      />
+      <Input
+        type="search"
+        value={value}
+        onChange={(event) => {
+          const next = event.target.value
+          setValue(next)
+          debouncedSearch(next)
+        }}
+        placeholder="Search API tokens"
+        aria-label="Search API tokens"
+        className="pl-9"
+      />
+    </div>
+  )
+}
+
+function compareTokens(
+  left: ApiTokenSummary,
+  right: ApiTokenSummary,
+  sort: ApiTokenSort,
+): number {
+  let result = 0
+
+  switch (sort) {
+    case 'name':
+      result = left.name.localeCompare(right.name)
+      break
+    case 'role':
+      result = left.role.localeCompare(right.role)
+      break
+    case 'status':
+      result = getTokenStatus(left).localeCompare(getTokenStatus(right))
+      break
+    case 'last_used_at':
+      result = (left.last_used_at ?? 0) - (right.last_used_at ?? 0)
+      break
+    case 'created_at':
+      result = left.created_at - right.created_at
+      break
+  }
+
+  return result || left.id.localeCompare(right.id)
+}
+
 function ApiTokensPage() {
-  const { data, isLoading, error } = useApiTokens()
+  const tokensQuery = useApiTokens()
+  const navigate = useNavigate({ from: '/settings/api-tokens' })
+  const search = useSearch({ from: '/settings/api-tokens' })
   const revokeMutation = useRevokeApiToken()
   const canWrite = useHasPermission('api_tokens', 'write')
   const canDelete = useHasPermission('api_tokens', 'delete')
@@ -335,10 +431,61 @@ function ApiTokensPage() {
   const [createdDialogOpen, setCreatedDialogOpen] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<ApiTokenSummary | null>(null)
 
-  const tokens = data?.tokens ?? []
+  const page = search.page ?? 1
+  const pageSize = search.pageSize ?? 20
+  const sort = search.sort ?? 'created_at'
+  const direction = search.direction ?? 'desc'
+  const tokens = tokensQuery.data?.tokens ?? []
   const activeCount = tokens.filter(
     (t) => !t.is_revoked && !t.is_expired,
   ).length
+  const filteredTokens = useMemo(() => {
+    const query = search.q?.toLowerCase()
+    if (!query) return tokens
+
+    return tokens.filter((token) =>
+      [
+        token.name,
+        token.prefix,
+        token.role,
+        token.created_by_email,
+        getTokenStatus(token),
+      ].some((value) => value.toLowerCase().includes(query)),
+    )
+  }, [search.q, tokens])
+  const sortedTokens = useMemo(
+    () =>
+      [...filteredTokens].sort((left, right) => {
+        const result = compareTokens(left, right, sort)
+        return direction === 'asc' ? result : -result
+      }),
+    [direction, filteredTokens, sort],
+  )
+  const total = sortedTokens.length
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
+  const visibleTokens = sortedTokens.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  )
+  function updateSearch(updates: Partial<ApiTokensSearch>) {
+    void navigate({
+      search: (previous) => ({ ...previous, ...updates }),
+      replace: true,
+    })
+  }
+
+  usePageClamp(
+    page,
+    pageSize,
+    tokensQuery.isLoading ? undefined : total,
+    (nextPage) => {
+      updateSearch({ page: nextPage === 1 ? undefined : nextPage })
+    },
+  )
+
+  function handleSortChange(nextSort: ApiTokenSort, next: SortDirection) {
+    updateSearch({ sort: nextSort, direction: next, page: undefined })
+  }
 
   function handleTokenCreated(response: CreateApiTokenResponse) {
     setCreatedResponse(() => response)
@@ -423,101 +570,299 @@ function ApiTokensPage() {
         </Card>
       </section>
 
-      {isLoading ? (
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
-      ) : null}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <TokenSearch
+          key={search.q ?? ''}
+          initialValue={search.q ?? ''}
+          onSearch={(value) =>
+            updateSearch({ q: value.trim() || undefined, page: undefined })
+          }
+        />
+        <div className="flex gap-2 sm:hidden">
+          <NativeSelect
+            className="min-w-0 flex-1"
+            aria-label="Sort API tokens"
+            value={sort}
+            onChange={(event) =>
+              handleSortChange(event.target.value as ApiTokenSort, direction)
+            }
+          >
+            {Object.entries(API_TOKEN_SORT_OPTIONS).map(([value, label]) => (
+              <NativeSelectOption key={value} value={value}>
+                {label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <Button
+            variant="outline"
+            onClick={() =>
+              handleSortChange(sort, direction === 'asc' ? 'desc' : 'asc')
+            }
+          >
+            {direction === 'asc' ? 'Ascending' : 'Descending'}
+          </Button>
+        </div>
+      </div>
 
-      {error ? (
+      {tokensQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load API tokens: {error.message}
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>Failed to load API tokens: {tokensQuery.error.message}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void tokensQuery.refetch()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {!isLoading && !error ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Token Inventory
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {tokens.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No API tokens yet. Create one to get started.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Prefix</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Created by</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last used</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {tokens.map((token) => {
-                    const status = getTokenStatus(token)
-                    return (
-                      <TableRow key={token.id}>
-                        <TableCell>
-                          <p className="font-medium">{token.name}</p>
-                        </TableCell>
-                        <TableCell>
-                          <code className="font-mono text-xs text-muted-foreground">
+      {!tokensQuery.isLoading && !tokensQuery.error && tokens.length === 0 ? (
+        <Empty className="bg-card">
+          <EmptyHeader>
+            <EmptyTitle>No API tokens yet</EmptyTitle>
+            <EmptyDescription>
+              Create a token when an integration needs programmatic access.
+            </EmptyDescription>
+          </EmptyHeader>
+          {canWrite ? (
+            <EmptyContent>
+              <Button onClick={() => setCreateOpen(true)}>Create token</Button>
+            </EmptyContent>
+          ) : null}
+        </Empty>
+      ) : null}
+
+      {!tokensQuery.isLoading &&
+      !tokensQuery.error &&
+      tokens.length > 0 &&
+      total === 0 ? (
+        <Empty className="bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={Search01Icon} />
+            </EmptyMedia>
+            <EmptyTitle>No matching tokens</EmptyTitle>
+            <EmptyDescription>
+              Try a different search or clear the current query.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              variant="outline"
+              onClick={() => updateSearch({ q: undefined, page: undefined })}
+            >
+              Clear search
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : null}
+
+      {!tokensQuery.error && (tokensQuery.isLoading || total > 0) ? (
+        <section aria-label="API token inventory" className="min-w-0">
+          <div className="divide-y sm:hidden">
+            {tokensQuery.isLoading
+              ? Array.from({ length: 4 }, (_, index) => (
+                  <div key={index} className="space-y-2 py-4">
+                    <Skeleton className="h-5 w-2/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                ))
+              : visibleTokens.map((token) => {
+                  const status = getTokenStatus(token)
+                  return (
+                    <article key={token.id} className="space-y-3 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="truncate font-medium">{token.name}</h2>
+                          <code className="block truncate font-mono text-xs text-muted-foreground">
                             {token.prefix}...
                           </code>
+                        </div>
+                        <Badge variant={getStatusVariant(status)}>
+                          {status}
+                        </Badge>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
+                        <Badge variant="secondary">
+                          {ROLE_LABELS[token.role] ?? token.role}
+                        </Badge>
+                        <span>
+                          Created {formatRelativeTime(token.created_at)}
+                        </span>
+                        <span>
+                          Used {formatRelativeTime(token.last_used_at)}
+                        </span>
+                      </div>
+                      {status === 'active' && canDelete ? (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => setRevokeTarget(token)}
+                        >
+                          Revoke
+                        </Button>
+                      ) : null}
+                    </article>
+                  )
+                })}
+          </div>
+
+          <div className="hidden sm:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <SortableTableHead
+                    sort={sort}
+                    sortKey="name"
+                    direction={direction}
+                    onSortChange={handleSortChange}
+                  >
+                    Name
+                  </SortableTableHead>
+                  <TableHead className="hidden lg:table-cell">Prefix</TableHead>
+                  <SortableTableHead
+                    sort={sort}
+                    sortKey="role"
+                    direction={direction}
+                    onSortChange={handleSortChange}
+                  >
+                    Role
+                  </SortableTableHead>
+                  <TableHead className="hidden lg:table-cell">
+                    Created by
+                  </TableHead>
+                  <SortableTableHead
+                    className="hidden lg:table-cell"
+                    sort={sort}
+                    sortKey="created_at"
+                    direction={direction}
+                    onSortChange={handleSortChange}
+                  >
+                    Created
+                  </SortableTableHead>
+                  <SortableTableHead
+                    className="hidden lg:table-cell"
+                    sort={sort}
+                    sortKey="last_used_at"
+                    direction={direction}
+                    onSortChange={handleSortChange}
+                  >
+                    Last used
+                  </SortableTableHead>
+                  <SortableTableHead
+                    sort={sort}
+                    sortKey="status"
+                    direction={direction}
+                    onSortChange={handleSortChange}
+                  >
+                    Status
+                  </SortableTableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tokensQuery.isLoading
+                  ? Array.from({ length: 5 }, (_, index) => (
+                      <TableRow key={index}>
+                        <TableCell>
+                          <Skeleton className="h-5 w-36" />
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          <Skeleton className="h-4 w-20" />
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary">
-                            {ROLE_LABELS[token.role] ?? token.role}
-                          </Badge>
+                          <Skeleton className="h-6 w-20" />
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {token.created_by_email}
+                        <TableCell className="hidden lg:table-cell">
+                          <Skeleton className="h-4 w-40" />
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatRelativeTime(token.created_at)}
+                        <TableCell className="hidden lg:table-cell">
+                          <Skeleton className="h-4 w-20" />
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatRelativeTime(token.last_used_at)}
+                        <TableCell className="hidden lg:table-cell">
+                          <Skeleton className="h-4 w-20" />
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getStatusVariant(status)}>
-                            {status}
-                          </Badge>
+                          <Skeleton className="h-6 w-16" />
                         </TableCell>
-                        <TableCell className="text-right">
-                          {status === 'active' && canDelete ? (
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => setRevokeTarget(token)}
-                            >
-                              Revoke
-                            </Button>
-                          ) : null}
+                        <TableCell>
+                          <Skeleton className="ml-auto h-8 w-16" />
                         </TableCell>
                       </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                    ))
+                  : visibleTokens.map((token) => {
+                      const status = getTokenStatus(token)
+                      return (
+                        <TableRow key={token.id}>
+                          <TableCell className="font-medium">
+                            {token.name}
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <code className="font-mono text-xs text-muted-foreground">
+                              {token.prefix}...
+                            </code>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">
+                              {ROLE_LABELS[token.role] ?? token.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                            {token.created_by_email}
+                          </TableCell>
+                          <TableCell className="hidden text-muted-foreground lg:table-cell">
+                            {formatRelativeTime(token.created_at)}
+                          </TableCell>
+                          <TableCell className="hidden text-muted-foreground lg:table-cell">
+                            {formatRelativeTime(token.last_used_at)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusVariant(status)}>
+                              {status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {status === 'active' && canDelete ? (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setRevokeTarget(token)}
+                              >
+                                Revoke
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+              </TableBody>
+            </Table>
+          </div>
+
+          {!tokensQuery.isLoading ? (
+            <CollectionPagination
+              page={currentPage}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={(nextPage) =>
+                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+              }
+              onPageSizeChange={(nextPageSize) =>
+                updateSearch({
+                  pageSize:
+                    nextPageSize === 20
+                      ? undefined
+                      : (nextPageSize as 50 | 100),
+                  page: undefined,
+                })
+              }
+            />
+          ) : null}
+        </section>
       ) : null}
 
       <CreateTokenDialog

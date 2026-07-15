@@ -725,6 +725,24 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort by created_at, actor_email, action, or resource_type",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Sort direction: asc or desc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -734,6 +752,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListAuditLogsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -1060,6 +1088,24 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort by created_at, status, project_name, pipeline_name, or branch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Sort direction: asc or desc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1069,6 +1115,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListBuildsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -2737,6 +2793,24 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort by created_at, updated_at, or name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Sort direction: asc or desc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2746,6 +2820,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListProjectsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -2951,6 +3035,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum artifacts to return (max 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -2960,6 +3054,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListArtifactsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -3240,6 +3344,63 @@
           },
           "409": {
             "description": "User is already a member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/members/candidates": {
+      "get": {
+        "tags": [
+          "Project Members"
+        ],
+        "summary": "List eligible project member candidates",
+        "operationId": "list_project_member_candidates",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Eligible member candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListProjectMemberCandidatesResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Manage Members permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -6459,84 +6620,6 @@
         ]
       }
     },
-    "/v1/users/{user_id}/preview": {
-      "post": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Preview QA user access",
-        "description": "Creates a short-lived session for an active QA Viewer. Owner only.",
-        "operationId": "preview_qa_user",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "description": "QA user ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "QA preview session",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PreviewQaUserResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Target is not a QA Viewer",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Owner access required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "QA user is not active",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
-      }
-    },
     "/v1/users/{user_id}/role": {
       "patch": {
         "tags": [
@@ -9135,6 +9218,20 @@
           }
         }
       },
+      "ListProjectMemberCandidatesResponse": {
+        "type": "object",
+        "required": [
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectMemberCandidate"
+            }
+          }
+        }
+      },
       "ListProjectMembersResponse": {
         "type": "object",
         "required": [
@@ -9807,26 +9904,6 @@
         },
         "additionalProperties": false
       },
-      "PreviewQaUserResponse": {
-        "type": "object",
-        "required": [
-          "session_token",
-          "expires_at",
-          "user"
-        ],
-        "properties": {
-          "expires_at": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "session_token": {
-            "type": "string"
-          },
-          "user": {
-            "$ref": "#/components/schemas/AuthenticatedUser"
-          }
-        }
-      },
       "Project": {
         "type": "object",
         "required": [
@@ -9931,6 +10008,7 @@
           "user_id",
           "role",
           "user_email",
+          "user_role",
           "created_at",
           "updated_at"
         ],
@@ -9968,6 +10046,38 @@
             "type": "string"
           },
           "user_id": {
+            "type": "string"
+          },
+          "user_role": {
+            "type": "string"
+          }
+        }
+      },
+      "ProjectMemberCandidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "role",
+          "status"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
             "type": "string"
           }
         }

@@ -26,7 +26,7 @@ export function useRunners() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'runners'],
-    queryFn: () => listRunners(baseUrl!, token!),
+    queryFn: ({ signal }) => listRunners(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
     refetchInterval: 15_000,
   })

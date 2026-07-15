@@ -1,8 +1,6 @@
 import {
-  ArrowUpDownIcon,
   Cancel01Icon,
   MoreHorizontalCircle01Icon,
-  PlayIcon,
   UserCheck01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -24,8 +22,9 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { relativeTime } from '@/lib/format-utils'
 
-const ROLE_LABELS: Record<string, string> = {
+export const ROLE_LABELS: Record<string, string> = {
   owner: 'Owner',
   admin: 'Admin',
   developer: 'Developer',
@@ -51,22 +50,108 @@ const STATUS_BADGE_VARIANT: Record<string, 'success' | 'info' | 'destructive'> =
 
 export interface UserColumnOptions {
   authUserId: string | undefined
-  canPreviewQa: boolean
   onRoleChange: (userId: string, email: string, newRole: UserRole) => void
-  onPreviewQa: (userId: string, email: string) => void
   onDisable: (userId: string, email: string) => void
   onReEnable: (userId: string, email: string) => void
 }
 
+export function UserRoleBadge({ role }: { role: UserRole }) {
+  return (
+    <Badge variant={ROLE_BADGE_VARIANT[role] ?? 'outline'} className="text-xs">
+      {ROLE_LABELS[role] ?? role}
+    </Badge>
+  )
+}
+
+export function UserStatusBadge({ status }: { status: User['status'] }) {
+  return (
+    <Badge
+      variant={STATUS_BADGE_VARIANT[status] ?? 'outline'}
+      className="text-xs capitalize"
+    >
+      {status}
+    </Badge>
+  )
+}
+
+interface UserActionsProps extends UserColumnOptions {
+  user: User
+}
+
+export function UserActions({
+  authUserId,
+  onDisable,
+  onReEnable,
+  onRoleChange,
+  user,
+}: UserActionsProps) {
+  const isOwner = user.role === 'owner'
+  const isSelf = user.id === authUserId
+  const isDisabled = user.status === 'disabled'
+
+  if (isOwner || isSelf) return null
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Open actions for ${user.email}`}
+            title={`Open actions for ${user.email}`}
+          />
+        }
+      >
+        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto">
+        {!isDisabled ? (
+          <>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Change role</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup value={user.role}>
+                  {(['admin', 'developer', 'qa_viewer'] as const).map(
+                    (role) => (
+                      <DropdownMenuRadioItem
+                        key={role}
+                        value={role}
+                        onClick={() => {
+                          if (role !== user.role) {
+                            onRoleChange(user.id, user.email, role)
+                          }
+                        }}
+                      >
+                        {ROLE_LABELS[role]}
+                      </DropdownMenuRadioItem>
+                    ),
+                  )}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => onDisable(user.id, user.email)}
+            >
+              <HugeiconsIcon icon={Cancel01Icon} size={14} />
+              Disable user
+            </DropdownMenuItem>
+          </>
+        ) : (
+          <DropdownMenuItem onClick={() => onReEnable(user.id, user.email)}>
+            <HugeiconsIcon icon={UserCheck01Icon} size={14} />
+            Re-enable user
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
-  const {
-    authUserId,
-    canPreviewQa,
-    onRoleChange,
-    onPreviewQa,
-    onDisable,
-    onReEnable,
-  } = options
+  const { authUserId } = options
 
   return [
     {
@@ -96,17 +181,7 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
     },
     {
       accessorKey: 'email',
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        >
-          Email
-          <HugeiconsIcon icon={ArrowUpDownIcon} />
-        </Button>
-      ),
+      header: 'Email',
       cell: ({ row }) => {
         const isSelf = row.original.id === authUserId
         return (
@@ -121,133 +196,34 @@ export function getColumns(options: UserColumnOptions): Array<ColumnDef<User>> {
     },
     {
       accessorKey: 'role',
-      header: ({ column }) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2"
-          onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-        >
-          Role
-          <HugeiconsIcon icon={ArrowUpDownIcon} />
-        </Button>
-      ),
-      cell: ({ row }) => {
-        const role = row.original.role
-        return (
-          <Badge
-            variant={ROLE_BADGE_VARIANT[role] ?? 'outline'}
-            className="text-xs"
-          >
-            {ROLE_LABELS[role] ?? role}
-          </Badge>
-        )
-      },
+      header: 'Role',
+      cell: ({ row }) => <UserRoleBadge role={row.original.role} />,
     },
     {
       accessorKey: 'status',
       header: 'Status',
-      cell: ({ row }) => {
-        const status = row.original.status
-        return (
-          <Badge
-            variant={STATUS_BADGE_VARIANT[status] ?? 'outline'}
-            className="text-xs capitalize"
-          >
-            {status}
-          </Badge>
-        )
-      },
+      cell: ({ row }) => <UserStatusBadge status={row.original.status} />,
+    },
+    {
+      accessorKey: 'created_at',
+      header: 'Joined',
+      cell: ({ row }) => (
+        <span
+          className="text-xs text-muted-foreground"
+          title={new Date(row.original.created_at * 1000).toLocaleString()}
+        >
+          {relativeTime(row.original.created_at)}
+        </span>
+      ),
     },
     {
       id: 'actions',
       header: () => <span className="sr-only">Actions</span>,
-      cell: ({ row }) => {
-        const user = row.original
-        const isOwner = user.role === 'owner'
-        const isSelf = user.id === authUserId
-        const isDisabled = user.status === 'disabled'
-
-        if (isOwner || isSelf) return null
-
-        return (
-          <div className="text-right">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Open user actions"
-                    title="Open user actions"
-                  />
-                }
-              >
-                <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-                <span className="sr-only">Open menu</span>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-auto">
-                {!isDisabled ? (
-                  <>
-                    {canPreviewQa &&
-                    user.role === 'qa_viewer' &&
-                    user.status === 'active' ? (
-                      <>
-                        <DropdownMenuItem
-                          onClick={() => onPreviewQa(user.id, user.email)}
-                        >
-                          <HugeiconsIcon icon={PlayIcon} size={14} />
-                          Preview as QA
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                      </>
-                    ) : null}
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>
-                        Change role
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        <DropdownMenuRadioGroup value={user.role}>
-                          {(['admin', 'developer', 'qa_viewer'] as const).map(
-                            (role) => (
-                              <DropdownMenuRadioItem
-                                key={role}
-                                value={role}
-                                onClick={() => {
-                                  if (role !== user.role) {
-                                    onRoleChange(user.id, user.email, role)
-                                  }
-                                }}
-                              >
-                                {ROLE_LABELS[role]}
-                              </DropdownMenuRadioItem>
-                            ),
-                          )}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onClick={() => onDisable(user.id, user.email)}
-                    >
-                      <HugeiconsIcon icon={Cancel01Icon} size={14} />
-                      Disable user
-                    </DropdownMenuItem>
-                  </>
-                ) : (
-                  <DropdownMenuItem
-                    onClick={() => onReEnable(user.id, user.email)}
-                  >
-                    <HugeiconsIcon icon={UserCheck01Icon} size={14} />
-                    Re-enable User
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )
-      },
+      cell: ({ row }) => (
+        <div className="text-right">
+          <UserActions user={row.original} {...options} />
+        </div>
+      ),
     },
   ]
 }

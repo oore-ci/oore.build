@@ -29,7 +29,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 
-export function OidcSettingsDialog({ state }: { state: PreferencesPageState }) {
+export default function OidcSettingsDialog({
+  state,
+}: {
+  state: PreferencesPageState
+}) {
   const {
     configureExternalAccessOidcMutation,
     externalAccessOidcForm,

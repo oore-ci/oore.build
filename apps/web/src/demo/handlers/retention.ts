@@ -5,6 +5,7 @@ import type {
   RetentionCleanupSummary,
   RetentionPolicy,
 } from '@/lib/types'
+import { requireDemoInstancePermission } from '../authorization'
 
 function now(): number {
   return Math.floor(Date.now() / 1000)
@@ -47,6 +48,11 @@ export const retentionHandlers = [
 
   http.put('/v1/settings/retention', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
     globalPolicy = {
       ...globalPolicy,
@@ -68,6 +74,11 @@ export const retentionHandlers = [
 
   http.put('/v1/projects/:id/retention', async ({ params, request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const projectId = params.id as string
     const body = (await request.json()) as Record<string, unknown>
 
@@ -82,8 +93,13 @@ export const retentionHandlers = [
     return HttpResponse.json(effectivePolicy(projectId))
   }),
 
-  http.delete('/v1/projects/:id/retention', async ({ params }) => {
+  http.delete('/v1/projects/:id/retention', async ({ params, request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const projectId = params.id as string
     projectOverrides.delete(projectId)
     return HttpResponse.json(effectivePolicy(projectId))

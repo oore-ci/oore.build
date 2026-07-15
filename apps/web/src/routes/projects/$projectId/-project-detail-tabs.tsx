@@ -1,6 +1,6 @@
-import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, PlayIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Link } from '@tanstack/react-router'
 
 import type { Build, Pipeline } from '@/lib/types'
 import { getStatusVariant } from '@/lib/status-variants'

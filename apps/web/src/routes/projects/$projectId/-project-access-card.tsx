@@ -1,15 +1,23 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Delete02Icon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  Delete02Icon,
+  MoreHorizontalCircle01Icon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
-import type { ProjectMember, ProjectRole, User } from '@/lib/types'
-import { useUsers } from '@/hooks/use-auth'
+import type {
+  ProjectMember,
+  ProjectMemberCandidate,
+  ProjectRole,
+} from '@/lib/types'
 import {
   useAddProjectMember,
+  useProjectMemberCandidates,
   useProjectMembers,
   useRemoveProjectMember,
   useUpdateProjectMember,
@@ -35,6 +43,35 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Form,
   FormControl,
@@ -63,7 +100,7 @@ import {
 } from '@/components/ui/table'
 
 const accessSchema = z.object({
-  user_id: z.string().min(1, 'Select a user'),
+  user_id: z.string().min(1, 'Select a user.'),
   role: z.enum(['maintainer', 'developer', 'viewer']),
 })
 
@@ -88,7 +125,9 @@ const INSTANCE_ROLE_LABELS: Record<string, string> = {
   qa_viewer: 'QA Viewer',
 }
 
-function initials(user: Pick<User, 'email' | 'display_name'>): string {
+function initials(
+  user: Pick<ProjectMemberCandidate, 'email' | 'display_name'>,
+): string {
   const source = user.display_name?.trim() || user.email
   return source
     .split(/[\s@._-]+/)
@@ -98,12 +137,107 @@ function initials(user: Pick<User, 'email' | 'display_name'>): string {
     .join('')
 }
 
+function MemberIdentity({ member }: { member: ProjectMember }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <Avatar size="sm">
+        {member.user_avatar_url ? (
+          <AvatarImage
+            src={member.user_avatar_url}
+            alt=""
+            referrerPolicy="no-referrer"
+          />
+        ) : null}
+        <AvatarFallback>
+          {initials({
+            email: member.user_email,
+            display_name: member.user_display_name,
+          })}
+        </AvatarFallback>
+      </Avatar>
+      <div className="min-w-0">
+        <p className="truncate font-medium">
+          {member.user_display_name ?? member.user_email}
+        </p>
+        {member.user_display_name ? (
+          <p className="truncate text-xs text-muted-foreground">
+            {member.user_email}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function MemberActions({
+  instanceRole,
+  member,
+  onRemove,
+  onRoleChange,
+  pending,
+}: {
+  instanceRole: string | undefined
+  member: ProjectMember
+  onRemove: () => void
+  onRoleChange: (role: ProjectRole) => void
+  pending: boolean
+}) {
+  const hasImplicitAccess = instanceRole === 'owner' || instanceRole === 'admin'
+  const isQaViewer = instanceRole === 'qa_viewer'
+  if (hasImplicitAccess) return null
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Manage access for ${member.user_email}`}
+          />
+        }
+      >
+        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {!isQaViewer ? (
+          <>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Change role</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup value={member.role}>
+                  {PROJECT_ROLE_OPTIONS.map((role) => (
+                    <DropdownMenuRadioItem
+                      key={role}
+                      value={role}
+                      disabled={pending}
+                      onClick={() => onRoleChange(role)}
+                    >
+                      {PROJECT_ROLE_LABELS[role]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        <DropdownMenuItem variant="destructive" onClick={onRemove}>
+          <HugeiconsIcon icon={Delete02Icon} />
+          Remove access
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function ProjectAccessCard({ projectId }: { projectId: string }) {
   const membersQuery = useProjectMembers(projectId)
-  const usersQuery = useUsers()
+  const candidatesQuery = useProjectMemberCandidates(projectId)
   const addMutation = useAddProjectMember(projectId)
   const updateMutation = useUpdateProjectMember(projectId)
   const removeMutation = useRemoveProjectMember(projectId)
+  const [addOpen, setAddOpen] = useState(false)
   const [memberToRemove, setMemberToRemove] = useState<ProjectMember | null>(
     null,
   )
@@ -112,37 +246,31 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     defaultValues: { user_id: '', role: 'viewer' },
   })
 
-  const users = useMemo(() => usersQuery.data?.users ?? [], [usersQuery.data])
+  const candidates = useMemo(
+    () => candidatesQuery.data?.candidates ?? [],
+    [candidatesQuery.data],
+  )
   const members = useMemo(
     () => membersQuery.data?.members ?? [],
     [membersQuery.data],
   )
-  const usersById = useMemo(
-    () => new Map(users.map((user) => [user.id, user])),
-    [users],
+  const candidatesById = useMemo(
+    () => new Map(candidates.map((candidate) => [candidate.id, candidate])),
+    [candidates],
   )
-  const memberIds = useMemo(
-    () => new Set(members.map((member) => member.user_id)),
-    [members],
-  )
-  const availableUsers = useMemo(
-    () =>
-      users.filter(
-        (user) =>
-          (user.status === 'active' || user.status === 'invited') &&
-          (user.role === 'developer' || user.role === 'qa_viewer') &&
-          !memberIds.has(user.id),
-      ),
-    [memberIds, users],
-  )
-  const selectedUser = usersById.get(form.watch('user_id'))
+  const selectedUser = candidatesById.get(form.watch('user_id'))
   const availableRoles =
     selectedUser?.role === 'qa_viewer'
       ? (['viewer'] as Array<ProjectRole>)
       : PROJECT_ROLE_OPTIONS
 
-  function onSubmit(values: AccessForm) {
-    const user = usersById.get(values.user_id)
+  function setDialogOpen(open: boolean) {
+    setAddOpen(open)
+    if (!open) form.reset({ user_id: '', role: 'viewer' })
+  }
+
+  function addMember(values: AccessForm) {
+    const user = candidatesById.get(values.user_id)
     const role: ProjectRole =
       user?.role === 'qa_viewer' ? 'viewer' : values.role
     addMutation.mutate(
@@ -150,7 +278,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
       {
         onSuccess: () => {
           toast.success(`${user?.email ?? 'User'} added to this project`)
-          form.reset({ user_id: '', role: 'viewer' })
+          setDialogOpen(false)
         },
         onError: (error) => toast.error(error.message),
       },
@@ -180,37 +308,37 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     })
   }
 
-  const isLoading = membersQuery.isLoading || usersQuery.isLoading
-  const error = membersQuery.error ?? usersQuery.error
+  const isLoading = membersQuery.isLoading || candidatesQuery.isLoading
+  const error = membersQuery.error ?? candidatesQuery.error
 
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Project access</CardTitle>
-          <CardDescription>
-            Assign developers and QA viewers to this project. QA access is
-            always read-only and includes build logs and installable artifacts.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : error ? (
-            <Alert variant="destructive">
-              <AlertDescription>
-                Failed to load project access: {error.message}
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <>
+        <CardHeader className="flex-row items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Project access
+            </CardTitle>
+            <CardDescription>
+              Grant developers or QA viewers access to this project.
+            </CardDescription>
+          </div>
+          <Dialog open={addOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger render={<Button size="sm" />}>
+              <HugeiconsIcon icon={Add01Icon} />
+              Add member
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add project member</DialogTitle>
+                <DialogDescription>
+                  Choose an eligible user and their project role.
+                </DialogDescription>
+              </DialogHeader>
               <Form {...form}>
                 <form
-                  onSubmit={form.handleSubmit(onSubmit)}
-                  className="grid items-start gap-3 md:grid-cols-[minmax(0,1fr)_12rem_auto]"
+                  className="space-y-4"
+                  onSubmit={form.handleSubmit(addMember)}
                 >
                   <FormField
                     control={form.control}
@@ -218,48 +346,41 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>User</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={(value) => {
-                            field.onChange(value)
-                            const user = usersById.get(value ?? '')
-                            if (user?.role === 'qa_viewer') {
-                              form.setValue('role', 'viewer')
-                            }
-                          }}
-                          items={Object.fromEntries(
-                            availableUsers.map((user) => [
-                              user.id,
-                              `${user.email} · ${INSTANCE_ROLE_LABELS[user.role]}`,
-                            ]),
-                          )}
-                          disabled={availableUsers.length === 0}
-                        >
+                        <Command className="rounded-md! border">
                           <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue
-                                placeholder={
-                                  availableUsers.length === 0
-                                    ? 'Everyone eligible already has access'
-                                    : 'Select a user'
-                                }
-                              />
-                            </SelectTrigger>
+                            <CommandInput placeholder="Search eligible users..." />
                           </FormControl>
-                          <SelectContent>
-                            {availableUsers.map((user) => (
-                              <SelectItem key={user.id} value={user.id}>
-                                {user.email}
-                                <span className="text-xs text-muted-foreground">
-                                  {INSTANCE_ROLE_LABELS[user.role]}
-                                  {user.status === 'invited'
-                                    ? ' · Invited'
-                                    : ''}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          <CommandList className="max-h-48">
+                            <CommandEmpty>
+                              No eligible users found.
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {candidates.map((user) => (
+                                <CommandItem
+                                  key={user.id}
+                                  value={`${user.email} ${user.display_name ?? ''}`}
+                                  data-checked={field.value === user.id}
+                                  onSelect={() => {
+                                    field.onChange(user.id)
+                                    if (user.role === 'qa_viewer') {
+                                      form.setValue('role', 'viewer')
+                                    }
+                                  }}
+                                >
+                                  <span className="min-w-0 flex-1 truncate">
+                                    {user.email}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {INSTANCE_ROLE_LABELS[user.role]}
+                                    {user.status === 'invited'
+                                      ? ' · Invited'
+                                      : ''}
+                                  </span>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -272,7 +393,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                         <FormLabel>Project role</FormLabel>
                         <Select
                           value={field.value}
-                          onValueChange={(value) => field.onChange(value)}
+                          onValueChange={field.onChange}
                           items={Object.fromEntries(
                             availableRoles.map((role) => [
                               role,
@@ -295,33 +416,92 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                         </Select>
                         {selectedUser?.role === 'qa_viewer' ? (
                           <FormDescription>
-                            QA Viewers are always assigned read-only access.
+                            QA viewers always receive read-only Viewer access.
                           </FormDescription>
                         ) : null}
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                  <Button
-                    type="submit"
-                    className="md:mt-7"
-                    disabled={
-                      availableUsers.length === 0 || addMutation.isPending
-                    }
-                  >
-                    {addMutation.isPending ? (
-                      <>
-                        <Spinner className="size-4" />
-                        Adding...
-                      </>
-                    ) : (
-                      'Add access'
-                    )}
-                  </Button>
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setDialogOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={addMutation.isPending}>
+                      {addMutation.isPending ? (
+                        <>
+                          <Spinner className="size-4" />
+                          Adding...
+                        </>
+                      ) : (
+                        'Add member'
+                      )}
+                    </Button>
+                  </DialogFooter>
                 </form>
               </Form>
-
-              <div className="overflow-hidden rounded-md border">
+            </DialogContent>
+          </Dialog>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : error ? (
+            <Alert variant="destructive">
+              <AlertDescription>
+                Failed to load project access: {error.message}
+              </AlertDescription>
+            </Alert>
+          ) : members.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              No explicit project members yet.
+            </p>
+          ) : (
+            <>
+              <div className="divide-y md:hidden">
+                {members.map((member) => {
+                  const instanceRole = member.user_role
+                  return (
+                    <div
+                      key={member.id}
+                      className="flex min-h-16 items-center gap-3 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <MemberIdentity member={member} />
+                        <div className="mt-2 flex flex-wrap gap-2 pl-11">
+                          <Badge variant="outline">
+                            {INSTANCE_ROLE_LABELS[instanceRole] ?? 'Unknown'}
+                          </Badge>
+                          <Badge variant="secondary">
+                            {
+                              PROJECT_ROLE_LABELS[
+                                instanceRole === 'qa_viewer'
+                                  ? 'viewer'
+                                  : member.role
+                              ]
+                            }
+                          </Badge>
+                        </div>
+                      </div>
+                      <MemberActions
+                        member={member}
+                        instanceRole={instanceRole}
+                        pending={updateMutation.isPending}
+                        onRoleChange={(role) => updateRole(member, role)}
+                        onRemove={() => setMemberToRemove(member)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="hidden md:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -334,113 +514,39 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {members.length === 0 ? (
-                      <TableRow>
-                        <TableCell
-                          colSpan={4}
-                          className="text-center text-muted-foreground"
-                        >
-                          No explicit project members yet.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      members.map((member) => {
-                        const user = usersById.get(member.user_id)
-                        const instanceRole = user?.role
-                        const hasImplicitAccess =
-                          instanceRole === 'owner' || instanceRole === 'admin'
-                        const isQaViewer = instanceRole === 'qa_viewer'
-                        return (
-                          <TableRow key={member.id}>
-                            <TableCell>
-                              <div className="flex items-center gap-3">
-                                <Avatar size="sm">
-                                  {member.user_avatar_url ? (
-                                    <AvatarImage
-                                      src={member.user_avatar_url}
-                                      alt=""
-                                      referrerPolicy="no-referrer"
-                                    />
-                                  ) : null}
-                                  <AvatarFallback>
-                                    {initials({
-                                      email: member.user_email,
-                                      display_name: member.user_display_name,
-                                    })}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div className="min-w-0">
-                                  <p className="truncate font-medium">
-                                    {member.user_display_name ??
-                                      member.user_email}
-                                  </p>
-                                  {member.user_display_name ? (
-                                    <p className="truncate text-xs text-muted-foreground">
-                                      {member.user_email}
-                                    </p>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">
-                                {INSTANCE_ROLE_LABELS[instanceRole ?? ''] ??
-                                  'Unknown'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <Select
-                                value={isQaViewer ? 'viewer' : member.role}
-                                onValueChange={(value) =>
-                                  updateRole(member, value as ProjectRole)
-                                }
-                                items={Object.fromEntries(
-                                  (isQaViewer
-                                    ? (['viewer'] as Array<ProjectRole>)
-                                    : PROJECT_ROLE_OPTIONS
-                                  ).map((role) => [
-                                    role,
-                                    PROJECT_ROLE_LABELS[role],
-                                  ]),
-                                )}
-                                disabled={
-                                  hasImplicitAccess ||
-                                  isQaViewer ||
-                                  updateMutation.isPending
-                                }
-                              >
-                                <SelectTrigger size="sm" className="w-32">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {(isQaViewer
-                                    ? (['viewer'] as Array<ProjectRole>)
-                                    : PROJECT_ROLE_OPTIONS
-                                  ).map((role) => (
-                                    <SelectItem key={role} value={role}>
-                                      {PROJECT_ROLE_LABELS[role]}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell>
-                              {!hasImplicitAccess ? (
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() => setMemberToRemove(member)}
-                                  aria-label={`Remove ${member.user_email} from project`}
-                                  title="Remove project access"
-                                >
-                                  <HugeiconsIcon icon={Delete02Icon} />
-                                </Button>
-                              ) : null}
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })
-                    )}
+                    {members.map((member) => {
+                      const instanceRole = member.user_role
+                      return (
+                        <TableRow key={member.id}>
+                          <TableCell>
+                            <MemberIdentity member={member} />
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {INSTANCE_ROLE_LABELS[instanceRole] ?? 'Unknown'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {
+                              PROJECT_ROLE_LABELS[
+                                instanceRole === 'qa_viewer'
+                                  ? 'viewer'
+                                  : member.role
+                              ]
+                            }
+                          </TableCell>
+                          <TableCell>
+                            <MemberActions
+                              member={member}
+                              instanceRole={instanceRole}
+                              pending={updateMutation.isPending}
+                              onRoleChange={(role) => updateRole(member, role)}
+                              onRemove={() => setMemberToRemove(member)}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -459,7 +565,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove project access?</AlertDialogTitle>
             <AlertDialogDescription>
-              {memberToRemove?.user_email} will no longer see this project's
+              {memberToRemove?.user_email} will no longer see this project’s
               builds, logs, or artifacts.
             </AlertDialogDescription>
           </AlertDialogHeader>

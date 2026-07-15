@@ -1,58 +1,58 @@
 ---
 status: implemented
-description: 'Role-based access control model with owner, admin, developer, and viewer roles.'
+description: 'Instance and project role-based access control for owners, admins, developers, and QA viewers.'
 ---
 
 # Roles and Permissions (RBAC)
 
-Oore CI uses role-based access control with four roles. Each user has exactly one role.
+Oore CI gives each user one instance role. Developers and QA viewers also need explicit project membership; owners and admins have implicit Maintainer access to every project.
 
 ## Roles
 
-| Role        | Description                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| `owner`     | Instance creator. Full access to everything. Exactly one per instance.                       |
-| `admin`     | Full management access. Can manage users, settings, and all project operations.              |
-| `developer` | Can create and manage projects, configure pipelines, trigger builds, and download artifacts. |
-| `qa_viewer` | Read-only access. Can view builds and download artifacts but cannot modify anything.         |
+| Role        | Description                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| `owner`     | Instance creator. Full access to everything. Exactly one per instance.                                                |
+| `admin`     | Full management access. Can manage users, settings, and all project operations.                                       |
+| `developer` | Can create projects, use assigned operator surfaces, and mutate an assigned project when its project role permits it. |
+| `qa_viewer` | Tester-only access to assigned apps, release details, diagnostic logs, and installable artifacts.                     |
 
-## Permission matrix
+## Operator surface policy
 
-| Permission                  | Owner | Admin | Developer | QA Viewer |
-| --------------------------- | ----- | ----- | --------- | --------- |
-| **Users**                   |       |       |           |           |
-| View user list              | Yes   | Yes   | No        | No        |
-| Invite users                | Yes   | Yes   | No        | No        |
-| Change user roles           | Yes   | Yes   | No        | No        |
-| Disable/enable users        | Yes   | Yes   | No        | No        |
-| **Settings**                |       |       |           |           |
-| View instance settings      | Yes   | Yes   | No        | No        |
-| Modify artifact storage     | Yes   | Yes   | No        | No        |
-| Modify instance preferences | Yes   | Yes   | No        | No        |
-| Manage integrations         | Yes   | Yes   | No        | No        |
-| **Projects**                |       |       |           |           |
-| List projects               | Yes   | Yes   | Yes       | Yes       |
-| Create projects             | Yes   | Yes   | Yes       | No        |
-| Edit projects               | Yes   | Yes   | Yes       | No        |
-| Delete projects             | Yes   | Yes   | No        | No        |
-| **Pipelines**               |       |       |           |           |
-| List pipelines              | Yes   | Yes   | Yes       | Yes       |
-| Create/edit pipelines       | Yes   | Yes   | Yes       | No        |
-| Delete pipelines            | Yes   | Yes   | No        | No        |
-| Configure signing           | Yes   | Yes   | Yes       | No        |
-| **Builds**                  |       |       |           |           |
-| View builds                 | Yes   | Yes   | Yes       | Yes       |
-| Trigger builds              | Yes   | Yes   | Yes       | No        |
-| Cancel builds               | Yes   | Yes   | Yes       | No        |
-| View build logs             | Yes   | Yes   | Yes       | Yes       |
-| **Artifacts**               |       |       |           |           |
-| List artifacts              | Yes   | Yes   | Yes       | Yes       |
-| Download artifacts          | Yes   | Yes   | Yes       | Yes       |
-| Install APK/IPA artifacts   | Yes   | Yes   | Yes       | Yes       |
-| Manage external share links | Yes   | Yes   | Yes       | No        |
-| **Runners**                 |       |       |           |           |
-| View runners                | Yes   | Yes   | Yes       | No        |
-| Register runners            | Yes   | Yes   | No        | No        |
+| Surface                         | Owner        | Admin        | Developer                                        | QA Viewer                    |
+| ------------------------------- | ------------ | ------------ | ------------------------------------------------ | ---------------------------- |
+| Operator dashboard              | Full         | Full         | Assigned work                                    | No; tester workspace instead |
+| Create projects                 | Yes          | Yes          | Yes                                              | No                           |
+| Existing project/build surfaces | All projects | All projects | Assigned projects; mutations follow project role | Assigned release data only   |
+| Users and invitations           | Manage       | Manage       | No                                               | No                           |
+| Sources                         | Manage       | Manage       | Read-only                                        | No operator route            |
+| Runners                         | Manage       | Manage       | Read-only                                        | No operator route            |
+| API tokens                      | Manage       | Manage       | Manage within developer visibility               | No                           |
+| Notifications                   | Manage       | Manage       | No                                               | No                           |
+| Preferences and retention       | Manage       | Manage       | No                                               | No                           |
+| Audit log                       | View         | View         | No                                               | No                           |
+| Runtime updates                 | Manage       | No           | No                                               | No                           |
+
+Notification routes and all instance-administration routes are owner/admin-only unless the table explicitly narrows access further. Runtime update controls are owner-only.
+
+## Project roles
+
+| Project role | Capabilities                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `maintainer` | Full project access, including project settings and deletion, membership, pipelines and signing, builds, and artifacts.                                            |
+| `developer`  | Read the project; manage pipelines and signing; trigger or cancel builds; read artifacts and manage artifact shares. Cannot change project settings or membership. |
+| `viewer`     | Read project, pipeline, build, log, and artifact data; download or install artifacts. No project mutations.                                                        |
+
+Owners and admins resolve to Maintainer for every project. A developer's effective permissions come from the role on that explicit membership. QA viewers are always capped at Viewer, including when legacy membership data contains a higher role.
+
+Project Maintainers can discover only eligible developer and QA-viewer candidates through the project-scoped membership API. This does not grant developer accounts access to the global Users directory.
+
+## Route behavior
+
+- Developers can use the dashboard, project creation, assigned project and build routes, API tokens, and read-only Sources and Runners. Project mutations are checked against the effective project role before mutation UI renders.
+- QA viewers use the canonical `/` tester workspace. `/builds` redirects to `/`; an assigned `/builds/:buildId` opens tester release detail with release information, install/download action, and secondary diagnostic logs.
+- QA viewers do not receive the operator Projects, Sources, Runners, Users, Notifications, or instance-settings routes.
+- Disallowed direct routes redirect before their mutation interface renders. The backend remains the security boundary.
+- There is no QA-preview or impersonation endpoint. The hosted demo's role selector signs in as a demo persona and does not change a real user's role or session.
 
 ## User statuses
 
@@ -72,7 +72,7 @@ Oore CI uses role-based access control with four roles. Each user has exactly on
 
 ## Enforcement
 
-RBAC is enforced at the API level. Every authenticated request is checked against the user's role before processing. Insufficient permissions return `403 Forbidden` with code `forbidden`.
+RBAC is enforced at the API level. Instance operations check the session role; project operations also resolve membership and the effective project role. A project hidden from the user returns `404 Not Found`; an allowed project with an insufficient role returns `403 Forbidden`. Frontend route guards and hidden controls mirror this policy but do not replace backend enforcement.
 
 ## Audit events
 

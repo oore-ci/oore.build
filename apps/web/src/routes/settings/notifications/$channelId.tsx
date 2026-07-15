@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 
 export const Route = createFileRoute('/settings/notifications/$channelId')({
@@ -15,6 +15,6 @@ export const Route = createFileRoute('/settings/notifications/$channelId')({
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
 })

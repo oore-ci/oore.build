@@ -13,7 +13,6 @@ import type { Artifact, BuildStatus } from '@/lib/types'
 import { useArtifactDownloadLink } from '@/hooks/use-builds'
 import { formatFileSize, relativeTime } from '@/lib/format-utils'
 import { artifactInstallReadiness } from '@/lib/artifact-install'
-import { useHasPermission } from '@/hooks/use-permissions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -188,13 +187,14 @@ export function ArtifactsPanel({
   artifacts,
   isLoading,
   buildStatus,
+  canManageShareLinks,
 }: {
   artifacts: Array<Artifact>
   isLoading: boolean
   buildStatus: BuildStatus
+  canManageShareLinks: boolean
 }) {
   const downloadMutation = useArtifactDownloadLink()
-  const canManageShareLinks = useHasPermission('artifacts', 'write')
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {

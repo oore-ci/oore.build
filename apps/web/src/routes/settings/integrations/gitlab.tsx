@@ -23,7 +23,7 @@ import {
 import { useGitLabStart } from '@/hooks/use-integrations'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { gitLabPublicEndpoints, normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
@@ -35,7 +35,7 @@ export const Route = createFileRoute('/settings/integrations/gitlab')({
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: GitLabSetupPage,
 })

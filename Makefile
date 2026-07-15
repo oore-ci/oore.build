@@ -1,5 +1,5 @@
 .PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index web-performance-baseline test-web-performance-baseline test-web-runtime-performance build check \
-		       test-web test-demo lint-web fix-web \
+		       test-web test-web-ui test-demo lint-web fix-web \
 		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
@@ -70,6 +70,9 @@ deploy-demo-only:
 
 test-web:
 	cd apps/web && bun run test
+
+test-web-ui:
+	cd apps/web && bun run test:ui
 
 test-demo:
 	cd apps/web && bun run test src/demo/demo.test.ts src/hooks/use-permissions.test.ts
@@ -240,7 +243,7 @@ lint: lint-web lint-docs fmt-rust-check
 
 test: test-web test-demo test-docs test-release-index test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
-validate: docs-check lint test clippy-rust bundle-check build-docs build-site cargo-check
+validate: docs-check lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
 
 validate-ci:
 	bash tools/validate-ci.sh

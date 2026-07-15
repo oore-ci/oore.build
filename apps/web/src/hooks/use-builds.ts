@@ -63,6 +63,8 @@ export function useBuilds(
     pipeline_id?: string
     status?: string
     branch?: string
+    sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
+    direction?: 'asc' | 'desc'
     limit?: number
     offset?: number
   },
@@ -315,15 +317,20 @@ export function useArtifacts(
   })
 }
 
-export function useProjectArtifacts(projectId: string) {
+export function useProjectArtifacts(projectId: string, limit = 50) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'project-artifacts', projectId],
+    queryKey: [
+      instance?.id ?? '__none__',
+      'project-artifacts',
+      projectId,
+      limit,
+    ],
     queryFn: ({ signal }) =>
-      listProjectArtifacts(baseUrl!, token!, projectId, { signal }),
+      listProjectArtifacts(baseUrl!, token!, projectId, { limit }, { signal }),
     enabled: !!baseUrl && !!token && !!projectId,
     staleTime: 5_000,
   })

@@ -4,6 +4,32 @@ import { demoBuilds } from '../data/builds'
 import { demoProjects } from '../data/projects'
 import { INTEGRATION_IDS, PIPELINE_IDS, ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
+import {
+  requireDemoInstancePermission,
+  requireDemoProjectPermission,
+} from '../authorization'
+
+function pipelineProjectId(pipelineId: string): string | null {
+  return (
+    demoPipelines.find((pipeline) => pipeline.id === pipelineId)?.project_id ??
+    null
+  )
+}
+
+function requirePipelinePermission(
+  request: Request,
+  pipelineId: string,
+  permission: string,
+): Response | null {
+  const projectId = pipelineProjectId(pipelineId)
+  if (!projectId) {
+    return HttpResponse.json(
+      { error: 'Pipeline not found', code: 'not_found' },
+      { status: 404 },
+    )
+  }
+  return requireDemoProjectPermission(request, projectId, permission)
+}
 
 const iosSigningByPipeline: Partial<Record<string, Record<string, unknown>>> = {
   [PIPELINE_IDS.shopIos]: {
@@ -188,6 +214,12 @@ export const pipelineHandlers = [
     '/v1/projects/:projectId/pipelines',
     async ({ params, request }) => {
       await delay(300)
+      const forbidden = requireDemoProjectPermission(
+        request,
+        String(params.projectId),
+        'pipelines:write',
+      )
+      if (forbidden) return forbidden
       const body = (await request.json()) as Record<string, unknown>
       return HttpResponse.json({
         pipeline: {
@@ -206,6 +238,12 @@ export const pipelineHandlers = [
 
   http.patch('/v1/pipelines/:pipelineId', async ({ params, request }) => {
     await delay(200)
+    const forbidden = requirePipelinePermission(
+      request,
+      String(params.pipelineId),
+      'pipelines:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
     const pipeline = demoPipelines.find((p) => p.id === params.pipelineId)
     return HttpResponse.json({
@@ -215,13 +253,21 @@ export const pipelineHandlers = [
     })
   }),
 
-  http.delete('/v1/pipelines/:pipelineId', async () => {
+  http.delete('/v1/pipelines/:pipelineId', async ({ params, request }) => {
     await delay(200)
+    const forbidden = requirePipelinePermission(
+      request,
+      String(params.pipelineId),
+      'pipelines:delete',
+    )
+    if (forbidden) return forbidden
     return new HttpResponse(null, { status: 204 })
   }),
 
-  http.post('/v1/pipelines/validate', async () => {
+  http.post('/v1/pipelines/validate', async ({ request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(request, 'pipelines:write')
+    if (forbidden) return forbidden
     return HttpResponse.json({ valid: true })
   }),
 
@@ -254,6 +300,12 @@ export const pipelineHandlers = [
     '/v1/pipelines/:pipelineId/android-signing',
     async ({ params, request }) => {
       await delay(300)
+      const forbidden = requirePipelinePermission(
+        request,
+        String(params.pipelineId),
+        'pipelines:write',
+      )
+      if (forbidden) return forbidden
       const body = (await request.json()) as {
         debug?: Record<string, unknown>
         release?: Record<string, unknown>
@@ -309,6 +361,12 @@ export const pipelineHandlers = [
     async ({ params, request }) => {
       await delay(300)
       const id = params.pipelineId as string
+      const forbidden = requirePipelinePermission(
+        request,
+        id,
+        'pipelines:write',
+      )
+      if (forbidden) return forbidden
       const body = (await request.json()) as Record<string, unknown>
       const existing = iosSigningByPipeline[id] ?? {}
       const merged = {
@@ -324,8 +382,14 @@ export const pipelineHandlers = [
 
   http.post(
     '/v1/pipelines/:pipelineId/ios-signing/sync',
-    async ({ params }) => {
+    async ({ params, request }) => {
       await delay(500)
+      const forbidden = requirePipelinePermission(
+        request,
+        String(params.pipelineId),
+        'pipelines:write',
+      )
+      if (forbidden) return forbidden
       return HttpResponse.json({
         pipeline_id: params.pipelineId,
         updated_profiles: 1,
@@ -347,6 +411,12 @@ export const pipelineHandlers = [
     '/v1/pipelines/:pipelineId/ios-signing/devices/register',
     async ({ params, request }) => {
       await delay(400)
+      const forbidden = requirePipelinePermission(
+        request,
+        String(params.pipelineId),
+        'pipelines:write',
+      )
+      if (forbidden) return forbidden
       const body = (await request.json()) as {
         name: string
         udid: string

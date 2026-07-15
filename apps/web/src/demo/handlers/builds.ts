@@ -2,8 +2,11 @@ import { HttpResponse, delay, http } from 'msw'
 import { demoBuildEvents, demoBuilds } from '../data/builds'
 import { demoBuildLogs } from '../data/build-logs'
 import { demoArtifacts } from '../data/artifacts'
-import { USER_IDS, ago } from '../seed'
+import { demoProjects } from '../data/projects'
+import { demoPipelines } from '../data/pipelines'
+import { ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
+import { requireDemoProjectPermission } from '../authorization'
 
 export const buildHandlers = [
   http.get(
@@ -49,7 +52,38 @@ export const buildHandlers = [
     const branch = url.searchParams.get('branch')
     if (branch) builds = builds.filter((b) => b.branch === branch)
 
-    const limit = Number(url.searchParams.get('limit')) || 50
+    const sort = url.searchParams.get('sort')
+    const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
+    builds.sort((left, right) => {
+      const value = (build: (typeof demoBuilds)[number]) => {
+        if (sort === 'status') return build.status.toLowerCase()
+        if (sort === 'branch') return build.branch?.toLowerCase() ?? ''
+        if (sort === 'project_name') {
+          return (
+            demoProjects
+              .find((project) => project.id === build.project_id)
+              ?.name.toLowerCase() ?? ''
+          )
+        }
+        if (sort === 'pipeline_name') {
+          return (
+            demoPipelines
+              .find((pipeline) => pipeline.id === build.pipeline_id)
+              ?.name.toLowerCase() ?? ''
+          )
+        }
+        return build.created_at
+      }
+      const leftValue = value(left)
+      const rightValue = value(right)
+      const compared =
+        typeof leftValue === 'string'
+          ? leftValue.localeCompare(String(rightValue))
+          : leftValue - Number(rightValue)
+      return (compared || left.id.localeCompare(right.id)) * direction
+    })
+
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200)
     const offset = Number(url.searchParams.get('offset')) || 0
 
     return HttpResponse.json({
@@ -83,6 +117,13 @@ export const buildHandlers = [
 
   http.post('/v1/projects/:projectId/builds', async ({ params, request }) => {
     await delay(400)
+    const forbidden = requireDemoProjectPermission(
+      request,
+      String(params.projectId),
+      'builds:write',
+    )
+    if (forbidden) return forbidden
+    const persona = getDemoPersonaFromRequest(request)
     const body = (await request.json()) as {
       pipeline_id: string
       branch?: string
@@ -97,7 +138,7 @@ export const buildHandlers = [
         build_number: 144,
         status: 'queued',
         trigger_type: 'manual',
-        trigger_actor: USER_IDS.owner,
+        trigger_actor: persona.userId,
         branch: body.branch ?? 'main',
         commit_sha: body.commit_sha,
         changelog: body.changelog,
@@ -109,18 +150,59 @@ export const buildHandlers = [
     })
   }),
 
-  http.post('/v1/builds/:buildId/cancel', async ({ params }) => {
+  http.post('/v1/builds/:buildId/cancel', async ({ params, request }) => {
     await delay(300)
     const build = demoBuilds.find((b) => b.id === params.buildId)
+    if (!build) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const forbidden = requireDemoProjectPermission(
+      request,
+      build.project_id,
+      'builds:cancel',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({
-      build: build
-        ? {
-            ...build,
-            status: 'canceled',
-            finished_at: ago(0),
-            updated_at: ago(0),
-          }
-        : { id: params.buildId, status: 'canceled' },
+      build: {
+        ...build,
+        status: 'canceled',
+        finished_at: ago(0),
+        updated_at: ago(0),
+      },
+    })
+  }),
+
+  http.post('/v1/builds/:buildId/rerun', async ({ params, request }) => {
+    await delay(300)
+    const build = demoBuilds.find(
+      (candidate) => candidate.id === params.buildId,
+    )
+    if (!build) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const forbidden = requireDemoProjectPermission(
+      request,
+      build.project_id,
+      'builds:write',
+    )
+    if (forbidden) return forbidden
+    return HttpResponse.json({
+      build: {
+        ...build,
+        id: `build-demo-rerun-${Date.now()}`,
+        build_number: build.build_number + 1,
+        status: 'queued',
+        source_build_id: build.id,
+        queued_at: ago(0),
+        created_at: ago(0),
+        updated_at: ago(0),
+      },
     })
   }),
 
@@ -185,11 +267,19 @@ export const buildHandlers = [
     const projectBuildIds = demoBuilds
       .filter((build) => build.project_id === params.projectId)
       .map((build) => build.id)
-    return HttpResponse.json({
-      artifacts: projectBuildIds.flatMap(
-        (buildId) => demoArtifacts[buildId] ?? [],
-      ),
-    })
+    const url = new URL(request.url)
+    const limit = Math.min(
+      Number(url.searchParams.get('limit')) || Number.POSITIVE_INFINITY,
+      200,
+    )
+    const artifacts = projectBuildIds
+      .flatMap((buildId) => demoArtifacts[buildId] ?? [])
+      .sort(
+        (left, right) =>
+          right.created_at - left.created_at || right.id.localeCompare(left.id),
+      )
+      .slice(0, limit)
+    return HttpResponse.json({ artifacts })
   }),
 
   http.post('/v1/artifacts/query', async ({ request }) => {

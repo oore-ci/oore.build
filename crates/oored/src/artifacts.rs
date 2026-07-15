@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use oore_contract::{
@@ -10,6 +10,7 @@ use oore_contract::{
     CompleteArtifactResponse, CreateArtifactRequest, CreateArtifactResponse, ListArtifactsResponse,
     ListBuildArtifactsRequest,
 };
+use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
 use tracing::{error, info};
 use uuid::Uuid;
@@ -40,6 +41,13 @@ const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
 
 /// Keep artifact batches aligned with the maximum build-list page used by the UI.
 const MAX_ARTIFACT_BUILD_IDS: usize = 200;
+
+const MAX_PROJECT_ARTIFACT_HISTORY_LIMIT: i64 = 200;
+
+#[derive(Debug, Deserialize)]
+pub struct ListProjectArtifactsQuery {
+    pub limit: Option<i64>,
+}
 
 fn is_unique_constraint(err: &sqlx::Error) -> bool {
     match err {
@@ -470,6 +478,7 @@ pub async fn list_project_artifacts(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(project_id): Path<String>,
+    Query(params): Query<ListProjectArtifactsQuery>,
 ) -> ApiResult<ListArtifactsResponse> {
     let pool = {
         let store = state.store.lock().await;
@@ -477,13 +486,26 @@ pub async fn list_project_artifacts(
     };
     require_project_artifact_read(&pool, &auth, &project_id).await?;
 
+    if params.limit.is_some_and(|limit| limit <= 0) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "limit must be greater than zero",
+        ));
+    }
+    let limit = params
+        .limit
+        .map(|limit| limit.min(MAX_PROJECT_ARTIFACT_HISTORY_LIMIT))
+        .unwrap_or(-1);
+
     let rows = sqlx::query(
         "SELECT a.* FROM artifacts a \
          JOIN builds b ON b.id = a.build_id \
          WHERE b.project_id = ?1 AND a.state = 'available' \
-         ORDER BY a.created_at DESC",
+         ORDER BY a.created_at DESC, a.id DESC LIMIT ?2",
     )
     .bind(&project_id)
+    .bind(limit)
     .fetch_all(&pool)
     .await
     .map_err(|e| {

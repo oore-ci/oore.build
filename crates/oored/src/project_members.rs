@@ -4,8 +4,9 @@ use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    AddProjectMemberRequest, AddProjectMemberResponse, ApiError, ListProjectMembersResponse,
-    ProjectMember, ProjectRole, UpdateProjectMemberRequest, UpdateProjectMemberResponse,
+    AddProjectMemberRequest, AddProjectMemberResponse, ApiError,
+    ListProjectMemberCandidatesResponse, ListProjectMembersResponse, ProjectMember,
+    ProjectMemberCandidate, ProjectRole, UpdateProjectMemberRequest, UpdateProjectMemberResponse,
 };
 use sqlx::Row;
 use tracing::{error, info};
@@ -33,6 +34,7 @@ fn row_to_project_member(row: &sqlx::sqlite::SqliteRow) -> Result<ProjectMember,
         user_id: row.get("user_id"),
         role,
         user_email: row.get("user_email"),
+        user_role: row.get("user_role"),
         user_display_name: row.get("user_display_name"),
         user_avatar_url: row.get("user_avatar_url"),
         created_at: row.get("created_at"),
@@ -65,7 +67,8 @@ pub async fn list_project_members(
 
     let rows = sqlx::query(
         "SELECT pm.id, pm.project_id, pm.user_id, pm.role, pm.created_at, pm.updated_at, \
-                u.email AS user_email, u.display_name AS user_display_name, u.avatar_url AS user_avatar_url \
+                u.email AS user_email, u.role AS user_role, \
+                u.display_name AS user_display_name, u.avatar_url AS user_avatar_url \
          FROM project_members pm \
          JOIN users u ON u.id = pm.user_id \
          WHERE pm.project_id = ?1 \
@@ -76,7 +79,11 @@ pub async fn list_project_members(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to list project members");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to list project members")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list project members",
+        )
     })?;
 
     let members: Vec<ProjectMember> = rows
@@ -85,6 +92,78 @@ pub async fn list_project_members(
         .collect();
 
     Ok(Json(ListProjectMembersResponse { members }))
+}
+
+/// `GET /v1/projects/{project_id}/members/candidates` — list users eligible for project access.
+pub async fn list_project_member_candidates(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<ListProjectMemberCandidatesResponse> {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::ManageMembers)?;
+
+    let project_exists: bool =
+        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
+            .bind(&project_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(false);
+    if !project_exists {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
+    }
+
+    let rows = sqlx::query(
+        "SELECT u.id, u.email, u.display_name, u.role, u.status \
+         FROM users u \
+         WHERE u.role IN ('developer', 'qa_viewer') \
+           AND u.status IN ('active', 'invited') \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM project_members pm \
+               WHERE pm.project_id = ?1 AND pm.user_id = u.id \
+           ) \
+         ORDER BY COALESCE(NULLIF(u.display_name, ''), u.email) COLLATE NOCASE ASC, u.id ASC",
+    )
+    .bind(&project_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to list project member candidates");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list eligible project members",
+        )
+    })?;
+
+    let candidates = rows
+        .iter()
+        .map(|row| ProjectMemberCandidate {
+            id: row.get("id"),
+            email: row.get("email"),
+            display_name: row.get("display_name"),
+            role: row.get("role"),
+            status: row.get("status"),
+        })
+        .collect();
+
+    Ok(Json(ListProjectMemberCandidatesResponse { candidates }))
 }
 
 /// `POST /v1/projects/{project_id}/members` — add a member to a project.
@@ -215,6 +294,7 @@ pub async fn add_project_member(
         user_id: req.user_id,
         role: req.role,
         user_email: target_user.get("email"),
+        user_role: target_instance_role,
         user_display_name: target_user.get("display_name"),
         user_avatar_url: target_user.get("avatar_url"),
         created_at: now,
@@ -349,7 +429,8 @@ pub async fn update_project_member(
     // Fetch the updated member with user info
     let row = sqlx::query(
         "SELECT pm.id, pm.project_id, pm.user_id, pm.role, pm.created_at, pm.updated_at, \
-                u.email AS user_email, u.display_name AS user_display_name, u.avatar_url AS user_avatar_url \
+                u.email AS user_email, u.role AS user_role, \
+                u.display_name AS user_display_name, u.avatar_url AS user_avatar_url \
          FROM project_members pm \
          JOIN users u ON u.id = pm.user_id \
          WHERE pm.project_id = ?1 AND pm.user_id = ?2",
@@ -360,7 +441,11 @@ pub async fn update_project_member(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch updated project member");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch updated member")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch updated member",
+        )
     })?;
 
     let member = row_to_project_member(&row).map_err(|_| {

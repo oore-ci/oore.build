@@ -16,6 +16,7 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { useSetupCurrentStep } from '@/hooks/use-setup-route-transitions'
+import { SetupStepError } from '@/components/setup-route-components'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -23,19 +24,8 @@ export const Route = createFileRoute('/setup/complete')({
     requireSetupSessionOrRedirect(instance.id)
   },
   component: CompleteStep,
-  errorComponent: CompleteStepError,
+  errorComponent: SetupStepError,
 })
-
-function CompleteStepError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
 
 function CompleteStep() {
   const sessionToken = useSetupStore((s) => s.sessionToken)

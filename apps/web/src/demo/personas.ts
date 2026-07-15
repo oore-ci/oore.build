@@ -47,7 +47,7 @@ export const DEMO_PERSONAS: Array<DemoPersona> = [
     role: 'developer',
     token: 'demo-session-token-developer',
     projectRoles: {
-      [PROJECT_IDS.flutterShop]: 'developer',
+      [PROJECT_IDS.flutterShop]: 'maintainer',
       [PROJECT_IDS.nativePayments]: 'viewer',
     },
   },

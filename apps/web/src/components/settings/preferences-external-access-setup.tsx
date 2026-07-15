@@ -33,6 +33,9 @@ export function ExternalAccessSetup({
     networkSettingsQuery,
     oidcConfig,
     preflightQuery,
+    preloadExternalAccessNetworkDialog,
+    preloadOidcSettingsDialog,
+    preloadTrustedProxySettingsDialog,
     readinessOpen,
     readinessReady,
     remoteAuthMode,
@@ -74,6 +77,8 @@ export function ExternalAccessSetup({
         <div className="grid gap-3 md:grid-cols-2">
           <button
             type="button"
+            onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
+            onFocus={() => void preloadExternalAccessNetworkDialog()}
             onClick={() => setNetworkEditorOpen(true)}
             disabled={!isOwner || networkSettingsQuery.isLoading}
             className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
@@ -101,6 +106,16 @@ export function ExternalAccessSetup({
 
           <button
             type="button"
+            onMouseEnter={() =>
+              void (remoteAuthMode === 'trusted_proxy'
+                ? preloadTrustedProxySettingsDialog()
+                : preloadOidcSettingsDialog())
+            }
+            onFocus={() =>
+              void (remoteAuthMode === 'trusted_proxy'
+                ? preloadTrustedProxySettingsDialog()
+                : preloadOidcSettingsDialog())
+            }
             onClick={() =>
               remoteAuthMode === 'trusted_proxy'
                 ? setTrustedProxyDialogOpen(true)

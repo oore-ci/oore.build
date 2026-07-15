@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { RetentionSummaryCard } from './retention-summary-card'
+import { RetentionSummaryCard } from './-retention-summary-card'
 
 export const Route = createLazyFileRoute('/settings/retention')({
   component: RetentionPage,

@@ -11,6 +11,7 @@ import type {
   InstancePreferences,
   TrustedProxySettingsPublic,
 } from '@/lib/types'
+import { requireDemoInstancePermission } from '../authorization'
 
 const DEMO_OIDC_ISSUER = 'https://accounts.google.com'
 
@@ -130,6 +131,11 @@ export const settingsHandlers = [
 
   http.put('/v1/settings/artifact-storage', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
 
     const accessKeyId = (body.access_key_id as string | undefined)?.trim()
@@ -164,6 +170,11 @@ export const settingsHandlers = [
 
   http.put('/v1/settings/preferences', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
 
     instancePreferences = {
@@ -193,6 +204,11 @@ export const settingsHandlers = [
 
   http.put('/v1/settings/external-access/network', async ({ request }) => {
     await delay(250)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as {
       public_url?: string
       artifact_delivery_url?: string
@@ -218,6 +234,11 @@ export const settingsHandlers = [
     '/v1/settings/external-access/trusted-proxy',
     async ({ request }) => {
       await delay(250)
+      const forbidden = requireDemoInstancePermission(
+        request,
+        'instance_settings:write',
+      )
+      if (forbidden) return forbidden
       const body = (await request.json()) as {
         user_email_header?: string
         trusted_proxy_cidrs: Array<string>
@@ -274,6 +295,11 @@ export const settingsHandlers = [
 
   http.put('/v1/settings/external-access/oidc', async ({ request }) => {
     await delay(250)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as {
       issuer_url?: string
       client_id?: string
@@ -296,6 +322,11 @@ export const settingsHandlers = [
     '/v1/settings/external-access/oidc/test-connection',
     async ({ request }) => {
       await delay(500)
+      const forbidden = requireDemoInstancePermission(
+        request,
+        'instance_settings:write',
+      )
+      if (forbidden) return forbidden
       const body = (await request.json()) as { issuer_url?: string }
       const issuer = (body.issuer_url ?? DEMO_OIDC_ISSUER).replace(/\/$/, '')
       return HttpResponse.json({

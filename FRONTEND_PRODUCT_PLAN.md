@@ -140,3 +140,68 @@ This follow-up supersedes Milestone 2's placement of artifacts as a secondary se
 - [x] Verify successful and failed step states in the local signed-in demo, including step filtering, full-log defaults, timeline switching, and false-positive severity cases.
 
 **Gate:** the first viewport answers whether the build succeeded, what it produced, and where execution details live; successful Git and tool progress is visually calm; focused tests, production build, React Doctor, docs gate, and `make validate` pass.
+
+## Milestone 11 — Stable UI consistency, responsive density, and role experiences
+
+This milestone is a release-readiness audit and correction pass across the whole signed-in product. Repeated tasks must look and behave consistently enough for users to build muscle memory. A component may vary for role, device, or content only when that variation is deliberate and documented—not because separate screens evolved independently.
+
+### P0 — release blockers and first impressions
+
+- [ ] Audit every signed-in route in owner, developer, and QA contexts at 320, 390, 768, 1024, 1440, and 1920 px widths, in light and dark themes, with loading, empty, error, small-data, and large-data states where applicable.
+- [ ] Verify the critical mobile flows on physical iPhone Safari, not only Chromium emulation.
+- [x] Fix the Safari bottom safe-area/background failure by defining one token-based root surface for `html`, `body`, and the app mount; use `viewport-fit=cover`, safe-area padding, dynamic viewport units, and theme-aware browser chrome metadata.
+- [x] Make the QA experience a first-class tester workspace rather than an empty or diminished operator dashboard: prioritize assigned apps/projects, latest installable build, active build state, and a compact recent history with useful empty and loading states.
+- [x] Remove the obsolete “Explore as QA”/QA-preview feature end to end now that the demo environment can simulate roles. Remove its UI action, preview-session client state, child-instance behavior, backend endpoint, OpenAPI surface, and tests while preserving real QA accounts, permissions, and project-viewer enforcement.
+- [x] Redesign Project access. Replace the current dense inline form-plus-table card with one clear member-management flow: a searchable user picker, contextual project-role choice, one obvious confirmation action, compact existing-member rows, and an overflow menu for secondary or destructive actions. Explain the QA viewer ceiling only when relevant. Use a shadcn dialog on wide screens and an appropriate compact mobile presentation; do not expose the desktop table on a narrow phone.
+- [x] Fix the 768 px shell so navigation does not consume a desktop-width sidebar beside tablet-width content.
+- [ ] Remove divider and card nesting that does not communicate a real grouping, hierarchy, or interaction boundary.
+
+### Shared collection and table contract
+
+- [ ] Inventory every collection screen—projects, builds, users, runners, sources, notifications, audit events, access lists, tokens, artifacts, and any embedded tables—and record its search, filter, sort, pagination, row-action, bulk-action, loading, empty, and error behavior before changing components.
+- [x] Adopt one desktop table toolbar pattern: search at the leading edge, related filters immediately after it, bulk actions in a stable conditional slot, and table-specific secondary actions at the trailing edge. Keep the page's primary create/add action in the page header rather than moving it between table toolbars.
+- [x] Add column sorting wherever the column is meaningful and the data source can return truthful results. Show the active direction, expose accessible labels, define a sensible default sort, and use server-side sorting for paginated data rather than sorting only the visible page.
+- [ ] Keep row actions in a rightmost actions column with the same overflow-menu treatment. Show a standalone row action only when it is the clear, frequent primary task for that row.
+- [x] Use one table footer pattern: result/count context at the leading edge and pagination at the trailing edge. Keep page size, previous/next behavior, disabled states, and labels consistent.
+- [x] Make search, filters, sorting, page, and page size URL-backed where restoration, sharing, or browser Back behavior is valuable.
+- [x] At 640–1023 px, prioritize columns, hide secondary detail behind row expansion or the action menu, and wrap the toolbar in a fixed order. Do not make horizontal scrolling the default tablet solution.
+- [x] Below 640 px, replace dense tables with compact list rows where comparison across columns is not essential. Put full-width search first, then consistently placed Filter and Sort controls; show identity, status, and the primary value before secondary metadata; keep actions predictable and touch-safe.
+- [x] Reserve horizontal table scrolling on mobile for genuinely comparative datasets, keep the identity column visible where practical, and make the scroll affordance obvious.
+- [ ] Standardize row density, cell padding, header treatment, selected/hover/focus states, long-text truncation, status placement, timestamps, and destructive-action confirmation.
+- [x] Match skeletons to the final rows, keep empty and error feedback inside the collection region, and avoid a page-level spinner for ordinary table refreshes.
+- [x] Build shared toolbar, pagination, and responsive-row primitives only after at least two migrated screens prove the exact repeated shape; continue using shadcn Table and TanStack Table rather than creating a parallel table system.
+
+### Page layout and interaction grammar
+
+- [ ] Standardize page title, description, breadcrumb, and primary-action placement through the existing page-header/layout primitives. On mobile, place the primary action in one predictable location and avoid oversized full-viewport headers.
+- [ ] Define compact, standard, and immersive page-width/padding modes and assign every route to one of them. Remove one-off container widths and breakpoint padding unless the content requires them.
+- [x] Standardize button hierarchy, size, icon placement, disabled/loading state, and touch target. One action must not change visual rank or wording between equivalent screens.
+- [ ] Standardize search-field width and placement, filter-control order, overflow menus, destructive confirmations, form submit/cancel placement, and sticky actions for genuinely long forms.
+- [ ] Standardize tabs, cards, dialogs/sheets, alerts, skeletons, empty states, and persistent errors, including spacing and when a border or divider is warranted.
+- [ ] Review UX copy across repeated controls so identical actions use identical verbs and role-specific restrictions are explained at the point of action.
+- [ ] Verify keyboard order, visible focus, screen-reader names, contrast, reduced motion, zoom at 200%, and minimum practical touch targets as part of each migrated pattern.
+
+### Dashboard and mobile information density
+
+- [x] Limit the home dashboard's Recent builds section to the six most recent completed builds and provide a clear “View all builds” route. Keep active/running builds separate so “recent” never becomes an unbounded build archive.
+- [x] Reduce mobile card height, padding, decorative headers, and repeated metadata. Prefer compact rows or grouped summaries when a large card does not provide a distinct action or decision.
+- [x] Keep the first mobile viewport focused on the user's next useful action and current system/build state instead of repeated chrome, oversized cards, or low-value history.
+- [x] Review dashboard content by role so owners, developers, and QA users see the work and status relevant to them rather than the same widgets with most data missing.
+
+### Performance and behavioral quality
+
+- [x] Finish abort-signal propagation for remaining query-backed reads so navigation cannot leave obsolete work running.
+- [ ] Bound historical log memory and network use without breaking search or full-log download.
+- [x] Audit unnecessary duplicate queries, avoidable refetches, large rerender surfaces, long lists without windowing/pagination, layout shifts, and route chunks that load before their feature is opened.
+- [ ] Measure representative dashboard, collection, project-access, and build-detail flows with small and large datasets; record interaction latency, query count, transferred bytes, and layout shifts before and after changes.
+- [x] Keep loading transitions shaped like the destination UI and preserve prior table data during ordinary filter, sort, and page transitions where that prevents flicker without showing stale status as current.
+
+### Audit evidence and rollout
+
+- [ ] Maintain a route-by-role-by-viewport audit matrix with screenshot evidence and a severity-ranked issue ledger. Treat broken access, unreadable/hidden controls, Safari surface failures, and role dead ends as blockers; treat inconsistency, density, and polish as ranked follow-ups rather than losing them.
+- [x] Establish the shared contracts on one representative collection screen and Project access, validate them with real data, then migrate the remaining screens in coherent batches.
+- [x] Add visual and interaction regression coverage for the shared patterns at desktop, tablet, and mobile widths, including sort, filter, pagination, overflow actions, empty/error/loading states, and safe areas.
+- [x] Run focused tests after each batch, then React Doctor, accessibility, visual, performance, docs, production builds, and `make validate` before release sign-off.
+- [ ] Complete a final manual release sweep on Chrome, Firefox, and Safari desktop plus physical iPhone Safari and a representative Android browser.
+
+**Gate:** equivalent screens teach one stable interaction model; tables and collection controls behave predictably at every target width; the dashboard is concise; Project access is understandable without instruction; QA users have a useful first-class workspace; obsolete QA preview code is gone; Safari paints the correct app surface through the bottom safe area; no release-blocking accessibility, responsive, or measured performance regression remains.

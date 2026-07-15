@@ -1,7 +1,7 @@
-import type { RetentionCleanupSummary } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import type { RetentionCleanupSummary } from '@/lib/types'
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -48,9 +48,7 @@ export function RetentionSummaryCard({
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">
-                Artifacts deleted
-              </p>
+              <p className="text-muted-foreground text-sm">Artifacts deleted</p>
               <p className="text-lg font-semibold">
                 {lastCleanup.artifacts_deleted}
               </p>

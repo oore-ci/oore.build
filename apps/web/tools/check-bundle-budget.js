@@ -140,6 +140,57 @@ const profiles = [
     ],
     budgetKiB: Number(process.env.OORE_WEB_QA_ROUTE_BUDGET_KIB ?? 245),
   },
+  {
+    name: 'QA diagnostic logs',
+    entries: [
+      'src/routes/builds/$buildId.tsx?tsr-split=component',
+      'src/components/build-details/artifact-install-page.tsx',
+      'src/components/build-details/qa-build-logs.tsx',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_QA_LOGS_BUDGET_KIB ?? 200),
+  },
+  {
+    name: 'Preferences cold route',
+    entries: ['src/routes/settings/preferences.lazy.tsx'],
+    budgetKiB: Number(process.env.OORE_WEB_PREFERENCES_ROUTE_BUDGET_KIB ?? 285),
+  },
+  {
+    name: 'Users cold route',
+    entries: ['src/routes/settings/users.tsx?tsr-split=component'],
+    budgetKiB: Number(process.env.OORE_WEB_USERS_ROUTE_BUDGET_KIB ?? 245),
+  },
+  {
+    name: 'User invite dialog',
+    entries: [
+      'src/routes/settings/users.tsx?tsr-split=component',
+      'src/routes/settings/-invite-user-dialog.tsx',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_USER_INVITE_BUDGET_KIB ?? 285),
+  },
+  {
+    name: 'Pipeline create route',
+    entries: [
+      'src/routes/projects/$projectId/pipelines/new.tsx?tsr-split=component',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_PIPELINE_CREATE_BUDGET_KIB ?? 265),
+  },
+  {
+    name: 'Pipeline edit route',
+    entries: [
+      'src/routes/projects/$projectId/pipelines/$pipelineId_.edit.tsx?tsr-split=component',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_PIPELINE_EDIT_BUDGET_KIB ?? 265),
+  },
+  {
+    name: 'Notification edit route',
+    entries: ['src/routes/settings/notifications/$channelId.lazy.tsx'],
+    budgetKiB: Number(process.env.OORE_WEB_NOTIFICATION_EDIT_BUDGET_KIB ?? 255),
+  },
+  {
+    name: 'API tokens route',
+    entries: ['src/routes/settings/api-tokens.lazy.tsx'],
+    budgetKiB: Number(process.env.OORE_WEB_API_TOKENS_BUDGET_KIB ?? 255),
+  },
 ]
 
 console.log(

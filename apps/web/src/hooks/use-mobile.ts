@@ -2,7 +2,7 @@ import * as React from 'react'
 
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
-const MOBILE_BREAKPOINT = 768
+const MOBILE_BREAKPOINT = 1024
 
 export function useIsBelowBreakpoint(breakpoint: number) {
   const [matches, setMatches] = React.useState(

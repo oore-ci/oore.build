@@ -38,7 +38,9 @@ export default function SidebarMobile({
           <SheetTitle>Sidebar</SheetTitle>
           <SheetDescription>Displays the mobile sidebar.</SheetDescription>
         </SheetHeader>
-        <div className="flex h-full w-full flex-col">{children}</div>
+        <div className="flex h-full w-full flex-col pt-[var(--safe-area-top)] pr-[var(--safe-area-right)] pb-[var(--safe-area-bottom)] pl-[var(--safe-area-left)]">
+          {children}
+        </div>
       </SheetContent>
     </Sheet>
   )

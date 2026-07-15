@@ -1,10 +1,10 @@
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import type {
   Pipeline,
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@/lib/types'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   PipelineDetailSection as Section,
   PipelineDetailValue as KV,
@@ -55,7 +55,11 @@ export function PipelineConfigurationCard({
                 {pipeline.trigger_config.events.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {pipeline.trigger_config.events.map((event) => (
-                      <Badge key={event} variant="outline" className="text-[11px]">
+                      <Badge
+                        key={event}
+                        variant="outline"
+                        className="text-[11px]"
+                      >
                         {event}
                       </Badge>
                     ))}
@@ -113,15 +117,18 @@ export function PipelineConfigurationCard({
                 : 'none'}
             </span>
           </KV>
-          {(pipeline.execution_config.platform_build_args?.android.length ?? 0) >
-          0 ? (
+          {(pipeline.execution_config.platform_build_args?.android.length ??
+            0) > 0 ? (
             <KV label="Android args">
               <span className="font-mono">
-                {pipeline.execution_config.platform_build_args?.android.join(' ')}
+                {pipeline.execution_config.platform_build_args?.android.join(
+                  ' ',
+                )}
               </span>
             </KV>
           ) : null}
-          {(pipeline.execution_config.platform_build_args?.ios.length ?? 0) > 0 ? (
+          {(pipeline.execution_config.platform_build_args?.ios.length ?? 0) >
+          0 ? (
             <KV label="iOS args">
               <span className="font-mono">
                 {pipeline.execution_config.platform_build_args?.ios.join(' ')}
@@ -187,7 +194,9 @@ export function PipelineConfigurationCard({
                 </KV>
               </>
             ) : (
-              <p className="py-1 text-xs text-muted-foreground">Not configured</p>
+              <p className="py-1 text-xs text-muted-foreground">
+                Not configured
+              </p>
             )}
           </Section>
         ) : null}
@@ -228,14 +237,16 @@ export function PipelineConfigurationCard({
                         </div>
                       </KV>
                     ) : null}
-                    {iosSigning.mode === 'manual' || iosSigning.mode === 'hybrid' ? (
+                    {iosSigning.mode === 'manual' ||
+                    iosSigning.mode === 'hybrid' ? (
                       <KV label="Certificate">
                         {iosSigning.has_p12
                           ? (iosSigning.p12_filename ?? 'configured')
                           : 'not uploaded'}
                       </KV>
                     ) : null}
-                    {iosSigning.mode === 'api' || iosSigning.mode === 'hybrid' ? (
+                    {iosSigning.mode === 'api' ||
+                    iosSigning.mode === 'hybrid' ? (
                       <KV label="API key">
                         {iosSigning.has_api_key
                           ? `Key ${iosSigning.api_key_id ?? 'configured'}`
@@ -246,14 +257,18 @@ export function PipelineConfigurationCard({
                       <KV label="Profiles">
                         {iosSigning.provisioning_profiles.length} provisioning
                         profile
-                        {iosSigning.provisioning_profiles.length === 1 ? '' : 's'}
+                        {iosSigning.provisioning_profiles.length === 1
+                          ? ''
+                          : 's'}
                       </KV>
                     ) : null}
                   </>
                 ) : null}
               </>
             ) : (
-              <p className="py-1 text-xs text-muted-foreground">Not configured</p>
+              <p className="py-1 text-xs text-muted-foreground">
+                Not configured
+              </p>
             )}
           </Section>
         ) : null}

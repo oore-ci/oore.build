@@ -24,6 +24,40 @@ pub struct ListAuditLogsQuery {
     pub resource_type: Option<String>,
     pub from_ts: Option<i64>,
     pub to_ts: Option<i64>,
+    pub sort: Option<String>,
+    pub direction: Option<String>,
+}
+
+fn audit_log_order_clause(
+    sort: Option<&str>,
+    direction: Option<&str>,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let column = match sort.unwrap_or("created_at") {
+        "created_at" => "a.created_at",
+        "actor_email" => "u.email COLLATE NOCASE",
+        "action" => "a.action COLLATE NOCASE",
+        "resource_type" => "a.resource_type COLLATE NOCASE",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "sort must be created_at, actor_email, action, or resource_type",
+            ));
+        }
+    };
+    let direction = match direction.unwrap_or("desc") {
+        "asc" => "ASC",
+        "desc" => "DESC",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "direction must be asc or desc",
+            ));
+        }
+    };
+
+    Ok(format!("{column} {direction}, a.id {direction}"))
 }
 
 /// `GET /v1/audit-logs` — paginated, filterable audit log.
@@ -39,6 +73,7 @@ pub async fn list_audit_logs(
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+    let order_by = audit_log_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
     // Build dynamic query with filters
     let mut conditions = Vec::new();
@@ -75,7 +110,7 @@ pub async fn list_audit_logs(
     let list_query = format!(
         "SELECT a.*, u.email AS actor_email FROM audit_logs a \
          LEFT JOIN users u ON a.actor_id = u.id \
-         {where_clause} ORDER BY a.created_at DESC LIMIT ?{} OFFSET ?{}",
+         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
         bind_values.len() + 1,
         bind_values.len() + 2
     );

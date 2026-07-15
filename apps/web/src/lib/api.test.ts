@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from '@/lib/api'
 import {
   ApiClientError,
   completeSetup,
@@ -17,12 +18,16 @@ import {
   getPipeline,
   getRepositoryAvatar,
   getSetupStatus,
+  listAllIntegrations,
   listBuildArtifacts,
   listBuilds,
+  listAuditLogs,
+  listProjectArtifacts,
+  listProjectMemberCandidates,
   listProjectMembers,
+  listProjects,
   listPipelines,
   listRunners,
-  previewQaUser,
   removeProjectMember,
   testOidcConnection,
   updateArtifactStorageSettings,
@@ -196,18 +201,144 @@ describe('query cancellation', () => {
       },
     )
   })
+
+  it('encodes collection sorting and forwards cancellation to GET requests', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, {}))
+
+    await listProjects(
+      'https://ci.example.com',
+      'token',
+      { search: 'shop', sort: 'name', direction: 'asc', limit: 20, offset: 20 },
+      { signal: controller.signal },
+    )
+    await listBuilds(
+      'https://ci.example.com',
+      'token',
+      { sort: 'project_name', direction: 'desc' },
+      { signal: controller.signal },
+    )
+    await listAuditLogs(
+      'https://ci.example.com',
+      'token',
+      { sort: 'action', direction: 'asc' },
+      { signal: controller.signal },
+    )
+
+    const request = {
+      headers: { Authorization: 'Bearer token' },
+      signal: controller.signal,
+    }
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/projects?search=shop&sort=name&direction=asc&limit=20&offset=20',
+      request,
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/builds?sort=project_name&direction=desc',
+      request,
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      3,
+      'https://ci.example.com/v1/audit-logs?sort=action&direction=asc',
+      request,
+    )
+  })
+
+  it('requests bounded project artifact history with cancellation', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValue(mockJsonResponse(200, { artifacts: [] }))
+
+    await listProjectArtifacts(
+      'https://ci.example.com',
+      'token',
+      'project-1',
+      { limit: 50 },
+      { signal: controller.signal },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/project-1/artifacts?limit=50',
+      {
+        headers: { Authorization: 'Bearer token' },
+        signal: controller.signal,
+      },
+    )
+  })
+
+  it('loads every integration page for client-side collection controls', async () => {
+    const controller = new AbortController()
+    const firstPage = Array.from({ length: 200 }, (_, index) => ({
+      id: `integration-${index}`,
+    }))
+    mockFetch
+      .mockReturnValueOnce(
+        mockJsonResponse(200, { integrations: firstPage, total: 202 }),
+      )
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          integrations: [{ id: 'integration-200' }, { id: 'integration-201' }],
+          total: 202,
+        }),
+      )
+
+    const result = await listAllIntegrations(
+      'https://ci.example.com',
+      'token',
+      undefined,
+      { signal: controller.signal },
+    )
+
+    expect(result.integrations).toHaveLength(202)
+    expect(result.total).toBe(202)
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/integrations?limit=200',
+      expect.objectContaining({ signal: controller.signal }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/integrations?limit=200&offset=200',
+      expect.objectContaining({ signal: controller.signal }),
+    )
+  })
+})
+
+describe('removed API contracts', () => {
+  it('does not expose a QA preview client', () => {
+    expect(api).not.toHaveProperty('previewQaUser')
+  })
 })
 
 describe('QA project access', () => {
-  it('calls the preview and project membership endpoints with bearer auth', async () => {
+  it('lists project-scoped member candidates with cancellation', async () => {
+    const controller = new AbortController()
+    mockFetch.mockReturnValueOnce(mockJsonResponse(200, { candidates: [] }))
+
+    await listProjectMemberCandidates(
+      'https://ci.example.com',
+      'maintainer-token',
+      'project-1',
+      { signal: controller.signal },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://ci.example.com/v1/projects/project-1/members/candidates',
+      {
+        headers: { Authorization: 'Bearer maintainer-token' },
+        signal: controller.signal,
+      },
+    )
+  })
+
+  it('calls the project membership endpoints with bearer auth', async () => {
     mockFetch
-      .mockReturnValueOnce(mockJsonResponse(200, { session_token: 'preview' }))
       .mockReturnValueOnce(mockJsonResponse(200, { members: [] }))
       .mockReturnValueOnce(mockJsonResponse(200, { member: { id: 'm1' } }))
       .mockReturnValueOnce(mockJsonResponse(200, { member: { id: 'm1' } }))
       .mockReturnValueOnce(mockJsonResponse(200, { ok: true }))
 
-    await previewQaUser('https://ci.example.com', 'owner-token', 'qa-1')
     await listProjectMembers(
       'https://ci.example.com',
       'owner-token',
@@ -236,19 +367,11 @@ describe('QA project access', () => {
     const auth = { Authorization: 'Bearer owner-token' }
     expect(mockFetch).toHaveBeenNthCalledWith(
       1,
-      'https://ci.example.com/v1/users/qa-1/preview',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/json' },
-      }),
-    )
-    expect(mockFetch).toHaveBeenNthCalledWith(
-      2,
       'https://ci.example.com/v1/projects/project-1/members',
       { headers: auth },
     )
     expect(mockFetch).toHaveBeenNthCalledWith(
-      3,
+      2,
       'https://ci.example.com/v1/projects/project-1/members',
       expect.objectContaining({
         method: 'POST',
@@ -256,7 +379,7 @@ describe('QA project access', () => {
       }),
     )
     expect(mockFetch).toHaveBeenNthCalledWith(
-      4,
+      3,
       'https://ci.example.com/v1/projects/project-1/members/qa-1',
       expect.objectContaining({
         method: 'PATCH',
@@ -264,7 +387,7 @@ describe('QA project access', () => {
       }),
     )
     expect(mockFetch).toHaveBeenNthCalledWith(
-      5,
+      4,
       'https://ci.example.com/v1/projects/project-1/members/qa-1',
       expect.objectContaining({
         method: 'DELETE',

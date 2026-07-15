@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Kbd } from '@/components/ui/kbd'
 import { Toaster } from '@/components/ui/sonner'
+import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
@@ -69,6 +70,34 @@ function RouteTransitionBar() {
       <div className="h-full w-1/3 animate-[route-slide_1s_ease-in-out_infinite] bg-primary" />
     </div>
   )
+}
+
+function ThemeColorSync() {
+  useMountEffect(() => {
+    const root = document.documentElement
+    const light = document.querySelector<HTMLMetaElement>(
+      'meta[name="theme-color"][data-theme="light"]',
+    )
+    const dark = document.querySelector<HTMLMetaElement>(
+      'meta[name="theme-color"][data-theme="dark"]',
+    )
+    if (!light || !dark) return
+
+    const sync = () => {
+      const isDark =
+        root.classList.contains('dark') ||
+        (!root.classList.contains('light') &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches)
+      light.media = isDark ? 'not all' : 'all'
+      dark.media = isDark ? 'all' : 'not all'
+    }
+    const observer = new MutationObserver(sync)
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] })
+    sync()
+    return () => observer.disconnect()
+  })
+
+  return null
 }
 
 export const Route = createRootRoute({
@@ -138,20 +167,31 @@ function RootLayout() {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
+        <ThemeColorSync />
+        <a
+          href="#main-content"
+          className="fixed top-2 left-2 z-100 -translate-y-20 bg-background px-3 py-2 text-sm font-medium text-foreground ring-2 ring-ring transition-transform focus:translate-y-0"
+        >
+          Skip to content
+        </a>
         <RouteTransitionBar />
         {showQaChrome ? (
-          <div className="flex min-h-screen flex-col bg-surface">
+          <div className="flex min-h-dvh flex-col bg-surface">
             <QaAppHeader />
             <ConnectivityBanner />
-            <main className="flex flex-1 flex-col">
+            <main
+              id="main-content"
+              tabIndex={-1}
+              className="flex flex-1 flex-col"
+            >
               <Outlet />
             </main>
           </div>
         ) : showAppChrome ? (
           <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
-            <SidebarInset>
-              <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
+            <SidebarInset id="main-content" tabIndex={-1}>
+              <header className="sticky top-0 z-30 flex h-[calc(3rem+var(--safe-area-top))] shrink-0 items-center gap-2 border-b bg-background px-4 pt-[var(--safe-area-top)]">
                 <SidebarTrigger className="-ml-1" />
                 <Separator
                   orientation="vertical"
@@ -161,6 +201,8 @@ function RootLayout() {
                 <div className="ml-auto">
                   <button
                     type="button"
+                    data-slot="button"
+                    data-size="icon-sm"
                     aria-label="Search"
                     onMouseEnter={() => void loadCommandPalette()}
                     onFocus={() => void loadCommandPalette()}
@@ -180,12 +222,16 @@ function RootLayout() {
             </SidebarInset>
           </SidebarProvider>
         ) : (
-          <div className="min-h-screen flex flex-col bg-surface">
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex min-h-dvh flex-col bg-surface pt-[var(--safe-area-top)] pb-[var(--safe-area-bottom)]"
+          >
             <ConnectivityBanner />
             <div className="flex-1 flex flex-col">
               <Outlet />
             </div>
-          </div>
+          </main>
         )}
         <Toaster />
         {showAppChrome && !showQaChrome && commandPaletteOpen ? (
@@ -194,13 +240,13 @@ function RootLayout() {
           </Suspense>
         ) : null}
         {isDemoMode && (
-          <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
+          <div className="fixed right-[calc(var(--safe-area-right)+1rem)] bottom-[calc(var(--safe-area-bottom)+1rem)] z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
             <span className="size-1.5 animate-pulse bg-primary" />
             Demo Mode
-            <span className="text-muted-foreground/50">—</span>
+            <span className="hidden text-muted-foreground/50 sm:inline">—</span>
             <a
               href="https://oore.build"
-              className="text-primary underline underline-offset-2"
+              className="hidden text-primary underline underline-offset-2 sm:inline"
               target="_blank"
               rel="noopener noreferrer"
             >

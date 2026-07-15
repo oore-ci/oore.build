@@ -114,11 +114,7 @@ function AuthCallbackPage() {
     }
 
     // POST to verify-oidc with the setup session token
-    setupOidcVerify(
-      resolveRequiredInstanceApiBaseUrl(instance),
-      code,
-      state,
-    )
+    setupOidcVerify(resolveRequiredInstanceApiBaseUrl(instance), code, state)
       .then(() => {
         cleanupOidcSessionStorage()
         void navigate({ to: '/setup/complete' })
@@ -211,7 +207,7 @@ function AuthCallbackPage() {
         ? 'Setup authentication failed'
         : 'Authentication failed'
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6">
+      <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
         <PageMeta title="Signing In" />
         <div className="w-full max-w-md space-y-4">
           <Alert variant="destructive">
@@ -237,7 +233,7 @@ function AuthCallbackPage() {
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center">
+    <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
       <PageMeta title="Signing In" />
       <div className="flex items-center gap-3">
         <Spinner className="size-5" />

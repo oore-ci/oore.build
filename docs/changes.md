@@ -12,6 +12,23 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-16
+
+- **Stable-release UI and frontend engineering hardening**:
+  - The responsive shell now keeps tablet navigation off-canvas through 1023 px, paints the document and app root with the active theme, supports dynamic viewport units and safe-area insets, and keeps dialogs, setup steps, focus, reduced motion, and phone touch targets usable in short or narrow viewports.
+  - QA now receives an adaptive tester workspace and progressive release detail with secondary, lazy-loaded logs. The obsolete QA preview UI, session state, API contract, backend endpoint, and OpenAPI operation are removed; real QA memberships and historical audit labels remain intact.
+  - Project access and user invitation now use focused dialog forms, contextual project roles, compact mobile rows, and overflow actions. Eligible-user discovery is project-scoped, so developer Maintainers can manage access without receiving permission to browse the global Users directory. Dashboard recency is capped at six completed builds and six projects, while active builds remain separate.
+  - Projects, Builds, Audit Log, Users, API Tokens, Runners, Sources, and Notifications now share responsive collection controls, URL-backed search/sort/pagination where applicable, accessible sortable headers, compact phone rows, stable result counts, skeletons, Retry states, and 20/50/100 page sizes. Projects, Builds, and Audit use allowlisted server sorting with stable ID tie-breakers.
+  - Read queries forward TanStack Query cancellation, setup polling stops once configured, QA artifact history accepts a bounded limit, repository provider discovery reuses project data, optional Preferences and QA-log code loads on intent, and privacy-bounded telemetry counts render errors and unhandled rejections without collecting messages, stacks, URLs, or identifiers.
+  - Ready instances now reject owner OIDC verification before inspecting callback state, so every setup mutation returns the contracted `already_configured` conflict without consuming stale or fabricated callback state.
+  - Playwright now gates signed-in routes at phone, tablet, desktop, and wide Chromium viewports in both themes, plus 320 px and 1920 px layout smoke, role/direct-route policy, WebKit critical surfaces, and Firefox smoke. The gate is wired into the Makefile and frontend CI; physical-device release sign-off remains manual.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+  - Ad-hoc Installation: https://linear.app/oorebuild/document/feature-ad-hoc-app-installation-18011ca32086
+  - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
+  - V1 Roadmap: https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+  - RBAC ADR: https://linear.app/oorebuild/document/adr-0002-rbac-implementation-strategy-8fe72b2d4289
+  - QA preview retirement ADR: https://linear.app/oorebuild/document/adr-0012-remove-qa-impersonation-preview-from-v1-28dc8ae9cc99
+
 ## 2026-07-15
 
 - **Denser QA release history**:

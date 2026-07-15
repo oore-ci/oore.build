@@ -6,7 +6,6 @@ import {
   inviteUser,
   listUsers,
   logout,
-  previewQaUser,
   reEnableUser,
   updateUserRole,
 } from '@/lib/api'
@@ -36,7 +35,7 @@ export function useUsers() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'users'],
-    queryFn: () => listUsers(baseUrl!, token!),
+    queryFn: ({ signal }) => listUsers(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
@@ -83,19 +82,6 @@ export function useUpdateUserRole() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'users'],
       })
-    },
-  })
-}
-
-export function usePreviewQaUser() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-
-  return useMutation({
-    mutationFn: (userId: string) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return previewQaUser(baseUrl, token, userId)
     },
   })
 }

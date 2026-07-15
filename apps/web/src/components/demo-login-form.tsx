@@ -103,7 +103,7 @@ export default function DemoLoginForm() {
               </Alert>
             ) : null}
             <Button type="submit" className="w-full">
-              Explore as{' '}
+              Sign in as{' '}
               {form.watch('email').split('+')[1]?.split('@')[0] ?? 'user'}
             </Button>
           </form>

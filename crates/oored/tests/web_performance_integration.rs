@@ -48,7 +48,9 @@ async fn authenticated_web_performance_is_exported_without_private_labels() {
                         "persona": "qa_install",
                         "observations": [
                             {"metric": "lcp", "value": 2400.0},
-                            {"metric": "cls", "value": 0.05}
+                            {"metric": "cls", "value": 0.05},
+                            {"metric": "render_error", "value": 1},
+                            {"metric": "unhandled_rejection", "value": 1}
                         ]
                     }))
                     .unwrap(),
@@ -75,6 +77,8 @@ async fn authenticated_web_performance_is_exported_without_private_labels() {
         .to_bytes();
     let metrics = String::from_utf8(metrics.to_vec()).expect("utf8 metrics");
     assert!(metrics.contains("oore_web_lcp_seconds_bucket"));
+    assert!(metrics.contains("oore_web_render_errors_total"));
+    assert!(metrics.contains("oore_web_unhandled_rejections_total"));
     assert!(metrics.contains("channel=\"beta\""));
     assert!(metrics.contains("persona=\"qa_install\""));
     assert!(!metrics.contains("owner@local"));

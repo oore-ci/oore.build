@@ -30,6 +30,7 @@ import { PageMeta } from '@/lib/seo'
 import { loadTrustedProxySetupPrefill } from '@/lib/setup-prefill'
 import { useSetupStore } from '@/stores/setup-store'
 import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
+import { SetupStepError } from '@/components/setup-route-components'
 
 const trustedProxyPresetSchema = z.enum(['generic', 'warpgate', 'custom'])
 type TrustedProxyPreset = z.infer<typeof trustedProxyPresetSchema>
@@ -51,19 +52,8 @@ type TrustedProxyForm = z.infer<typeof trustedProxySchema>
 
 export const Route = createLazyFileRoute('/setup/trusted-proxy')({
   component: SetupTrustedProxyStep,
-  errorComponent: SetupTrustedProxyError,
+  errorComponent: SetupStepError,
 })
-
-function SetupTrustedProxyError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
 
 function parseCidrs(raw: string | undefined): Array<string> {
   if (!raw) return []
@@ -208,7 +198,7 @@ function SetupTrustedProxyStep() {
                     }}
                     disabled={configureMutation.isPending}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue placeholder="Choose proxy" />
                     </SelectTrigger>
                     <SelectContent>

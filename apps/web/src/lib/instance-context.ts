@@ -1,5 +1,5 @@
 import { redirect } from '@tanstack/react-router'
-import type { Instance } from '@/lib/types'
+import type { Instance, UserRole } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
@@ -140,6 +140,22 @@ export function requireAuthOrRedirect(instanceId: string): string {
   const current = useAuthStore.getState().instanceId
   if (current !== instanceId) {
     useAuthStore.getState().setInstanceContext(instanceId)
+  }
+  return token
+}
+
+/**
+ * Require authentication plus one of the supplied instance roles.
+ * This is a UI/direct-route guard; the API remains the authorization boundary.
+ */
+export function requireInstanceRoleOrRedirect(
+  instanceId: string,
+  allowedRoles: ReadonlyArray<UserRole>,
+): string {
+  const token = requireAuthOrRedirect(instanceId)
+  const role = useAuthStore.getState().user?.role
+  if (!role || !allowedRoles.includes(role)) {
+    throw redirect({ to: '/' })
   }
   return token
 }

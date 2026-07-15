@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import type { ConnectivityIssue } from '@/lib/connectivity'
@@ -87,7 +86,6 @@ function useLoginPageState() {
   const instances = useInstanceStore((s) => s.instances)
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
-  const removeInstance = useInstanceStore((s) => s.removeInstance)
   const navigate = useNavigate()
   const setAuth = useAuthStore((s) => s.setAuth)
   const token = useAuthStore((s) => s.token)
@@ -123,22 +121,12 @@ function useLoginPageState() {
     ? resolveLoginFlow(setupStatusQuery.data, loopbackLocalPath)
     : null
   const localLoginAvailable = loginFlow === 'local' && loopbackLocalPath
-  const trustedProxyLoginAvailable =
-    loginFlow === 'trusted_proxy' && !instance?.qaPreviewSourceId
+  const trustedProxyLoginAvailable = loginFlow === 'trusted_proxy'
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
 
   useMountEffect(() => {
     if (hasValidToken) {
       void navigate({ to: '/' })
-    }
-  })
-
-  useMountEffect(() => {
-    if (!hasValidToken && instance?.qaPreviewSourceId) {
-      removeInstance(instance.id)
-      toast.dismiss()
-      toast.info('QA preview ended. You are back in your owner session.')
-      void navigate({ to: '/settings/users', replace: true })
     }
   })
 
@@ -156,11 +144,6 @@ function useLoginPageState() {
 
   const handleLogin = useCallback(async () => {
     if (!instance) return
-    if (instance.qaPreviewSourceId) {
-      removeInstance(instance.id)
-      void navigate({ to: '/settings/users', replace: true })
-      return
-    }
     const baseUrl = resolveInstanceApiBaseUrl(instance)
     if (!baseUrl) return
     setLoading(true)
@@ -322,7 +305,7 @@ function useLoginPageState() {
       }
       setLoading(false)
     }
-  }, [instance, localEmail, navigate, removeInstance, setAuth])
+  }, [instance, localEmail, navigate, setAuth])
 
   useTrustedProxyAutoLogin({
     enabled:
@@ -385,7 +368,7 @@ function LoginPage() {
 
   if (isDemoMode) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6">
+      <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
         <PageMeta title="Demo login" />
         <div className="w-full max-w-sm space-y-8">
           <div className="space-y-4 text-center">
@@ -408,7 +391,7 @@ function LoginPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-6">
+    <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
       <PageMeta title="Login" />
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center space-y-4">

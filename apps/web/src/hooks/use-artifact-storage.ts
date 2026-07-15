@@ -46,7 +46,8 @@ export function useArtifactStorageSettings() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifact-storage-settings'],
-    queryFn: () => getArtifactStorageSettings(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      getArtifactStorageSettings(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
@@ -72,15 +73,16 @@ export function useUpdateArtifactStorageSettings() {
   })
 }
 
-export function useInstancePreferences() {
+export function useInstancePreferences(options?: { enabled?: boolean }) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'instance-preferences'],
-    queryFn: () => getInstancePreferences(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    queryFn: ({ signal }) =>
+      getInstancePreferences(baseUrl!, token!, { signal }),
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
   })
 }
 
@@ -115,7 +117,8 @@ export function useExternalAccessOidc() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-oidc'],
-    queryFn: () => getExternalAccessOidc(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      getExternalAccessOidc(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
@@ -165,20 +168,24 @@ export function useExternalAccessPreflight() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
-    queryFn: () => getExternalAccessPreflight(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      getExternalAccessPreflight(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
 
-export function useExternalAccessNetworkSettings() {
+export function useExternalAccessNetworkSettings(options?: {
+  enabled?: boolean
+}) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
-    queryFn: () => getExternalAccessNetworkSettings(baseUrl!, token!),
-    enabled: !!baseUrl && !!token,
+    queryFn: ({ signal }) =>
+      getExternalAccessNetworkSettings(baseUrl!, token!, { signal }),
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
   })
 }
 
@@ -216,7 +223,8 @@ export function useExternalAccessTrustedProxySettings() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-trusted-proxy'],
-    queryFn: () => getExternalAccessTrustedProxySettings(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      getExternalAccessTrustedProxySettings(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }

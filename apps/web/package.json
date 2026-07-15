@@ -9,8 +9,9 @@
     "bundle:check": "node tools/check-bundle-budget.js",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:ui": "playwright test",
     "lint": "oxlint . && bun run lint:effects",
-    "lint:effects": "! grep -RInE '\\b(React\\.)?useEffect\\b' src --include='*.ts' --include='*.tsx' --exclude='use-mount-effect.ts' --exclude='use-breadcrumb-label.ts' --exclude='use-auto-scroll.ts' --exclude='use-build-notification.ts' --exclude='use-session-countdown.ts' --exclude='use-log-stream.ts' --exclude='use-index-auth-guard.ts' --exclude='use-trusted-proxy-auto-login.ts' --exclude='use-setup-route-transitions.ts' --exclude='use-window-event.ts' --exclude='use-repository-avatar-url.ts'",
+    "lint:effects": "! grep -RInE '\\b(React\\.)?useEffect\\b' src --include='*.ts' --include='*.tsx' --exclude='use-mount-effect.ts' --exclude='use-breadcrumb-label.ts' --exclude='use-auto-scroll.ts' --exclude='use-build-notification.ts' --exclude='use-session-countdown.ts' --exclude='use-log-stream.ts' --exclude='use-index-auth-guard.ts' --exclude='use-trusted-proxy-auto-login.ts' --exclude='use-setup-route-transitions.ts' --exclude='use-window-event.ts' --exclude='use-repository-avatar-url.ts' --exclude='use-debounced-callback.ts' --exclude='use-page-clamp.ts'",
     "format": "prettier",
     "check": "prettier --write . && oxlint --fix . && bun run lint:effects"
   },
@@ -38,8 +39,9 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@tanstack/devtools-vite": "^0.8.1",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.3.2",
+    "@tanstack/devtools-vite": "^0.8.1",
     "@tanstack/react-devtools": "^0.10.8",
     "@tanstack/react-router-devtools": "^1.167.0",
     "@tanstack/router-plugin": "^1.168.19",

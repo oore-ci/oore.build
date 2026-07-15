@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import type {
   AddProjectMemberRequest,
   CreateProjectRequest,
@@ -10,6 +16,7 @@ import {
   createProject,
   deleteProject,
   getProject,
+  listProjectMemberCandidates,
   listProjectMembers,
   listProjects,
   removeProjectMember,
@@ -28,6 +35,42 @@ function useAuthToken(): string | null {
   return token
 }
 
+export function useProjectPages(
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'updated_at' | 'name'
+    direction?: 'asc' | 'desc'
+    limit?: number
+  },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
+  const limit = params?.limit ?? 20
+
+  return useInfiniteQuery({
+    queryKey: [instance?.id ?? '__none__', 'project-pages', params ?? {}],
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      listProjects(
+        baseUrl!,
+        token!,
+        { ...params, limit, offset: pageParam },
+        { signal },
+      ),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce(
+        (count, page) => count + page.projects.length,
+        0,
+      )
+      return loaded < lastPage.total ? loaded : undefined
+    },
+    enabled: enabled && !!baseUrl && !!token,
+  })
+}
+
 function useBaseUrl(): string | null {
   const instance = useActiveInstance()
   return resolveInstanceApiBaseUrl(instance)
@@ -36,6 +79,8 @@ function useBaseUrl(): string | null {
 export function useProjects(
   params?: {
     search?: string
+    sort?: 'created_at' | 'updated_at' | 'name'
+    direction?: 'asc' | 'desc'
     limit?: number
     offset?: number
   },
@@ -48,8 +93,9 @@ export function useProjects(
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'projects', params ?? {}],
-    queryFn: () => listProjects(baseUrl!, token!, params),
+    queryFn: ({ signal }) => listProjects(baseUrl!, token!, params, { signal }),
     enabled: enabled && !!baseUrl && !!token,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -60,7 +106,8 @@ export function useProject(projectId: string) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'project', projectId],
-    queryFn: () => getProject(baseUrl!, token!, projectId),
+    queryFn: ({ signal }) =>
+      getProject(baseUrl!, token!, projectId, { signal }),
     enabled: !!baseUrl && !!token && !!projectId,
   })
 }
@@ -141,8 +188,26 @@ export function useProjectMembers(projectId: string, enabled = true) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
-    queryFn: () => listProjectMembers(baseUrl!, token!, projectId),
+    queryFn: ({ signal }) =>
+      listProjectMembers(baseUrl!, token!, projectId, { signal }),
     enabled: enabled && !!baseUrl && !!token && !!projectId,
+  })
+}
+
+export function useProjectMemberCandidates(projectId: string) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'project-member-candidates',
+      projectId,
+    ],
+    queryFn: ({ signal }) =>
+      listProjectMemberCandidates(baseUrl!, token!, projectId, { signal }),
+    enabled: !!baseUrl && !!token && !!projectId,
   })
 }
 
@@ -161,6 +226,13 @@ export function useAddProjectMember(projectId: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'project-member-candidates',
+          projectId,
+        ],
       })
     },
   })
@@ -207,6 +279,13 @@ export function useRemoveProjectMember(projectId: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'project-members', projectId],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'project-member-candidates',
+          projectId,
+        ],
       })
     },
   })

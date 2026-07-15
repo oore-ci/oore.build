@@ -38,6 +38,7 @@ describe('build detail deferrals', () => {
           ]}
           isLoading={false}
           buildStatus="succeeded"
+          canManageShareLinks
         />
       </QueryClientProvider>,
     )
