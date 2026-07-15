@@ -124,6 +124,7 @@ use utoipa::OpenApi;
         paths::register_pipeline_ios_device,
         // ── Builds ──
         paths::create_build,
+        paths::preview_build_changelog,
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
@@ -155,6 +156,7 @@ use utoipa::OpenApi;
         paths::complete_artifact,
         paths::abort_artifact,
         paths::list_artifacts,
+        paths::list_project_artifacts,
         paths::generate_download_link,
         paths::create_artifact_install_link,
         paths::get_ios_install_manifest,
@@ -308,6 +310,7 @@ use utoipa::OpenApi;
         oore_contract::BuildEvent,
         oore_contract::CreateBuildRequest,
         oore_contract::CreateBuildResponse,
+        oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
@@ -1576,6 +1579,23 @@ mod paths {
     )]
     pub(super) async fn create_build() {}
 
+    /// Preview a Markdown changelog for a manual build.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/builds/changelog-preview", tag = "Builds",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("pipeline_id" = String, Query, description = "Pipeline ID"),
+            ("branch" = Option<String>, Query, description = "Target branch"),
+            ("commit_sha" = Option<String>, Query, description = "Target commit"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Generated changelog draft", body = BuildChangelogPreviewResponse),
+            (status = 400, description = "Invalid revision", body = ApiError),
+            (status = 404, description = "Project or pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn preview_build_changelog() {}
+
     /// List builds
     ///
     /// Returns builds, optionally filtered by project, pipeline, or status.
@@ -1886,6 +1906,16 @@ mod paths {
         )
     )]
     pub(super) async fn list_artifacts() {}
+
+    /// List available artifacts across a project
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Project artifact list", body = ListArtifactsResponse),
+        )
+    )]
+    pub(super) async fn list_project_artifacts() {}
 
     /// Generate download link
     ///

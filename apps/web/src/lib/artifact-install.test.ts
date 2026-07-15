@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   artifactInstallReadiness,
   detectInstallDevice,
+  selectInstallArtifact,
 } from './artifact-install'
 import type { Artifact } from '@/lib/types'
 
@@ -78,5 +79,19 @@ describe('install device detection', () => {
     expect(detectInstallDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)')).toBe(
       'other',
     )
+  })
+})
+
+describe('combined install artifact selection', () => {
+  const apk = { ...ipa({}), id: 'apk', artifact_type: 'apk' as const }
+  const ios = ipa({})
+
+  it('prefers the current phone and otherwise keeps the intended artifact', () => {
+    expect(selectInstallArtifact([ios, apk], 'android', ios.id)?.id).toBe('apk')
+    expect(selectInstallArtifact([ios, apk], 'iphone-safari', apk.id)?.id).toBe(
+      ios.id,
+    )
+    expect(selectInstallArtifact([ios, apk], 'other', ios.id)?.id).toBe(ios.id)
+    expect(selectInstallArtifact([ios, apk], 'other')?.id).toBe('apk')
   })
 })

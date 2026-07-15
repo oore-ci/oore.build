@@ -10,6 +10,23 @@ export interface IosAppMetadata {
 export type InstallDevice =
   'iphone-safari' | 'iphone-other' | 'android' | 'other'
 
+export function selectInstallArtifact(
+  artifacts: Array<Artifact>,
+  device: InstallDevice,
+  requestedId?: string,
+): Artifact | undefined {
+  return (
+    artifacts.find(
+      (artifact) =>
+        (device.startsWith('iphone') && artifact.artifact_type === 'ipa') ||
+        (device === 'android' && artifact.artifact_type === 'apk'),
+    ) ??
+    artifacts.find((artifact) => artifact.id === requestedId) ??
+    artifacts.find((artifact) => artifact.artifact_type === 'apk') ??
+    artifacts.find((artifact) => artifact.artifact_type === 'ipa')
+  )
+}
+
 function metadataString(
   value: Record<string, unknown>,
   key: string,

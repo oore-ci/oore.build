@@ -142,6 +142,22 @@ async fn post_json(
     (status, body_json(response.into_body()).await)
 }
 
+async fn get_json(app: &axum::Router, token: &str, uri: &str) -> (StatusCode, serde_json::Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, body_json(response.into_body()).await)
+}
+
 #[tokio::test]
 async fn branch_builds_are_pinned_and_reruns_keep_the_original_commit() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -202,6 +218,52 @@ async fn branch_builds_are_pinned_and_reruns_keep_the_original_commit() {
 }
 
 #[tokio::test]
+async fn changelog_preview_compares_with_the_previous_successful_build() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet"]);
+    git(&repo, &["config", "user.name", "Oore Tests"]);
+    git(&repo, &["config", "user.email", "tests@oore.build"]);
+    git(&repo, &["checkout", "-q", "-b", "main"]);
+    let first_sha = commit(&repo, "first\n", "Initial app");
+
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let token = session_token(&pool, &user_id).await;
+    let (project_id, pipeline_id) = seed_local_project(&pool, &user_id, &repo).await;
+    let (status, first) = post_json(
+        &app,
+        &token,
+        &format!("/v1/projects/{project_id}/builds"),
+        serde_json::json!({ "pipeline_id": pipeline_id }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = ?1")
+        .bind(first["build"]["id"].as_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let second_sha = commit(&repo, "second\n", "Improve checkout");
+    let (status, preview) = get_json(
+        &app,
+        &token,
+        &format!(
+            "/v1/projects/{project_id}/builds/changelog-preview?pipeline_id={pipeline_id}&branch=main"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preview["base_commit"], first_sha);
+    assert_eq!(preview["target_commit"], second_sha);
+    assert_eq!(preview["markdown"], "- Improve checkout — Oore Tests");
+}
+
+#[tokio::test]
 async fn manual_platform_selection_is_validated_snapshotted_and_kept_on_rerun() {
     let tmp = tempfile::TempDir::new().unwrap();
     let repo = tmp.path().join("repo");
@@ -242,11 +304,28 @@ async fn manual_platform_selection_is_validated_snapshotted_and_kept_on_rerun() 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(invalid["code"], "invalid_input");
 
+    let (status, invalid) = post_json(
+        &app,
+        &token,
+        &format!("/v1/projects/{project_id}/builds"),
+        serde_json::json!({
+            "pipeline_id": pipeline_id,
+            "changelog": "x".repeat(4_001)
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid["code"], "invalid_input");
+
     let (status, first) = post_json(
         &app,
         &token,
         &format!("/v1/projects/{project_id}/builds"),
-        serde_json::json!({ "pipeline_id": pipeline_id, "platforms": ["ios"] }),
+        serde_json::json!({
+            "pipeline_id": pipeline_id,
+            "platforms": ["ios"],
+            "changelog": "Test the new checkout flow"
+        }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -254,6 +333,7 @@ async fn manual_platform_selection_is_validated_snapshotted_and_kept_on_rerun() 
         first["build"]["config_snapshot"]["selected_platforms"],
         serde_json::json!(["ios"])
     );
+    assert_eq!(first["build"]["changelog"], "Test the new checkout flow");
 
     let first_build_id = first["build"]["id"].as_str().unwrap();
     sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = ?1")
@@ -273,4 +353,5 @@ async fn manual_platform_selection_is_validated_snapshotted_and_kept_on_rerun() 
         rerun["build"]["config_snapshot"]["selected_platforms"],
         serde_json::json!(["ios"])
     );
+    assert_eq!(rerun["build"]["changelog"], "Test the new checkout flow");
 }

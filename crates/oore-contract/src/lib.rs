@@ -989,6 +989,8 @@ pub struct Build {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
@@ -1047,11 +1049,21 @@ pub struct CreateBuildRequest {
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateBuildResponse {
     pub build: Build,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BuildChangelogPreviewResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    pub target_commit: String,
+    pub markdown: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

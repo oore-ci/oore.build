@@ -5,6 +5,22 @@ import { demoArtifacts } from '../data/artifacts'
 import { USER_IDS, ago } from '../seed'
 
 export const buildHandlers = [
+  http.get(
+    '/v1/projects/:projectId/builds/changelog-preview',
+    async ({ request }) => {
+      await delay(200)
+      const url = new URL(request.url)
+      return HttpResponse.json({
+        base_commit: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1',
+        target_commit:
+          url.searchParams.get('commit_sha') ??
+          'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+        markdown:
+          '- Faster checkout validation — Alex Morgan\n- Clearer payment retry messaging — Priya Shah\n- Fixed saved delivery addresses — Sam Lee',
+      })
+    },
+  ),
+
   http.get('/v1/builds', async ({ request }) => {
     await delay(150)
     const url = new URL(request.url)
@@ -59,6 +75,7 @@ export const buildHandlers = [
       pipeline_id: string
       branch?: string
       commit_sha?: string
+      changelog?: string
     }
     return HttpResponse.json({
       build: {
@@ -71,6 +88,7 @@ export const buildHandlers = [
         trigger_actor: USER_IDS.owner,
         branch: body.branch ?? 'main',
         commit_sha: body.commit_sha,
+        changelog: body.changelog,
         config_snapshot: {},
         queued_at: ago(0),
         created_at: ago(0),
@@ -124,6 +142,18 @@ export const buildHandlers = [
     const buildId = params.buildId as string
     return HttpResponse.json({
       artifacts: demoArtifacts[buildId] ?? [],
+    })
+  }),
+
+  http.get('/v1/projects/:projectId/artifacts', async ({ params }) => {
+    await delay(150)
+    const projectBuildIds = demoBuilds
+      .filter((build) => build.project_id === params.projectId)
+      .map((build) => build.id)
+    return HttpResponse.json({
+      artifacts: projectBuildIds.flatMap(
+        (buildId) => demoArtifacts[buildId] ?? [],
+      ),
     })
   }),
 ]

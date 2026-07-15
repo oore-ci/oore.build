@@ -6,7 +6,10 @@ import z from 'zod'
 import { toast } from 'sonner'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
-import { useCreateBuild } from '@/hooks/use-builds'
+import {
+  useBuildChangelogPreview,
+  useCreateBuild,
+} from '@/hooks/use-builds'
 import { usePipelines } from '@/hooks/use-pipelines'
 import { useProjects } from '@/hooks/use-projects'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -38,6 +41,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Textarea } from '@/components/ui/textarea'
 import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import type { BuildPlatform } from '@/lib/types'
 
@@ -54,6 +58,7 @@ const triggerBuildSchema = z
     platforms: z.array(z.enum(['android', 'ios', 'macos'])),
     branch: z.string().optional(),
     commit_sha: z.string().optional(),
+    changelog: z.string().max(4000, 'Keep the changelog under 4,000 characters').optional(),
   })
   .superRefine((data, ctx) => {
     const branch = data.branch?.trim()
@@ -157,6 +162,7 @@ function defaults(
     platforms,
     branch: defaultBranch ?? '',
     commit_sha: '',
+    changelog: undefined,
   }
 }
 
@@ -230,6 +236,11 @@ function useTriggerBuildDialogState({
     () => selectedPipeline?.execution_config.platforms ?? [],
     [selectedPipeline],
   )
+  const changelogPreviewQuery = useBuildChangelogPreview(projectId, {
+    pipeline_id: selectedPipelineId,
+    branch: form.watch('branch')?.trim() || undefined,
+    commit_sha: form.watch('commit_sha')?.trim() || undefined,
+  }, { enabled: open })
 
   // Auto-select pipeline when project changes
   useMountEffect(() => {
@@ -265,7 +276,15 @@ function useTriggerBuildDialogState({
       return
     }
     const branch = data.branch?.trim() || undefined
-    const commitSha = data.commit_sha?.trim() || undefined
+    const commitSha =
+      data.commit_sha?.trim() ||
+      changelogPreviewQuery.data?.target_commit ||
+      undefined
+    const changelog = (
+      data.changelog === undefined
+        ? changelogPreviewQuery.data?.markdown
+        : data.changelog
+    )?.trim() || undefined
 
     createBuildMutation.mutate(
       {
@@ -275,6 +294,7 @@ function useTriggerBuildDialogState({
           branch,
           commit_sha: commitSha,
           trigger_ref: branch,
+          changelog,
           platforms:
             availablePlatforms.length > 1
               ? data.platforms.length > 0
@@ -310,6 +330,7 @@ function useTriggerBuildDialogState({
 
   return {
     createBuildMutation,
+    changelogPreviewQuery,
     defaultBranch,
     defaultPipelineId,
     description,
@@ -339,6 +360,7 @@ function useTriggerBuildDialogState({
 export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
   const {
     createBuildMutation,
+    changelogPreviewQuery,
     defaultBranch,
     defaultPipelineId,
     description,
@@ -537,6 +559,36 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
                   <p className="text-xs text-muted-foreground">
                     If set, the runner checks out this exact commit.
                   </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="changelog"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>What changed? (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      {...field}
+                      value={
+                        field.value ??
+                        changelogPreviewQuery.data?.markdown ??
+                        ''
+                      }
+                      placeholder="No changes found since the previous build."
+                      rows={5}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {changelogPreviewQuery.isFetching
+                      ? 'Drafting from commits since the previous successful build…'
+                      : changelogPreviewQuery.error
+                        ? 'Could not generate a draft. You can still write one.'
+                        : 'Markdown draft generated from commit titles and authors. Edit or clear it before running.'}
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

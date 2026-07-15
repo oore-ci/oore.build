@@ -430,6 +430,7 @@ export interface Build {
   trigger_ref?: string
   commit_sha?: string
   branch?: string
+  changelog?: string
   source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
@@ -466,10 +467,17 @@ export interface CreateBuildRequest {
   branch?: string
   commit_sha?: string
   trigger_ref?: string
+  changelog?: string
 }
 
 export interface CreateBuildResponse {
   build: Build
+}
+
+export interface BuildChangelogPreviewResponse {
+  base_commit?: string
+  target_commit: string
+  markdown: string
 }
 
 export interface BuildDetailResponse {

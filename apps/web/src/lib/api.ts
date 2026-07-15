@@ -7,6 +7,7 @@ import type {
   AddProjectMemberResponse,
   BootstrapTokenVerifyResponse,
   BrowseLocalGitDirectoriesResponse,
+  BuildChangelogPreviewResponse,
   BuildDetailResponse,
   BuildLogsResponse,
   CancelBuildResponse,
@@ -852,6 +853,23 @@ export function createBuild(
   )
 }
 
+export function getBuildChangelogPreview(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  params: { pipeline_id: string; branch?: string; commit_sha?: string },
+  options?: RequestOptions,
+): Promise<BuildChangelogPreviewResponse> {
+  const query = new URLSearchParams({ pipeline_id: params.pipeline_id })
+  if (params.branch) query.set('branch', params.branch)
+  if (params.commit_sha) query.set('commit_sha', params.commit_sha)
+  return request<BuildChangelogPreviewResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/builds/changelog-preview?${query}`,
+    { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
 export function listBuilds(
   baseUrl: string,
   token: string,
@@ -976,6 +994,19 @@ export function listArtifacts(
   return request<ListArtifactsResponse>(
     baseUrl,
     `/v1/builds/${buildId}/artifacts`,
+    { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
+export function listProjectArtifacts(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  options?: RequestOptions,
+): Promise<ListArtifactsResponse> {
+  return request<ListArtifactsResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/artifacts`,
     { headers: authHeaders(token), signal: options?.signal },
   )
 }

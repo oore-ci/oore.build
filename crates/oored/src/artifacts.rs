@@ -461,6 +461,40 @@ pub async fn list_artifacts(
     Ok(Json(ListArtifactsResponse { artifacts }))
 }
 
+/// `GET /v1/projects/{project_id}/artifacts` — list available artifacts for a project.
+pub async fn list_project_artifacts(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(project_id): Path<String>,
+) -> ApiResult<ListArtifactsResponse> {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_project_artifact_read(&pool, &auth, &project_id).await?;
+
+    let rows = sqlx::query(
+        "SELECT a.* FROM artifacts a \
+         JOIN builds b ON b.id = a.build_id \
+         WHERE b.project_id = ?1 AND a.state = 'available' \
+         ORDER BY a.created_at DESC",
+    )
+    .bind(&project_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to list project artifacts");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list project artifacts",
+        )
+    })?;
+
+    let artifacts = rows.iter().map(row_to_artifact).collect();
+    Ok(Json(ListArtifactsResponse { artifacts }))
+}
+
 /// `POST /v1/artifacts/{artifact_id}/download-link` — generate a download link.
 pub async fn generate_download_link(
     State(state): State<Arc<AppState>>,

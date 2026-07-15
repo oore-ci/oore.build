@@ -19,12 +19,18 @@ Rules:
   - QA users now land on a build-first surface with build-only navigation and a truthful no-project-access state, keeping project, source, pipeline, and instance administration out of their default experience while preserving artifact install/download access for assigned projects.
   - Owners can start an audited 10-minute QA preview from Users without changing stored roles. The frontend isolates the preview in a clearly labeled instance session and restores the untouched owner session when preview ends or expires.
   - Build detail actions now follow the same permission boundary as the build list: QA Viewers can inspect logs and install or download artifacts, but do not see re-run or cancel controls that the backend would reject.
+  - QA Viewers now use a phone-first app-testing home without the CI sidebar, build table, filters, commits, triggers, or logs. App tabs group every installable platform produced by the same build into one compact `x.y.z+n` version row and paginate retained versions in place. Active builds use the same version language, while technical build links without an install target return to this home.
+  - Manual builds prefill an optional Markdown changelog from commit titles and authors since the previous successful build of the same pipeline. The draft remains editable or clearable, pins the run to the compared target commit, is preserved by re-runs, appears as a stripped-down summary beside the version, and renders safely in full on the install page.
+  - Each version is one tappable row with a quiet chevron instead of separate platform or Install buttons, even when its build produced both Android and iOS artifacts. Oore automatically chooses the current phone's matching artifact, preserves a shared link's intended artifact as the fallback, and otherwise prefers the directly usable APK on desktop.
+  - Phone install pages identify the app with its repository avatar and name, use typography and spacing instead of decorative section dividers, and keep a safe-area-aware bottom dock with a compact Back action and one primary Install or Download APK action. IPA downloads and duplicate artifact download actions are absent from the QA flow; larger layouts retain inline navigation and actions.
+  - The frontend loads retained QA version history through a project-scoped artifact listing guarded by `ReadArtifacts`; it derives a missing artifact version from the newest known app version and the build number instead of exposing filenames or CI-only labels.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-ad-hoc-app-installation-18011ca32086
   - Linear RBAC ADR: https://linear.app/oorebuild/document/adr-0002-rbac-implementation-strategy-28554f736e4a
 
 - **Authenticated private GitLab repository avatars**:
   - Private GitLab repository avatars now load through a bearer-authenticated Oore endpoint instead of depending on each browser's GitLab cookies. GitHub avatars continue using their public URLs, while missing or unavailable images retain the existing initials fallback.
   - The backend applies the stored GitLab credential through GitLab's project/group avatar APIs, restricts requests to the configured GitLab origin, disables redirects, validates image types, and enforces a 2 MiB response limit.
+  - GitLab avatar responses with a generic binary or missing content type are accepted only when their bytes match a supported raster-image signature. Oore normalizes the resulting MIME type and continues rejecting arbitrary binary responses.
   - Linear feature doc: https://linear.app/oorebuild/document/authenticated-gitlab-repository-avatars-3eab35144db0
 
 - **Ad-hoc Android and iOS app installation**:

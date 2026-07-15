@@ -911,7 +911,7 @@ async fn test_create_artifact_checksum_dedup() {
 
 #[tokio::test]
 async fn test_list_artifacts() {
-    let (app, _pool, session_token, runner_id, runner_token, build_id) = full_scaffold().await;
+    let (app, pool, session_token, runner_id, runner_token, build_id) = full_scaffold().await;
 
     // Create two artifacts
     for (name, art_type) in [("app.apk", "apk"), ("app.ipa", "ipa")] {
@@ -964,6 +964,25 @@ async fn test_list_artifacts() {
     assert_eq!(artifacts.len(), 2);
     assert_eq!(artifacts[0]["name"].as_str().unwrap(), "app.apk");
     assert_eq!(artifacts[1]["name"].as_str().unwrap(), "app.ipa");
+
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let req = Request::builder()
+        .uri(format!("/v1/projects/{project_id}/artifacts"))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["artifacts"].as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]

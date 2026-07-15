@@ -8,13 +8,12 @@ import {
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+import { Search01Icon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
 import PageBreadcrumb from '@/components/page-breadcrumb'
+import QaAppHeader from '@/components/qa-app-header'
 import { Separator } from '@/components/ui/separator'
 import {
   SidebarInset,
@@ -116,6 +115,7 @@ function RootLayout() {
     !!activeInstanceId &&
     !!authToken &&
     !!authUser
+  const showQaChrome = showAppChrome && authUser.role === 'qa_viewer'
 
   useSessionMonitor()
 
@@ -123,7 +123,15 @@ function RootLayout() {
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <RouteTransitionBar />
-        {showAppChrome ? (
+        {showQaChrome ? (
+          <div className="flex min-h-screen flex-col bg-surface">
+            <QaAppHeader />
+            <ConnectivityBanner />
+            <main className="flex flex-1 flex-col">
+              <Outlet />
+            </main>
+          </div>
+        ) : showAppChrome ? (
           <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
             <SidebarInset>
@@ -162,7 +170,7 @@ function RootLayout() {
           </div>
         )}
         <Toaster />
-        {showAppChrome ? (
+        {showAppChrome && !showQaChrome ? (
           <Suspense fallback={null}>
             <CommandPalette />
           </Suspense>
