@@ -45,6 +45,12 @@ const cssBudgetKiB = Number(process.env.OORE_WEB_CSS_BUDGET_KIB ?? 22)
 
 const profiles = [
   {
+    name: 'Field metrics after idle',
+    entries: ['src/web-performance.ts'],
+    budgetKiB: Number(process.env.OORE_WEB_FIELD_METRICS_BUDGET_KIB ?? 170),
+    includeDynamic: true,
+  },
+  {
     name: 'Mobile shell',
     entries: ['src/components/ui/sidebar-mobile.tsx'],
     budgetKiB: Number(process.env.OORE_WEB_MOBILE_SHELL_BUDGET_KIB ?? 195),
@@ -110,6 +116,15 @@ let exceedsBudget = jsKiB > jsBudgetKiB || cssKiB > cssBudgetKiB
 
 for (const profile of profiles) {
   const profileAssets = assetsFor([entryKey, ...profile.entries])
+  if (profile.includeDynamic) {
+    for (const profileEntry of profile.entries) {
+      for (const dynamicEntry of manifest[profileEntry]?.dynamicImports ?? []) {
+        const dynamicAssets = assetsFor([dynamicEntry])
+        for (const asset of dynamicAssets.js) profileAssets.js.add(asset)
+        for (const asset of dynamicAssets.css) profileAssets.css.add(asset)
+      }
+    }
+  }
   const profileJsKiB = gzipKiB(profileAssets.js)
   console.log(
     `${profile.name.padEnd(24)} ${profileJsKiB.toFixed(2)} KiB JS / ${profile.budgetKiB.toFixed(2)} KiB budget`,

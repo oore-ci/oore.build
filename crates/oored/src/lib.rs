@@ -2013,7 +2013,7 @@ pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Ro
     static TEST_METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
     let metrics_handle = TEST_METRICS
         .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
+            observability::metrics_builder()
                 .install_recorder()
                 .expect("failed to install test metrics recorder")
         })
@@ -2208,6 +2208,10 @@ async fn build_router_inner(
             post(auth::trusted_proxy_login),
         )
         .route("/v1/auth/logout", post(auth::logout))
+        .route(
+            "/v1/telemetry/web-performance",
+            post(observability::record_web_performance),
+        )
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
         .route(
