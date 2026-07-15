@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -8,7 +9,6 @@ import {
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
-import ReactMarkdown from 'react-markdown'
 
 import {
   artifactInstallReadiness,
@@ -36,16 +36,26 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
 
+const ChangelogMarkdown = lazy(() => import('./changelog-markdown'))
+const expiryFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
 function expiryLabel(expiresAt: number | undefined): string {
   if (expiresAt == null) return 'No scheduled expiry'
-  return `Available until ${new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(expiresAt * 1000))}`
+  return `Available until ${expiryFormatter.format(new Date(expiresAt * 1000))}`
 }
 
 function displayName(name: string): string {
   return name.replace(/\.(apk|ipa)$/i, '')
+}
+
+function copyPageLink() {
+  void navigator.clipboard.writeText(window.location.href).then(
+    () => toast.success('Install page link copied'),
+    () => toast.error('Failed to copy install page link'),
+  )
 }
 
 export function ArtifactInstallPage({
@@ -82,8 +92,7 @@ export function ArtifactInstallPage({
   if (
     buildQuery.isLoading ||
     artifactsQuery.isLoading ||
-    (isQaViewer &&
-      (projectQuery.isLoading || projectArtifactsQuery.isLoading))
+    (isQaViewer && (projectQuery.isLoading || projectArtifactsQuery.isLoading))
   ) {
     return (
       <PageLayout width="narrow">
@@ -161,13 +170,6 @@ export function ArtifactInstallPage({
         toast.error(`Could not start installation: ${error.message}`)
       },
     })
-  }
-
-  function handleCopyPageLink() {
-    void navigator.clipboard.writeText(window.location.href).then(
-      () => toast.success('Install page link copied'),
-      () => toast.error('Failed to copy install page link'),
-    )
   }
 
   const primaryLabel = isIos
@@ -251,38 +253,9 @@ export function ArtifactInstallPage({
         {isQaViewer && build.changelog ? (
           <section>
             <h2 className="text-sm font-medium">What’s new</h2>
-            <ReactMarkdown
-              skipHtml
-              components={{
-                a: ({ children, ...props }) => (
-                  <a
-                    {...props}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-4"
-                  >
-                    {children}
-                  </a>
-                ),
-                ol: ({ children }) => (
-                  <ol className="mt-2 flex list-decimal flex-col gap-1 pl-5 text-sm text-muted-foreground">
-                    {children}
-                  </ol>
-                ),
-                p: ({ children }) => (
-                  <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
-                    {children}
-                  </p>
-                ),
-                ul: ({ children }) => (
-                  <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
-                    {children}
-                  </ul>
-                ),
-              }}
-            >
-              {build.changelog}
-            </ReactMarkdown>
+            <Suspense fallback={<Skeleton className="mt-2 h-16 w-full" />}>
+              <ChangelogMarkdown>{build.changelog}</ChangelogMarkdown>
+            </Suspense>
           </section>
         ) : null}
 
@@ -375,7 +348,7 @@ export function ArtifactInstallPage({
           {!isQaViewer ? (
             <Button
               variant="ghost"
-              onClick={handleCopyPageLink}
+              onClick={copyPageLink}
               className="mt-2 w-full"
             >
               <HugeiconsIcon icon={Copy01Icon} />

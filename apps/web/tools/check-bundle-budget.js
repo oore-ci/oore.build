@@ -69,7 +69,16 @@ const profiles = [
       'src/routes/builds/$buildId.tsx?tsr-split=component',
       'src/components/build-details/build-detail-page.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_BUILD_DETAIL_BUDGET_KIB ?? 275),
+    budgetKiB: Number(process.env.OORE_WEB_BUILD_DETAIL_BUDGET_KIB ?? 240),
+  },
+  {
+    name: 'Operator artifact sharing',
+    entries: [
+      'src/routes/builds/$buildId.tsx?tsr-split=component',
+      'src/components/build-details/build-detail-page.tsx',
+      'src/components/build-details/artifact-share-menu.tsx',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_ARTIFACT_SHARE_BUDGET_KIB ?? 275),
   },
   {
     name: 'QA artifact install',
@@ -77,7 +86,16 @@ const profiles = [
       'src/routes/builds/$buildId.tsx?tsr-split=component',
       'src/components/build-details/artifact-install-page.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 215),
+    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 195),
+  },
+  {
+    name: 'QA install with changelog',
+    entries: [
+      'src/routes/builds/$buildId.tsx?tsr-split=component',
+      'src/components/build-details/artifact-install-page.tsx',
+      'src/components/build-details/changelog-markdown.tsx',
+    ],
+    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 215),
   },
 ]
 
