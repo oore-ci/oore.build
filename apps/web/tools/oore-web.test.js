@@ -8,6 +8,7 @@ import {
   authorizeOwner,
   getWebUpdateStatus,
   isApiPath,
+  spaCacheControl,
 } from './oore-web.js'
 
 const ooreWebPath = path.resolve(process.cwd(), 'tools/oore-web.js')
@@ -50,6 +51,18 @@ function sendJson(response, data, proxied = false) {
 }
 
 afterEach(() => vi.unstubAllGlobals())
+
+describe('oore-web SPA caching', () => {
+  it('caches hashed assets immutably and always revalidates HTML', () => {
+    expect(spaCacheControl('/assets/index-abc123.js')).toBe(
+      'public, max-age=31536000, immutable',
+    )
+    expect(spaCacheControl('/')).toBe('public, max-age=0, must-revalidate')
+    expect(spaCacheControl('/index.html')).toBe(
+      'public, max-age=0, must-revalidate',
+    )
+  })
+})
 
 describe('oore-web runtime release metadata', () => {
   it('returns the changelog and release URL with update availability', async () => {

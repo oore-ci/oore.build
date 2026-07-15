@@ -46,8 +46,6 @@ function sitemapPlugin(): Plugin {
 /**
  * Post-build plugin that optimises the production HTML:
  * 1. Preloads the primary font (Google Sans Flex latin) to eliminate FOUT.
- * 2. Removes modulepreload for deferred chunks (form-vendor) that are
- *    lazy-loaded on interaction and shouldn't block the critical path.
  */
 function htmlOptimisePlugin(): Plugin {
   return {
@@ -65,13 +63,7 @@ function htmlOptimisePlugin(): Plugin {
         return
       }
 
-      // 1. Remove modulepreload for lazy-loaded chunks
-      html = html.replace(
-        /<link rel="modulepreload"[^>]*href="[^"]*form-vendor[^"]*"[^>]*>\n?/g,
-        '',
-      )
-
-      // 2. Find the hashed font filename and inject a preload hint
+      // Find the hashed font filename and inject a preload hint
       const assetFiles = readdirSync(`${outDir}/assets`)
       const fontFile = assetFiles.find(
         (f) =>
@@ -103,19 +95,11 @@ export default defineConfig({
     sitemapPlugin(),
   ],
   build: {
+    manifest: true,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return
-
-          // Keep route-only controls out of the eagerly loaded UI chunk.
-          if (
-            id.includes('/@base-ui/react/checkbox/') ||
-            id.includes('/@base-ui/react/scroll-area/') ||
-            id.includes('/@base-ui/react/select/') ||
-            id.includes('/@base-ui/react/tabs/')
-          )
-            return 'deferred-ui-vendor'
 
           // Framework/runtime chunks are stable across route deployments.
           if (
@@ -136,13 +120,6 @@ export default defineConfig({
           )
             return 'router-vendor'
 
-          if (
-            id.includes('/@base-ui/') ||
-            id.includes('/@floating-ui/') ||
-            id.includes('/tabbable/')
-          )
-            return 'ui-vendor'
-
           // Keep the TanStack routing and query runtimes in one stable chunk.
           if (
             id.includes('/@tanstack/react-query/') ||
@@ -150,27 +127,11 @@ export default defineConfig({
           )
             return 'router-vendor'
 
-          // Form libs (lazy-loaded via dialog components)
-          if (
-            id.includes('/react-hook-form/') ||
-            id.includes('/zod/') ||
-            id.includes('/@hookform/')
-          )
-            return 'form-vendor'
-
           // Toast notifications
           if (id.includes('/sonner/')) return 'sonner'
 
           // Icon library
           if (id.includes('/@hugeicons/')) return 'icons'
-
-          // Styling utilities are part of the shared UI runtime.
-          if (
-            id.includes('/tailwind-merge/') ||
-            id.includes('/class-variance-authority/') ||
-            id.includes('/clsx/')
-          )
-            return 'ui-vendor'
         },
       },
     },
