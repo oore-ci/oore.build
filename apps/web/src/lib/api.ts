@@ -173,6 +173,27 @@ async function request<T>(
   return (await res.json()) as T
 }
 
+async function requestBlob(
+  baseUrl: string,
+  path: string,
+  options: RequestInit = {},
+): Promise<Blob> {
+  const res = await fetch(`${baseUrl}${path}`, options)
+  if (!res.ok) {
+    let body: ApiError
+    try {
+      body = (await res.json()) as ApiError
+    } catch {
+      body = {
+        error: `Request failed with status ${res.status}`,
+        code: 'unknown_error',
+      }
+    }
+    throw new ApiClientError(res.status, body)
+  }
+  return res.blob()
+}
+
 function authHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` }
 }
@@ -502,6 +523,19 @@ export function listIntegrationRepos(
   return request<ListRepositoriesResponse>(
     baseUrl,
     `/v1/integrations/${integrationId}/repositories`,
+    { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
+export function getRepositoryAvatar(
+  baseUrl: string,
+  token: string,
+  repositoryId: string,
+  options?: RequestOptions,
+): Promise<Blob> {
+  return requestBlob(
+    baseUrl,
+    `/v1/integration-repositories/${repositoryId}/avatar`,
     { headers: authHeaders(token), signal: options?.signal },
   )
 }

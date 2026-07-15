@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "oxlint . && bun run lint:effects",
-    "lint:effects": "! grep -RInE '\\b(React\\.)?useEffect\\b' src --include='*.ts' --include='*.tsx' --exclude='use-mount-effect.ts' --exclude='use-breadcrumb-label.ts' --exclude='use-auto-scroll.ts' --exclude='use-build-notification.ts' --exclude='use-session-countdown.ts' --exclude='use-log-stream.ts' --exclude='use-index-auth-guard.ts' --exclude='use-trusted-proxy-auto-login.ts' --exclude='use-setup-route-transitions.ts' --exclude='use-window-event.ts'",
+    "lint:effects": "! grep -RInE '\\b(React\\.)?useEffect\\b' src --include='*.ts' --include='*.tsx' --exclude='use-mount-effect.ts' --exclude='use-breadcrumb-label.ts' --exclude='use-auto-scroll.ts' --exclude='use-build-notification.ts' --exclude='use-session-countdown.ts' --exclude='use-log-stream.ts' --exclude='use-index-auth-guard.ts' --exclude='use-trusted-proxy-auto-login.ts' --exclude='use-setup-route-transitions.ts' --exclude='use-window-event.ts' --exclude='use-repository-avatar-url.ts'",
     "format": "prettier",
     "check": "prettier --write . && oxlint --fix . && bun run lint:effects"
   },

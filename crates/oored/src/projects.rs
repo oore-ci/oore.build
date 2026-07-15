@@ -26,8 +26,11 @@ use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
-const PROJECT_SELECT: &str = "SELECT p.*, r.full_name AS repository_full_name, r.avatar_url AS repository_avatar_url \
-    FROM projects p LEFT JOIN integration_repositories r ON r.id = p.repository_id";
+const PROJECT_SELECT: &str = "SELECT p.*, r.full_name AS repository_full_name, r.avatar_url AS repository_avatar_url, \
+    i.provider AS repository_provider FROM projects p \
+    LEFT JOIN integration_repositories r ON r.id = p.repository_id \
+    LEFT JOIN integration_installations inst ON inst.id = r.installation_id \
+    LEFT JOIN integrations i ON i.id = inst.integration_id";
 
 // ── Row conversion ──────────────────────────────────────────────
 
@@ -43,6 +46,7 @@ fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
         repository_id: row.get("repository_id"),
         repository_full_name: row.get("repository_full_name"),
         repository_avatar_url: row.get("repository_avatar_url"),
+        repository_provider: row.get("repository_provider"),
         settings,
         default_branch: row.get("default_branch"),
         created_by: row.get("created_by"),
@@ -420,6 +424,7 @@ pub async fn create_project(
         repository_id,
         repository_full_name: None,
         repository_avatar_url: None,
+        repository_provider: None,
         settings: serde_json::json!({}),
         default_branch,
         created_by: auth.0.user_id,
