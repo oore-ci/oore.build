@@ -43,6 +43,32 @@ describe('useInstanceStore', () => {
     expect(useInstanceStore.getState().activeInstanceId).toBe(first)
   })
 
+  it('creates an isolated QA preview and returns to its source instance', () => {
+    const sourceId = useInstanceStore
+      .getState()
+      .addInstance('Production', 'https://ci.example.com', 'shield')
+    const source = useInstanceStore.getState().instances[sourceId]
+    const previewId = useInstanceStore
+      .getState()
+      .addInstance(
+        `${source.label} · QA preview`,
+        source.url,
+        source.icon,
+        source.id,
+      )
+
+    const preview = useInstanceStore.getState().instances[previewId]
+    expect(preview.label).toBe('Production · QA preview')
+    expect(preview.url).toBe(source.url)
+    expect(preview.qaPreviewSourceId).toBe(sourceId)
+
+    useInstanceStore.getState().setActiveInstance(previewId)
+    useInstanceStore.getState().removeInstance(previewId)
+
+    expect(useInstanceStore.getState().instances[previewId]).toBeUndefined()
+    expect(useInstanceStore.getState().activeInstanceId).toBe(sourceId)
+  })
+
   it('setActiveInstance switches active', () => {
     useInstanceStore.getState().addInstance('First', 'https://one.example.com')
     const second = useInstanceStore

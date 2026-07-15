@@ -3,12 +3,39 @@ import { demoBuildEvents, demoBuilds } from '../data/builds'
 import { demoBuildLogs } from '../data/build-logs'
 import { demoArtifacts } from '../data/artifacts'
 import { USER_IDS, ago } from '../seed'
+import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 
 export const buildHandlers = [
+  http.get(
+    '/v1/projects/:projectId/builds/changelog-preview',
+    async ({ request, params }) => {
+      await delay(200)
+      const persona = getDemoPersonaFromRequest(request)
+      if (!getDemoProjectRole(persona, String(params.projectId))) {
+        return HttpResponse.json(
+          { error: 'Project not found', code: 'not_found' },
+          { status: 404 },
+        )
+      }
+      const url = new URL(request.url)
+      return HttpResponse.json({
+        base_commit: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1',
+        target_commit:
+          url.searchParams.get('commit_sha') ??
+          'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+        markdown:
+          '- Faster checkout validation — Alex Morgan\n- Clearer payment retry messaging — Priya Shah\n- Fixed saved delivery addresses — Sam Lee',
+      })
+    },
+  ),
+
   http.get('/v1/builds', async ({ request }) => {
     await delay(150)
     const url = new URL(request.url)
-    let builds = [...demoBuilds]
+    const persona = getDemoPersonaFromRequest(request)
+    let builds = demoBuilds.filter((build) =>
+      getDemoProjectRole(persona, build.project_id),
+    )
 
     const projectId = url.searchParams.get('project_id')
     if (projectId) builds = builds.filter((b) => b.project_id === projectId)
@@ -31,10 +58,11 @@ export const buildHandlers = [
     })
   }),
 
-  http.get('/v1/builds/:buildId', async ({ params }) => {
+  http.get('/v1/builds/:buildId', async ({ params, request }) => {
     await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
     const build = demoBuilds.find((b) => b.id === params.buildId)
-    if (!build) {
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
       return HttpResponse.json(
         { error: 'Build not found', code: 'not_found' },
         { status: 404 },
@@ -59,6 +87,7 @@ export const buildHandlers = [
       pipeline_id: string
       branch?: string
       commit_sha?: string
+      changelog?: string
     }
     return HttpResponse.json({
       build: {
@@ -71,6 +100,7 @@ export const buildHandlers = [
         trigger_actor: USER_IDS.owner,
         branch: body.branch ?? 'main',
         commit_sha: body.commit_sha,
+        changelog: body.changelog,
         config_snapshot: {},
         queued_at: ago(0),
         created_at: ago(0),
@@ -106,6 +136,14 @@ export const buildHandlers = [
   http.get('/v1/builds/:buildId/logs', async ({ params, request }) => {
     await delay(200)
     const buildId = params.buildId as string
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoBuilds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
     const allLogs = demoBuildLogs[buildId] ?? []
 
     const url = new URL(request.url)
@@ -119,11 +157,58 @@ export const buildHandlers = [
     })
   }),
 
-  http.get('/v1/builds/:buildId/artifacts', async ({ params }) => {
+  http.get('/v1/builds/:buildId/artifacts', async ({ params, request }) => {
     await delay(150)
     const buildId = params.buildId as string
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoBuilds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
     return HttpResponse.json({
       artifacts: demoArtifacts[buildId] ?? [],
+    })
+  }),
+
+  http.get('/v1/projects/:projectId/artifacts', async ({ params, request }) => {
+    await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    if (!getDemoProjectRole(persona, String(params.projectId))) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const projectBuildIds = demoBuilds
+      .filter((build) => build.project_id === params.projectId)
+      .map((build) => build.id)
+    return HttpResponse.json({
+      artifacts: projectBuildIds.flatMap(
+        (buildId) => demoArtifacts[buildId] ?? [],
+      ),
+    })
+  }),
+
+  http.post('/v1/artifacts/query', async ({ request }) => {
+    await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    const body = (await request.json()) as { build_ids: Array<string> }
+    const visibleBuildIds = new Set(
+      demoBuilds
+        .filter(
+          (build) =>
+            body.build_ids.includes(build.id) &&
+            getDemoProjectRole(persona, build.project_id),
+        )
+        .map((build) => build.id),
+    )
+    return HttpResponse.json({
+      artifacts: [...visibleBuildIds].flatMap(
+        (buildId) => demoArtifacts[buildId] ?? [],
+      ),
     })
   }),
 ]

@@ -963,7 +963,7 @@ async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
     let pool = connect_pool(&db_path).await;
     let owner_id = seed_test_user(&pool).await;
     let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
-    let (_project_id, pipeline_id) =
+    let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &owner_id, "org/private-project").await;
 
     let outsider_id = seed_user_with_role(&pool, "outsider@example.com", "developer").await;
@@ -1034,6 +1034,99 @@ async fn test_non_member_cannot_use_direct_pipeline_or_signing_routes() {
         let (status, json) = json_request(&app, method, &uri, &outsider_token, body).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {json}");
     }
+
+    let viewer_id = seed_user_with_role(&pool, "viewer@example.com", "qa_viewer").await;
+    seed_project_member(&pool, &project_id, &viewer_id, &owner_id, "viewer").await;
+    let viewer_token = create_session_token(&pool, &viewer_id).await;
+    for uri in [
+        format!("/v1/pipelines/{pipeline_id}/android-signing"),
+        format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+        format!("/v1/pipelines/{pipeline_id}/ios-signing/devices"),
+    ] {
+        let (status, json) = json_request(&app, "GET", &uri, &viewer_token, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "GET {uri}: {json}");
+    }
+}
+
+#[tokio::test]
+async fn test_qa_session_is_capped_at_viewer_for_legacy_elevated_membership() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/qa-cap").await;
+    let qa_id = seed_user_with_role(&pool, "qa-cap@example.com", "qa_viewer").await;
+
+    // Simulate a stale row written before QA assignments were restricted to Viewer.
+    seed_project_member(&pool, &project_id, &qa_id, &owner_id, "developer").await;
+    let qa_token = create_session_token(&pool, &qa_id).await;
+
+    let (status, response) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/builds"),
+        &qa_token,
+        Some(serde_json::json!({ "pipeline_id": pipeline_id })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "response: {response}");
+    assert_eq!(response["code"], "permission_denied");
+}
+
+#[tokio::test]
+async fn test_qa_project_assignment_is_viewer_only_and_can_precede_first_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let owner_token = create_session_token(&pool, &owner_id).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/qa-assignment").await;
+    let qa_id = seed_user_with_role(&pool, "qa-invited@example.com", "qa_viewer").await;
+    sqlx::query("UPDATE users SET status = 'invited' WHERE id = ?1")
+        .bind(&qa_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, response) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/members"),
+        &owner_token,
+        Some(serde_json::json!({ "user_id": qa_id, "role": "developer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "response: {response}");
+    assert_eq!(response["code"], "invalid_project_role");
+
+    let (status, response) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/projects/{project_id}/members"),
+        &owner_token,
+        Some(serde_json::json!({ "user_id": qa_id, "role": "viewer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "response: {response}");
+    assert_eq!(response["member"]["role"], "viewer");
+
+    let (status, response) = json_request(
+        &app,
+        "PATCH",
+        &format!("/v1/projects/{project_id}/members/{qa_id}"),
+        &owner_token,
+        Some(serde_json::json!({ "role": "maintainer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "response: {response}");
+    assert_eq!(response["code"], "invalid_project_role");
 }
 
 #[tokio::test]

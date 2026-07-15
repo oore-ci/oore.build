@@ -4,9 +4,10 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, Build, BuildContext, BuildDetailResponse, BuildEvent, BuildPlatform, BuildStatus,
-    CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse,
-    ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse, TriggerConfig,
+    ApiError, Build, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse, BuildEvent,
+    BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest,
+    CreateBuildResponse, ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse,
+    TriggerConfig,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -54,6 +55,7 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         trigger_ref: row.get("trigger_ref"),
         commit_sha: row.get("commit_sha"),
         branch: row.get("branch"),
+        changelog: row.get("changelog"),
         source_build_id: row.get("source_build_id"),
         config_snapshot,
         runner_id: row.get("runner_id"),
@@ -375,6 +377,7 @@ struct BuildInsertBinds<'a> {
     trigger_ref: Option<&'a str>,
     commit_sha: Option<&'a str>,
     branch: Option<&'a str>,
+    changelog: Option<&'a str>,
     config_snapshot: &'a str,
     webhook_id: Option<&'a str>,
     now: i64,
@@ -390,10 +393,10 @@ async fn execute_build_insert(
     sqlx::query(
         "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, \
          trigger_type, trigger_actor, trigger_event, trigger_ref, commit_sha, branch, \
-         config_snapshot, webhook_id, source_build_id, queued_at, created_at, updated_at) \
+         changelog, config_snapshot, webhook_id, source_build_id, queued_at, created_at, updated_at) \
          VALUES (?1, ?2, ?3, \
                  (SELECT COALESCE(MAX(build_number), 0) + 1 FROM builds WHERE project_id = ?2), \
-                 'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?13)",
+                 'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?14)",
     )
     .bind(b.build_id)
     .bind(b.project_id)
@@ -404,6 +407,7 @@ async fn execute_build_insert(
     .bind(b.trigger_ref)
     .bind(b.commit_sha)
     .bind(b.branch)
+    .bind(b.changelog)
     .bind(b.config_snapshot)
     .bind(b.webhook_id)
     .bind(b.source_build_id)
@@ -423,6 +427,56 @@ pub struct ListBuildsQuery {
     pub branch: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuildChangelogPreviewQuery {
+    pub pipeline_id: String,
+    pub branch: Option<String>,
+    pub commit_sha: Option<String>,
+}
+
+fn escape_markdown_inline(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('*', "\\*")
+        .replace('_', "\\_")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('<', "\\<")
+        .replace('>', "\\>")
+}
+
+fn changelog_markdown(commits: Vec<crate::integrations::CommitSummary>) -> String {
+    let mut markdown = String::new();
+    let total = commits.len();
+    for (index, commit) in commits.into_iter().enumerate() {
+        let title = commit
+            .title
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let author = commit
+            .author
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if title.is_empty() {
+            continue;
+        }
+        let line = format!(
+            "- {} — {}\n",
+            escape_markdown_inline(&title),
+            escape_markdown_inline(&author)
+        );
+        if markdown.len() + line.len() > 3_900 {
+            let remaining = total.saturating_sub(index);
+            markdown.push_str(&format!("- …and {remaining} more changes\n"));
+            break;
+        }
+        markdown.push_str(&line);
+    }
+    markdown.trim_end().to_string()
 }
 
 // ── Concurrency policy ──────────────────────────────────────────
@@ -485,6 +539,123 @@ async fn apply_cancel_previous(
 
 // ── Handlers ────────────────────────────────────────────────────
 
+/// `GET /v1/projects/{project_id}/builds/changelog-preview` — draft release notes.
+pub async fn preview_build_changelog(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(project_id): Path<String>,
+    Query(params): Query<BuildChangelogPreviewQuery>,
+) -> ApiResult<BuildChangelogPreviewResponse> {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::TriggerBuild)?;
+
+    let project = sqlx::query("SELECT repository_id, default_branch FROM projects WHERE id = ?1")
+        .bind(&project_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to fetch project for changelog preview");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch project",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"))?;
+    let repository_id: Option<String> = project.get("repository_id");
+    let repository_id = repository_id.ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "source_not_configured",
+            "Project is not linked to a source repository",
+        )
+    })?;
+    let pipeline_exists: bool =
+        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM pipelines WHERE id = ?1 AND project_id = ?2")
+            .bind(&params.pipeline_id)
+            .bind(&project_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(false);
+    if !pipeline_exists {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Pipeline not found in this project",
+        ));
+    }
+
+    let commit_sha = normalize_optional(params.commit_sha);
+    let branch = normalize_optional(params.branch)
+        .or_else(|| normalize_optional(project.get::<Option<String>, _>("default_branch")));
+    let target_commit = match commit_sha {
+        Some(commit_sha) => commit_sha,
+        None => {
+            crate::integrations::resolve_branch_commit(
+                &pool,
+                &state.encryption_key,
+                &repository_id,
+                branch.as_deref().ok_or_else(|| {
+                    api_err(
+                        StatusCode::BAD_REQUEST,
+                        "invalid_input",
+                        "Provide branch or commit_sha",
+                    )
+                })?,
+            )
+            .await?
+        }
+    };
+    let base_commit: Option<String> = sqlx::query_scalar(
+        "SELECT commit_sha FROM builds \
+         WHERE project_id = ?1 AND pipeline_id = ?2 AND status = 'succeeded' \
+           AND commit_sha IS NOT NULL \
+         ORDER BY build_number DESC LIMIT 1",
+    )
+    .bind(&project_id)
+    .bind(&params.pipeline_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch previous build revision");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch previous build revision",
+        )
+    })?;
+    let markdown = match base_commit.as_deref() {
+        Some(base) if base != target_commit => changelog_markdown(
+            crate::integrations::compare_commits(
+                &pool,
+                &state.encryption_key,
+                &repository_id,
+                base,
+                &target_commit,
+            )
+            .await?,
+        ),
+        _ => String::new(),
+    };
+
+    Ok(Json(BuildChangelogPreviewResponse {
+        base_commit,
+        target_commit,
+        markdown,
+    }))
+}
+
 /// `POST /v1/projects/{project_id}/builds` — create a new build (manual/API trigger).
 pub async fn create_build(
     State(state): State<Arc<AppState>>,
@@ -510,6 +681,14 @@ pub async fn create_build(
     let requested_branch = normalize_optional(req.branch);
     let mut commit_sha = normalize_optional(req.commit_sha);
     let trigger_ref = normalize_optional(req.trigger_ref);
+    let changelog = normalize_optional(req.changelog);
+    if changelog.as_ref().is_some_and(|value| value.len() > 4_000) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Changelog must be 4,000 characters or fewer",
+        ));
+    }
 
     // Verify project exists and has source linkage.
     let project_row =
@@ -677,6 +856,7 @@ pub async fn create_build(
             trigger_ref: trigger_ref.as_deref(),
             commit_sha: commit_sha.as_deref(),
             branch: branch.as_deref(),
+            changelog: changelog.as_deref(),
             config_snapshot: &snapshot_str,
             webhook_id: None,
             now,
@@ -741,6 +921,7 @@ pub async fn create_build(
         trigger_ref,
         commit_sha,
         branch,
+        changelog,
         source_build_id: None,
         config_snapshot,
         runner_id: None,
@@ -991,7 +1172,7 @@ pub async fn rerun_build(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, config_snapshot \
+         trigger_ref, commit_sha, branch, changelog, config_snapshot \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -1056,6 +1237,7 @@ pub async fn rerun_build(
     let branch: Option<String> = source_row.get("branch");
     let commit_sha: Option<String> = source_row.get("commit_sha");
     let trigger_ref: Option<String> = source_row.get("trigger_ref");
+    let changelog: Option<String> = source_row.get("changelog");
 
     let now = now_unix();
     let new_build_id = Uuid::new_v4().to_string();
@@ -1072,6 +1254,7 @@ pub async fn rerun_build(
             trigger_ref: trigger_ref.as_deref(),
             commit_sha: commit_sha.as_deref(),
             branch: branch.as_deref(),
+            changelog: changelog.as_deref(),
             config_snapshot: &config_snapshot_str,
             webhook_id: None,
             now,
@@ -1144,6 +1327,7 @@ pub async fn rerun_build(
         trigger_ref,
         commit_sha,
         branch,
+        changelog,
         source_build_id: Some(build_id),
         config_snapshot,
         runner_id: None,
@@ -1332,6 +1516,7 @@ pub async fn trigger_build_from_webhook(
                     trigger_ref: branch,
                     commit_sha,
                     branch,
+                    changelog: None,
                     config_snapshot: &snapshot_str,
                     webhook_id: Some(webhook_id),
                     now,
@@ -1380,6 +1565,7 @@ pub async fn trigger_build_from_webhook(
                 trigger_ref: branch.map(String::from),
                 commit_sha: commit_sha.map(String::from),
                 branch: branch.map(String::from),
+                changelog: None,
                 source_build_id: None,
                 config_snapshot,
                 runner_id: None,

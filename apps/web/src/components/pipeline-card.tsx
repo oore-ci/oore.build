@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
@@ -22,15 +22,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 
 interface PipelineCardProps {
   pipeline: Pipeline
   projectId: string
-  defaultBranch?: string
   canWrite: boolean
   canTriggerBuild: boolean
+  onPreloadTriggerBuild: () => void
+  onTriggerBuild: (pipelineId: string) => void
   lastBuildStatus?: string
   lastBuildTime?: number
 }
@@ -38,16 +37,15 @@ interface PipelineCardProps {
 export default function PipelineCard({
   pipeline,
   projectId,
-  defaultBranch,
   canWrite,
   canTriggerBuild,
+  onPreloadTriggerBuild,
+  onTriggerBuild,
   lastBuildStatus,
   lastBuildTime,
 }: PipelineCardProps) {
-  const navigate = useNavigate()
   const updateMutation = useUpdatePipeline()
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const [triggerOpen, setTriggerOpen] = useState(false)
 
   function handleToggle() {
     updateMutation.mutate(
@@ -118,9 +116,9 @@ export default function PipelineCard({
             {canTriggerBuild ? (
               <Button
                 size="sm"
-                onClick={() => setTriggerOpen(true)}
-                disabled={isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                onMouseEnter={onPreloadTriggerBuild}
+                onFocus={onPreloadTriggerBuild}
+                onClick={() => onTriggerBuild(pipeline.id)}
               >
                 <HugeiconsIcon icon={PlayIcon} />
                 Run build
@@ -148,8 +146,7 @@ export default function PipelineCard({
                 size="sm"
                 variant="outline"
                 onClick={handleToggle}
-                disabled={updateMutation.isPending || isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                disabled={updateMutation.isPending}
               >
                 {pipeline.enabled ? 'Disable' : 'Enable'}
               </Button>
@@ -283,19 +280,6 @@ export default function PipelineCard({
           </Collapsible>
         </CardContent>
       </Card>
-
-      <TriggerBuildDialog
-        open={triggerOpen}
-        onOpenChange={setTriggerOpen}
-        fixedProjectId={projectId}
-        fixedPipelineId={pipeline.id}
-        fixedPipelineName={pipeline.name}
-        defaultBranch={defaultBranch}
-        description={`Run "${pipeline.name}" now.`}
-        onBuildCreated={(buildId) => {
-          void navigate({ to: '/builds/$buildId', params: { buildId } })
-        }}
-      />
     </>
   )
 }

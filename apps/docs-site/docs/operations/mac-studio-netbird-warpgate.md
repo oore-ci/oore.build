@@ -154,6 +154,55 @@ From the browser, open the Warpgate-protected public URL. The authenticated emai
 
 Configure External Access `public_url` and `allowed_origins` with that same HTTPS URL after login.
 
+### 6. Configure non-interactive iOS installs
+
+Warpgate normally expects an interactive browser session, while Apple's iOS
+installer fetches the manifest and IPA as separate system requests. Create a
+Warpgate access ticket bound to a dedicated, least-privilege user and the Oore
+target. Give it the shortest practical expiry and use allowance for your QA
+workflow. Do not use an owner or staff user's ticket.
+Do not invite the dedicated ticket identity into Oore; the short-lived Oore
+artifact token, not that identity, authorizes the requested IPA.
+
+In Oore, open **Preferences → Identity settings**. The iOS install ticket field
+appears only when the trusted-proxy identity header is
+`x-warpgate-username`. Paste the ticket and save. Oore encrypts it at rest and
+reports only whether it exists and whether it came from encrypted settings or
+the environment.
+
+For service-managed fresh installs, add
+`OORE_WARPGATE_TICKET=replace_with_ticket` to the non-interactive backend
+installer environment shown earlier. For an existing instance, prefer the UI;
+changing a LaunchDaemon environment directly requires reinstalling it with its
+complete current listen, user, state-file, and environment arguments.
+
+The Preferences value takes precedence when both sources exist. Remove the
+stored value in Preferences to return to the environment fallback. Restart the
+daemon after changing its service environment.
+
+For iOS only, Oore appends `warpgate-ticket` to the manifest URL, the IPA URL
+inside the manifest, and the final local-storage download redirect. Warpgate
+accepts the ticket from that query parameter before the request reaches Oore;
+Oore then independently validates its short-lived artifact token. Android,
+OIDC, Local Only mode, and generic trusted-proxy deployments never receive the
+Warpgate query parameter.
+
+The ticket can appear in browser history and ingress access logs. Keep access
+to those logs restricted, rotate the ticket when exposure is suspected, and
+retain NetBird as the private network boundary. A separate unauthenticated
+`/install/` ingress bypass is not required in this topology.
+
+Verify the public ingress accepts the ticket but Oore still rejects a fake
+artifact token:
+
+```bash
+curl -i \
+  'https://oore.example.com/install/ios/not-a-token/manifest.plist?warpgate-ticket=replace_with_ticket'
+```
+
+The response must be Oore JSON with `401 invalid_token`, not a Warpgate login
+page. Run this from a device on the same NetBird policy used by QA users.
+
 ## Common mistakes
 
 - Binding `oored` to `0.0.0.0`: bind only the Mac private/NetBird address used by the AWS frontend.
@@ -164,6 +213,8 @@ Configure External Access `public_url` and `allowed_origins` with that same HTTP
 - Serving the UI from one origin and API from another without adding the UI origin to `allowed_origins`.
 - Forgetting to forward `X-Warpgate-Username` to `/v1/*`.
 - Passing a username instead of an email in the trusted-proxy header.
+- Creating the install ticket for a privileged Warpgate user instead of a dedicated target-only identity.
+- Configuring a ticket while Oore uses OIDC or a different identity header; the integration intentionally remains inactive.
 
 ## When to use OIDC instead
 

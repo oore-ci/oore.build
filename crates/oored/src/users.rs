@@ -4,8 +4,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, InviteUserRequest, InviteUserResponse, ListUsersResponse, ReEnableUserResponse,
-    UpdateUserRoleRequest, UpdateUserRoleResponse, User, UserProfileResponse,
+    ApiError, AuthenticatedUser, InviteUserRequest, InviteUserResponse, ListUsersResponse,
+    PreviewQaUserResponse, ReEnableUserResponse, UpdateUserRoleRequest, UpdateUserRoleResponse,
+    User, UserProfileResponse,
 };
 use sqlx::Row;
 use tracing::{error, info};
@@ -18,6 +19,8 @@ use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+
+const QA_PREVIEW_SESSION_TTL_SECS: i64 = 10 * 60;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -70,6 +73,103 @@ pub async fn get_me(
 ) -> ApiResult<UserProfileResponse> {
     let user = fetch_user_by_id(&state, &auth.0.user_id).await?;
     Ok(Json(UserProfileResponse { user }))
+}
+
+/// `POST /v1/users/{user_id}/preview` — create a short-lived QA session.
+///
+/// This is owner-only and limited to active QA users. It lets an owner verify
+/// the real project-scoped QA experience without changing either user's role
+/// or replacing the owner's existing session.
+pub async fn preview_qa_user(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(user_id): Path<String>,
+) -> ApiResult<PreviewQaUserResponse> {
+    auth.require_owner()?;
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+
+    let row = sqlx::query(
+        "SELECT id, email, oidc_subject, role, status, avatar_url FROM users WHERE id = ?1",
+    )
+    .bind(&user_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch QA preview target");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch preview user",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "user_not_found", "User not found"))?;
+
+    let role: String = row.get("role");
+    if role != "qa_viewer" {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_preview_target",
+            "Only QA Viewer users can be previewed",
+        ));
+    }
+
+    let status: String = row.get("status");
+    if status != "active" {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "preview_target_inactive",
+            "The QA user must be active before previewing their access",
+        ));
+    }
+
+    let session_token = state
+        .sessions
+        .create_session(&user_id, QA_PREVIEW_SESSION_TTL_SECS)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to create QA preview session");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "session_error",
+                "Failed to create QA preview session",
+            )
+        })?;
+    let expires_at = now_unix() + QA_PREVIEW_SESSION_TTL_SECS;
+    let email: String = row.get("email");
+
+    let details = serde_json::json!({
+        "previewed_user_id": user_id,
+        "previewed_email": email,
+        "expires_at": expires_at,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        &pool,
+        Some(&auth.0.user_id),
+        "qa_preview_started",
+        "user",
+        Some(&user_id),
+        Some(&details),
+    )
+    .await;
+
+    info!(previewed_user_id = %user_id, previewed_by = %auth.0.email, "QA preview session started");
+
+    Ok(Json(PreviewQaUserResponse {
+        session_token,
+        expires_at,
+        user: AuthenticatedUser {
+            email,
+            oidc_subject: row.get("oidc_subject"),
+            user_id: Some(user_id),
+            role: Some(role),
+            avatar_url: row.get("avatar_url"),
+        },
+    }))
 }
 
 /// `GET /v1/users` — list all users (owner/admin only).

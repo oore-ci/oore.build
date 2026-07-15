@@ -1,13 +1,6 @@
 import { HttpResponse, delay, http } from 'msw'
-import {
-  DEMO_AUTH_EXPIRES_AT,
-  DEMO_AUTH_TOKEN,
-  DEMO_OIDC_SUBJECT,
-  DEMO_USER_EMAIL,
-  DEMO_USER_ID,
-  DEMO_USER_ROLE,
-  ago,
-} from '../seed'
+import { ago } from '../seed'
+import { getDemoPersonaFromRequest, getDemoSession } from '../personas'
 
 function safeDemoRedirectUri(requestUrl: string): string {
   const request = new URL(requestUrl)
@@ -33,14 +26,15 @@ function safeRedirectParam(value: string | null): string | null {
 }
 
 export const authHandlers = [
-  http.get('/v1/users/me', async () => {
+  http.get('/v1/users/me', async ({ request }) => {
     await delay(100)
+    const persona = getDemoPersonaFromRequest(request)
     return HttpResponse.json({
       user: {
-        id: DEMO_USER_ID,
-        email: DEMO_USER_EMAIL,
-        display_name: 'Alex Chen',
-        role: DEMO_USER_ROLE,
+        id: persona.userId,
+        email: persona.email,
+        display_name: persona.displayName,
+        role: persona.role,
         status: 'active',
         created_at: ago(86400 * 90),
         updated_at: ago(3600),
@@ -63,45 +57,18 @@ export const authHandlers = [
     })
   }),
 
-  http.post('/v1/auth/oidc/callback', async () => {
+  http.post('/v1/auth/oidc/callback', async ({ request }) => {
     await delay(300)
-    return HttpResponse.json({
-      session_token: DEMO_AUTH_TOKEN,
-      expires_at: DEMO_AUTH_EXPIRES_AT,
-      user: {
-        email: DEMO_USER_EMAIL,
-        oidc_subject: DEMO_OIDC_SUBJECT,
-        user_id: DEMO_USER_ID,
-        role: DEMO_USER_ROLE,
-      },
-    })
+    return HttpResponse.json(getDemoSession(getDemoPersonaFromRequest(request)))
   }),
 
-  http.post('/v1/auth/local/login', async () => {
+  http.post('/v1/auth/local/login', async ({ request }) => {
     await delay(150)
-    return HttpResponse.json({
-      session_token: DEMO_AUTH_TOKEN,
-      expires_at: DEMO_AUTH_EXPIRES_AT,
-      user: {
-        email: DEMO_USER_EMAIL,
-        oidc_subject: DEMO_OIDC_SUBJECT,
-        user_id: DEMO_USER_ID,
-        role: DEMO_USER_ROLE,
-      },
-    })
+    return HttpResponse.json(getDemoSession(getDemoPersonaFromRequest(request)))
   }),
 
-  http.post('/v1/auth/trusted-proxy/login', async () => {
+  http.post('/v1/auth/trusted-proxy/login', async ({ request }) => {
     await delay(150)
-    return HttpResponse.json({
-      session_token: DEMO_AUTH_TOKEN,
-      expires_at: DEMO_AUTH_EXPIRES_AT,
-      user: {
-        email: DEMO_USER_EMAIL,
-        oidc_subject: `trusted-proxy::${DEMO_USER_EMAIL}`,
-        user_id: DEMO_USER_ID,
-        role: DEMO_USER_ROLE,
-      },
-    })
+    return HttpResponse.json(getDemoSession(getDemoPersonaFromRequest(request)))
   }),
 ]

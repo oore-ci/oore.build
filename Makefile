@@ -1,5 +1,5 @@
-.PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index build check \
-		       test-web lint-web fix-web \
+.PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index web-performance-baseline test-web-performance-baseline test-web-runtime-performance build check \
+		       test-web test-demo lint-web fix-web \
 		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
@@ -71,6 +71,9 @@ deploy-demo-only:
 test-web:
 	cd apps/web && bun run test
 
+test-demo:
+	cd apps/web && bun run test src/demo/demo.test.ts src/hooks/use-permissions.test.ts
+
 lint-web:
 	cd apps/web && bun run lint
 
@@ -111,6 +114,15 @@ deploy-release-index-only:
 
 test-release-index:
 	bun test tools/generate-release-index.test.ts
+
+web-performance-baseline:
+	bun tools/web-performance-baseline.ts
+
+test-web-performance-baseline:
+	bun test tools/web-performance-baseline.test.ts
+
+test-web-runtime-performance:
+	bun tools/web-runtime-performance.ts
 
 test-docs:
 	cd apps/docs-site && bun run test
@@ -226,7 +238,7 @@ check: lint-web cargo-check
 
 lint: lint-web lint-docs fmt-rust-check
 
-test: test-web test-docs test-release-index test-rust-workspace
+test: test-web test-demo test-docs test-release-index test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
 validate: docs-check lint test clippy-rust bundle-check build-docs build-site cargo-check
 

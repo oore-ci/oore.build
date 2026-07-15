@@ -3,7 +3,7 @@
 export const DEMO_INSTANCE_ID = 'demo-00000000-0000-0000-0000-000000000001'
 // Resolved at runtime by enableDemoMode() via getDemoInstanceUrl().
 // Must be a truthy string so `!!baseUrl` checks pass in query hooks.
-// MSW intercepts fetch requests before they hit the network.
+// Demo mode intercepts fetch requests in-process before they hit the network.
 export const DEMO_INSTANCE_URL = 'https://demo.oore.build'
 
 /** Returns the real origin at runtime so MSW path matching works correctly. */
@@ -15,11 +15,12 @@ export function getDemoInstanceUrl(): string {
 export const DEMO_INSTANCE_LABEL = 'Demo Instance'
 
 export const DEMO_USER_ID = 'usr-demo-owner-001'
-export const DEMO_USER_EMAIL = 'alex@oore.build'
+export const DEMO_USER_EMAIL = 'demo+owner@oore.build'
 export const DEMO_USER_ROLE = 'owner' as const
 export const DEMO_OIDC_SUBJECT = 'demo-oidc-subject-001'
 
-export const DEMO_AUTH_TOKEN = 'demo-session-token-static'
+export const LEGACY_DEMO_AUTH_TOKEN = 'demo-session-token-static'
+export const DEMO_PASSWORD = 'owner'
 // Year 2099 — never expires during demo use
 export const DEMO_AUTH_EXPIRES_AT = 4102444800
 
@@ -56,6 +57,7 @@ export const BUILD_IDS = {
   timedOut1: 'build-demo-010',
   succeeded4: 'build-demo-011',
   succeeded5: 'build-demo-012',
+  succeeded6: 'build-demo-013',
 } as const
 
 // ── Runner IDs ────────────────────────────────────────────────────

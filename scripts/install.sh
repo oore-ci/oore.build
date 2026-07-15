@@ -21,6 +21,8 @@ OORE_START_DAEMON="${OORE_START_DAEMON:-}"
 OORE_INSTALL_DAEMON_SERVICE="${OORE_INSTALL_DAEMON_SERVICE:-}"
 OORE_DAEMON_LISTEN="${OORE_DAEMON_LISTEN:-}"
 OORE_PUBLIC_URL="${OORE_PUBLIC_URL:-}"
+OORE_WARPGATE_TICKET="${OORE_WARPGATE_TICKET:-}"
+OORE_ARTIFACT_DELIVERY_URL="${OORE_ARTIFACT_DELIVERY_URL:-}"
 OORE_CORS_ORIGINS="${OORE_CORS_ORIGINS:-}"
 OORE_ENABLE_LINGER="${OORE_ENABLE_LINGER:-}"
 OORE_HOSTED_UI="${OORE_HOSTED_UI:-https://ci.oore.build}"
@@ -98,6 +100,8 @@ Environment overrides:
   OORE_START_DAEMON          Start daemon in non-interactive mode (true/false)
   OORE_INSTALL_DAEMON_SERVICE Install oored as a launchd service in all/backend mode (true/false)
   OORE_PUBLIC_URL            Browser-visible HTTPS origin for remote access
+  OORE_WARPGATE_TICKET       Optional Warpgate access ticket for iOS OTA installs
+  OORE_ARTIFACT_DELIVERY_URL Optional token-only HTTPS origin for artifact installs behind an auth proxy
   OORE_CORS_ORIGINS          Comma-separated allowed browser origins (default: OORE_PUBLIC_URL when set)
   OORE_DAEMON_URL            Daemon URL used by all/backend setup helpers (default: http://127.0.0.1:8787)
   OORE_WEB_BACKEND_URL       Backend URL proxied by oore-web (default: OORE_DAEMON_URL)
@@ -230,6 +234,9 @@ print_install_summary() {
     printf '  Daemon listen: %s\n' "$OORE_DAEMON_LISTEN"
     if [[ -n "$OORE_PUBLIC_URL" ]]; then
       printf '  Public URL:    %s\n' "$OORE_PUBLIC_URL"
+    fi
+    if [[ -n "$OORE_ARTIFACT_DELIVERY_URL" ]]; then
+      printf '  Delivery URL:  %s\n' "$OORE_ARTIFACT_DELIVERY_URL"
     fi
     if [[ -n "$OORE_CORS_ORIGINS" ]]; then
       printf '  CORS origins:  %s\n' "$OORE_CORS_ORIGINS"
@@ -1442,6 +1449,12 @@ install_daemon_service() {
 
   if [[ -n "$OORE_PUBLIC_URL" ]]; then
     cmd+=("--env" "OORE_PUBLIC_URL=$OORE_PUBLIC_URL")
+  fi
+  if [[ -n "$OORE_WARPGATE_TICKET" ]]; then
+    cmd+=("--env" "OORE_WARPGATE_TICKET=$OORE_WARPGATE_TICKET")
+  fi
+  if [[ -n "$OORE_ARTIFACT_DELIVERY_URL" ]]; then
+    cmd+=("--env" "OORE_ARTIFACT_DELIVERY_URL=$OORE_ARTIFACT_DELIVERY_URL")
   fi
   if [[ -n "$OORE_CORS_ORIGINS" ]]; then
     cmd+=("--env" "OORE_CORS_ORIGINS=$OORE_CORS_ORIGINS")

@@ -54,6 +54,7 @@ use utoipa::OpenApi;
         paths::get_me,
         paths::list_users,
         paths::invite_user,
+        paths::preview_qa_user,
         paths::update_user_role,
         paths::delete_user,
         paths::re_enable_user,
@@ -82,6 +83,7 @@ use utoipa::OpenApi;
         paths::get_integration,
         paths::delete_integration,
         paths::list_repositories,
+        paths::repository_avatar,
         paths::list_installations,
         paths::sync_installations,
         paths::github_start,
@@ -122,6 +124,7 @@ use utoipa::OpenApi;
         paths::register_pipeline_ios_device,
         // ── Builds ──
         paths::create_build,
+        paths::preview_build_changelog,
         paths::list_builds,
         paths::get_build,
         paths::cancel_build,
@@ -153,7 +156,11 @@ use utoipa::OpenApi;
         paths::complete_artifact,
         paths::abort_artifact,
         paths::list_artifacts,
+        paths::list_project_artifacts,
+        paths::list_build_artifacts,
         paths::generate_download_link,
+        paths::create_artifact_install_link,
+        paths::get_ios_install_manifest,
         // ── Scoped Download Tokens (OOR-140) ──
         paths::create_scoped_download_token,
         paths::list_scoped_download_tokens,
@@ -215,6 +222,7 @@ use utoipa::OpenApi;
         oore_contract::UpdateUserRoleResponse,
         oore_contract::ReEnableUserResponse,
         oore_contract::ListUsersResponse,
+        oore_contract::PreviewQaUserResponse,
         oore_contract::UserProfileResponse,
         // Integrations
         oore_contract::ScmProvider,
@@ -303,6 +311,7 @@ use utoipa::OpenApi;
         oore_contract::BuildEvent,
         oore_contract::CreateBuildRequest,
         oore_contract::CreateBuildResponse,
+        oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
@@ -331,8 +340,11 @@ use utoipa::OpenApi;
         oore_contract::CreateArtifactResponse,
         oore_contract::CompleteArtifactRequest,
         oore_contract::CompleteArtifactResponse,
+        oore_contract::ListBuildArtifactsRequest,
         oore_contract::ListArtifactsResponse,
         oore_contract::ArtifactDownloadLinkResponse,
+        oore_contract::ArtifactInstallPlatform,
+        oore_contract::ArtifactInstallLinkResponse,
         oore_contract::CreateScopedDownloadTokenRequest,
         oore_contract::CreateScopedDownloadTokenResponse,
         oore_contract::ArtifactDownloadTokenSummary,
@@ -790,6 +802,22 @@ mod paths {
     )]
     pub(super) async fn invite_user() {}
 
+    /// Preview QA user access
+    ///
+    /// Creates a short-lived session for an active QA Viewer. Owner only.
+    #[utoipa::path(post, path = "/v1/users/{user_id}/preview", tag = "Users",
+        params(("user_id" = String, Path, description = "QA user ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "QA preview session", body = PreviewQaUserResponse),
+            (status = 400, description = "Target is not a QA Viewer", body = ApiError),
+            (status = 403, description = "Owner access required", body = ApiError),
+            (status = 404, description = "User not found", body = ApiError),
+            (status = 409, description = "QA user is not active", body = ApiError),
+        )
+    )]
+    pub(super) async fn preview_qa_user() {}
+
     /// Update user role
     ///
     /// Changes a user's role. Requires `owner` or `admin` role.
@@ -1098,6 +1126,18 @@ mod paths {
         )
     )]
     pub(super) async fn list_repositories() {}
+
+    /// Fetch a private GitLab repository avatar through Oore
+    #[utoipa::path(get, path = "/v1/integration-repositories/{id}/avatar", tag = "Integrations",
+        params(("id" = String, Path, description = "Integration repository ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Repository avatar image", content_type = "image/*"),
+            (status = 404, description = "Avatar not found", body = ApiError),
+            (status = 502, description = "GitLab avatar unavailable", body = ApiError),
+        )
+    )]
+    pub(super) async fn repository_avatar() {}
 
     /// List integration installations
     #[utoipa::path(get, path = "/v1/integrations/{id}/installations", tag = "Integrations",
@@ -1541,6 +1581,23 @@ mod paths {
     )]
     pub(super) async fn create_build() {}
 
+    /// Preview a Markdown changelog for a manual build.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/builds/changelog-preview", tag = "Builds",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("pipeline_id" = String, Query, description = "Pipeline ID"),
+            ("branch" = Option<String>, Query, description = "Target branch"),
+            ("commit_sha" = Option<String>, Query, description = "Target commit"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Generated changelog draft", body = BuildChangelogPreviewResponse),
+            (status = 400, description = "Invalid revision", body = ApiError),
+            (status = 404, description = "Project or pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn preview_build_changelog() {}
+
     /// List builds
     ///
     /// Returns builds, optionally filtered by project, pipeline, or status.
@@ -1852,6 +1909,27 @@ mod paths {
     )]
     pub(super) async fn list_artifacts() {}
 
+    /// List available artifacts across a project
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Project artifact list", body = ListArtifactsResponse),
+        )
+    )]
+    pub(super) async fn list_project_artifacts() {}
+
+    /// List available artifacts for a bounded set of builds
+    #[utoipa::path(post, path = "/v1/artifacts/query", tag = "Artifacts",
+        request_body = ListBuildArtifactsRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Artifact list", body = ListArtifactsResponse),
+            (status = 400, description = "Too many build IDs", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_build_artifacts() {}
+
     /// Generate download link
     ///
     /// Returns a signed download URL for an artifact. URLs expire after 15 minutes.
@@ -1864,6 +1942,37 @@ mod paths {
         )
     )]
     pub(super) async fn generate_download_link() {}
+
+    /// Create device install link
+    ///
+    /// Creates a one-hour install session for an APK or install-ready signed IPA.
+    /// QA viewers may use this endpoint through their artifact read permission.
+    #[utoipa::path(post, path = "/v1/artifacts/{artifact_id}/install-link", tag = "Artifacts",
+        params(("artifact_id" = String, Path, description = "Artifact ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Device install session", body = ArtifactInstallLinkResponse),
+            (status = 404, description = "Artifact not found", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+            (status = 412, description = "External HTTPS access is not ready", body = ApiError),
+            (status = 422, description = "Artifact is not install-ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn create_artifact_install_link() {}
+
+    /// Get iOS OTA install manifest
+    ///
+    /// Returns an Apple property-list manifest authorized by the scoped token in the URL.
+    #[utoipa::path(get, path = "/install/ios/{token}/manifest.plist", tag = "Artifacts",
+        params(("token" = String, Path, description = "Artifact install token")),
+        responses(
+            (status = 200, description = "Apple OTA installation manifest", content_type = "application/xml"),
+            (status = 401, description = "Invalid or expired token", body = ApiError),
+            (status = 410, description = "Artifact expired", body = ApiError),
+            (status = 422, description = "IPA is not install-ready", body = ApiError),
+        )
+    )]
+    pub(super) async fn get_ios_install_manifest() {}
 
     // ── Scoped Download Tokens (OOR-140) ──
 
@@ -1912,7 +2021,7 @@ mod paths {
     ///
     /// Downloads an artifact using a scoped download token. No session auth required —
     /// the token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.
-    #[utoipa::path(get, path = "/v1/artifacts/dl/{token}", tag = "Scoped Download Tokens",
+    #[utoipa::path(get, path = "/install/artifact/{token}", tag = "Scoped Download Tokens",
         params(("token" = String, Path, description = "Scoped download token")),
         responses(
             (status = 302, description = "Redirect to presigned download URL"),

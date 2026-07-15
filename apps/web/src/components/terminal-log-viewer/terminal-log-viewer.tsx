@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 import { LogOutput } from './log-output'
@@ -29,6 +29,7 @@ export default function TerminalLogViewer({
   const [autoScroll, setAutoScroll] = useState(true)
   const [wrapLines, setWrapLines] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const deferredSearchQuery = useDeferredValue(searchQuery)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -53,12 +54,12 @@ export default function TerminalLogViewer({
     [selectedStep, allVisibleLogs, stepGroupsByName],
   )
   const filteredLogs = useMemo(() => {
-    if (!searchQuery.trim()) return selectedLogs
-    const query = searchQuery.toLowerCase()
+    if (!deferredSearchQuery.trim()) return selectedLogs
+    const query = deferredSearchQuery.toLowerCase()
     return selectedLogs.filter((chunk) =>
       chunk.content.toLowerCase().includes(query),
     )
-  }, [selectedLogs, searchQuery])
+  }, [selectedLogs, deferredSearchQuery])
   const selectedStepMeta: SelectedStepMeta | null = useMemo(() => {
     if (selectedStep === 'all') return null
     const group = stepGroupsByName.get(selectedStep)
@@ -140,7 +141,7 @@ export default function TerminalLogViewer({
     virtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' })
   }
 
-  const lineCountLabel = searchQuery
+  const lineCountLabel = deferredSearchQuery
     ? `${filteredLogs.length} of ${selectedLogs.length} lines`
     : `${selectedLogs.length} lines`
 
@@ -205,7 +206,7 @@ export default function TerminalLogViewer({
             logs={filteredLogs}
             selectedStep={selectedStep}
             selectedStepMeta={selectedStepMeta}
-            searchQuery={searchQuery}
+            searchQuery={deferredSearchQuery}
             isLoading={isLoading}
             logsUnavailable={logsUnavailable}
             isTerminal={isTerminal}

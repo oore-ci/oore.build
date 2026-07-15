@@ -7,6 +7,7 @@ import {
 import type { UseQueryOptions } from '@tanstack/react-query'
 import type {
   Build,
+  BuildChangelogPreviewResponse,
   BuildDetailResponse,
   BuildLogChunk,
   BuildStatus,
@@ -16,12 +17,16 @@ import type {
 } from '@/lib/types'
 import {
   cancelBuild,
+  createArtifactInstallLink,
   createBuild,
   createScopedDownloadToken,
   getArtifactDownloadLink,
   getBuild,
+  getBuildChangelogPreview,
   getBuildLogs,
   listArtifacts,
+  listBuildArtifacts,
+  listProjectArtifacts,
   listBuilds,
   rerunBuild,
 } from '@/lib/api'
@@ -142,6 +147,7 @@ export function useCreateBuild() {
         branch: data.branch,
         commit_sha: data.commit_sha,
         trigger_ref: data.trigger_ref,
+        changelog: data.changelog,
         config_snapshot: {},
         queued_at: Math.floor(Date.now() / 1000),
         created_at: Math.floor(Date.now() / 1000),
@@ -171,6 +177,36 @@ export function useCreateBuild() {
         queryKey: [instanceId, 'builds'],
       })
     },
+  })
+}
+
+export function useBuildChangelogPreview(
+  projectId: string,
+  params: { pipeline_id: string; branch?: string; commit_sha?: string },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery<BuildChangelogPreviewResponse>({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'build-changelog-preview',
+      projectId,
+      params,
+    ],
+    queryFn: ({ signal }) =>
+      getBuildChangelogPreview(baseUrl!, token!, projectId, params, { signal }),
+    enabled:
+      !!baseUrl &&
+      !!token &&
+      (options?.enabled ?? true) &&
+      !!projectId &&
+      !!params.pipeline_id &&
+      (!!params.branch || !!params.commit_sha),
+    staleTime: 30_000,
+    retry: false,
   })
 }
 
@@ -279,6 +315,34 @@ export function useArtifacts(
   })
 }
 
+export function useProjectArtifacts(projectId: string) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'project-artifacts', projectId],
+    queryFn: ({ signal }) =>
+      listProjectArtifacts(baseUrl!, token!, projectId, { signal }),
+    enabled: !!baseUrl && !!token && !!projectId,
+    staleTime: 5_000,
+  })
+}
+
+export function useArtifactsForBuilds(buildIds: Array<string>) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'build-artifacts', buildIds],
+    queryFn: ({ signal }) =>
+      listBuildArtifacts(baseUrl!, token!, { build_ids: buildIds }, { signal }),
+    enabled: !!baseUrl && !!token && buildIds.length > 0,
+    staleTime: 5_000,
+  })
+}
+
 export function useArtifactDownloadLink() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -288,6 +352,19 @@ export function useArtifactDownloadLink() {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return getArtifactDownloadLink(baseUrl, token, artifactId)
+    },
+  })
+}
+
+export function useArtifactInstallLink() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+
+  return useMutation({
+    mutationFn: (artifactId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return createArtifactInstallLink(baseUrl, token, artifactId)
     },
   })
 }

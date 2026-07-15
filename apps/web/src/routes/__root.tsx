@@ -8,13 +8,12 @@ import {
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+import { Search01Icon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
 import PageBreadcrumb from '@/components/page-breadcrumb'
+import QaAppHeader from '@/components/qa-app-header'
 import { Separator } from '@/components/ui/separator'
 import {
   SidebarInset,
@@ -30,12 +29,14 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useUiStore } from '@/stores/ui-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { isDemoMode } from '@/lib/demo-mode'
+import { useWindowEvent } from '@/hooks/use-window-event'
 import {
   RootErrorBoundary,
   RootNotFound,
 } from '@/components/root-route-boundaries'
 
-const CommandPalette = lazy(() => import('@/components/command-palette'))
+const loadCommandPalette = () => import('@/components/command-palette')
+const CommandPalette = lazy(loadCommandPalette)
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
@@ -106,6 +107,8 @@ function RootLayout() {
   const authToken = useAuthStore((s) => s.token)
   const authUser = useAuthStore((s) => s.user)
   const openCommandPalette = useUiStore((s) => s.setCommandPaletteOpen)
+  const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen)
+  const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette)
   const sidebarOpen = useUiStore((s) => s.sidebarOpen)
   const setSidebarOpen = useUiStore((s) => s.setSidebarOpen)
 
@@ -116,14 +119,35 @@ function RootLayout() {
     !!activeInstanceId &&
     !!authToken &&
     !!authUser
+  const showQaChrome = showAppChrome && authUser.role === 'qa_viewer'
 
   useSessionMonitor()
+  useWindowEvent('keydown', (event) => {
+    if (
+      showAppChrome &&
+      !showQaChrome &&
+      (event.metaKey || event.ctrlKey) &&
+      event.key === 'k'
+    ) {
+      event.preventDefault()
+      void loadCommandPalette()
+      toggleCommandPalette()
+    }
+  })
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <RouteTransitionBar />
-        {showAppChrome ? (
+        {showQaChrome ? (
+          <div className="flex min-h-screen flex-col bg-surface">
+            <QaAppHeader />
+            <ConnectivityBanner />
+            <main className="flex flex-1 flex-col">
+              <Outlet />
+            </main>
+          </div>
+        ) : showAppChrome ? (
           <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
             <SidebarInset>
@@ -138,6 +162,8 @@ function RootLayout() {
                   <button
                     type="button"
                     aria-label="Search"
+                    onMouseEnter={() => void loadCommandPalette()}
+                    onFocus={() => void loadCommandPalette()}
                     onClick={() => openCommandPalette(true)}
                     className="inline-flex h-8 w-8 items-center justify-center gap-2 rounded-sm border bg-muted/50 px-0 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:w-48 sm:justify-between sm:px-3"
                   >
@@ -162,7 +188,7 @@ function RootLayout() {
           </div>
         )}
         <Toaster />
-        {showAppChrome ? (
+        {showAppChrome && !showQaChrome && commandPaletteOpen ? (
           <Suspense fallback={null}>
             <CommandPalette />
           </Suspense>

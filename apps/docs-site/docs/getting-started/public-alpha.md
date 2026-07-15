@@ -60,7 +60,7 @@ Choosing the right path depends on how your browser reaches the backend. The bac
 
 ![Oore CI Dashboard screenshot](/demo-dashboard.webp)
 
-> The public demo uses fixed sample data. It is read-only and does not create projects, pipelines, builds, or settings changes.
+> The public demo uses rich fixed sample data and never persists mutations. Try Owner, Admin, Developer, and QA Viewer with `demo+<role>@oore.build`; every account uses password `owner`. Allowed mutation controls remain explorable, but attempts show `Action not allowed on demo.`
 
 ### Path A: Local-first (no HTTPS required)
 

@@ -33,6 +33,39 @@ pub async fn create_test_app(db_path: &Path) -> Router {
     build_test_router(store, TEST_ENCRYPTION_KEY.to_vec()).await
 }
 
+/// Create a test app with an externally reachable public URL loaded into runtime state.
+pub async fn create_test_app_with_public_url(db_path: &Path, public_url: &str) -> Router {
+    create_test_app_with_network_urls(db_path, Some(public_url), None).await
+}
+
+pub async fn create_test_app_with_network_urls(
+    db_path: &Path,
+    public_url: Option<&str>,
+    artifact_delivery_url: Option<&str>,
+) -> Router {
+    let store = SetupStore::connect(db_path.to_path_buf())
+        .await
+        .expect("failed to connect to test database");
+    store
+        .init_if_missing()
+        .await
+        .expect("failed to init database");
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO external_access_network_settings \
+         (id, public_url, artifact_delivery_url, allowed_origins_json, created_at, updated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?4)",
+    )
+    .bind(public_url)
+    .bind(artifact_delivery_url)
+    .bind(serde_json::to_string(&public_url.into_iter().collect::<Vec<_>>()).unwrap())
+    .bind(now)
+    .execute(store.pool())
+    .await
+    .expect("failed to seed public URL");
+    build_test_router(store, TEST_ENCRYPTION_KEY.to_vec()).await
+}
+
 /// Connect to the test database at `path` and return the pool.
 pub async fn connect_pool(path: &Path) -> SqlitePool {
     let store = SetupStore::connect(path.to_path_buf())

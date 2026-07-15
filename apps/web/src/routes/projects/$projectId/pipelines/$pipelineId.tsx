@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -16,7 +16,7 @@ import {
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuilds } from '@/hooks/use-builds'
 import { useRepositoryProvider } from '@/hooks/use-integrations'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import {
   useDeletePipeline,
   usePipeline,
@@ -64,8 +64,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import TriggerBuildDialog from '@/components/trigger-build-dialog'
 import { PipelineConfigurationCard } from './pipeline-configuration-card'
+
+const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
+const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId',
@@ -89,18 +91,32 @@ function usePipelineDetailPageState() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
-  const signingQuery = usePipelineAndroidSigning(pipelineId)
-  const iosSigningQuery = usePipelineIosSigning(pipelineId)
+  const canWriteGlobally = useHasPermission('pipelines', 'write')
+  const canDeleteGlobally = useHasPermission('pipelines', 'delete')
+  const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const { data: projectData } = useProject(projectId)
+  const projectRole =
+    projectData?.current_user_role ?? projectData?.project.current_user_role
+  const canWrite =
+    canWriteGlobally && hasProjectPermission(projectRole, 'pipelines', 'write')
+  const canDelete =
+    canDeleteGlobally &&
+    hasProjectPermission(projectRole, 'pipelines', 'delete')
+  const canTriggerBuild =
+    canTriggerBuildGlobally &&
+    hasProjectPermission(projectRole, 'builds', 'write')
+  const signingQuery = usePipelineAndroidSigning(pipelineId, {
+    enabled: canWrite,
+  })
+  const iosSigningQuery = usePipelineIosSigning(pipelineId, {
+    enabled: canWrite,
+  })
   const { data: buildsData } = useBuilds({
     pipeline_id: pipelineId,
     limit: 20,
   })
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
-  const canWrite = useHasPermission('pipelines', 'write')
-  const canDelete = useHasPermission('pipelines', 'delete')
-  const canTriggerBuild = useHasPermission('builds', 'write')
   const repoProviderQuery = useRepositoryProvider(
     projectData?.project.repository_id,
   )
@@ -261,6 +277,8 @@ function PipelineDetailPage() {
             <>
               {canTriggerBuild ? (
                 <Button
+                  onMouseEnter={() => void loadTriggerBuildDialog()}
+                  onFocus={() => void loadTriggerBuildDialog()}
                   onClick={() => setTriggerBuildOpen(true)}
                   disabled={!projectHasSource}
                 >
@@ -340,7 +358,12 @@ function PipelineDetailPage() {
               </EmptyHeader>
               {canTriggerBuild && projectHasSource ? (
                 <EmptyContent>
-                  <Button size="sm" onClick={() => setTriggerBuildOpen(true)}>
+                  <Button
+                    size="sm"
+                    onMouseEnter={() => void loadTriggerBuildDialog()}
+                    onFocus={() => void loadTriggerBuildDialog()}
+                    onClick={() => setTriggerBuildOpen(true)}
+                  >
                     <HugeiconsIcon icon={PlayIcon} />
                     Run first build
                   </Button>
@@ -403,18 +426,22 @@ function PipelineDetailPage() {
       </Card>
 
       {/* Dialogs */}
-      <TriggerBuildDialog
-        open={triggerBuildOpen}
-        onOpenChange={setTriggerBuildOpen}
-        fixedProjectId={projectId}
-        fixedPipelineId={pipeline.id}
-        fixedPipelineName={pipeline.name}
-        defaultBranch={projectData?.project.default_branch}
-        description="Run this pipeline now with a branch or pinned commit."
-        onBuildCreated={(buildId) => {
-          void navigate({ to: '/builds/$buildId', params: { buildId } })
-        }}
-      />
+      {triggerBuildOpen ? (
+        <Suspense fallback={null}>
+          <TriggerBuildDialog
+            open
+            onOpenChange={setTriggerBuildOpen}
+            fixedProjectId={projectId}
+            fixedPipelineId={pipeline.id}
+            fixedPipelineName={pipeline.name}
+            defaultBranch={projectData?.project.default_branch}
+            description="Run this pipeline now with a branch or pinned commit."
+            onBuildCreated={(buildId) => {
+              void navigate({ to: '/builds/$buildId', params: { buildId } })
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

@@ -77,6 +77,19 @@ The presigned URL model means:
 - **Time-limited access**: URLs expire, preventing stale links from being shared indefinitely
 - **No proxy bottleneck**: Downloads go directly to S3/R2, not through the daemon
 
+## Device installation flow
+
+APK and signed ad-hoc IPA artifacts can use the install flow in addition to ordinary downloads:
+
+1. An authenticated user with artifact read access requests `POST /v1/artifacts/{artifact_id}/install-link`.
+2. Oore creates a reusable, artifact-scoped token that expires after one hour or when the artifact expires.
+3. Android receives the scoped APK download URL directly.
+4. iOS receives an `itms-services` URL whose HTTPS manifest references the scoped IPA download URL.
+
+The iOS token must be reusable because the phone fetches the manifest and IPA separately. The public manifest endpoint validates but does not consume the token. Oore only creates iOS install links for signed ad-hoc artifacts carrying bundle identifier, app name, version, and build number metadata from the current runner.
+
+See [Install Mobile Builds](/guides/artifacts/install-mobile-builds) for device instructions.
+
 ## Local backend tokens
 
 For the `local` storage backend, the daemon manages its own token system:
@@ -93,7 +106,7 @@ This provides equivalent security to S3 presigned URLs for local deployments.
 Artifact access is protected by multiple layers:
 
 1. **Runner assignment**: Only the runner assigned to a build can create artifacts for that build
-2. **RBAC permissions**: Only users with `builds:read` permission can request download links
+2. **RBAC permissions**: Users with artifact read access can download and install; artifact write access is required to administer reusable external share links
 3. **Signed URLs**: Time-limited, so sharing a link has a bounded exposure window
 4. **Audit trail**: Download link generation is logged for accountability
 5. **Checksum deduplication**: Prevents duplicate artifact uploads within a build

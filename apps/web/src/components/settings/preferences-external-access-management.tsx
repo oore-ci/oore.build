@@ -15,6 +15,7 @@ export function ExternalAccessManagement({
     setNetworkEditorOpen,
     setOidcDialogOpen,
     setTrustedProxyDialogOpen,
+    trustedProxySettings,
   } = state
   return (
     <div className="space-y-3 border p-3">
@@ -52,7 +53,12 @@ export function ExternalAccessManagement({
           <p className="text-sm font-medium">Identity settings</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {remoteAuthMode === 'trusted_proxy'
-              ? 'Update trusted proxy header, peer CIDRs, and secret.'
+              ? trustedProxySettings?.user_email_header ===
+                'x-warpgate-username'
+                ? trustedProxySettings.has_warpgate_ticket
+                  ? `Warpgate identity and iOS installs configured (${trustedProxySettings.warpgate_ticket_source === 'environment' ? 'environment' : 'encrypted settings'} ticket).`
+                  : 'Warpgate identity configured. Add an access ticket for iOS installs.'
+                : 'Update trusted proxy header, peer CIDRs, and secret.'
               : 'Update issuer and client credentials.'}
           </p>
           <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">

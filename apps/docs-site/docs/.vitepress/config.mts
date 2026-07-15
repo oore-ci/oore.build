@@ -305,6 +305,10 @@ export default defineConfig({
               text: 'Download Artifacts',
               link: '/guides/artifacts/download-artifacts',
             },
+            {
+              text: 'Install Mobile Builds',
+              link: '/guides/artifacts/install-mobile-builds',
+            },
           ],
         },
         {

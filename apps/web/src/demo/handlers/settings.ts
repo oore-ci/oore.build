@@ -26,6 +26,7 @@ let instancePreferences: InstancePreferences = { ...demoInstancePreferences }
 
 let externalAccessNetworkSettings: ExternalAccessNetworkSettings = {
   public_url: undefined,
+  artifact_delivery_url: undefined,
   allowed_origins: [],
   source: 'default',
   updated_at: ago(86400 * 30),
@@ -35,6 +36,7 @@ let trustedProxySettings: TrustedProxySettingsPublic = {
   user_email_header: 'x-oore-user-email',
   trusted_proxy_cidrs: [],
   has_shared_secret: false,
+  has_warpgate_ticket: false,
   updated_at: ago(86400 * 30),
 }
 
@@ -193,11 +195,13 @@ export const settingsHandlers = [
     await delay(250)
     const body = (await request.json()) as {
       public_url?: string
+      artifact_delivery_url?: string
       allowed_origins: Array<string>
     }
     externalAccessNetworkSettings = {
       ...externalAccessNetworkSettings,
       public_url: body.public_url,
+      artifact_delivery_url: body.artifact_delivery_url,
       allowed_origins: body.allowed_origins,
       source: 'database',
       updated_at: now(),
@@ -218,6 +222,7 @@ export const settingsHandlers = [
         user_email_header?: string
         trusted_proxy_cidrs: Array<string>
         shared_secret?: string
+        warpgate_ticket?: string
       }
       trustedProxySettings = {
         ...trustedProxySettings,
@@ -226,6 +231,17 @@ export const settingsHandlers = [
         trusted_proxy_cidrs: body.trusted_proxy_cidrs,
         has_shared_secret:
           trustedProxySettings.has_shared_secret || !!body.shared_secret,
+        has_warpgate_ticket:
+          body.warpgate_ticket === ''
+            ? false
+            : trustedProxySettings.has_warpgate_ticket ||
+              !!body.warpgate_ticket,
+        warpgate_ticket_source:
+          body.warpgate_ticket === ''
+            ? undefined
+            : body.warpgate_ticket
+              ? 'database'
+              : trustedProxySettings.warpgate_ticket_source,
         updated_at: now(),
       }
       return HttpResponse.json({ settings: trustedProxySettings })

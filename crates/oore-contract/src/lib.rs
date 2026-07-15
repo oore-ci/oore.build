@@ -478,6 +478,13 @@ pub struct ReEnableUserResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PreviewQaUserResponse {
+    pub session_token: String,
+    pub expires_at: i64,
+    pub user: AuthenticatedUser,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListUsersResponse {
     pub users: Vec<User>,
 }
@@ -982,6 +989,8 @@ pub struct Build {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
@@ -1040,11 +1049,21 @@ pub struct CreateBuildRequest {
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CreateBuildResponse {
     pub build: Build,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BuildChangelogPreviewResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    pub target_commit: String,
+    pub markdown: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1265,6 +1284,11 @@ pub struct CompleteArtifactResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildArtifactsRequest {
+    pub build_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListArtifactsResponse {
     pub artifacts: Vec<Artifact>,
 }
@@ -1272,6 +1296,23 @@ pub struct ListArtifactsResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ArtifactDownloadLinkResponse {
     pub download_url: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactInstallPlatform {
+    Android,
+    Ios,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ArtifactInstallLinkResponse {
+    pub platform: ArtifactInstallPlatform,
+    pub install_url: String,
+    pub download_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest_url: Option<String>,
     pub expires_at: i64,
 }
 
@@ -1522,6 +1563,8 @@ pub enum ExternalAccessNetworkSource {
 pub struct ExternalAccessNetworkSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
     pub source: ExternalAccessNetworkSource,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1537,6 +1580,8 @@ pub struct ExternalAccessNetworkSettingsResponse {
 pub struct UpdateExternalAccessNetworkSettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_delivery_url: Option<String>,
     pub allowed_origins: Vec<String>,
 }
 
@@ -1590,8 +1635,18 @@ pub struct TrustedProxySettingsPublic {
     pub user_email_header: String,
     pub trusted_proxy_cidrs: Vec<String>,
     pub has_shared_secret: bool,
+    pub has_warpgate_ticket: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warpgate_ticket_source: Option<WarpgateTicketSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpgateTicketSource {
+    Database,
+    Environment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -1607,6 +1662,8 @@ pub struct UpdateTrustedProxySettingsRequest {
     pub trusted_proxy_cidrs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warpgate_ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -1647,6 +1704,8 @@ pub struct Project {
     pub repository_full_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_provider: Option<String>,
     #[schema(value_type = Object)]
     pub settings: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]

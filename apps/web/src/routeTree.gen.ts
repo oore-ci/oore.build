@@ -61,7 +61,7 @@ const SetupIndexRoute = SetupIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => SetupRoute,
-} as any)
+} as any).lazy(() => import('./routes/setup/index.lazy').then((d) => d.Route))
 const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
   id: '/projects/',
   path: '/projects/',
@@ -76,22 +76,24 @@ const SetupTrustedProxyRoute = SetupTrustedProxyRouteImport.update({
   id: '/trusted-proxy',
   path: '/trusted-proxy',
   getParentRoute: () => SetupRoute,
-} as any)
+} as any).lazy(() =>
+  import('./routes/setup/trusted-proxy.lazy').then((d) => d.Route),
+)
 const SetupOwnerRoute = SetupOwnerRouteImport.update({
   id: '/owner',
   path: '/owner',
   getParentRoute: () => SetupRoute,
-} as any)
+} as any).lazy(() => import('./routes/setup/owner.lazy').then((d) => d.Route))
 const SetupOidcRoute = SetupOidcRouteImport.update({
   id: '/oidc',
   path: '/oidc',
   getParentRoute: () => SetupRoute,
-} as any)
+} as any).lazy(() => import('./routes/setup/oidc.lazy').then((d) => d.Route))
 const SetupModeRoute = SetupModeRouteImport.update({
   id: '/mode',
   path: '/mode',
   getParentRoute: () => SetupRoute,
-} as any)
+} as any).lazy(() => import('./routes/setup/mode.lazy').then((d) => d.Route))
 const SetupCompleteRoute = SetupCompleteRouteImport.update({
   id: '/complete',
   path: '/complete',
@@ -106,17 +108,23 @@ const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   id: '/settings/runners',
   path: '/settings/runners',
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any).lazy(() =>
+  import('./routes/settings/runners.lazy').then((d) => d.Route),
+)
 const SettingsRetentionRoute = SettingsRetentionRouteImport.update({
   id: '/settings/retention',
   path: '/settings/retention',
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any).lazy(() =>
+  import('./routes/settings/retention.lazy').then((d) => d.Route),
+)
 const SettingsPreferencesRoute = SettingsPreferencesRouteImport.update({
   id: '/settings/preferences',
   path: '/settings/preferences',
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any).lazy(() =>
+  import('./routes/settings/preferences.lazy').then((d) => d.Route),
+)
 const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
   id: '/settings/audit-log',
   path: '/settings/audit-log',
@@ -131,7 +139,9 @@ const SettingsApiTokensRoute = SettingsApiTokensRouteImport.update({
   id: '/settings/api-tokens',
   path: '/settings/api-tokens',
   getParentRoute: () => rootRouteImport,
-} as any)
+} as any).lazy(() =>
+  import('./routes/settings/api-tokens.lazy').then((d) => d.Route),
+)
 const BuildsBuildIdRoute = BuildsBuildIdRouteImport.update({
   id: '/builds/$buildId',
   path: '/builds/$buildId',
@@ -164,13 +174,19 @@ const SettingsNotificationsNewRoute =
     id: '/settings/notifications/new',
     path: '/settings/notifications/new',
     getParentRoute: () => rootRouteImport,
-  } as any)
+  } as any).lazy(() =>
+    import('./routes/settings/notifications/new.lazy').then((d) => d.Route),
+  )
 const SettingsNotificationsChannelIdRoute =
   SettingsNotificationsChannelIdRouteImport.update({
     id: '/settings/notifications/$channelId',
     path: '/settings/notifications/$channelId',
     getParentRoute: () => rootRouteImport,
-  } as any)
+  } as any).lazy(() =>
+    import('./routes/settings/notifications/$channelId.lazy').then(
+      (d) => d.Route,
+    ),
+  )
 const SettingsIntegrationsLocalGitRoute =
   SettingsIntegrationsLocalGitRouteImport.update({
     id: '/settings/integrations/local-git',

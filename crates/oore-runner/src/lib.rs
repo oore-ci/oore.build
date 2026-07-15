@@ -434,6 +434,20 @@ struct IosSigningMaterialization {
     signing_identity_name: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct IosAppMetadata {
+    bundle_identifier: String,
+    display_name: String,
+    version: String,
+    build_number: String,
+}
+
+#[derive(Debug)]
+struct SignedIosArchive {
+    ipa_path: PathBuf,
+    app: IosAppMetadata,
+}
+
 struct IosSigningCleanup {
     keychain_path: PathBuf,
     original_default_keychain: String,
@@ -1037,6 +1051,46 @@ fn read_apple_bundle_identifier(bundle_path: &Path) -> anyhow::Result<String> {
     )
 }
 
+fn read_apple_bundle_value(bundle_path: &Path, key: &str) -> Option<String> {
+    let output = Command::new("/usr/libexec/PlistBuddy")
+        .args([
+            "-c".to_string(),
+            format!("Print :{key}"),
+            bundle_path.join("Info.plist").display().to_string(),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn read_ios_app_metadata(bundle_path: &Path) -> anyhow::Result<IosAppMetadata> {
+    let bundle_identifier = read_apple_bundle_identifier(bundle_path)?;
+    let display_name = read_apple_bundle_value(bundle_path, "CFBundleDisplayName")
+        .or_else(|| read_apple_bundle_value(bundle_path, "CFBundleName"))
+        .or_else(|| {
+            bundle_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_string)
+        })
+        .ok_or_else(|| anyhow::anyhow!("app bundle is missing a display name"))?;
+    let version = read_apple_bundle_value(bundle_path, "CFBundleShortVersionString")
+        .ok_or_else(|| anyhow::anyhow!("app bundle is missing CFBundleShortVersionString"))?;
+    let build_number = read_apple_bundle_value(bundle_path, "CFBundleVersion")
+        .ok_or_else(|| anyhow::anyhow!("app bundle is missing CFBundleVersion"))?;
+
+    Ok(IosAppMetadata {
+        bundle_identifier,
+        display_name,
+        version,
+        build_number,
+    })
+}
+
 fn profile_path_for_bundle<'a>(
     materialization: &'a IosSigningMaterialization,
     bundle_id: &str,
@@ -1131,7 +1185,7 @@ fn collect_nested_code(root: &Path, output: &mut Vec<PathBuf>) -> anyhow::Result
 fn manually_sign_ios_archive(
     workspace: &Path,
     materialization: &IosSigningMaterialization,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<SignedIosArchive> {
     let archive = find_newest_path_with_extension(workspace, "xcarchive")?;
     let applications = archive.join("Products").join("Applications");
     let app = find_direct_path_with_extension(&applications, "app")?;
@@ -1189,6 +1243,8 @@ fn manually_sign_ios_archive(
         &format!("verify signed app {}", app.display()),
     )?;
 
+    let app_metadata = read_ios_app_metadata(&app)?;
+
     let package_root = entitlements_dir.join("package");
     let payload = package_root.join("Payload");
     if package_root.exists() {
@@ -1237,7 +1293,10 @@ fn manually_sign_ios_archive(
     )?;
     fs::metadata(&ipa_path)
         .map_err(|error| anyhow::anyhow!("signed IPA was not created: {error}"))?;
-    Ok(ipa_path)
+    Ok(SignedIosArchive {
+        ipa_path,
+        app: app_metadata,
+    })
 }
 
 fn ios_signing_prepared_marker(
@@ -2593,6 +2652,7 @@ async fn execute_build(
     };
 
     let mut ios_signing_command_applied = false;
+    let mut signed_ios_app_metadata: Option<IosAppMetadata> = None;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -2799,7 +2859,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             duration_ms: (signing_finished - signing_started) * 1000,
                         });
                         match signing_result {
-                            Ok(ipa_path) => {
+                            Ok(signed_archive) => {
                                 let _ = append_runner_log_line(
                                     client,
                                     daemon_url,
@@ -2809,10 +2869,11 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     "stdout",
                                     &format!(
                                         "[oore-signing] Signed IPA created at {}",
-                                        ipa_path.display()
+                                        signed_archive.ipa_path.display()
                                     ),
                                 )
                                 .await;
+                                signed_ios_app_metadata = Some(signed_archive.app);
                             }
                             Err(error) => {
                                 let _ = append_runner_log_line(
@@ -2868,6 +2929,12 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         .zip(ios_signing_materialization.as_ref())
         .map(|(bundle, materialization)| {
             serde_json::json!({
+                "ios_app": signed_ios_app_metadata.as_ref().map(|app| serde_json::json!({
+                    "bundle_identifier": app.bundle_identifier,
+                    "display_name": app.display_name,
+                    "version": app.version,
+                    "build_number": app.build_number,
+                })),
                 "ios_signing": {
                     "source": ios_signing_source.unwrap_or("pipeline_profile"),
                     "mode": match bundle.mode {
@@ -4664,6 +4731,33 @@ mod tests {
     fn falls_back_to_ad_hoc_alias_when_release_testing_absent() {
         let help = "Available options: app-store, ad-hoc, enterprise";
         assert_eq!(choose_ios_export_method(help), "ad-hoc");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_install_metadata_from_signed_app_info_plist() {
+        let workspace = temp_workspace();
+        let app = workspace.join("Kite.app");
+        fs::create_dir_all(&app).expect("create app bundle");
+        fs::write(
+            app.join("Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.example.kite</string>
+<key>CFBundleDisplayName</key><string>Kite QA</string>
+<key>CFBundleShortVersionString</key><string>3.2.1</string>
+<key>CFBundleVersion</key><string>42</string>
+</dict></plist>"#,
+        )
+        .expect("write Info.plist");
+
+        let metadata = read_ios_app_metadata(&app).expect("read app metadata");
+        assert_eq!(metadata.bundle_identifier, "com.example.kite");
+        assert_eq!(metadata.display_name, "Kite QA");
+        assert_eq!(metadata.version, "3.2.1");
+        assert_eq!(metadata.build_number, "42");
+        cleanup_workspace(&workspace);
     }
 
     #[test]

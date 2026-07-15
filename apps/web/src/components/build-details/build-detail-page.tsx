@@ -23,7 +23,7 @@ import {
   useRerunBuild,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -40,6 +40,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 export function BuildDetailPage({ buildId }: { buildId: string }) {
   const navigate = useNavigate()
   const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
+  const canTriggerBuild = useHasPermission('builds', 'write')
+  const canCancelBuild = useHasPermission('builds', 'cancel')
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
@@ -124,7 +126,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   if (!data) return null
 
   const { build, events } = data
-  const canCancel = !isTerminal
+  const canCancel = !isTerminal && canCancelBuild
   const duration = build.started_at
     ? (build.finished_at ?? Math.floor(Date.now() / 1000)) - build.started_at
     : null
@@ -168,7 +170,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         }
         actions={
           <div className="flex items-center gap-2">
-            {isTerminal ? (
+            {isTerminal && canTriggerBuild ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -188,8 +190,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                     },
                   })
                 }}
-                disabled={rerunMutation.isPending || isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                disabled={rerunMutation.isPending}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
@@ -200,8 +201,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 variant="destructive"
                 size="sm"
                 onClick={handleCancel}
-                disabled={cancelMutation.isPending || isDemoMode}
-                title={isDemoMode ? READ_ONLY_REASON : undefined}
+                disabled={cancelMutation.isPending}
               >
                 {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
               </Button>

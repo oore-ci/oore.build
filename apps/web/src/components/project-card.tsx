@@ -13,6 +13,7 @@ interface ProjectCardProps {
   project: Project
   pipelineCount?: number
   lastBuildStatus?: string
+  onPreloadTriggerBuild: () => void
   onTriggerBuild: (projectId: string) => void
 }
 
@@ -20,6 +21,7 @@ export default function ProjectCard({
   project,
   pipelineCount,
   lastBuildStatus,
+  onPreloadTriggerBuild,
   onTriggerBuild,
 }: ProjectCardProps) {
   return (
@@ -31,6 +33,8 @@ export default function ProjectCard({
               <RepositoryAvatar
                 fullName={project.repository_full_name}
                 avatarUrl={project.repository_avatar_url}
+                repositoryId={project.repository_id}
+                provider={project.repository_provider}
               />
             ) : null}
             <div className="min-w-0">
@@ -88,6 +92,8 @@ export default function ProjectCard({
           size="sm"
           variant="outline"
           className="mt-auto w-full"
+          onMouseEnter={onPreloadTriggerBuild}
+          onFocus={onPreloadTriggerBuild}
           onClick={() => onTriggerBuild(project.id)}
         >
           <HugeiconsIcon icon={PlayIcon} />

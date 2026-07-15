@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { BuildLogChunk } from '@/lib/types'
 import {
+  createLogFrameBatcher,
   mergeBuildLogChunks,
   mergeBuildLogSnapshots,
 } from '@/lib/log-stream-utils'
@@ -87,5 +88,37 @@ describe('mergeBuildLogChunks', () => {
     )
 
     expect(result.map((log) => log.content)).toEqual(['one', 'two', 'three'])
+  })
+})
+
+describe('createLogFrameBatcher', () => {
+  it('flushes bursty stream lines together and can discard stale work', () => {
+    const callbacks: Array<() => void> = []
+    const canceled: Array<number> = []
+    const flushed: Array<Array<number>> = []
+    const batcher = createLogFrameBatcher(
+      (chunks) => flushed.push(chunks.map((entry) => entry.sequence)),
+      (callback) => {
+        callbacks.push(callback)
+        return callbacks.length
+      },
+      (handle) => canceled.push(handle),
+    )
+
+    batcher.enqueue(chunk(1, 'one'))
+    batcher.enqueue(chunk(2, 'two'))
+    expect(callbacks).toHaveLength(1)
+    callbacks[0]()
+    expect(flushed).toEqual([[1, 2]])
+
+    batcher.enqueue(chunk(3, 'three'))
+    batcher.flush()
+    expect(flushed).toEqual([[1, 2], [3]])
+    expect(canceled).toEqual([2])
+
+    batcher.enqueue(chunk(4, 'four'))
+    batcher.cancel()
+    expect(canceled).toEqual([2, 3])
+    expect(flushed).toEqual([[1, 2], [3]])
   })
 })

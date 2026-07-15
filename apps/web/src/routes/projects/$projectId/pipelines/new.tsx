@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AlertCircleIcon,
@@ -22,6 +22,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   useCreatePipeline,
   useRepositoryWorkflows,
@@ -45,7 +46,6 @@ import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
 import { PageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
-import { READ_ONLY_REASON, isDemoMode } from '@/lib/demo-mode'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -57,9 +57,15 @@ export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
     breadcrumbLabel: 'New Pipeline',
     breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
   },
-  beforeLoad: () => {
+  beforeLoad: ({ params }) => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
+    if (useAuthStore.getState().user?.role === 'qa_viewer') {
+      throw redirect({
+        to: '/projects/$projectId',
+        params: { projectId: params.projectId },
+      })
+    }
   },
   component: NewPipelinePage,
 })
@@ -901,8 +907,6 @@ function NewPipelinePage() {
                 />
               ) : undefined
             }
-            readOnly={isDemoMode}
-            readOnlyReason={READ_ONLY_REASON}
           />
         </div>
       ) : null}

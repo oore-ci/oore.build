@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 
 import type { BuildLogChunk } from '@/lib/types'
 import { createStreamToken, getBuildLogs } from '@/lib/api'
-import { mergeBuildLogChunks } from '@/lib/log-stream-utils'
+import {
+  createLogFrameBatcher,
+  mergeBuildLogChunks,
+} from '@/lib/log-stream-utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
@@ -86,6 +89,10 @@ export function useLogStream(
     lastSequenceRef.current = merged.lastSequence
     updateStream({ logs: merged.logs })
   }, [])
+  const logBatcher = useMemo(
+    () => createLogFrameBatcher(appendLogs),
+    [appendLogs],
+  )
 
   const pollOnce = useCallback(async () => {
     if (!baseUrl || !token) return
@@ -120,6 +127,7 @@ export function useLogStream(
   }, [baseUrl, token, pollOnce])
 
   const cleanup = useCallback(() => {
+    logBatcher.cancel()
     if (abortRef.current) {
       abortRef.current.abort()
       abortRef.current = null
@@ -129,7 +137,7 @@ export function useLogStream(
       eventSourceRef.current = null
     }
     stopPolling()
-  }, [stopPolling])
+  }, [logBatcher, stopPolling])
 
   useEffect(() => {
     let eventSource: EventSource | null = null
@@ -158,14 +166,17 @@ export function useLogStream(
 
     const handleLog = (event: Event) => {
       try {
-        const chunk = JSON.parse((event as MessageEvent).data as string) as BuildLogChunk
-        appendLogs([chunk])
+        const chunk = JSON.parse(
+          (event as MessageEvent).data as string,
+        ) as BuildLogChunk
+        logBatcher.enqueue(chunk)
       } catch {
         // Ignore malformed chunks.
       }
     }
 
     const handleDone = () => {
+      logBatcher.flush()
       updateStream({ isStreaming: false, isDone: true })
       eventSource?.close()
       eventSourceRef.current = null
@@ -230,7 +241,7 @@ export function useLogStream(
     baseUrl,
     token,
     buildId,
-    appendLogs,
+    logBatcher,
     startPolling,
     stopPolling,
     pollOnce,

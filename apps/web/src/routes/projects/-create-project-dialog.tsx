@@ -126,6 +126,8 @@ export default function CreateProjectDialog({
                                 <RepositoryAvatar
                                   fullName={repo.full_name}
                                   avatarUrl={repo.avatar_url}
+                                  repositoryId={repo.id}
+                                  provider={repo.provider}
                                 />
                                 <span>{repo.full_name}</span>
                               </SelectItem>

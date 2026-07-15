@@ -1,9 +1,13 @@
 import type {
   ApiError,
   ArtifactDownloadLinkResponse,
+  ArtifactInstallLinkResponse,
   ArtifactStorageSettingsResponse,
+  AddProjectMemberRequest,
+  AddProjectMemberResponse,
   BootstrapTokenVerifyResponse,
   BrowseLocalGitDirectoriesResponse,
+  BuildChangelogPreviewResponse,
   BuildDetailResponse,
   BuildLogsResponse,
   CancelBuildResponse,
@@ -37,6 +41,7 @@ import type {
   InviteUserResponse,
   ListApiTokensResponse,
   ListArtifactsResponse,
+  ListBuildArtifactsRequest,
   ListAuditLogsResponse,
   ListBuildsResponse,
   ListInstallationsResponse,
@@ -45,6 +50,7 @@ import type {
   ListNotificationDeliveriesResponse,
   ListPipelineIosDevicesResponse,
   ListPipelinesResponse,
+  ListProjectMembersResponse,
   ListProjectsResponse,
   ListRepositoriesResponse,
   ListRunnersResponse,
@@ -59,6 +65,7 @@ import type {
   PipelineDetailResponse,
   PipelineIosSigningResponse,
   ProjectDetailResponse,
+  PreviewQaUserResponse,
   ReEnableUserResponse,
   RegisterIosDeviceRequest,
   RegisterIosDeviceResponse,
@@ -92,6 +99,8 @@ import type {
   UpdatePipelineIosSigningRequest,
   UpdatePipelineRequest,
   UpdateProjectRequest,
+  UpdateProjectMemberRequest,
+  UpdateProjectMemberResponse,
   UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
   UpdateRunnerResponse,
@@ -164,6 +173,27 @@ async function request<T>(
   }
 
   return (await res.json()) as T
+}
+
+async function requestBlob(
+  baseUrl: string,
+  path: string,
+  options: RequestInit = {},
+): Promise<Blob> {
+  const res = await fetch(`${baseUrl}${path}`, options)
+  if (!res.ok) {
+    let body: ApiError
+    try {
+      body = (await res.json()) as ApiError
+    } catch {
+      body = {
+        error: `Request failed with status ${res.status}`,
+        code: 'unknown_error',
+      }
+    }
+    throw new ApiClientError(res.status, body)
+  }
+  return res.blob()
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -367,6 +397,21 @@ export function inviteUser(
   })
 }
 
+export function previewQaUser(
+  baseUrl: string,
+  token: string,
+  userId: string,
+): Promise<PreviewQaUserResponse> {
+  return request<PreviewQaUserResponse>(
+    baseUrl,
+    `/v1/users/${userId}/preview`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+    },
+  )
+}
+
 export function updateUserRole(
   baseUrl: string,
   token: string,
@@ -480,6 +525,19 @@ export function listIntegrationRepos(
   return request<ListRepositoriesResponse>(
     baseUrl,
     `/v1/integrations/${integrationId}/repositories`,
+    { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
+export function getRepositoryAvatar(
+  baseUrl: string,
+  token: string,
+  repositoryId: string,
+  options?: RequestOptions,
+): Promise<Blob> {
+  return requestBlob(
+    baseUrl,
+    `/v1/integration-repositories/${repositoryId}/avatar`,
     { headers: authHeaders(token), signal: options?.signal },
   )
 }
@@ -796,6 +854,23 @@ export function createBuild(
   )
 }
 
+export function getBuildChangelogPreview(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  params: { pipeline_id: string; branch?: string; commit_sha?: string },
+  options?: RequestOptions,
+): Promise<BuildChangelogPreviewResponse> {
+  const query = new URLSearchParams({ pipeline_id: params.pipeline_id })
+  if (params.branch) query.set('branch', params.branch)
+  if (params.commit_sha) query.set('commit_sha', params.commit_sha)
+  return request<BuildChangelogPreviewResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/builds/changelog-preview?${query}`,
+    { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
 export function listBuilds(
   baseUrl: string,
   token: string,
@@ -924,6 +999,33 @@ export function listArtifacts(
   )
 }
 
+export function listProjectArtifacts(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  options?: RequestOptions,
+): Promise<ListArtifactsResponse> {
+  return request<ListArtifactsResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/artifacts`,
+    { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
+export function listBuildArtifacts(
+  baseUrl: string,
+  token: string,
+  data: ListBuildArtifactsRequest,
+  options?: RequestOptions,
+): Promise<ListArtifactsResponse> {
+  return request<ListArtifactsResponse>(baseUrl, '/v1/artifacts/query', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(data),
+    signal: options?.signal,
+  })
+}
+
 export function getArtifactDownloadLink(
   baseUrl: string,
   token: string,
@@ -936,6 +1038,24 @@ export function getArtifactDownloadLink(
   ).then((response) => ({
     ...response,
     download_url: useInstanceOrigin(baseUrl, response.download_url),
+  }))
+}
+
+export function createArtifactInstallLink(
+  baseUrl: string,
+  token: string,
+  artifactId: string,
+): Promise<ArtifactInstallLinkResponse> {
+  return request<ArtifactInstallLinkResponse>(
+    baseUrl,
+    `/v1/artifacts/${artifactId}/install-link`,
+    { method: 'POST', headers: authHeaders(token) },
+  ).then((response) => ({
+    ...response,
+    download_url: useInstanceOrigin(baseUrl, response.download_url),
+    manifest_url: response.manifest_url
+      ? useInstanceOrigin(baseUrl, response.manifest_url)
+      : undefined,
   }))
 }
 
@@ -986,6 +1106,69 @@ export function getProject(
   return request<ProjectDetailResponse>(baseUrl, `/v1/projects/${projectId}`, {
     headers: authHeaders(token),
   })
+}
+
+export function listProjectMembers(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+): Promise<ListProjectMembersResponse> {
+  return request<ListProjectMembersResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/members`,
+    { headers: authHeaders(token) },
+  )
+}
+
+export function addProjectMember(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  data: AddProjectMemberRequest,
+): Promise<AddProjectMemberResponse> {
+  return request<AddProjectMemberResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/members`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function updateProjectMember(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  userId: string,
+  data: UpdateProjectMemberRequest,
+): Promise<UpdateProjectMemberResponse> {
+  return request<UpdateProjectMemberResponse>(
+    baseUrl,
+    `/v1/projects/${projectId}/members/${userId}`,
+    {
+      method: 'PATCH',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
+  )
+}
+
+export function removeProjectMember(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  userId: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    baseUrl,
+    `/v1/projects/${projectId}/members/${userId}`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    },
+  )
 }
 
 export function createProject(

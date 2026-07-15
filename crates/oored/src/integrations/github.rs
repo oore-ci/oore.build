@@ -1124,6 +1124,115 @@ pub(crate) async fn resolve_branch_commit(
         })
 }
 
+pub(crate) async fn compare_commits(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    installation_id: &str,
+    full_name: &str,
+    base: &str,
+    head: &str,
+) -> Result<Vec<super::CommitSummary>, (StatusCode, Json<ApiError>)> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        commits: Vec<CompareCommit>,
+    }
+    #[derive(Deserialize)]
+    struct CompareCommit {
+        author: Option<GitHubUser>,
+        commit: GitCommit,
+    }
+    #[derive(Deserialize)]
+    struct GitHubUser {
+        login: String,
+    }
+    #[derive(Deserialize)]
+    struct GitCommit {
+        author: GitAuthor,
+        message: String,
+    }
+    #[derive(Deserialize)]
+    struct GitAuthor {
+        name: String,
+    }
+
+    let client = build_http_client().map_err(|e| {
+        error!(error = %e, "failed to build GitHub client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create GitHub client",
+        )
+    })?;
+    let token = load_installation_access_token(
+        &client,
+        pool,
+        encryption_key,
+        integration_id,
+        installation_id,
+    )
+    .await?;
+    let response = client
+        .get(format!(
+            "https://api.github.com/repos/{full_name}/compare/{}...{}",
+            urlencoding::encode(base),
+            urlencoding::encode(head)
+        ))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "oore-ci")
+        .send()
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to compare GitHub commits");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_api_error",
+                "Failed to compare repository revisions",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(api_err(
+            StatusCode::BAD_GATEWAY,
+            "github_api_error",
+            format!(
+                "GitHub returned {} while comparing revisions",
+                response.status()
+            ),
+        ));
+    }
+    response
+        .json::<CompareResponse>()
+        .await
+        .map(|response| {
+            response
+                .commits
+                .into_iter()
+                .map(|commit| super::CommitSummary {
+                    title: commit
+                        .commit
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string(),
+                    author: commit
+                        .author
+                        .map(|author| author.login)
+                        .unwrap_or(commit.commit.author.name),
+                })
+                .collect()
+        })
+        .map_err(|e| {
+            error!(error = %e, "failed to parse GitHub comparison");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_parse_error",
+                "Failed to read repository comparison",
+            )
+        })
+}
+
 /// Core sync logic — fetches installations and repos from GitHub, upserts them,
 /// and removes stale records that are no longer present on GitHub.
 ///

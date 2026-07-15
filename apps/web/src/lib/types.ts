@@ -5,6 +5,7 @@ export interface Instance {
   label: string
   url: string
   icon?: string
+  qaPreviewSourceId?: string
   addedAt: number
 }
 
@@ -184,6 +185,12 @@ export interface UpdateUserRoleResponse {
 
 export interface ReEnableUserResponse {
   user: User
+}
+
+export interface PreviewQaUserResponse {
+  session_token: string
+  expires_at: number
+  user: AuthenticatedUser
 }
 
 export interface ListUsersResponse {
@@ -423,6 +430,7 @@ export interface Build {
   trigger_ref?: string
   commit_sha?: string
   branch?: string
+  changelog?: string
   source_build_id?: string
   config_snapshot: Record<string, unknown>
   runner_id?: string
@@ -459,10 +467,17 @@ export interface CreateBuildRequest {
   branch?: string
   commit_sha?: string
   trigger_ref?: string
+  changelog?: string
 }
 
 export interface CreateBuildResponse {
   build: Build
+}
+
+export interface BuildChangelogPreviewResponse {
+  base_commit?: string
+  target_commit: string
+  markdown: string
 }
 
 export interface BuildDetailResponse {
@@ -521,8 +536,22 @@ export interface ListArtifactsResponse {
   artifacts: Array<Artifact>
 }
 
+export interface ListBuildArtifactsRequest {
+  build_ids: Array<string>
+}
+
 export interface ArtifactDownloadLinkResponse {
   download_url: string
+  expires_at: number
+}
+
+export type ArtifactInstallPlatform = 'android' | 'ios'
+
+export interface ArtifactInstallLinkResponse {
+  platform: ArtifactInstallPlatform
+  install_url: string
+  download_url: string
+  manifest_url?: string
   expires_at: number
 }
 
@@ -612,6 +641,7 @@ export type ExternalAccessNetworkSource = 'database' | 'environment' | 'default'
 
 export interface ExternalAccessNetworkSettings {
   public_url?: string
+  artifact_delivery_url?: string
   allowed_origins: Array<string>
   source: ExternalAccessNetworkSource
   updated_at?: number
@@ -623,6 +653,7 @@ export interface ExternalAccessNetworkSettingsResponse {
 
 export interface UpdateExternalAccessNetworkSettingsRequest {
   public_url?: string
+  artifact_delivery_url?: string
   allowed_origins: Array<string>
 }
 
@@ -667,6 +698,8 @@ export interface TrustedProxySettingsPublic {
   user_email_header: string
   trusted_proxy_cidrs: Array<string>
   has_shared_secret: boolean
+  has_warpgate_ticket: boolean
+  warpgate_ticket_source?: 'database' | 'environment'
   updated_at?: number
 }
 
@@ -678,6 +711,7 @@ export interface UpdateTrustedProxySettingsRequest {
   user_email_header?: string
   trusted_proxy_cidrs: Array<string>
   shared_secret?: string
+  warpgate_ticket?: string
 }
 
 export interface InstancePreferences {
@@ -707,11 +741,13 @@ export interface Project {
   repository_id?: string
   repository_full_name?: string
   repository_avatar_url?: string
+  repository_provider?: ScmProvider
   settings: Record<string, unknown>
   default_branch?: string
   created_by: string
   created_at: number
   updated_at: number
+  current_user_role?: ProjectRole
 }
 
 export interface CreateProjectRequest {
@@ -737,11 +773,47 @@ export interface ProjectDetailResponse {
   project: Project
   pipeline_count: number
   build_count: number
+  current_user_role?: ProjectRole
 }
 
 export interface ListProjectsResponse {
   projects: Array<Project>
   total: number
+}
+
+export type ProjectRole = 'maintainer' | 'developer' | 'viewer'
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  user_id: string
+  role: ProjectRole
+  user_email: string
+  user_display_name?: string
+  user_avatar_url?: string
+  created_at: number
+  updated_at: number
+}
+
+export interface AddProjectMemberRequest {
+  user_id: string
+  role: ProjectRole
+}
+
+export interface AddProjectMemberResponse {
+  member: ProjectMember
+}
+
+export interface UpdateProjectMemberRequest {
+  role: ProjectRole
+}
+
+export interface UpdateProjectMemberResponse {
+  member: ProjectMember
+}
+
+export interface ListProjectMembersResponse {
+  members: Array<ProjectMember>
 }
 
 // ── Pipeline domain types ───────────────────────────────────────

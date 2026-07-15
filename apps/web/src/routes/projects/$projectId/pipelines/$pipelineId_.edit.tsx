@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
 import type {
@@ -14,6 +14,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   usePipeline,
   usePipelineAndroidSigning,
@@ -79,9 +80,18 @@ export const Route = createFileRoute(
     signingError:
       typeof search.signingError === 'string' ? search.signingError : undefined,
   }),
-  beforeLoad: () => {
+  beforeLoad: ({ params }) => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
+    if (useAuthStore.getState().user?.role === 'qa_viewer') {
+      throw redirect({
+        to: '/projects/$projectId/pipelines/$pipelineId',
+        params: {
+          projectId: params.projectId,
+          pipelineId: params.pipelineId,
+        },
+      })
+    }
   },
   component: EditPipelinePage,
 })

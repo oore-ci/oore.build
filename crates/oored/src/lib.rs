@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod apple_api;
+pub mod artifact_install;
 pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
@@ -2012,7 +2013,7 @@ pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Ro
     static TEST_METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
     let metrics_handle = TEST_METRICS
         .get_or_init(|| {
-            metrics_exporter_prometheus::PrometheusBuilder::new()
+            observability::metrics_builder()
                 .install_recorder()
                 .expect("failed to install test metrics recorder")
         })
@@ -2048,6 +2049,7 @@ async fn build_router_inner(
                 warn!(error = %error, "failed to load external access network settings; falling back to defaults");
                 instance_settings::EffectiveExternalAccessNetworkSettings {
                     public_url: None,
+                    artifact_delivery_url: None,
                     allowed_origins: instance_settings::default_allowed_origins(),
                     source: oore_contract::ExternalAccessNetworkSource::Default,
                     updated_at: None,
@@ -2070,6 +2072,7 @@ async fn build_router_inner(
     info!(
         source = ?external_access_network.source,
         public_url = ?external_access_network.public_url,
+        artifact_delivery_url = ?external_access_network.artifact_delivery_url,
         origins = ?external_access_network.allowed_origins,
         "configured External Access network settings"
     );
@@ -2205,6 +2208,10 @@ async fn build_router_inner(
             post(auth::trusted_proxy_login),
         )
         .route("/v1/auth/logout", post(auth::logout))
+        .route(
+            "/v1/telemetry/web-performance",
+            post(observability::record_web_performance),
+        )
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
         .route(
@@ -2213,6 +2220,7 @@ async fn build_router_inner(
         )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
+        .route("/v1/users/{user_id}/preview", post(users::preview_qa_user))
         .route(
             "/v1/users/{user_id}/role",
             axum::routing::patch(users::update_user_role),
@@ -2286,6 +2294,10 @@ async fn build_router_inner(
         .route(
             "/v1/integrations/{id}/repositories",
             get(integrations::list_repositories),
+        )
+        .route(
+            "/v1/integration-repositories/{id}/avatar",
+            get(integrations::repository_avatar),
         )
         .route(
             "/v1/integrations/github/start",
@@ -2389,6 +2401,10 @@ async fn build_router_inner(
             "/v1/projects/{project_id}/builds",
             post(builds::create_build),
         )
+        .route(
+            "/v1/projects/{project_id}/builds/changelog-preview",
+            get(builds::preview_build_changelog),
+        )
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
@@ -2469,8 +2485,17 @@ async fn build_router_inner(
             get(artifacts::list_artifacts),
         )
         .route(
+            "/v1/projects/{project_id}/artifacts",
+            get(artifacts::list_project_artifacts),
+        )
+        .route("/v1/artifacts/query", post(artifacts::list_build_artifacts))
+        .route(
             "/v1/artifacts/{artifact_id}/download-link",
             post(artifacts::generate_download_link),
+        )
+        .route(
+            "/v1/artifacts/{artifact_id}/install-link",
+            post(artifact_install::create_install_link),
         )
         .route(
             "/v1/artifacts/local-upload/{token}",
@@ -2504,6 +2529,22 @@ async fn build_router_inner(
         .route(
             "/v1/artifacts/dl/{token}",
             get(artifact_tokens::download_via_scoped_token),
+        )
+        .route(
+            "/v1/artifacts/install/ios/{token}/manifest.plist",
+            get(artifact_install::ios_install_manifest),
+        )
+        .route(
+            "/install/artifact/{token}",
+            get(artifact_tokens::download_via_scoped_token),
+        )
+        .route(
+            "/install/ios/{token}/manifest.plist",
+            get(artifact_install::ios_install_manifest),
+        )
+        .route(
+            "/install/download/{token}",
+            get(artifacts::download_local_artifact),
         )
         // ── Retention policy ────────────────────────────────────
         .route(

@@ -48,6 +48,8 @@ Oore CI uses role-based access control with four roles. Each user has exactly on
 | **Artifacts**               |       |       |           |           |
 | List artifacts              | Yes   | Yes   | Yes       | Yes       |
 | Download artifacts          | Yes   | Yes   | Yes       | Yes       |
+| Install APK/IPA artifacts   | Yes   | Yes   | Yes       | Yes       |
+| Manage external share links | Yes   | Yes   | Yes       | No        |
 | **Runners**                 |       |       |           |           |
 | View runners                | Yes   | Yes   | Yes       | No        |
 | Register runners            | Yes   | Yes   | No        | No        |

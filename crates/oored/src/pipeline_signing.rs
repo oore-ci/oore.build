@@ -419,7 +419,7 @@ pub async fn get_pipeline_android_signing(
         &auth.0.role,
         &auth.0.auth_source,
         &pipeline_id,
-        ProjectPermission::Read,
+        ProjectPermission::ManagePipelines,
     )
     .await?;
 

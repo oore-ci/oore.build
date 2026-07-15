@@ -35,11 +35,13 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import {
   useDeleteUser,
   useInviteUser,
+  usePreviewQaUser,
   useReEnableUser,
   useUpdateUserRole,
   useUsers,
 } from '@/hooks/use-auth'
 import { useAuthStore } from '@/stores/auth-store'
+import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -99,6 +101,9 @@ function useUsersSettingsPageState() {
   const updateRoleMutation = useUpdateUserRole()
   const deleteMutation = useDeleteUser()
   const reEnableMutation = useReEnableUser()
+  const previewMutation = usePreviewQaUser()
+  const activeInstance = useActiveInstance()
+  const navigate = Route.useNavigate()
 
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<UserRole>('developer')
@@ -228,6 +233,55 @@ function useUsersSettingsPageState() {
     [reEnableMutation, showError],
   )
 
+  const handlePreviewQa = useCallback(
+    (userId: string, email: string) => {
+      if (!activeInstance) {
+        toast.error('No active instance')
+        return
+      }
+      previewMutation.mutate(userId, {
+        onSuccess: (response) => {
+          const previewUser = response.user
+          if (!previewUser.user_id || previewUser.role !== 'qa_viewer') {
+            toast.error('The preview session returned an invalid QA profile')
+            return
+          }
+
+          const instanceStore = useInstanceStore.getState()
+          for (const instance of Object.values(instanceStore.instances)) {
+            if (instance.qaPreviewSourceId === activeInstance.id) {
+              instanceStore.removeInstance(instance.id)
+            }
+          }
+          const previewInstanceId = instanceStore.addInstance(
+            `${activeInstance.label} · QA preview`,
+            activeInstance.url,
+            activeInstance.icon,
+            activeInstance.id,
+          )
+          instanceStore.setActiveInstance(previewInstanceId)
+          useAuthStore
+            .getState()
+            .setAuth(response.session_token, response.expires_at, {
+              email: previewUser.email,
+              oidc_subject: previewUser.oidc_subject,
+              user_id: previewUser.user_id,
+              role: previewUser.role,
+              avatar_url: previewUser.avatar_url,
+            })
+          toast.success(`Previewing access for ${email}`, {
+            description:
+              'This read-only preview ends in 10 minutes. Switch instances to return sooner.',
+          })
+          void navigate({ to: '/builds', replace: true })
+        },
+        onError: (previewError) =>
+          showError(previewError, 'Failed to start QA preview'),
+      })
+    },
+    [activeInstance, navigate, previewMutation, showError],
+  )
+
   const users = data?.users ?? EMPTY_USERS
   const userStatusCounts = useMemo(
     () =>
@@ -245,6 +299,7 @@ function useUsersSettingsPageState() {
     () =>
       getColumns({
         authUserId: authUser?.user_id,
+        canPreviewQa: authUser?.role === 'owner',
         onRoleChange: (userId, email, newRole) => {
           setConfirmAction({
             type: 'role_change',
@@ -260,9 +315,10 @@ function useUsersSettingsPageState() {
             userEmail: email,
           })
         },
+        onPreviewQa: handlePreviewQa,
         onReEnable: handleReEnable,
       }),
-    [authUser?.user_id, handleReEnable],
+    [authUser?.role, authUser?.user_id, handlePreviewQa, handleReEnable],
   )
 
   const table = useReactTable({
@@ -282,7 +338,9 @@ function useUsersSettingsPageState() {
   })
 
   const pendingMutation =
-    deleteMutation.isPending || updateRoleMutation.isPending
+    deleteMutation.isPending ||
+    updateRoleMutation.isPending ||
+    previewMutation.isPending
 
   const handleBulkDisable = (userIds: Array<string>) => {
     setConfirmAction({
@@ -411,7 +469,7 @@ function UsersSettingsPage() {
       <PageMeta title="User Management" noindex />
       <PageHeader
         title="Users"
-        description="Manage team members and their roles."
+        description="Manage team roles, preview QA access, and assign projects from each project's Settings tab."
       />
       <section className="grid gap-4 md:grid-cols-3">
         <Card>

@@ -4,6 +4,28 @@ import type { Artifact } from '@/lib/types'
 export const demoArtifacts: Record<string, Array<Artifact>> = {
   [BUILD_IDS.succeeded1]: [
     {
+      id: 'art-005',
+      build_id: BUILD_IDS.succeeded1,
+      name: 'FlutterShop.ipa',
+      artifact_type: 'ipa',
+      file_path: 'build/ios/ipa/FlutterShop.ipa',
+      file_size: 32505856,
+      checksum: 'sha256:c3d4e5f6a7b8...',
+      metadata: {
+        ios_app: {
+          bundle_identifier: 'build.oore.fluttershop',
+          display_name: 'Flutter Shop',
+          version: '1.4.1',
+          build_number: '85',
+        },
+        ios_signing: {
+          bundle_ids: ['build.oore.fluttershop'],
+          effective_export_method: 'release-testing',
+        },
+      },
+      created_at: ago(7020),
+    },
+    {
       id: 'art-001',
       build_id: BUILD_IDS.succeeded1,
       name: 'app-armeabi-v7a-release.apk',
@@ -11,7 +33,11 @@ export const demoArtifacts: Record<string, Array<Artifact>> = {
       file_path: 'build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk',
       file_size: 19084288,
       checksum: 'sha256:a1b2c3d4e5f6...',
-      metadata: { abi: 'armeabi-v7a', minSdk: 21 },
+      metadata: {
+        abi: 'armeabi-v7a',
+        minSdk: 21,
+        android_app: { version_name: '1.4.1', version_code: '85' },
+      },
       created_at: ago(7020),
     },
     {
@@ -22,7 +48,11 @@ export const demoArtifacts: Record<string, Array<Artifact>> = {
       file_path: 'build/app/outputs/flutter-apk/app-arm64-v8a-release.apk',
       file_size: 20054016,
       checksum: 'sha256:b2c3d4e5f6a7...',
-      metadata: { abi: 'arm64-v8a', minSdk: 21 },
+      metadata: {
+        abi: 'arm64-v8a',
+        minSdk: 21,
+        android_app: { version_name: '1.4.1', version_code: '85' },
+      },
       created_at: ago(7020),
     },
   ],
@@ -34,7 +64,10 @@ export const demoArtifacts: Record<string, Array<Artifact>> = {
       artifact_type: 'apk',
       file_path: 'build/app/outputs/flutter-apk/app-debug.apk',
       file_size: 44695552,
-      metadata: { buildType: 'debug' },
+      metadata: {
+        buildType: 'debug',
+        android_app: { version_name: '2.7.0', version_code: '46' },
+      },
       created_at: ago(14160),
     },
   ],
@@ -47,8 +80,56 @@ export const demoArtifacts: Record<string, Array<Artifact>> = {
       file_path: 'build/ios/ipa/FlutterShop.ipa',
       file_size: 32505856,
       checksum: 'sha256:c3d4e5f6a7b8...',
-      metadata: { bundleId: 'build.oore.fluttershop' },
+      metadata: {
+        ios_app: {
+          bundle_identifier: 'build.oore.fluttershop',
+          display_name: 'Flutter Shop',
+          version: '1.4.0',
+          build_number: '84',
+        },
+        ios_signing: {
+          bundle_ids: ['build.oore.fluttershop'],
+          effective_export_method: 'release-testing',
+        },
+      },
       created_at: ago(28260),
+    },
+  ],
+  [BUILD_IDS.succeeded6]: [
+    {
+      id: 'art-006',
+      build_id: BUILD_IDS.succeeded6,
+      name: 'native-payments-release.apk',
+      artifact_type: 'apk',
+      file_path: 'build/app/outputs/flutter-apk/app-release.apk',
+      file_size: 24117248,
+      checksum: 'sha256:d4e5f6a7b8c9...',
+      metadata: {
+        android_app: { version_name: '3.2.0', version_code: '132' },
+      },
+      created_at: ago(171540),
+    },
+    {
+      id: 'art-007',
+      build_id: BUILD_IDS.succeeded6,
+      name: 'NativePayments.ipa',
+      artifact_type: 'ipa',
+      file_path: 'build/ios/ipa/NativePayments.ipa',
+      file_size: 35651584,
+      checksum: 'sha256:e5f6a7b8c9d0...',
+      metadata: {
+        ios_app: {
+          bundle_identifier: 'build.oore.nativepayments',
+          display_name: 'Native Payments',
+          version: '3.2.0',
+          build_number: '132',
+        },
+        ios_signing: {
+          bundle_ids: ['build.oore.nativepayments'],
+          effective_export_method: 'release-testing',
+        },
+      },
+      created_at: ago(171540),
     },
   ],
 }
