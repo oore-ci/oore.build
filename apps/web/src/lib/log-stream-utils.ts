@@ -6,6 +6,42 @@ export interface MergeBuildLogChunksResult {
   lastSequence: number
 }
 
+export function createLogFrameBatcher(
+  onFlush: (chunks: Array<BuildLogChunk>) => void,
+  schedule: (callback: () => void) => number = requestAnimationFrame,
+  cancel: (handle: number) => void = cancelAnimationFrame,
+) {
+  let frame: number | null = null
+  let queued: Array<BuildLogChunk> = []
+
+  const flush = () => {
+    if (frame !== null) cancel(frame)
+    frame = null
+    if (queued.length === 0) return
+    const chunks = queued
+    queued = []
+    onFlush(chunks)
+  }
+
+  return {
+    enqueue(chunk: BuildLogChunk) {
+      queued.push(chunk)
+      if (frame === null) {
+        frame = schedule(() => {
+          frame = null
+          flush()
+        })
+      }
+    },
+    flush,
+    cancel() {
+      if (frame !== null) cancel(frame)
+      frame = null
+      queued = []
+    },
+  }
+}
+
 function findLogInsertIndex(
   logs: Array<BuildLogChunk>,
   sequence: number,
