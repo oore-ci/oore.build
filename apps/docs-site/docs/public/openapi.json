@@ -39,6 +39,111 @@
         }
       }
     },
+    "/install/artifact/{token}": {
+      "get": {
+        "tags": [
+          "Scoped Download Tokens"
+        ],
+        "summary": "Download via scoped token",
+        "description": "Downloads an artifact using a scoped download token. No session auth required —\nthe token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.",
+        "operationId": "download_via_scoped_token",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Scoped download token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to presigned download URL"
+          },
+          "401": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/install/ios/{token}/manifest.plist": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Get iOS OTA install manifest",
+        "description": "Returns an Apple property-list manifest authorized by the scoped token in the URL.",
+        "operationId": "get_ios_install_manifest",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Artifact install token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apple OTA installation manifest",
+            "content": {
+              "application/xml": {}
+            }
+          },
+          "401": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Artifact expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IPA is not install-ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/api-tokens": {
       "get": {
         "tags": [
@@ -265,111 +370,6 @@
             "bearer_auth": []
           }
         ]
-      }
-    },
-    "/v1/artifacts/dl/{token}": {
-      "get": {
-        "tags": [
-          "Scoped Download Tokens"
-        ],
-        "summary": "Download via scoped token",
-        "description": "Downloads an artifact using a scoped download token. No session auth required —\nthe token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.",
-        "operationId": "download_via_scoped_token",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "description": "Scoped download token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "302": {
-            "description": "Redirect to presigned download URL"
-          },
-          "401": {
-            "description": "Invalid or expired token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Artifact expired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/artifacts/install/ios/{token}/manifest.plist": {
-      "get": {
-        "tags": [
-          "Artifacts"
-        ],
-        "summary": "Get iOS OTA install manifest",
-        "description": "Returns an Apple property-list manifest authorized by the scoped token in the URL.",
-        "operationId": "get_ios_install_manifest",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "description": "Artifact install token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Apple OTA installation manifest",
-            "content": {
-              "application/xml": {}
-            }
-          },
-          "401": {
-            "description": "Invalid or expired token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "410": {
-            "description": "Artifact expired",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "IPA is not install-ready",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/v1/artifacts/{artifact_id}/download-link": {

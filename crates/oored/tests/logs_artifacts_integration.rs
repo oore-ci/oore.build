@@ -1119,7 +1119,7 @@ async fn test_ios_install_manifest_and_qa_permissions() {
         install["download_url"]
             .as_str()
             .unwrap()
-            .starts_with("https://install.ci.example.com/v1/artifacts/dl/")
+            .starts_with("https://install.ci.example.com/install/artifact/")
     );
     let req = Request::builder()
         .uri(manifest_path)
@@ -1145,7 +1145,7 @@ async fn test_ios_install_manifest_and_qa_permissions() {
     .unwrap();
     assert!(manifest.contains("<string>com.example.kite</string>"));
     assert!(manifest.contains("<string>Version 3.2.1 (42)</string>"));
-    assert!(manifest.contains("https://install.ci.example.com/v1/artifacts/dl/"));
+    assert!(manifest.contains("https://install.ci.example.com/install/artifact/"));
 
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
         .bind(&build_id)
@@ -1190,6 +1190,29 @@ async fn test_ios_install_manifest_and_qa_permissions() {
 }
 
 #[tokio::test]
+async fn test_public_install_prefix_rejects_invalid_tokens() {
+    let (app, _pool, _owner_token, _runner_id, _runner_token, _build_id) =
+        full_scaffold_with_public_url(Some("https://ci.example.com")).await;
+
+    for (path, expected_status) in [
+        (
+            "/install/ios/not-a-token/manifest.plist",
+            StatusCode::UNAUTHORIZED,
+        ),
+        ("/install/artifact/not-a-token", StatusCode::UNAUTHORIZED),
+        ("/install/download/not-a-token", StatusCode::NOT_FOUND),
+    ] {
+        let request = Request::builder()
+            .uri(path)
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), expected_status, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn test_android_install_link_uses_protected_scoped_download() {
     let (app, _pool, owner_token, runner_id, runner_token, build_id) =
         full_scaffold_with_public_url(Some("https://ci.example.com")).await;
@@ -1231,7 +1254,7 @@ async fn test_android_install_link_uses_protected_scoped_download() {
         install["install_url"]
             .as_str()
             .unwrap()
-            .starts_with("https://ci.example.com/v1/artifacts/dl/")
+            .starts_with("https://ci.example.com/install/artifact/")
     );
 }
 

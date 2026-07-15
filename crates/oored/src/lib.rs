@@ -2516,6 +2516,18 @@ async fn build_router_inner(
             "/v1/artifacts/install/ios/{token}/manifest.plist",
             get(artifact_install::ios_install_manifest),
         )
+        .route(
+            "/install/artifact/{token}",
+            get(artifact_tokens::download_via_scoped_token),
+        )
+        .route(
+            "/install/ios/{token}/manifest.plist",
+            get(artifact_install::ios_install_manifest),
+        )
+        .route(
+            "/install/download/{token}",
+            get(artifacts::download_local_artifact),
+        )
         // ── Retention policy ────────────────────────────────────
         .route(
             "/v1/settings/retention",

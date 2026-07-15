@@ -178,7 +178,7 @@ describe('artifact download links', () => {
       .mockReturnValueOnce(
         mockJsonResponse(200, {
           id: 'share-1',
-          download_url: 'http://127.0.0.1:8787/v1/artifacts/dl/scoped',
+          download_url: 'http://127.0.0.1:8787/install/artifact/scoped',
           token: 'scoped',
           prefix: 'scoped',
           expires_at: 1,
@@ -202,7 +202,7 @@ describe('artifact download links', () => {
       'https://oore.example.com/v1/artifacts/download/direct',
     )
     expect(scoped.download_url).toBe(
-      'https://oore.example.com/v1/artifacts/dl/scoped',
+      'https://oore.example.com/install/artifact/scoped',
     )
   })
 
@@ -212,9 +212,9 @@ describe('artifact download links', () => {
         platform: 'ios',
         install_url:
           'itms-services://?action=download-manifest&url=https%3A%2F%2Fci.example.com%2Fmanifest.plist',
-        download_url: 'http://127.0.0.1:8787/v1/artifacts/dl/install',
+        download_url: 'http://127.0.0.1:8787/install/artifact/install',
         manifest_url:
-          'http://127.0.0.1:8787/v1/artifacts/install/ios/install/manifest.plist',
+          'http://127.0.0.1:8787/install/ios/install/manifest.plist',
         expires_at: 1,
       }),
     )
@@ -227,10 +227,10 @@ describe('artifact download links', () => {
 
     expect(result.install_url).toMatch(/^itms-services:/)
     expect(result.download_url).toBe(
-      'https://oore.example.com/v1/artifacts/dl/install',
+      'https://oore.example.com/install/artifact/install',
     )
     expect(result.manifest_url).toBe(
-      'https://oore.example.com/v1/artifacts/install/ios/install/manifest.plist',
+      'https://oore.example.com/install/ios/install/manifest.plist',
     )
   })
 })

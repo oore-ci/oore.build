@@ -18,7 +18,7 @@ Rules:
   - Build artifacts now expose a dedicated mobile-first install page. APKs use protected scoped downloads; signed ad-hoc IPAs use a short-lived tokenized Apple OTA manifest and `itms-services` install URL. The page detects iPhone Safari, blocks misleading install attempts in other iPhone browsers, and gives platform-specific device guidance.
   - The macOS runner attaches bundle identifier, app name, marketing version, and build number to newly signed IPA artifacts, allowing the backend to verify manifest readiness before issuing an install link. Older IPAs remain downloadable and become install-ready after one rebuild.
   - QA Viewers retain artifact download/install access while external share-link administration, pipeline signing configuration, registered-device inventory, and direct create/edit routes are restricted to write-authorized users.
-  - Instances behind an interactive identity proxy can configure a separate HTTPS Artifact delivery URL. Manifests, scoped downloads, and local-storage redirects stay on that token-only origin so Apple and Android system installers are not redirected to a browser login page.
+  - Newly issued installer URLs are consolidated under `/install/` on the instance origin. A single pre-auth ingress rule can expose only that token-protected prefix while the UI and API remain behind interactive identity auth; no additional hostname or certificate is required.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-ad-hoc-app-installation-18011ca32086
 
 - **Combined pipelines with per-run platform selection**:

@@ -319,14 +319,12 @@ pub async fn create_install_link(
                 )
             })?;
 
-    let download_url = public_endpoint(&base, &format!("v1/artifacts/dl/{token}"));
+    let download_url = public_endpoint(&base, &format!("install/artifact/{token}"));
     let (install_url, manifest_url) = match platform {
         ArtifactInstallPlatform::Android => (download_url.clone(), None),
         ArtifactInstallPlatform::Ios => {
-            let manifest_url = public_endpoint(
-                &base,
-                &format!("v1/artifacts/install/ios/{token}/manifest.plist"),
-            );
+            let manifest_url =
+                public_endpoint(&base, &format!("install/ios/{token}/manifest.plist"));
             (
                 format!(
                     "itms-services://?action=download-manifest&url={}",
@@ -372,7 +370,7 @@ pub async fn create_install_link(
     }))
 }
 
-/// `GET /v1/artifacts/install/ios/{token}/manifest.plist` — serve an Apple OTA manifest.
+/// `GET /install/ios/{token}/manifest.plist` — serve an Apple OTA manifest.
 pub async fn ios_install_manifest(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -425,7 +423,7 @@ pub async fn ios_install_manifest(
         )
     })?;
     let base = artifact_delivery_base_url(&pool, true).await?;
-    let download_url = public_endpoint(&base, &format!("v1/artifacts/dl/{token}"));
+    let download_url = public_endpoint(&base, &format!("install/artifact/{token}"));
     let manifest = ios_manifest(&metadata, &download_url);
 
     let mut response = (StatusCode::OK, manifest).into_response();
@@ -486,7 +484,7 @@ mod tests {
         let metadata = parse_ios_manifest_metadata(&install_metadata()).expect("metadata");
         let manifest = ios_manifest(
             &metadata,
-            "https://ci.example.com/v1/artifacts/dl/token?a=1&b=2",
+            "https://ci.example.com/install/artifact/token?a=1&b=2",
         );
         assert!(manifest.contains("Kite &amp; QA &lt;adhoc&gt;"));
         assert!(manifest.contains("Version 3.2.1 (42)"));

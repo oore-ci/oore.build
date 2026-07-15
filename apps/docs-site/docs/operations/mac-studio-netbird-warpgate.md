@@ -154,26 +154,18 @@ From the browser, open the Warpgate-protected public URL. The authenticated emai
 
 Configure External Access `public_url` and `allowed_origins` with that same HTTPS URL after login.
 
-### 6. Add token-only artifact delivery
+### 6. Route token-only installs around interactive auth
 
-Warpgate requires an interactive session, while the iOS installer fetches its manifest and IPA outside Safari. Keep the main Oore hostname behind Warpgate and add a separate HTTPS hostname, such as `install.oore.example.com`, that reaches the existing HAProxy → `oore-web` path without Warpgate.
+Warpgate requires an interactive session, while the iOS installer fetches its manifest and IPA outside Safari. Keep the Oore UI behind Warpgate, but configure the public TLS ingress in front of Warpgate to send only `GET` and `HEAD` requests under `/install/` directly to the existing HAProxy → `oore-web` path.
 
-Restrict that hostname to `GET` and `HEAD` requests for only these path prefixes:
+Reject every other unauthenticated method and path at the edge. Every `/install/` request is authorized by a short-lived, artifact-scoped token; these endpoints do not accept a user identity header as authorization. Keep **Public URL** set to the normal Warpgate-protected Oore origin. No additional hostname or certificate is required.
 
-```text
-/v1/artifacts/install/ios/
-/v1/artifacts/dl/
-/v1/artifacts/download/
-```
-
-Reject every other method and path at the edge. These endpoints require short-lived, artifact-scoped bearer tokens; they do not accept a user identity header as authorization.
-
-In **Settings → Preferences → External Access**, set **Artifact delivery URL** to the new HTTPS origin. Keep **Public URL** set to the Warpgate-protected browser origin.
+If Warpgate owns the public listener, add the path split at a TLS reverse proxy before Warpgate. An Oore route alone cannot bypass authentication that has already redirected the request.
 
 Verify an invalid token reaches Oore rather than an interactive login page:
 
 ```bash
-curl -i https://install.oore.example.com/v1/artifacts/install/ios/not-a-token/manifest.plist
+curl -i https://oore.example.com/install/ios/not-a-token/manifest.plist
 ```
 
 The response must be Oore JSON with `401 invalid_token`, not a `3xx` redirect.

@@ -953,6 +953,7 @@ export function isApiPath(pathname) {
   return (
     pathname === '/healthz' ||
     pathname === '/readyz' ||
+    pathname.startsWith('/install/') ||
     pathname === '/v1' ||
     pathname.startsWith('/v1/')
   )

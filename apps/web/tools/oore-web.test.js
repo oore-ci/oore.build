@@ -109,6 +109,12 @@ describe('oore-web trusted proxy contract', () => {
     expect(isApiPath('/readyz')).toBe(true)
   })
 
+  it('proxies only the dedicated install route prefix', () => {
+    expect(isApiPath('/install/ios/token/manifest.plist')).toBe(true)
+    expect(isApiPath('/install/artifact/token')).toBe(true)
+    expect(isApiPath('/installer')).toBe(false)
+  })
+
   it('forwards identity only with valid upstream proof', () => {
     const config = {
       trustedProxySecret: 'backend-proof',

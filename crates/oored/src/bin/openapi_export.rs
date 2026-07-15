@@ -1889,7 +1889,7 @@ mod paths {
     /// Get iOS OTA install manifest
     ///
     /// Returns an Apple property-list manifest authorized by the scoped token in the URL.
-    #[utoipa::path(get, path = "/v1/artifacts/install/ios/{token}/manifest.plist", tag = "Artifacts",
+    #[utoipa::path(get, path = "/install/ios/{token}/manifest.plist", tag = "Artifacts",
         params(("token" = String, Path, description = "Artifact install token")),
         responses(
             (status = 200, description = "Apple OTA installation manifest", content_type = "application/xml"),
@@ -1947,7 +1947,7 @@ mod paths {
     ///
     /// Downloads an artifact using a scoped download token. No session auth required —
     /// the token itself is the authorization. For S3/R2 storage, redirects to a presigned URL.
-    #[utoipa::path(get, path = "/v1/artifacts/dl/{token}", tag = "Scoped Download Tokens",
+    #[utoipa::path(get, path = "/install/artifact/{token}", tag = "Scoped Download Tokens",
         params(("token" = String, Path, description = "Scoped download token")),
         responses(
             (status = 302, description = "Redirect to presigned download URL"),

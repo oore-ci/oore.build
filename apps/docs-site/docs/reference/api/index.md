@@ -223,9 +223,9 @@ Build artifact management and downloads.
 | `GET`  | `/v1/builds/{build_id}/artifacts`                  | User session   |
 | `POST` | `/v1/artifacts/{artifact_id}/download-link`        | User session   |
 | `POST` | `/v1/artifacts/{artifact_id}/install-link`         | User session   |
-| `GET`  | `/v1/artifacts/install/ios/{token}/manifest.plist` | Install token  |
+| `GET`  | `/install/ios/{token}/manifest.plist`              | Install token  |
 | `GET`  | `/v1/artifacts/download/{token}`                   | Download token |
-| `GET`  | `/v1/artifacts/dl/{token}`                         | Scoped token   |
+| `GET`  | `/install/artifact/{token}`                        | Scoped token   |
 
 ### Webhooks
 

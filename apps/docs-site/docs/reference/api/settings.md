@@ -82,7 +82,7 @@ and preflight checks.
 {
   "settings": {
     "public_url": "https://ci.example.com",
-    "artifact_delivery_url": "https://install.ci.example.com",
+    "artifact_delivery_url": null,
     "allowed_origins": [
       "http://localhost:3000",
       "http://127.0.0.1:3000",
@@ -112,7 +112,7 @@ optional `artifact_delivery_url`, and `allowed_origins`).
 ```json
 {
   "public_url": "https://ci.example.com",
-  "artifact_delivery_url": "https://install.ci.example.com",
+  "artifact_delivery_url": null,
   "allowed_origins": [
     "http://localhost:3000",
     "http://127.0.0.1:3000",

@@ -232,7 +232,7 @@ pub async fn create_scoped_token_handler(
     // Build the download URL
     let public_url = state.public_url.read().await.clone();
     let base = public_url.as_deref().unwrap_or("http://127.0.0.1:8787");
-    let download_url = format!("{}/v1/artifacts/dl/{}", base.trim_end_matches('/'), &token);
+    let download_url = format!("{}/install/artifact/{}", base.trim_end_matches('/'), &token);
 
     // Audit log
     let details = serde_json::json!({
@@ -428,7 +428,7 @@ pub async fn revoke_scoped_token_handler(
     Ok(Json(RevokeArtifactDownloadTokenResponse { revoked: true }))
 }
 
-/// `GET /v1/artifacts/dl/{token}` — download an artifact via scoped token (no session auth).
+/// `GET /install/artifact/{token}` — download an artifact via scoped token (no session auth).
 pub async fn download_via_scoped_token(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -512,7 +512,10 @@ pub async fn download_via_scoped_token(
         .generate_download_url_with_base(
             &validated.file_path,
             900,
-            network_settings.artifact_delivery_url.as_deref(),
+            network_settings
+                .artifact_delivery_url
+                .as_deref()
+                .or(network_settings.public_url.as_deref()),
         )
         .await
         .map_err(|e| {

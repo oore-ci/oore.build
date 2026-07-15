@@ -74,9 +74,9 @@ POST /v1/artifacts/{artifact_id}/install-link
 ```json
 {
   "platform": "ios",
-  "install_url": "itms-services://?action=download-manifest&url=https%3A%2F%2Finstall.ci.example.com%2Fv1%2Fartifacts%2Finstall%2Fios%2Ftoken%2Fmanifest.plist",
-  "download_url": "https://install.ci.example.com/v1/artifacts/dl/token",
-  "manifest_url": "https://install.ci.example.com/v1/artifacts/install/ios/token/manifest.plist",
+  "install_url": "itms-services://?action=download-manifest&url=https%3A%2F%2Fci.example.com%2Finstall%2Fios%2Ftoken%2Fmanifest.plist",
+  "download_url": "https://ci.example.com/install/artifact/token",
+  "manifest_url": "https://ci.example.com/install/ios/token/manifest.plist",
   "expires_at": 1784073600
 }
 ```
@@ -92,12 +92,14 @@ The endpoint prefers the optional Artifact delivery URL and otherwise uses the E
 Return the Apple OTA property-list manifest referenced by an iOS install URL.
 
 ```
-GET /v1/artifacts/install/ios/{token}/manifest.plist
+GET /install/ios/{token}/manifest.plist
 ```
 
 **Authentication**: Install token (in URL path)
 
-The XML manifest identifies the app and references `/v1/artifacts/dl/{token}` for the protected IPA download. The token remains reusable until expiry because iOS fetches the manifest and IPA separately.
+The XML manifest identifies the app and references `/install/artifact/{token}` for the protected IPA download. The token remains reusable until expiry because iOS fetches the manifest and IPA separately.
+
+Local artifact storage may redirect once more to `/install/download/{token}`. All installer traffic therefore remains under the single public `/install/` prefix.
 
 ---
 

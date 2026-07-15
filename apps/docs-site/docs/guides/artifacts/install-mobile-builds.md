@@ -10,7 +10,7 @@ Oore gives authenticated team members a device-first install page for Android AP
 ## What you need
 
 - A completed build with an APK or signed ad-hoc IPA artifact
-- An External Access public URL or separate Artifact delivery URL configured for the Oore instance
+- An External Access public URL configured for the Oore instance
 - For iOS, an HTTPS delivery URL
 - For iOS, the phone's UDID included in the provisioning profile used by the build
 - For iOS, Safari on the iPhone
@@ -28,13 +28,7 @@ The install session is scoped to one artifact and expires after one hour or when
 
 ## Instances behind an interactive auth proxy
 
-Apple fetches the manifest and IPA outside the signed-in browser page. If the main Oore URL is protected by Warpgate or another proxy that redirects every unauthenticated request to a login page, configure a separate **Artifact delivery URL** under **Settings → Preferences → External Access**.
-
-Route only token-authenticated `GET` and `HEAD` requests for these paths from that HTTPS origin to `oore-web`:
-
-- `/v1/artifacts/install/ios/`
-- `/v1/artifacts/dl/`
-- `/v1/artifacts/download/`
+Apple fetches the manifest and IPA outside the signed-in browser page. If the main Oore URL is protected by Warpgate or another proxy that redirects every unauthenticated request to a login page, route only token-authenticated `GET` and `HEAD` requests under `/install/` around interactive auth and into `oore-web`.
 
 Keep every other Oore path behind the normal identity proxy. The delivery URLs are bearer credentials, expire within one hour, and remain scoped to one artifact. A request with an invalid or expired token is rejected by Oore.
 
@@ -70,7 +64,7 @@ The IPA must also use Oore's `ad-hoc` or `release-testing` export path and have 
 | Symptom                              | What to check                                                                                     |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | Install button says to use Safari    | Copy the page URL and open it in Safari on the iPhone                                             |
-| iOS install prompt never appears     | Confirm the delivery URL uses HTTPS, is install-ready, and does not redirect token paths to login |
+| iOS install prompt never appears     | Confirm the public URL uses HTTPS and `/install/` does not redirect to interactive login          |
 | iOS says the app cannot be installed | Confirm the phone UDID is in the profile used for this exact build and the profile is not expired |
 | iOS app installs but will not open   | Enable Developer Mode, then retry                                                                 |
 | Android blocks the APK               | Allow unknown-app installation for the browser or file manager that opened the APK                |

@@ -233,6 +233,11 @@ impl LocalStorageClient {
         )
     }
 
+    pub async fn generate_download_url(&self, key: &str, ttl_secs: u64) -> String {
+        let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
+        format!("{}/v1/artifacts/download/{token}", self.public_base_url)
+    }
+
     pub async fn generate_download_url_with_base(
         &self,
         key: &str,
@@ -245,7 +250,7 @@ impl LocalStorageClient {
             .filter(|value| !value.is_empty())
             .unwrap_or(&self.public_base_url)
             .trim_end_matches('/');
-        format!("{base}/v1/artifacts/download/{token}")
+        format!("{base}/install/download/{token}")
     }
 
     pub async fn handle_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
@@ -354,8 +359,11 @@ impl StorageBackend {
         key: &str,
         ttl_secs: u64,
     ) -> Result<Option<String>, anyhow::Error> {
-        self.generate_download_url_with_base(key, ttl_secs, None)
-            .await
+        match self {
+            Self::Disabled => Ok(None),
+            Self::S3(client) => client.generate_download_url(key, ttl_secs).await.map(Some),
+            Self::Local(client) => Ok(Some(client.generate_download_url(key, ttl_secs).await)),
+        }
     }
 
     pub async fn generate_download_url_with_base(
@@ -612,6 +620,6 @@ mod tests {
             )
             .await;
 
-        assert!(url.starts_with("https://install.ci.example.com/v1/artifacts/download/"));
+        assert!(url.starts_with("https://install.ci.example.com/install/download/"));
     }
 }
