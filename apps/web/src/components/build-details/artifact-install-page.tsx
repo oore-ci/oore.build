@@ -155,7 +155,9 @@ function QaReleaseDetail({
           aria-selected={section === 'release'}
           aria-controls="qa-release-panel"
           variant="ghost"
-          className={section === 'release' ? 'border-b-2 border-primary' : ''}
+          className={
+            section === 'release' ? 'border-b-2 border-b-primary' : ''
+          }
           onClick={() => setSection('release')}
         >
           Release
@@ -165,7 +167,9 @@ function QaReleaseDetail({
           aria-selected={section === 'logs'}
           aria-controls="qa-logs-panel"
           variant="ghost"
-          className={section === 'logs' ? 'border-b-2 border-primary' : ''}
+          className={
+            section === 'logs' ? 'border-b-2 border-b-primary' : ''
+          }
           onMouseEnter={() => void import('./qa-build-logs')}
           onFocus={() => void import('./qa-build-logs')}
           onClick={() => setSection('logs')}
