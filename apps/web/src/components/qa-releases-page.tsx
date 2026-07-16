@@ -4,14 +4,13 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
   RefreshIcon,
-  Search01Icon,
   SmartPhone01Icon,
+  UnfoldMoreIcon,
 } from '@hugeicons/core-free-icons'
 
 import type { Artifact, Build, Project } from '@/lib/types'
 import { useArtifactsForBuilds, useBuilds } from '@/hooks/use-builds'
 import { useProjectPages } from '@/hooks/use-projects'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   detectInstallDevice,
@@ -32,13 +31,21 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
 import {
   Pagination,
   PaginationContent,
@@ -51,37 +58,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 
 const RELEASES_PER_PAGE = 10
-
-function AppButton({
-  active,
-  onSelect,
-  project,
-}: {
-  active: boolean
-  onSelect: () => void
-  project: Project
-}) {
-  return (
-    <Button
-      variant={active ? 'secondary' : 'ghost'}
-      className="h-auto w-full justify-start gap-3 px-3 py-2.5 text-left"
-      onClick={onSelect}
-    >
-      <RepositoryAvatar
-        fullName={project.repository_full_name ?? project.name}
-        avatarUrl={project.repository_avatar_url}
-        repositoryId={project.repository_id}
-        provider={project.repository_provider}
-        size="sm"
-      />
-      <span className="min-w-0 flex-1 truncate">{project.name}</span>
-      <HugeiconsIcon
-        icon={ArrowRight01Icon}
-        className="shrink-0 text-muted-foreground"
-      />
-    </Button>
-  )
-}
 
 function QaActivityRow({
   artifactState,
@@ -365,11 +341,9 @@ function ActivityPanel({ project }: { project: Project }) {
 
 export default function QaReleasesPage() {
   const [search, setSearch] = useState('')
-  const [projectSearch, setProjectSearch] = useState('')
-  const updateProjectSearch = useDebouncedCallback(setProjectSearch, 300)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const projectsQuery = useProjectPages({
-    search: projectSearch || undefined,
-    limit: 20,
+    limit: 200,
     sort: 'name',
     direction: 'asc',
   })
@@ -383,11 +357,11 @@ export default function QaReleasesPage() {
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ??
     projects.at(0)
-  const filteredProjects = projects.filter((project) =>
-    project.name.toLowerCase().includes(search.trim().toLowerCase()),
-  )
-  const searchPending =
-    search.trim() !== projectSearch || projectsQuery.isFetching
+
+  function setPickerState(open: boolean) {
+    setPickerOpen(open)
+    if (!open) setSearch('')
+  }
 
   return (
     <PageLayout width="wide" className="max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
@@ -418,8 +392,8 @@ export default function QaReleasesPage() {
       ) : null}
 
       {projectsQuery.isLoading ? (
-        <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
-          <Skeleton className="h-72 w-full" />
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-11 w-full max-w-sm" />
           <Skeleton className="h-96 w-full" />
         </div>
       ) : null}
@@ -444,60 +418,84 @@ export default function QaReleasesPage() {
       ) : null}
 
       {selectedProject ? (
-        <div className="grid items-start gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
-          <aside className="flex flex-col gap-3" aria-label="Apps">
-            <div className="relative">
-              <HugeiconsIcon
-                icon={Search01Icon}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                size={16}
+        <div className="flex flex-col gap-4">
+          <Button
+            variant="outline"
+            className="h-auto w-full max-w-sm justify-between px-3 py-2.5"
+            aria-haspopup="dialog"
+            aria-expanded={pickerOpen}
+            onClick={() => setPickerState(true)}
+          >
+            <span className="flex min-w-0 items-center gap-3">
+              <RepositoryAvatar
+                fullName={
+                  selectedProject.repository_full_name ?? selectedProject.name
+                }
+                avatarUrl={selectedProject.repository_avatar_url}
+                repositoryId={selectedProject.repository_id}
+                provider={selectedProject.repository_provider}
+                size="sm"
               />
-              <Input
+              <span className="truncate">{selectedProject.name}</span>
+            </span>
+            <HugeiconsIcon icon={UnfoldMoreIcon} data-icon="inline-end" />
+          </Button>
+          <CommandDialog
+            open={pickerOpen}
+            onOpenChange={setPickerState}
+            title="Choose an app"
+            description="Search the apps shared with you and choose one to inspect."
+          >
+            <Command>
+              <CommandInput
                 value={search}
-                onChange={(event) => {
-                  const value = event.target.value
-                  setSearch(value)
-                  updateProjectSearch(value.trim())
-                }}
-                placeholder="Search apps"
-                aria-label="Search apps"
-                className="pl-9"
+                onValueChange={setSearch}
+                placeholder="Search apps..."
               />
-            </div>
-            <div className="flex max-h-56 flex-col gap-1 overflow-y-auto lg:max-h-none">
-              {filteredProjects.map((project) => (
-                <AppButton
-                  key={project.id}
-                  project={project}
-                  active={project.id === selectedProject.id}
-                  onSelect={() => setSelectedProjectId(project.id)}
-                />
-              ))}
-              {filteredProjects.length === 0 && searchPending ? (
-                <p className="px-3 py-4 text-sm text-muted-foreground">
-                  Searching apps…
-                </p>
-              ) : null}
-              {filteredProjects.length === 0 && !searchPending ? (
-                <p className="px-3 py-4 text-sm text-muted-foreground">
-                  No matching apps.
-                </p>
-              ) : null}
+              <CommandList>
+                <CommandEmpty>No matching apps.</CommandEmpty>
+                <CommandGroup heading="Your apps">
+                  {projects.map((project) => (
+                    <CommandItem
+                      key={project.id}
+                      value={`${project.name} ${project.repository_full_name ?? ''}`}
+                      data-checked={project.id === selectedProject.id}
+                      onSelect={() => {
+                        setSelectedProjectId(project.id)
+                        setPickerState(false)
+                      }}
+                    >
+                      <RepositoryAvatar
+                        fullName={
+                          project.repository_full_name ?? project.name
+                        }
+                        avatarUrl={project.repository_avatar_url}
+                        repositoryId={project.repository_id}
+                        provider={project.repository_provider}
+                        size="sm"
+                      />
+                      <span className="truncate">{project.name}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
               {projectsQuery.hasNextPage ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={projectsQuery.isFetchingNextPage}
-                  onClick={() => void projectsQuery.fetchNextPage()}
-                >
-                  {projectsQuery.isFetchingNextPage
-                    ? 'Loading more…'
-                    : 'Load more apps'}
-                </Button>
+                <div className="border-t p-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    disabled={projectsQuery.isFetchingNextPage}
+                    onClick={() => void projectsQuery.fetchNextPage()}
+                  >
+                    {projectsQuery.isFetchingNextPage
+                      ? 'Loading more…'
+                      : 'Load more apps'}
+                  </Button>
+                </div>
               ) : null}
-            </div>
-          </aside>
-
+            </Command>
+          </CommandDialog>
           <ActivityPanel key={selectedProject.id} project={selectedProject} />
         </div>
       ) : null}
