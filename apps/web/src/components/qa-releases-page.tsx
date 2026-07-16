@@ -200,7 +200,7 @@ function ActivityPanel({
 
   return (
     <Card className="min-w-0 bg-transparent shadow-none ring-0">
-      <CardHeader>
+      <CardHeader className="px-0">
         <Combobox
           items={projects}
           value={project}
