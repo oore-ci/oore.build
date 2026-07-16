@@ -198,7 +198,7 @@ function ActivityPanel({
   usePageClamp(page, RELEASES_PER_PAGE, buildsQuery.data?.total, setPage)
 
   return (
-    <Card className="min-w-0 border-0 bg-transparent shadow-none">
+    <Card className="min-w-0 bg-transparent shadow-none ring-0">
       <CardHeader className="grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
         <div className="min-w-0">
           <Combobox
@@ -207,7 +207,7 @@ function ActivityPanel({
             onValueChange={(nextProject) => {
               if (nextProject) onProjectChange(nextProject.id)
             }}
-            itemToStringValue={(item) => item.name}
+            itemToStringLabel={(item) => item.name}
           >
             <ComboboxInput
               className="w-full sm:max-w-sm"
