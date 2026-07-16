@@ -1607,7 +1607,7 @@ mod paths {
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
             ("project_id" = Option<String>, Query, description = "Filter by project"),
             ("pipeline_id" = Option<String>, Query, description = "Filter by pipeline"),
-            ("status" = Option<String>, Query, description = "Filter by status"),
+            ("status" = Option<String>, Query, description = "Filter by one status or up to 9 comma-separated statuses"),
             ("sort" = Option<String>, Query, description = "Sort by created_at, status, project_name, pipeline_name, or branch"),
             ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
         ),

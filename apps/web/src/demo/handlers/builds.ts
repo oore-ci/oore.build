@@ -46,8 +46,26 @@ export const buildHandlers = [
     const pipelineId = url.searchParams.get('pipeline_id')
     if (pipelineId) builds = builds.filter((b) => b.pipeline_id === pipelineId)
 
-    const status = url.searchParams.get('status')
-    if (status) builds = builds.filter((b) => b.status === status)
+    if (url.searchParams.has('status')) {
+      const statuses = [
+        ...new Set(
+          (url.searchParams.get('status') ?? '')
+            .split(',')
+            .map((status) => status.trim())
+            .filter(Boolean),
+        ),
+      ]
+      if (statuses.length > 9) {
+        return HttpResponse.json(
+          {
+            error: 'status accepts at most 9 comma-separated values',
+            code: 'invalid_input',
+          },
+          { status: 400 },
+        )
+      }
+      builds = builds.filter((build) => statuses.includes(build.status))
+    }
 
     const branch = url.searchParams.get('branch')
     if (branch) builds = builds.filter((b) => b.branch === branch)

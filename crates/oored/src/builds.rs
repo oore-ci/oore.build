@@ -1006,8 +1006,31 @@ pub async fn list_builds(
         conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
     }
     if let Some(ref status) = params.status {
-        bind_values.push(status.clone());
-        conditions.push(format!("builds.status = ?{}", bind_values.len()));
+        let mut values = status
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        if values.len() > 9 {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "status accepts at most 9 comma-separated values",
+            ));
+        }
+        if values.is_empty() {
+            conditions.push("1 = 0".to_string());
+        }
+        let mut placeholders = Vec::new();
+        for value in values {
+            bind_values.push(value.to_string());
+            placeholders.push(format!("?{}", bind_values.len()));
+        }
+        if !placeholders.is_empty() {
+            conditions.push(format!("builds.status IN ({})", placeholders.join(", ")));
+        }
     }
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());

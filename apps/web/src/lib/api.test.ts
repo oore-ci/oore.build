@@ -215,7 +215,11 @@ describe('query cancellation', () => {
     await listBuilds(
       'https://ci.example.com',
       'token',
-      { sort: 'project_name', direction: 'desc' },
+      {
+        status: ['failed', 'timed_out'],
+        sort: 'project_name',
+        direction: 'desc',
+      },
       { signal: controller.signal },
     )
     await listAuditLogs(
@@ -236,7 +240,7 @@ describe('query cancellation', () => {
     )
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
-      'https://ci.example.com/v1/builds?sort=project_name&direction=desc',
+      'https://ci.example.com/v1/builds?status=failed%2Ctimed_out&sort=project_name&direction=desc',
       request,
     )
     expect(mockFetch).toHaveBeenNthCalledWith(

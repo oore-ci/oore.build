@@ -8,7 +8,7 @@ import {
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 
-import type { Artifact, Build, Project } from '@/lib/types'
+import type { Artifact, Build, BuildStatus, Project } from '@/lib/types'
 import { useArtifactsForBuilds, useBuilds } from '@/hooks/use-builds'
 import { useProjectPages } from '@/hooks/use-projects'
 import { usePageClamp } from '@/hooks/use-page-clamp'
@@ -26,7 +26,6 @@ import { PageMeta } from '@/lib/seo'
 import {
   BUILD_STATUS_FILTER_OPTIONS,
   getStatusVariant,
-  type BuildStatusFilter,
 } from '@/lib/status-variants'
 import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
@@ -34,6 +33,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Combobox,
   ComboboxContent,
@@ -60,11 +60,11 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -160,12 +160,13 @@ function ActivityPanel({
   projects: Array<Project>
 }) {
   const [page, setPage] = useState(1)
-  const [status, setStatus] = useState<BuildStatusFilter>('all')
+  const [statuses, setStatuses] = useState<Array<BuildStatus>>([])
+  const [draftStatuses, setDraftStatuses] = useState<Array<BuildStatus>>([])
   const [filterOpen, setFilterOpen] = useState(false)
   const offset = (page - 1) * RELEASES_PER_PAGE
   const buildsQuery = useBuilds({
     project_id: project.id,
-    status: status === 'all' ? undefined : status,
+    status: statuses.length > 0 ? statuses : undefined,
     limit: RELEASES_PER_PAGE,
     offset,
   })
@@ -205,6 +206,12 @@ function ActivityPanel({
     )
   })?.id
   const total = buildsQuery.data?.total ?? 0
+  const filterLabel =
+    statuses.length === 0
+      ? 'All statuses'
+      : statuses.length === 1
+        ? BUILD_STATUS_FILTER_OPTIONS[statuses[0]!]
+        : `${statuses.length} statuses`
   const totalPages = Math.max(1, Math.ceil(total / RELEASES_PER_PAGE))
   const paginationItems =
     totalPages <= 5
@@ -273,20 +280,26 @@ function ActivityPanel({
             ) : null}
           </ComboboxContent>
         </Combobox>
-        <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
+        <Sheet
+          open={filterOpen}
+          onOpenChange={(open) => {
+            if (open) setDraftStatuses(statuses)
+            setFilterOpen(open)
+          }}
+        >
           <SheetTrigger
             render={
               <Button
-                variant={status === 'all' ? 'outline' : 'secondary'}
+                variant={statuses.length === 0 ? 'outline' : 'secondary'}
                 size="icon"
                 className="sm:w-auto sm:px-2.5"
-                aria-label={`Filter builds: ${BUILD_STATUS_FILTER_OPTIONS[status]}`}
+                aria-label={`Filter builds: ${filterLabel}`}
               />
             }
           >
             <span className="relative flex">
               <HugeiconsIcon icon={FilterIcon} data-icon="inline-start" />
-              {status !== 'all' ? (
+              {statuses.length > 0 ? (
                 <Badge
                   aria-hidden
                   className="absolute -top-1 -right-1 size-2 p-0"
@@ -294,9 +307,7 @@ function ActivityPanel({
               ) : null}
             </span>
             <span className="hidden sm:inline">
-              {status === 'all'
-                ? 'Filter'
-                : BUILD_STATUS_FILTER_OPTIONS[status]}
+              {statuses.length === 0 ? 'Filter' : filterLabel}
             </span>
           </SheetTrigger>
           <SheetContent
@@ -306,34 +317,60 @@ function ActivityPanel({
             <SheetHeader className="mx-auto w-full max-w-lg">
               <SheetTitle>Filter builds</SheetTitle>
               <SheetDescription>
-                Show builds with a specific status.
+                Choose one or more build statuses.
               </SheetDescription>
             </SheetHeader>
-            <RadioGroup
-              value={status}
-              onValueChange={(value) => {
-                setStatus(value as BuildStatusFilter)
-                setPage(1)
-                setFilterOpen(false)
-              }}
-              className="mx-auto w-full max-w-lg gap-0 px-4 pb-4"
-            >
-              {Object.entries(BUILD_STATUS_FILTER_OPTIONS).map(
-                ([value, label]) => (
-                  <Label
-                    key={value}
-                    htmlFor={`qa-build-status-${value}`}
-                    className="min-h-11 justify-between border-b last:border-b-0"
-                  >
-                    {label}
-                    <RadioGroupItem
-                      id={`qa-build-status-${value}`}
-                      value={value}
-                    />
-                  </Label>
-                ),
-              )}
-            </RadioGroup>
+            <fieldset className="mx-auto w-full max-w-lg px-4">
+              <legend className="sr-only">Build statuses</legend>
+              <div className="grid grid-cols-2 gap-x-4">
+                {Object.entries(BUILD_STATUS_FILTER_OPTIONS)
+                  .filter(([value]) => value !== 'all')
+                  .map(([value, label]) => {
+                    const buildStatus = value as BuildStatus
+                    return (
+                      <Label
+                        key={value}
+                        htmlFor={`qa-build-status-${value}`}
+                        className="min-h-11 gap-3"
+                      >
+                        <Checkbox
+                          id={`qa-build-status-${value}`}
+                          checked={draftStatuses.includes(buildStatus)}
+                          onCheckedChange={(checked) =>
+                            setDraftStatuses((current) =>
+                              checked
+                                ? [...current, buildStatus]
+                                : current.filter(
+                                    (status) => status !== buildStatus,
+                                  ),
+                            )
+                          }
+                        />
+                        {label}
+                      </Label>
+                    )
+                  })}
+              </div>
+            </fieldset>
+            <SheetFooter className="mx-auto w-full max-w-lg flex-row">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setDraftStatuses([])}
+              >
+                Clear all
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  setStatuses([...draftStatuses].sort())
+                  setPage(1)
+                  setFilterOpen(false)
+                }}
+              >
+                Apply filters
+              </Button>
+            </SheetFooter>
           </SheetContent>
         </Sheet>
       </CardHeader>
@@ -358,7 +395,7 @@ function ActivityPanel({
               <Skeleton key={index} className="h-16 w-full" />
             ))}
           </div>
-        ) : builds.length === 0 && status === 'all' ? (
+        ) : builds.length === 0 && statuses.length === 0 ? (
           <p className="py-6 text-sm text-muted-foreground">
             No builds have been shared for this app yet.
           </p>
@@ -370,7 +407,10 @@ function ActivityPanel({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setStatus('all')}
+              onClick={() => {
+                setStatuses([])
+                setPage(1)
+              }}
             >
               Clear filter
             </Button>

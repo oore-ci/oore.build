@@ -1083,7 +1083,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Filter by status",
+            "description": "Filter by one status or up to 9 comma-separated statuses",
             "required": false,
             "schema": {
               "type": "string"

@@ -915,7 +915,7 @@ export function listBuilds(
   params?: {
     project_id?: string
     pipeline_id?: string
-    status?: string
+    status?: string | ReadonlyArray<string>
     branch?: string
     sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
     direction?: 'asc' | 'desc'
@@ -927,7 +927,11 @@ export function listBuilds(
   const query = new URLSearchParams()
   if (params?.project_id) query.set('project_id', params.project_id)
   if (params?.pipeline_id) query.set('pipeline_id', params.pipeline_id)
-  if (params?.status) query.set('status', params.status)
+  const status =
+    typeof params?.status === 'string'
+      ? params.status
+      : params?.status?.join(',')
+  if (status) query.set('status', status)
   if (params?.branch) query.set('branch', params.branch)
   if (params?.sort) query.set('sort', params.sort)
   if (params?.direction) query.set('direction', params.direction)

@@ -330,6 +330,29 @@ async fn test_build_list_sort_is_allowlisted() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(list["builds"][0]["status"], "failed");
 
+    let (status, filtered) = json_request(
+        &app,
+        "GET",
+        "/v1/builds?status=failed%2Crunning&limit=1",
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(filtered["total"], 2);
+    assert_eq!(filtered["builds"].as_array().unwrap().len(), 1);
+
+    let (status, filtered) = json_request(
+        &app,
+        "GET",
+        "/v1/builds?status=%2C%2C",
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(filtered["total"], 0);
+
     let (status, error) = json_request(
         &app,
         "GET",

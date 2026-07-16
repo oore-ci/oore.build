@@ -61,7 +61,7 @@ export function useBuilds(
   params?: {
     project_id?: string
     pipeline_id?: string
-    status?: string
+    status?: string | ReadonlyArray<string>
     branch?: string
     sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
     direction?: 'asc' | 'desc'
