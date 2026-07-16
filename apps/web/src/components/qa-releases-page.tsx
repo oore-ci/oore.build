@@ -39,6 +39,13 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 
 const RELEASES_PER_PAGE = 10
@@ -289,26 +296,38 @@ function ActivityPanel({ project }: { project: Project }) {
             <span className="text-xs text-muted-foreground">
               Page {page} of {totalPages}
             </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === 1 || buildsQuery.isFetching}
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === totalPages || buildsQuery.isFetching}
-                onClick={() =>
-                  setPage((value) => Math.min(totalPages, value + 1))
-                }
-              >
-                Next
-              </Button>
-            </div>
+            <Pagination className="w-auto">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    href="#"
+                    aria-disabled={page === 1 || buildsQuery.isFetching}
+                    className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      if (page > 1 && !buildsQuery.isFetching) {
+                        setPage((value) => value - 1)
+                      }
+                    }}
+                  />
+                </PaginationItem>
+                <PaginationItem>
+                  <PaginationNext
+                    href="#"
+                    aria-disabled={
+                      page === totalPages || buildsQuery.isFetching
+                    }
+                    className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      if (page < totalPages && !buildsQuery.isFetching) {
+                        setPage((value) => value + 1)
+                      }
+                    }}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </div>
         ) : null}
       </CardContent>
