@@ -14,6 +14,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -238,6 +246,24 @@ function useTriggerBuildDialogState({
     () => selectedPipeline?.execution_config.platforms ?? [],
     [selectedPipeline],
   )
+  const branchItems = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            defaultBranch,
+            activeProject?.default_branch,
+            ...(selectedPipeline?.trigger_config.branches ?? []).filter(
+              (branch) =>
+                !branch.includes('*') &&
+                !branch.includes('?') &&
+                !branch.includes('['),
+            ),
+          ].filter((branch): branch is string => !!branch),
+        ),
+      ),
+    [activeProject?.default_branch, defaultBranch, selectedPipeline],
+  )
   const changelogPreviewQuery = useBuildChangelogPreview(
     projectId,
     {
@@ -335,6 +361,7 @@ function useTriggerBuildDialogState({
     pipelines.length === 0
 
   return {
+    branchItems,
     createBuildMutation,
     changelogPreviewQuery,
     defaultBranch,
@@ -365,6 +392,7 @@ function useTriggerBuildDialogState({
 
 export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
   const {
+    branchItems,
     createBuildMutation,
     changelogPreviewQuery,
     defaultBranch,
@@ -532,13 +560,40 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Branch</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={defaultBranch ?? 'main'}
-                      autoComplete="off"
-                      {...field}
-                    />
-                  </FormControl>
+                  <Combobox
+                    items={branchItems}
+                    inputValue={field.value ?? ''}
+                    value={
+                      branchItems.includes(field.value ?? '')
+                        ? field.value
+                        : null
+                    }
+                    onInputValueChange={field.onChange}
+                    onValueChange={(value) => {
+                      if (value) field.onChange(value)
+                    }}
+                  >
+                    <FormControl>
+                      <ComboboxInput
+                        className="w-full"
+                        placeholder={defaultBranch ?? 'main'}
+                        autoComplete="off"
+                      />
+                    </FormControl>
+                    <ComboboxContent>
+                      <ComboboxEmpty>
+                        No matching known branches. Keep typing to use a custom
+                        branch.
+                      </ComboboxEmpty>
+                      <ComboboxList>
+                        {(branch) => (
+                          <ComboboxItem key={branch} value={branch}>
+                            {branch}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
                   <FormDescription>
                     The branch to build. If both branch and commit SHA are
                     provided, the commit takes precedence.
@@ -574,7 +629,7 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
               control={form.control}
               name="changelog"
               render={({ field }) => (
-                <FormItem>
+                <FormItem className="pb-4">
                   <FormLabel>What changed? (optional)</FormLabel>
                   <FormControl>
                     <Textarea

@@ -38,6 +38,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -314,152 +315,152 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
   return (
     <>
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-4">
-          <div className="space-y-1.5">
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Project access
-            </CardTitle>
-            <CardDescription>
-              Grant developers or QA viewers access to this project.
-            </CardDescription>
-          </div>
-          <Dialog open={addOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger
-              render={
-                <Button
-                  size="icon-sm"
-                  aria-label="Add project member"
-                  title="Add project member"
-                />
-              }
-            >
-              <HugeiconsIcon icon={Add01Icon} aria-hidden />
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add project member</DialogTitle>
-                <DialogDescription>
-                  Choose an eligible user and their project role.
-                </DialogDescription>
-              </DialogHeader>
-              <Form {...form}>
-                <form
-                  className="space-y-4"
-                  onSubmit={form.handleSubmit(addMember)}
-                >
-                  <FormField
-                    control={form.control}
-                    name="user_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>User</FormLabel>
-                        <Combobox
-                          items={candidates}
-                          value={candidatesById.get(field.value) ?? null}
-                          onValueChange={(user) => {
-                            field.onChange(user?.id ?? '')
-                            if (user?.role === 'qa_viewer') {
-                              form.setValue('role', 'viewer')
+        <CardHeader>
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Project access
+          </CardTitle>
+          <CardDescription>
+            Grant developers or QA viewers access to this project.
+          </CardDescription>
+          <CardAction>
+            <Dialog open={addOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    aria-label="Add project member"
+                    title="Add project member"
+                  />
+                }
+              >
+                <HugeiconsIcon icon={Add01Icon} aria-hidden />
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add project member</DialogTitle>
+                  <DialogDescription>
+                    Choose an eligible user and their project role.
+                  </DialogDescription>
+                </DialogHeader>
+                <Form {...form}>
+                  <form
+                    className="space-y-4"
+                    onSubmit={form.handleSubmit(addMember)}
+                  >
+                    <FormField
+                      control={form.control}
+                      name="user_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>User</FormLabel>
+                          <Combobox
+                            items={candidates}
+                            value={candidatesById.get(field.value) ?? null}
+                            onValueChange={(user) => {
+                              field.onChange(user?.id ?? '')
+                              if (user?.role === 'qa_viewer') {
+                                form.setValue('role', 'viewer')
+                              }
+                            }}
+                            itemToStringLabel={(user) =>
+                              user.display_name
+                                ? `${user.display_name} (${user.email})`
+                                : user.email
                             }
-                          }}
-                          itemToStringLabel={(user) =>
-                            user.display_name
-                              ? `${user.display_name} (${user.email})`
-                              : user.email
-                          }
-                        >
-                          <FormControl>
-                            <ComboboxInput
-                              className="w-full"
-                              placeholder="Search eligible users..."
-                            />
-                          </FormControl>
-                          <ComboboxContent>
-                            <ComboboxEmpty>
-                              No eligible users found.
-                            </ComboboxEmpty>
-                            <ComboboxList>
-                              {(user) => (
-                                <ComboboxItem key={user.id} value={user}>
-                                  <span className="min-w-0 flex-1 truncate">
-                                    {user.email}
-                                  </span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {INSTANCE_ROLE_LABELS[user.role]}
-                                    {user.status === 'invited'
-                                      ? ' · Invited'
-                                      : ''}
-                                  </span>
-                                </ComboboxItem>
-                              )}
-                            </ComboboxList>
-                          </ComboboxContent>
-                        </Combobox>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="role"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Project role</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          items={Object.fromEntries(
-                            availableRoles.map((role) => [
-                              role,
-                              PROJECT_ROLE_LABELS[role],
-                            ]),
-                          )}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {availableRoles.map((role) => (
-                              <SelectItem key={role} value={role}>
-                                {PROJECT_ROLE_LABELS[role]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {selectedUser?.role === 'qa_viewer' ? (
-                          <FormDescription>
-                            QA viewers always receive read-only Viewer access.
-                          </FormDescription>
-                        ) : null}
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <DialogFooter className="static">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setDialogOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={addMutation.isPending}>
-                      {addMutation.isPending ? (
-                        <>
-                          <Spinner className="size-4" />
-                          Adding...
-                        </>
-                      ) : (
-                        'Add'
+                          >
+                            <FormControl>
+                              <ComboboxInput
+                                className="w-full"
+                                placeholder="Search eligible users..."
+                              />
+                            </FormControl>
+                            <ComboboxContent>
+                              <ComboboxEmpty>
+                                No eligible users found.
+                              </ComboboxEmpty>
+                              <ComboboxList>
+                                {(user) => (
+                                  <ComboboxItem key={user.id} value={user}>
+                                    <span className="min-w-0 flex-1 truncate">
+                                      {user.email}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {INSTANCE_ROLE_LABELS[user.role]}
+                                      {user.status === 'invited'
+                                        ? ' · Invited'
+                                        : ''}
+                                    </span>
+                                  </ComboboxItem>
+                                )}
+                              </ComboboxList>
+                            </ComboboxContent>
+                          </Combobox>
+                          <FormMessage />
+                        </FormItem>
                       )}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
+                    />
+                    <FormField
+                      control={form.control}
+                      name="role"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Project role</FormLabel>
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            items={Object.fromEntries(
+                              availableRoles.map((role) => [
+                                role,
+                                PROJECT_ROLE_LABELS[role],
+                              ]),
+                            )}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {availableRoles.map((role) => (
+                                <SelectItem key={role} value={role}>
+                                  {PROJECT_ROLE_LABELS[role]}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {selectedUser?.role === 'qa_viewer' ? (
+                            <FormDescription>
+                              QA viewers always receive read-only Viewer access.
+                            </FormDescription>
+                          ) : null}
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <DialogFooter className="static">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={addMutation.isPending}>
+                        {addMutation.isPending ? (
+                          <>
+                            <Spinner className="size-4" />
+                            Adding...
+                          </>
+                        ) : (
+                          'Add'
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
+          </CardAction>
         </CardHeader>
         <CardContent>
           {isLoading ? (

@@ -349,7 +349,7 @@ function IntegrationsPage() {
         actions={
           remoteEnabled && canWrite && hasConnectedSources ? (
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button size="sm" />}>
+              <DropdownMenuTrigger render={<Button />}>
                 <HugeiconsIcon
                   icon={Link04Icon}
                   data-icon="inline-start"

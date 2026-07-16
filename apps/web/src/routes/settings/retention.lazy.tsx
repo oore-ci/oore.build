@@ -438,6 +438,11 @@ function RetentionPage() {
         description="Configure automatic cleanup of old builds and artifacts to manage disk usage"
       />
 
+      <RetentionSummaryCard
+        isLoading={cleanupLoading}
+        lastCleanup={lastCleanup}
+      />
+
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           {/* Enable/Disable */}
@@ -485,11 +490,6 @@ function RetentionPage() {
           </Card>
         </form>
       </Form>
-
-      <RetentionSummaryCard
-        isLoading={cleanupLoading}
-        lastCleanup={lastCleanup}
-      />
     </PageLayout>
   )
 }
