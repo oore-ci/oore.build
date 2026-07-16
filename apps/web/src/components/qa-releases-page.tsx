@@ -37,6 +37,7 @@ import {
   ComboboxItem,
   ComboboxList,
 } from '@/components/ui/combobox'
+import { InputGroupAddon } from '@/components/ui/input-group'
 import {
   Empty,
   EmptyDescription,
@@ -199,58 +200,61 @@ function ActivityPanel({
 
   return (
     <Card className="min-w-0 bg-transparent shadow-none ring-0">
-      <CardHeader className="grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-        <div className="min-w-0">
-          <Combobox
-            items={projects}
-            value={project}
-            onValueChange={(nextProject) => {
-              if (nextProject) onProjectChange(nextProject.id)
-            }}
-            itemToStringLabel={(item) => item.name}
+      <CardHeader>
+        <Combobox
+          items={projects}
+          value={project}
+          onValueChange={(nextProject) => {
+            if (nextProject) onProjectChange(nextProject.id)
+          }}
+          itemToStringLabel={(item) => item.name}
+        >
+          <ComboboxInput
+            className="w-full"
+            placeholder="Choose an app"
+            aria-label="Choose an app"
           >
-            <ComboboxInput
-              className="w-full sm:max-w-sm"
-              placeholder="Choose an app"
-              aria-label="Choose an app"
-            />
-            <ComboboxContent>
-              <ComboboxEmpty>No matching apps.</ComboboxEmpty>
-              <ComboboxList>
-                {(item) => (
-                  <ComboboxItem key={item.id} value={item}>
-                    <RepositoryAvatar
-                      fullName={item.repository_full_name ?? item.name}
-                      avatarUrl={item.repository_avatar_url}
-                      repositoryId={item.repository_id}
-                      provider={item.repository_provider}
-                      size="sm"
-                    />
-                    <span className="truncate">{item.name}</span>
-                  </ComboboxItem>
-                )}
-              </ComboboxList>
-              {hasMoreProjects ? (
-                <div className="border-t p-2">
-                  <Button
-                    variant="ghost"
+            <InputGroupAddon align="inline-start">
+              <RepositoryAvatar
+                fullName={project.repository_full_name ?? project.name}
+                avatarUrl={project.repository_avatar_url}
+                repositoryId={project.repository_id}
+                provider={project.repository_provider}
+                size="sm"
+              />
+            </InputGroupAddon>
+          </ComboboxInput>
+          <ComboboxContent>
+            <ComboboxEmpty>No matching apps.</ComboboxEmpty>
+            <ComboboxList>
+              {(item) => (
+                <ComboboxItem key={item.id} value={item}>
+                  <RepositoryAvatar
+                    fullName={item.repository_full_name ?? item.name}
+                    avatarUrl={item.repository_avatar_url}
+                    repositoryId={item.repository_id}
+                    provider={item.repository_provider}
                     size="sm"
-                    className="w-full"
-                    disabled={isFetchingMoreProjects}
-                    onClick={onLoadMoreProjects}
-                  >
-                    {isFetchingMoreProjects
-                      ? 'Loading more…'
-                      : 'Load more apps'}
-                  </Button>
-                </div>
-              ) : null}
-            </ComboboxContent>
-          </Combobox>
-        </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {total} build{total === 1 ? '' : 's'}
-        </span>
+                  />
+                  <span className="truncate">{item.name}</span>
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+            {hasMoreProjects ? (
+              <div className="border-t p-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  disabled={isFetchingMoreProjects}
+                  onClick={onLoadMoreProjects}
+                >
+                  {isFetchingMoreProjects ? 'Loading more…' : 'Load more apps'}
+                </Button>
+              </div>
+            ) : null}
+          </ComboboxContent>
+        </Combobox>
       </CardHeader>
       <CardContent>
         {buildsQuery.error ? (
