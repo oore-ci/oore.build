@@ -68,7 +68,7 @@ export function useBuilds(
     limit?: number
     offset?: number
   },
-  options?: { refetchInterval?: number | false },
+  options?: { enabled?: boolean; refetchInterval?: number | false },
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -78,7 +78,7 @@ export function useBuilds(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
     queryFn: ({ signal }) => listBuilds(baseUrl!, token!, params, { signal }),
-    enabled: !!baseUrl && !!token,
+    enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     staleTime: 5_000,
     refetchInterval: (query) =>
       hasActiveBuilds(query.state.data) ? pollInterval : false,

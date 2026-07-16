@@ -2,6 +2,8 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  ArrowDown01Icon,
+  ArrowRight01Icon,
   Delete02Icon,
   InformationCircleIcon,
   PlayIcon,
@@ -18,6 +20,8 @@ import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
+import type { SortDirection } from '@/components/collection-controls'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -42,7 +46,12 @@ import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ProjectBuildsTab, ProjectPipelinesTab } from './-project-detail-tabs'
+import {
+  PROJECT_BUILD_SORT_OPTIONS,
+  ProjectBuildsTab,
+  ProjectPipelinesTab,
+} from './-project-detail-tabs'
+import type { ProjectBuildSort } from './-project-detail-tabs'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
@@ -62,15 +71,45 @@ const ProjectAccessCard = lazy(() =>
 const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
-function validateTabSearch(search: Record<string, unknown>): {
+interface ProjectDetailSearch {
+  direction?: SortDirection
+  page?: number
+  pageSize?: 20 | 50 | 100
+  q?: string
+  sort?: ProjectBuildSort
+  status?: string
   tab?: TabValue
-} {
+}
+
+const PROJECT_BUILD_SORT_VALUES = new Set<ProjectBuildSort>(
+  Object.keys(PROJECT_BUILD_SORT_OPTIONS) as Array<ProjectBuildSort>,
+)
+
+function validateProjectSearch(
+  search: Record<string, unknown>,
+): ProjectDetailSearch {
   const tab = search.tab
+  const page = Number(search.page)
+  const pageSize = Number(search.pageSize)
+  const q = typeof search.q === 'string' ? search.q.trim() : ''
+  const status =
+    typeof search.status === 'string' &&
+    search.status in BUILD_STATUS_FILTER_OPTIONS
+      ? search.status
+      : ''
+  const sort = search.sort as ProjectBuildSort
+
   return {
     tab:
       typeof tab === 'string' && TAB_VALUES.includes(tab as TabValue)
         ? (tab as TabValue)
         : undefined,
+    q: q || undefined,
+    status: status && status !== 'all' ? status : undefined,
+    sort: PROJECT_BUILD_SORT_VALUES.has(sort) ? sort : undefined,
+    direction: search.direction === 'asc' ? 'asc' : undefined,
+    page: Number.isInteger(page) && page > 1 ? page : undefined,
+    pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
   }
 }
 
@@ -79,7 +118,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
     breadcrumbLabel: 'Details',
     breadcrumbParent: { label: 'Projects', to: '/projects' },
   },
-  validateSearch: validateTabSearch,
+  validateSearch: validateProjectSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
@@ -93,7 +132,7 @@ function useProjectDetailPageState() {
   const navigate = useNavigate()
   const { data, isLoading, error } = useProject(projectId)
   const { data: pipelinesData } = usePipelines(projectId)
-  const { data: buildsData } = useBuilds(
+  const { data: summaryBuildsData } = useBuilds(
     { project_id: projectId, limit: 20 },
     { refetchInterval: 15_000 },
   )
@@ -134,28 +173,25 @@ function useProjectDetailPageState() {
     string | undefined
   >()
 
-  const builds = useMemo(() => buildsData?.builds ?? [], [buildsData?.builds])
-  const { lastBuildByPipeline, latestSucceededBuild } = useMemo(() => {
+  const summaryBuilds = useMemo(
+    () => summaryBuildsData?.builds ?? [],
+    [summaryBuildsData?.builds],
+  )
+  const lastBuildByPipeline = useMemo(() => {
     const byPipeline = new Map<string, { status: string; time: number }>()
-    let latestSucceeded: (typeof builds)[number] | null = null
 
-    for (const build of builds) {
+    for (const build of summaryBuilds) {
       if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
         byPipeline.set(build.pipeline_id, {
           status: build.status,
           time: build.queued_at,
         })
       }
-      if (latestSucceeded === null && build.status === 'succeeded') {
-        latestSucceeded = build
-      }
     }
 
-    return {
-      lastBuildByPipeline: byPipeline,
-      latestSucceededBuild: latestSucceeded,
-    }
-  }, [builds])
+    return byPipeline
+  }, [summaryBuilds])
+  const buildCount = summaryBuildsData?.total ?? data?.build_count ?? 0
 
   const activeTab: TabValue = tab ?? 'pipelines'
 
@@ -179,7 +215,10 @@ function useProjectDetailPageState() {
     void navigate({
       to: '/projects/$projectId',
       params: { projectId },
-      search: value === 'pipelines' ? {} : { tab: value },
+      search: (previous) => ({
+        ...previous,
+        tab: value === 'pipelines' ? undefined : value,
+      }),
       replace: true,
     })
   }
@@ -204,7 +243,7 @@ function useProjectDetailPageState() {
   return {
     status: 'ready' as const,
     activeTab,
-    builds,
+    buildCount,
     canDeleteProjects,
     canManageAccess,
     canTriggerBuild,
@@ -216,7 +255,6 @@ function useProjectDetailPageState() {
     handleDelete,
     label,
     lastBuildByPipeline,
-    latestSucceededBuild,
     navigate,
     openTriggerBuild,
     pipelines,
@@ -266,7 +304,7 @@ function ProjectDetailPage() {
 
   const {
     activeTab,
-    builds,
+    buildCount,
     canDeleteProjects,
     canManageAccess,
     canTriggerBuild,
@@ -278,7 +316,6 @@ function ProjectDetailPage() {
     handleDelete,
     label,
     lastBuildByPipeline,
-    latestSucceededBuild,
     navigate,
     openTriggerBuild,
     pipelines,
@@ -294,10 +331,6 @@ function ProjectDetailPage() {
     triggerBuildOpen,
     triggerPipelineId,
   } = pageState
-
-  const openBuild = (buildId: string) => {
-    void navigate({ to: '/builds/$buildId', params: { buildId } })
-  }
 
   function preloadProjectSettings() {
     if (canManageAccess) void loadProjectAccessCard()
@@ -384,7 +417,7 @@ function ProjectDetailPage() {
             Pipelines{pipelines.length > 0 ? ` (${pipelines.length})` : ''}
           </TabsTrigger>
           <TabsTrigger value="builds">
-            Builds{builds.length > 0 ? ` (${builds.length})` : ''}
+            Builds{buildCount > 0 ? ` (${buildCount})` : ''}
           </TabsTrigger>
           <TabsTrigger
             value="settings"
@@ -415,14 +448,13 @@ function ProjectDetailPage() {
         />
 
         <ProjectBuildsTab
-          builds={builds}
+          active={activeTab === 'builds'}
           canTriggerBuild={canTriggerBuild}
-          latestSucceededBuild={latestSucceededBuild}
-          onOpenBuild={openBuild}
           onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
           onTriggerBuild={() => openTriggerBuild()}
           pipelineCount={pipelines.length}
           projectHasSource={projectHasSource}
+          projectId={projectId}
         />
 
         {/* ---- Settings tab ---- */}
@@ -458,9 +490,11 @@ function ProjectDetailPage() {
                   <CardContent>
                     <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-destructive">
                       Danger zone
-                      <span className="text-xs text-muted-foreground">
-                        {dangerOpen ? 'collapse' : 'expand'}
-                      </span>
+                      <HugeiconsIcon
+                        icon={dangerOpen ? ArrowDown01Icon : ArrowRight01Icon}
+                        className="size-4 text-muted-foreground"
+                        aria-hidden
+                      />
                     </CollapsibleTrigger>
                     <CollapsibleContent>
                       <div className="space-y-3 pt-4">

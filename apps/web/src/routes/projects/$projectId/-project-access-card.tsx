@@ -324,9 +324,16 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
             </CardDescription>
           </div>
           <Dialog open={addOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger render={<Button size="sm" />}>
-              <HugeiconsIcon icon={Add01Icon} />
-              Add member
+            <DialogTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  aria-label="Add project member"
+                  title="Add project member"
+                />
+              }
+            >
+              <HugeiconsIcon icon={Add01Icon} aria-hidden />
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
