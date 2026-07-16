@@ -20,7 +20,7 @@ export const BUILD_STATUS_FILTER_OPTIONS = {
 export type BuildStatusFilter = keyof typeof BUILD_STATUS_FILTER_OPTIONS
 
 const BUILD_STATUS_VARIANT: Record<string, BadgeVariant> = {
-  succeeded: 'secondary',
+  succeeded: 'success',
   active: 'secondary',
   running: 'outline',
   failed: 'destructive',
