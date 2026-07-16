@@ -5,7 +5,6 @@ import {
   ArrowRight01Icon,
   RefreshIcon,
   SmartPhone01Icon,
-  UnfoldMoreIcon,
 } from '@hugeicons/core-free-icons'
 
 import type { Artifact, Build, Project } from '@/lib/types'
@@ -29,16 +28,15 @@ import RepositoryAvatar from '@/components/repository-avatar'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
 import {
   Empty,
   EmptyDescription,
@@ -130,7 +128,21 @@ function QaActivityRow({
   )
 }
 
-function ActivityPanel({ project }: { project: Project }) {
+function ActivityPanel({
+  hasMoreProjects,
+  isFetchingMoreProjects,
+  onLoadMoreProjects,
+  onProjectChange,
+  project,
+  projects,
+}: {
+  hasMoreProjects: boolean
+  isFetchingMoreProjects: boolean
+  onLoadMoreProjects: () => void
+  onProjectChange: (projectId: string) => void
+  project: Project
+  projects: Array<Project>
+}) {
   const [page, setPage] = useState(1)
   const offset = (page - 1) * RELEASES_PER_PAGE
   const buildsQuery = useBuilds({
@@ -187,25 +199,54 @@ function ActivityPanel({ project }: { project: Project }) {
 
   return (
     <Card className="min-w-0 border-0 bg-transparent shadow-none">
-      <CardHeader className="flex-row items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1.5">
-          <div className="flex items-center gap-3">
-            <RepositoryAvatar
-              fullName={project.repository_full_name ?? project.name}
-              avatarUrl={project.repository_avatar_url}
-              repositoryId={project.repository_id}
-              provider={project.repository_provider}
-              size="lg"
+      <CardHeader className="grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <div className="min-w-0">
+          <Combobox
+            items={projects}
+            value={project}
+            onValueChange={(nextProject) => {
+              if (nextProject) onProjectChange(nextProject.id)
+            }}
+            itemToStringValue={(item) => item.name}
+          >
+            <ComboboxInput
+              className="w-full sm:max-w-sm"
+              placeholder="Choose an app"
+              aria-label="Choose an app"
             />
-            <div className="min-w-0">
-              <CardTitle className="truncate text-base font-semibold normal-case tracking-tight text-foreground">
-                {project.name}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Build activity and versions ready to test
-              </p>
-            </div>
-          </div>
+            <ComboboxContent>
+              <ComboboxEmpty>No matching apps.</ComboboxEmpty>
+              <ComboboxList>
+                {(item) => (
+                  <ComboboxItem key={item.id} value={item}>
+                    <RepositoryAvatar
+                      fullName={item.repository_full_name ?? item.name}
+                      avatarUrl={item.repository_avatar_url}
+                      repositoryId={item.repository_id}
+                      provider={item.repository_provider}
+                      size="sm"
+                    />
+                    <span className="truncate">{item.name}</span>
+                  </ComboboxItem>
+                )}
+              </ComboboxList>
+              {hasMoreProjects ? (
+                <div className="border-t p-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    disabled={isFetchingMoreProjects}
+                    onClick={onLoadMoreProjects}
+                  >
+                    {isFetchingMoreProjects
+                      ? 'Loading more…'
+                      : 'Load more apps'}
+                  </Button>
+                </div>
+              ) : null}
+            </ComboboxContent>
+          </Combobox>
         </div>
         <span className="shrink-0 text-xs text-muted-foreground">
           {total} build{total === 1 ? '' : 's'}
@@ -319,9 +360,7 @@ function ActivityPanel({ project }: { project: Project }) {
               <PaginationItem>
                 <PaginationNext
                   href="#"
-                  aria-disabled={
-                    page === totalPages || buildsQuery.isFetching
-                  }
+                  aria-disabled={page === totalPages || buildsQuery.isFetching}
                   className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
                   onClick={(event) => {
                     event.preventDefault()
@@ -340,8 +379,6 @@ function ActivityPanel({ project }: { project: Project }) {
 }
 
 export default function QaReleasesPage() {
-  const [search, setSearch] = useState('')
-  const [pickerOpen, setPickerOpen] = useState(false)
   const projectsQuery = useProjectPages({
     limit: 200,
     sort: 'name',
@@ -357,11 +394,6 @@ export default function QaReleasesPage() {
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ??
     projects.at(0)
-
-  function setPickerState(open: boolean) {
-    setPickerOpen(open)
-    if (!open) setSearch('')
-  }
 
   return (
     <PageLayout width="wide" className="max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
@@ -391,12 +423,7 @@ export default function QaReleasesPage() {
         </Alert>
       ) : null}
 
-      {projectsQuery.isLoading ? (
-        <div className="flex flex-col gap-4">
-          <Skeleton className="h-11 w-full max-w-sm" />
-          <Skeleton className="h-96 w-full" />
-        </div>
-      ) : null}
+      {projectsQuery.isLoading ? <Skeleton className="h-96 w-full" /> : null}
 
       {!projectsQuery.isLoading &&
       !projectsQuery.error &&
@@ -418,86 +445,15 @@ export default function QaReleasesPage() {
       ) : null}
 
       {selectedProject ? (
-        <div className="flex flex-col gap-4">
-          <Button
-            variant="outline"
-            className="h-auto w-full max-w-sm justify-between px-3 py-2.5"
-            aria-haspopup="dialog"
-            aria-expanded={pickerOpen}
-            onClick={() => setPickerState(true)}
-          >
-            <span className="flex min-w-0 items-center gap-3">
-              <RepositoryAvatar
-                fullName={
-                  selectedProject.repository_full_name ?? selectedProject.name
-                }
-                avatarUrl={selectedProject.repository_avatar_url}
-                repositoryId={selectedProject.repository_id}
-                provider={selectedProject.repository_provider}
-                size="sm"
-              />
-              <span className="truncate">{selectedProject.name}</span>
-            </span>
-            <HugeiconsIcon icon={UnfoldMoreIcon} data-icon="inline-end" />
-          </Button>
-          <CommandDialog
-            open={pickerOpen}
-            onOpenChange={setPickerState}
-            title="Choose an app"
-            description="Search the apps shared with you and choose one to inspect."
-          >
-            <Command>
-              <CommandInput
-                value={search}
-                onValueChange={setSearch}
-                placeholder="Search apps..."
-              />
-              <CommandList>
-                <CommandEmpty>No matching apps.</CommandEmpty>
-                <CommandGroup heading="Your apps">
-                  {projects.map((project) => (
-                    <CommandItem
-                      key={project.id}
-                      value={`${project.name} ${project.repository_full_name ?? ''}`}
-                      data-checked={project.id === selectedProject.id}
-                      onSelect={() => {
-                        setSelectedProjectId(project.id)
-                        setPickerState(false)
-                      }}
-                    >
-                      <RepositoryAvatar
-                        fullName={
-                          project.repository_full_name ?? project.name
-                        }
-                        avatarUrl={project.repository_avatar_url}
-                        repositoryId={project.repository_id}
-                        provider={project.repository_provider}
-                        size="sm"
-                      />
-                      <span className="truncate">{project.name}</span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </CommandList>
-              {projectsQuery.hasNextPage ? (
-                <div className="border-t p-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full"
-                    disabled={projectsQuery.isFetchingNextPage}
-                    onClick={() => void projectsQuery.fetchNextPage()}
-                  >
-                    {projectsQuery.isFetchingNextPage
-                      ? 'Loading more…'
-                      : 'Load more apps'}
-                  </Button>
-                </div>
-              ) : null}
-            </Command>
-          </CommandDialog>
-          <ActivityPanel key={selectedProject.id} project={selectedProject} />
-        </div>
+        <ActivityPanel
+          key={selectedProject.id}
+          project={selectedProject}
+          projects={projects}
+          onProjectChange={setSelectedProjectId}
+          hasMoreProjects={Boolean(projectsQuery.hasNextPage)}
+          isFetchingMoreProjects={projectsQuery.isFetchingNextPage}
+          onLoadMoreProjects={() => void projectsQuery.fetchNextPage()}
+        />
       ) : null}
     </PageLayout>
   )
