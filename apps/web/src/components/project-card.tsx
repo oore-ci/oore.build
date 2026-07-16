@@ -94,7 +94,7 @@ export default function ProjectCard({
         </div>
       </CardContent>
 
-      <CardContent className="hidden h-full flex-col gap-3 sm:flex">
+      <CardContent className="hidden h-full flex-col gap-4 sm:flex">
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
             {project.repository_full_name ? (
