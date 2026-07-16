@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
+  FilterIcon,
   RefreshIcon,
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
@@ -22,7 +23,11 @@ import {
   qaProjectVersionBase,
 } from '@/lib/qa-releases'
 import { PageMeta } from '@/lib/seo'
-import { getStatusVariant } from '@/lib/status-variants'
+import {
+  BUILD_STATUS_FILTER_OPTIONS,
+  getStatusVariant,
+  type BuildStatusFilter,
+} from '@/lib/status-variants'
 import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -38,6 +43,7 @@ import {
   ComboboxList,
 } from '@/components/ui/combobox'
 import { InputGroupAddon } from '@/components/ui/input-group'
+import { Label } from '@/components/ui/label'
 import {
   Empty,
   EmptyDescription,
@@ -54,6 +60,15 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 
 const RELEASES_PER_PAGE = 10
@@ -145,9 +160,12 @@ function ActivityPanel({
   projects: Array<Project>
 }) {
   const [page, setPage] = useState(1)
+  const [status, setStatus] = useState<BuildStatusFilter>('all')
+  const [filterOpen, setFilterOpen] = useState(false)
   const offset = (page - 1) * RELEASES_PER_PAGE
   const buildsQuery = useBuilds({
     project_id: project.id,
+    status: status === 'all' ? undefined : status,
     limit: RELEASES_PER_PAGE,
     offset,
   })
@@ -200,7 +218,7 @@ function ActivityPanel({
 
   return (
     <Card className="min-w-0 bg-transparent shadow-none ring-0">
-      <CardHeader className="px-0">
+      <CardHeader className="grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-0">
         <Combobox
           items={projects}
           value={project}
@@ -255,6 +273,61 @@ function ActivityPanel({
             ) : null}
           </ComboboxContent>
         </Combobox>
+        <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
+          <SheetTrigger
+            render={
+              <Button
+                variant={status === 'all' ? 'outline' : 'secondary'}
+                size="icon"
+                className="sm:w-auto sm:px-2.5"
+                aria-label={`Filter builds: ${BUILD_STATUS_FILTER_OPTIONS[status]}`}
+              />
+            }
+          >
+            <HugeiconsIcon icon={FilterIcon} data-icon="inline-start" />
+            <span className="hidden sm:inline">
+              {status === 'all'
+                ? 'Filter'
+                : BUILD_STATUS_FILTER_OPTIONS[status]}
+            </span>
+          </SheetTrigger>
+          <SheetContent
+            side="bottom"
+            className="max-h-[calc(100dvh_-_1rem_-_var(--safe-area-top))] overflow-y-auto overscroll-contain"
+          >
+            <SheetHeader className="mx-auto w-full max-w-lg">
+              <SheetTitle>Filter builds</SheetTitle>
+              <SheetDescription>
+                Show builds with a specific status.
+              </SheetDescription>
+            </SheetHeader>
+            <RadioGroup
+              value={status}
+              onValueChange={(value) => {
+                setStatus(value as BuildStatusFilter)
+                setPage(1)
+                setFilterOpen(false)
+              }}
+              className="mx-auto w-full max-w-lg gap-0 px-4 pb-4"
+            >
+              {Object.entries(BUILD_STATUS_FILTER_OPTIONS).map(
+                ([value, label]) => (
+                  <Label
+                    key={value}
+                    htmlFor={`qa-build-status-${value}`}
+                    className="min-h-11 justify-between border-b last:border-b-0"
+                  >
+                    {label}
+                    <RadioGroupItem
+                      id={`qa-build-status-${value}`}
+                      value={value}
+                    />
+                  </Label>
+                ),
+              )}
+            </RadioGroup>
+          </SheetContent>
+        </Sheet>
       </CardHeader>
       <CardContent>
         {buildsQuery.error ? (
@@ -277,10 +350,23 @@ function ActivityPanel({
               <Skeleton key={index} className="h-16 w-full" />
             ))}
           </div>
-        ) : builds.length === 0 ? (
+        ) : builds.length === 0 && status === 'all' ? (
           <p className="py-6 text-sm text-muted-foreground">
             No builds have been shared for this app yet.
           </p>
+        ) : builds.length === 0 ? (
+          <div className="flex flex-col items-start gap-3 py-6">
+            <p className="text-sm text-muted-foreground">
+              No builds match this status.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setStatus('all')}
+            >
+              Clear filter
+            </Button>
+          </div>
         ) : (
           <>
             {artifactsQuery.error && succeededBuildIds.length > 0 ? (

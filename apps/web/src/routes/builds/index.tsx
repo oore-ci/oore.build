@@ -24,7 +24,10 @@ import { useProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { usePageClamp } from '@/hooks/use-page-clamp'
-import { getStatusVariant } from '@/lib/status-variants'
+import {
+  BUILD_STATUS_FILTER_OPTIONS,
+  getStatusVariant,
+} from '@/lib/status-variants'
 import { useAuthStore } from '@/stores/auth-store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -83,15 +86,6 @@ interface BuildsSearch {
   status?: string
 }
 
-const STATUS_OPTIONS: Record<string, string> = {
-  all: 'All statuses',
-  queued: 'Queued',
-  running: 'Running',
-  succeeded: 'Succeeded',
-  failed: 'Failed',
-  canceled: 'Canceled',
-}
-
 const BUILD_SORT_OPTIONS: Record<BuildSort, string> = {
   created_at: 'Newest first',
   status: 'Status',
@@ -111,7 +105,8 @@ function parseSearch(search: Record<string, unknown>): BuildsSearch {
   const project =
     typeof search.project === 'string' ? search.project.trim() : ''
   const status =
-    typeof search.status === 'string' && search.status in STATUS_OPTIONS
+    typeof search.status === 'string' &&
+    search.status in BUILD_STATUS_FILTER_OPTIONS
       ? search.status
       : ''
   const sort = search.sort as BuildSort
@@ -337,7 +332,7 @@ function OperationsBuildsPage() {
                   page: undefined,
                 })
               }
-              items={STATUS_OPTIONS}
+              items={BUILD_STATUS_FILTER_OPTIONS}
             >
               <SelectTrigger
                 className="w-full sm:w-40"
@@ -346,11 +341,13 @@ function OperationsBuildsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(STATUS_OPTIONS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
+                {Object.entries(BUILD_STATUS_FILTER_OPTIONS).map(
+                  ([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ),
+                )}
               </SelectContent>
             </Select>
             <Select

@@ -1,7 +1,23 @@
 import type { VariantProps } from 'class-variance-authority'
 import type { badgeVariants } from '@/components/ui/badge-variants'
+import type { BuildStatus } from '@/lib/types'
 
 type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>['variant']>
+
+export const BUILD_STATUS_FILTER_OPTIONS = {
+  all: 'All statuses',
+  queued: 'Queued',
+  scheduled: 'Scheduled',
+  assigned: 'Assigned',
+  running: 'Running',
+  succeeded: 'Succeeded',
+  failed: 'Failed',
+  timed_out: 'Timed out',
+  canceled: 'Canceled',
+  expired: 'Expired',
+} as const satisfies Record<'all' | BuildStatus, string>
+
+export type BuildStatusFilter = keyof typeof BUILD_STATUS_FILTER_OPTIONS
 
 const BUILD_STATUS_VARIANT: Record<string, BadgeVariant> = {
   succeeded: 'success',
