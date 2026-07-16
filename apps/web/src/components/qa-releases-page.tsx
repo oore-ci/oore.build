@@ -42,7 +42,9 @@ import { Input } from '@/components/ui/input'
 import {
   Pagination,
   PaginationContent,
+  PaginationEllipsis,
   PaginationItem,
+  PaginationLink,
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
@@ -197,6 +199,14 @@ function ActivityPanel({ project }: { project: Project }) {
   })?.id
   const total = buildsQuery.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / RELEASES_PER_PAGE))
+  const paginationItems =
+    totalPages <= 5
+      ? Array.from({ length: totalPages }, (_, index) => index + 1)
+      : page <= 3
+        ? [1, 2, 3, 'end', totalPages]
+        : page >= totalPages - 2
+          ? [1, 'start', totalPages - 2, totalPages - 1, totalPages]
+          : [1, 'start', page, 'end', totalPages]
   usePageClamp(page, RELEASES_PER_PAGE, buildsQuery.data?.total, setPage)
 
   return (
@@ -292,43 +302,61 @@ function ActivityPanel({ project }: { project: Project }) {
           </>
         )}
         {totalPages > 1 ? (
-          <div className="mt-4 flex items-center justify-between gap-3 border-t pt-4">
-            <span className="text-xs text-muted-foreground">
-              Page {page} of {totalPages}
-            </span>
-            <Pagination className="w-auto">
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious
-                    href="#"
-                    aria-disabled={page === 1 || buildsQuery.isFetching}
-                    className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                    onClick={(event) => {
-                      event.preventDefault()
-                      if (page > 1 && !buildsQuery.isFetching) {
-                        setPage((value) => value - 1)
-                      }
-                    }}
-                  />
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationNext
-                    href="#"
-                    aria-disabled={
-                      page === totalPages || buildsQuery.isFetching
+          <Pagination className="mt-4 border-t pt-4">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  aria-disabled={page === 1 || buildsQuery.isFetching}
+                  className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    if (page > 1 && !buildsQuery.isFetching) {
+                      setPage((value) => value - 1)
                     }
-                    className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                    onClick={(event) => {
-                      event.preventDefault()
-                      if (page < totalPages && !buildsQuery.isFetching) {
-                        setPage((value) => value + 1)
-                      }
-                    }}
-                  />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          </div>
+                  }}
+                />
+              </PaginationItem>
+              {paginationItems.map((item) =>
+                typeof item === 'number' ? (
+                  <PaginationItem key={item}>
+                    <PaginationLink
+                      href="#"
+                      isActive={page === item}
+                      aria-label={`Go to page ${item}`}
+                      aria-disabled={buildsQuery.isFetching}
+                      className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                      onClick={(event) => {
+                        event.preventDefault()
+                        if (!buildsQuery.isFetching) setPage(item)
+                      }}
+                    >
+                      {item}
+                    </PaginationLink>
+                  </PaginationItem>
+                ) : (
+                  <PaginationItem key={item}>
+                    <PaginationEllipsis />
+                  </PaginationItem>
+                ),
+              )}
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  aria-disabled={
+                    page === totalPages || buildsQuery.isFetching
+                  }
+                  className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    if (page < totalPages && !buildsQuery.isFetching) {
+                      setPage((value) => value + 1)
+                    }
+                  }}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
         ) : null}
       </CardContent>
     </Card>
