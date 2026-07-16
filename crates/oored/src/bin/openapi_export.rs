@@ -54,7 +54,6 @@ use utoipa::OpenApi;
         paths::get_me,
         paths::list_users,
         paths::invite_user,
-        paths::preview_qa_user,
         paths::update_user_role,
         paths::delete_user,
         paths::re_enable_user,
@@ -103,6 +102,7 @@ use utoipa::OpenApi;
         paths::discover_repository_workflows,
         // ── Project Members ──
         paths::list_project_members,
+        paths::list_project_member_candidates,
         paths::add_project_member,
         paths::update_project_member,
         paths::remove_project_member,
@@ -222,7 +222,6 @@ use utoipa::OpenApi;
         oore_contract::UpdateUserRoleResponse,
         oore_contract::ReEnableUserResponse,
         oore_contract::ListUsersResponse,
-        oore_contract::PreviewQaUserResponse,
         oore_contract::UserProfileResponse,
         // Integrations
         oore_contract::ScmProvider,
@@ -263,11 +262,13 @@ use utoipa::OpenApi;
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
+        oore_contract::ProjectMemberCandidate,
         oore_contract::AddProjectMemberRequest,
         oore_contract::AddProjectMemberResponse,
         oore_contract::UpdateProjectMemberRequest,
         oore_contract::UpdateProjectMemberResponse,
         oore_contract::ListProjectMembersResponse,
+        oore_contract::ListProjectMemberCandidatesResponse,
         // Pipelines
         oore_contract::BuildPlatform,
         oore_contract::PipelineCommandStages,
@@ -802,22 +803,6 @@ mod paths {
     )]
     pub(super) async fn invite_user() {}
 
-    /// Preview QA user access
-    ///
-    /// Creates a short-lived session for an active QA Viewer. Owner only.
-    #[utoipa::path(post, path = "/v1/users/{user_id}/preview", tag = "Users",
-        params(("user_id" = String, Path, description = "QA user ID")),
-        security(("bearer_auth" = [])),
-        responses(
-            (status = 200, description = "QA preview session", body = PreviewQaUserResponse),
-            (status = 400, description = "Target is not a QA Viewer", body = ApiError),
-            (status = 403, description = "Owner access required", body = ApiError),
-            (status = 404, description = "User not found", body = ApiError),
-            (status = 409, description = "QA user is not active", body = ApiError),
-        )
-    )]
-    pub(super) async fn preview_qa_user() {}
-
     /// Update user role
     ///
     /// Changes a user's role. Requires `owner` or `admin` role.
@@ -1282,10 +1267,13 @@ mod paths {
             ("limit" = Option<i64>, Query, description = "Page size (default 50)"),
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
             ("search" = Option<String>, Query, description = "Filter by name (case-insensitive partial match)"),
+            ("sort" = Option<String>, Query, description = "Sort by created_at, updated_at, or name"),
+            ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
         ),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Project list", body = ListProjectsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
         )
     )]
     pub(super) async fn list_projects() {}
@@ -1336,6 +1324,18 @@ mod paths {
         )
     )]
     pub(super) async fn list_project_members() {}
+
+    /// List eligible project member candidates
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/members/candidates", tag = "Project Members",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Eligible member candidates", body = ListProjectMemberCandidatesResponse),
+            (status = 403, description = "Manage Members permission required", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn list_project_member_candidates() {}
 
     /// Add a member to a project
     #[utoipa::path(post, path = "/v1/projects/{project_id}/members", tag = "Project Members",
@@ -1607,11 +1607,14 @@ mod paths {
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
             ("project_id" = Option<String>, Query, description = "Filter by project"),
             ("pipeline_id" = Option<String>, Query, description = "Filter by pipeline"),
-            ("status" = Option<String>, Query, description = "Filter by status"),
+            ("status" = Option<String>, Query, description = "Filter by one status or up to 9 comma-separated statuses"),
+            ("sort" = Option<String>, Query, description = "Sort by created_at, status, project_name, pipeline_name, or branch"),
+            ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
         ),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Build list", body = ListBuildsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
         )
     )]
     pub(super) async fn list_builds() {}
@@ -1911,10 +1914,14 @@ mod paths {
 
     /// List available artifacts across a project
     #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",
-        params(("project_id" = String, Path, description = "Project ID")),
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("limit" = Option<i64>, Query, description = "Maximum artifacts to return (max 200)"),
+        ),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Project artifact list", body = ListArtifactsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
         )
     )]
     pub(super) async fn list_project_artifacts() {}
@@ -2074,10 +2081,13 @@ mod paths {
             ("resource_type" = Option<String>, Query, description = "Filter by resource type"),
             ("from_ts" = Option<i64>, Query, description = "Start of time range (unix timestamp)"),
             ("to_ts" = Option<i64>, Query, description = "End of time range (unix timestamp)"),
+            ("sort" = Option<String>, Query, description = "Sort by created_at, actor_email, action, or resource_type"),
+            ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
         ),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Paginated audit log entries", body = ListAuditLogsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
             (status = 403, description = "Insufficient permissions", body = ApiError),
         )
     )]

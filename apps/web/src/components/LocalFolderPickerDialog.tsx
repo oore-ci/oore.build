@@ -185,7 +185,7 @@ export default function LocalFolderPickerDialog({
                               {directory.name}
                             </p>
                             {directory.is_git_repository ? (
-                              <Badge variant="success">Git repo</Badge>
+                              <Badge variant="secondary">Git repo</Badge>
                             ) : null}
                           </div>
                           <p className="mt-1 truncate font-mono text-xs text-muted-foreground">

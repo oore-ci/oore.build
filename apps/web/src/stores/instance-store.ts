@@ -30,12 +30,7 @@ function generateInstanceId(): string {
 interface InstanceStoreState {
   instances: Record<string, Instance>
   activeInstanceId: string | null
-  addInstance: (
-    label: string,
-    url: string,
-    icon?: string,
-    qaPreviewSourceId?: string,
-  ) => string
+  addInstance: (label: string, url: string, icon?: string) => string
   removeInstance: (id: string) => void
   setActiveInstance: (id: string) => void
   updateInstance: (
@@ -52,14 +47,13 @@ export const useInstanceStore = create<InstanceStoreState>()(
       instances: {},
       activeInstanceId: null,
 
-      addInstance: (label, url, icon, qaPreviewSourceId) => {
+      addInstance: (label, url, icon) => {
         const id = generateInstanceId()
         const instance: Instance = {
           id,
           label,
           url,
           ...(icon ? { icon } : {}),
-          ...(qaPreviewSourceId ? { qaPreviewSourceId } : {}),
           addedAt: Date.now(),
         }
         const state = get()
@@ -74,8 +68,6 @@ export const useInstanceStore = create<InstanceStoreState>()(
       removeInstance: (id) => {
         const state = get()
         const { [id]: _, ...rest } = state.instances
-        const previewSourceId = state.instances[id]?.qaPreviewSourceId
-
         // Clear namespaced sessionStorage keys for this instance
         try {
           sessionStorage.removeItem(`oore_setup_session_${id}`)
@@ -95,10 +87,7 @@ export const useInstanceStore = create<InstanceStoreState>()(
         let nextActiveId: string | null = state.activeInstanceId
         if (state.activeInstanceId === id) {
           const remaining = Object.keys(rest)
-          nextActiveId =
-            previewSourceId && previewSourceId in rest
-              ? previewSourceId
-              : (remaining[0] ?? null)
+          nextActiveId = remaining[0] ?? null
         }
 
         set({ instances: rest, activeInstanceId: nextActiveId })

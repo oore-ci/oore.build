@@ -478,13 +478,6 @@ pub struct ReEnableUserResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct PreviewQaUserResponse {
-    pub session_token: String,
-    pub expires_at: i64,
-    pub user: AuthenticatedUser,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListUsersResponse {
     pub users: Vec<User>,
 }
@@ -1804,6 +1797,7 @@ pub struct ProjectMember {
     pub user_id: String,
     pub role: ProjectRole,
     pub user_email: String,
+    pub user_role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1836,6 +1830,21 @@ pub struct UpdateProjectMemberResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListProjectMembersResponse {
     pub members: Vec<ProjectMember>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectMemberCandidate {
+    pub id: String,
+    pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub role: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListProjectMemberCandidatesResponse {
+    pub candidates: Vec<ProjectMemberCandidate>,
 }
 
 // ── Pipeline API types ──────────────────────────────────────────

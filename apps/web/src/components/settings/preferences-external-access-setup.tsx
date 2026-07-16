@@ -33,6 +33,9 @@ export function ExternalAccessSetup({
     networkSettingsQuery,
     oidcConfig,
     preflightQuery,
+    preloadExternalAccessNetworkDialog,
+    preloadOidcSettingsDialog,
+    preloadTrustedProxySettingsDialog,
     readinessOpen,
     readinessReady,
     remoteAuthMode,
@@ -64,7 +67,7 @@ export function ExternalAccessSetup({
               </p>
             )}
           </div>
-          <Badge variant={readinessReady ? 'success' : 'secondary'}>
+          <Badge variant={readinessReady ? 'secondary' : 'outline'}>
             {readinessReady
               ? 'Ready to enable'
               : `${setupStepsComplete}/${setupStepCount} ready`}
@@ -74,6 +77,8 @@ export function ExternalAccessSetup({
         <div className="grid gap-3 md:grid-cols-2">
           <button
             type="button"
+            onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
+            onFocus={() => void preloadExternalAccessNetworkDialog()}
             onClick={() => setNetworkEditorOpen(true)}
             disabled={!isOwner || networkSettingsQuery.isLoading}
             className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
@@ -86,7 +91,7 @@ export function ExternalAccessSetup({
                     'Set Public URL and allowed origins.'}
                 </p>
               </div>
-              <Badge variant={networkReady ? 'success' : 'outline'}>
+              <Badge variant={networkReady ? 'secondary' : 'outline'}>
                 {networkReady ? 'Ready' : 'Setup'}
               </Badge>
             </div>
@@ -101,6 +106,16 @@ export function ExternalAccessSetup({
 
           <button
             type="button"
+            onMouseEnter={() =>
+              void (remoteAuthMode === 'trusted_proxy'
+                ? preloadTrustedProxySettingsDialog()
+                : preloadOidcSettingsDialog())
+            }
+            onFocus={() =>
+              void (remoteAuthMode === 'trusted_proxy'
+                ? preloadTrustedProxySettingsDialog()
+                : preloadOidcSettingsDialog())
+            }
             onClick={() =>
               remoteAuthMode === 'trusted_proxy'
                 ? setTrustedProxyDialogOpen(true)
@@ -118,7 +133,7 @@ export function ExternalAccessSetup({
                     : `Configure ${authModeLabel(remoteAuthMode)}.`}
                 </p>
               </div>
-              <Badge variant={identityReady ? 'success' : 'outline'}>
+              <Badge variant={identityReady ? 'secondary' : 'outline'}>
                 {identityReady ? 'Ready' : 'Setup'}
               </Badge>
             </div>
@@ -274,7 +289,7 @@ export function ExternalAccessSetup({
                       </div>
                     </div>
                     <Badge
-                      variant={check.ok ? 'success' : 'warning'}
+                      variant={check.ok ? 'secondary' : 'outline'}
                       className="mt-0.5"
                     >
                       {check.ok ? 'Ready' : 'Needs setup'}

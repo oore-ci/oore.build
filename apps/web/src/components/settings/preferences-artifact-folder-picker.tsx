@@ -1,7 +1,7 @@
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
 
-export function ArtifactFolderPicker({
+export default function ArtifactFolderPicker({
   state,
 }: {
   state: PreferencesPageState

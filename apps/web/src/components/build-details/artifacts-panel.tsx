@@ -5,15 +5,13 @@ import {
   Download04Icon,
   File01Icon,
   Share08Icon,
-  SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type { Artifact, BuildStatus } from '@/lib/types'
 import { useArtifactDownloadLink } from '@/hooks/use-builds'
 import { formatFileSize, relativeTime } from '@/lib/format-utils'
 import { artifactInstallReadiness } from '@/lib/artifact-install'
-import { useHasPermission } from '@/hooks/use-permissions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,19 +20,6 @@ import { Spinner } from '@/components/ui/spinner'
 
 const loadArtifactShareMenu = () => import('./artifact-share-menu')
 const ArtifactShareMenu = lazy(loadArtifactShareMenu)
-
-function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
-  switch (type) {
-    case 'apk':
-      return 'info' as const
-    case 'ipa':
-      return 'success' as const
-    case 'app':
-      return 'warning' as const
-    default:
-      return 'secondary' as const
-  }
-}
 
 function isArtifactExpired(artifact: Artifact): boolean {
   if (artifact.expires_at == null) return false
@@ -71,7 +56,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
 
   const trigger = (
     <Button
-      variant="ghost"
+      variant="outline"
       size="icon-xs"
       aria-label={`Share options for ${artifact.name}`}
       title="Share options"
@@ -122,10 +107,7 @@ function ArtifactRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium">{artifact.name}</p>
         <div className="mt-0.5 flex items-center gap-1.5">
-          <Badge
-            variant={artifactTypeBadgeVariant(artifact.artifact_type)}
-            className="text-[10px]"
-          >
+          <Badge variant="outline" className="text-[10px]">
             {artifact.artifact_type}
           </Badge>
           <span className="text-[10px] text-muted-foreground">
@@ -145,7 +127,8 @@ function ArtifactRow({
       <div className="flex shrink-0 items-center gap-1">
         {installReady ? (
           <Button
-            size="xs"
+            variant="outline"
+            size="icon-xs"
             render={
               <Link
                 to="/builds/$buildId"
@@ -157,25 +140,27 @@ function ArtifactRow({
             }
             nativeButton={false}
             disabled={expired}
+            aria-label={`Install ${artifact.name}`}
+            title="Install"
           >
-            <HugeiconsIcon icon={SmartPhone01Icon} />
-            Install
-          </Button>
-        ) : null}
-        <Button
-          variant="outline"
-          size="icon-xs"
-          title="Download"
-          aria-label={`Download ${artifact.name}`}
-          onClick={() => onDownload(artifact.id, artifact.name)}
-          disabled={isDownloadPending || expired}
-        >
-          {isDownloadPending ? (
-            <Spinner />
-          ) : (
             <HugeiconsIcon icon={Download04Icon} />
-          )}
-        </Button>
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="icon-xs"
+            title="Download"
+            aria-label={`Download ${artifact.name}`}
+            onClick={() => onDownload(artifact.id, artifact.name)}
+            disabled={isDownloadPending || expired}
+          >
+            {isDownloadPending ? (
+              <Spinner />
+            ) : (
+              <HugeiconsIcon icon={Download04Icon} />
+            )}
+          </Button>
+        )}
         {canManageShareLinks ? (
           <ArtifactShareControl artifact={artifact} />
         ) : null}
@@ -188,13 +173,14 @@ export function ArtifactsPanel({
   artifacts,
   isLoading,
   buildStatus,
+  canManageShareLinks,
 }: {
   artifacts: Array<Artifact>
   isLoading: boolean
   buildStatus: BuildStatus
+  canManageShareLinks: boolean
 }) {
   const downloadMutation = useArtifactDownloadLink()
-  const canManageShareLinks = useHasPermission('artifacts', 'write')
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {

@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Add01Icon } from '@hugeicons/core-free-icons'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { PageMeta } from '@/lib/seo'
@@ -19,7 +19,7 @@ export const Route = createFileRoute('/settings/integrations/local-git')({
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
   component: LocalGitPage,
 })

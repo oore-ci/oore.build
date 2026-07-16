@@ -1,14 +1,21 @@
 import { useMemo, useState } from 'react'
-import { createLazyFileRoute } from '@tanstack/react-router'
+import {
+  createLazyFileRoute,
+  useNavigate,
+  useSearch,
+} from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
 
 import type { Runner } from '@/lib/types'
 import { useHasPermission } from '@/hooks/use-permissions'
+import { CollectionSearchInput } from '@/components/collection-search-input'
+import { usePageClamp } from '@/hooks/use-page-clamp'
 import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
-import { getRunnerStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
@@ -32,46 +39,26 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import RunnerStatusDot from '@/components/runner-status-dot'
+import { Card, CardContent } from '@/components/ui/card'
+import type { SortDirection } from '@/components/collection-controls'
+import type { RunnerSort, RunnersSearch } from './runners'
+import { RunnerInventory } from './-runner-inventory'
 
 const EMPTY_RUNNERS: Array<Runner> = []
 
 export const Route = createLazyFileRoute('/settings/runners')({
   component: RunnersSettingsPage,
 })
-
-function formatRelativeTime(epochSeconds?: number): string {
-  if (!epochSeconds) return 'never'
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
-
-function getHeartbeatStaleness(
-  epochSeconds?: number,
-): 'fresh' | 'stale' | 'none' {
-  if (!epochSeconds) return 'none'
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diffSecs > 60) return 'stale'
-  return 'fresh'
-}
 
 function formatCapabilities(capabilities: Runner['capabilities']): string {
   const entries = Object.entries(capabilities)
@@ -207,13 +194,45 @@ function RenameRunnerDialog({
   )
 }
 
+const RUNNER_SORT_OPTIONS: Record<RunnerSort, string> = {
+  created_at: 'Registered',
+  last_heartbeat_at: 'Last heartbeat',
+  name: 'Name',
+  status: 'Status',
+}
+
+function compareRunners(left: Runner, right: Runner, sort: RunnerSort): number {
+  let result = 0
+  switch (sort) {
+    case 'name':
+      result = left.name.localeCompare(right.name)
+      break
+    case 'status':
+      result = left.status.localeCompare(right.status)
+      break
+    case 'last_heartbeat_at':
+      result = (left.last_heartbeat_at ?? 0) - (right.last_heartbeat_at ?? 0)
+      break
+    case 'created_at':
+      result = left.created_at - right.created_at
+      break
+  }
+  return result || left.id.localeCompare(right.id)
+}
+
 function RunnersSettingsPage() {
-  const { data, isLoading, error } = useRunners()
+  const runnersQuery = useRunners()
+  const navigate = useNavigate({ from: '/settings/runners' })
+  const search = useSearch({ from: '/settings/runners' })
   const canWrite = useHasPermission('runners', 'write')
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  const runners = data?.runners ?? EMPTY_RUNNERS
+  const page = search.page ?? 1
+  const pageSize = search.pageSize ?? 20
+  const sort = search.sort ?? 'name'
+  const direction = search.direction ?? 'asc'
+  const runners = runnersQuery.data?.runners ?? EMPTY_RUNNERS
   const onlineCount = useMemo(
     () =>
       runners.filter(
@@ -225,6 +244,58 @@ function RunnersSettingsPage() {
     () => runners.filter((runner) => runner.status === 'offline').length,
     [runners],
   )
+  const filteredRunners = useMemo(() => {
+    const query = search.q?.toLowerCase()
+    if (!query) return runners
+    return runners.filter((runner) =>
+      [
+        runner.name,
+        runner.id,
+        runner.status,
+        runner.registered_by ?? 'embedded',
+        formatCapabilities(runner.capabilities),
+      ].some((value) => value.toLowerCase().includes(query)),
+    )
+  }, [runners, search.q])
+  const sortedRunners = useMemo(
+    () =>
+      [...filteredRunners].sort((left, right) => {
+        const result = compareRunners(left, right, sort)
+        return direction === 'asc' ? result : -result
+      }),
+    [direction, filteredRunners, sort],
+  )
+  const total = sortedRunners.length
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
+  const visibleRunners = sortedRunners.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  )
+
+  function updateSearch(updates: Partial<RunnersSearch>) {
+    void navigate({
+      search: (previous) => ({ ...previous, ...updates }),
+      replace: true,
+    })
+  }
+
+  usePageClamp(
+    page,
+    pageSize,
+    runnersQuery.isLoading ? undefined : total,
+    (nextPage) => {
+      updateSearch({ page: nextPage === 1 ? undefined : nextPage })
+    },
+  )
+
+  function handleSortChange(nextSort: RunnerSort, next: SortDirection) {
+    updateSearch({ sort: nextSort, direction: next, page: undefined })
+  }
+
+  function openRename(runner: Runner) {
+    setSelectedRunner(runner)
+    setDialogOpen(true)
+  }
 
   return (
     <PageLayout width="wide">
@@ -233,6 +304,14 @@ function RunnersSettingsPage() {
         title="Runners"
         description="Runner health and metadata management. Auto-refreshes every 15s."
       />
+
+      {!canWrite ? (
+        <Alert>
+          <AlertDescription>
+            You have read-only access to runner health and metadata.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -255,7 +334,7 @@ function RunnersSettingsPage() {
                 Online runners
               </p>
               {onlineCount > 0 ? (
-                <Badge variant="success">{onlineCount}</Badge>
+                <Badge variant="secondary">{onlineCount}</Badge>
               ) : null}
             </div>
             <p className="mt-3 text-2xl font-bold tracking-tight">
@@ -286,125 +365,133 @@ function RunnersSettingsPage() {
         </Card>
       </section>
 
-      {isLoading ? (
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
-      ) : null}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CollectionSearchInput
+          key={search.q ?? ''}
+          initialValue={search.q ?? ''}
+          onSearch={(value) =>
+            updateSearch({ q: value.trim() || undefined, page: undefined })
+          }
+          placeholder="Search runners"
+          ariaLabel="Search runners"
+        />
+        <div className="flex gap-2 sm:hidden">
+          <NativeSelect
+            className="min-w-0 flex-1"
+            aria-label="Sort runners"
+            value={sort}
+            onChange={(event) =>
+              handleSortChange(event.target.value as RunnerSort, direction)
+            }
+          >
+            {Object.entries(RUNNER_SORT_OPTIONS).map(([value, label]) => (
+              <NativeSelectOption key={value} value={value}>
+                {label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <Button
+            variant="outline"
+            onClick={() =>
+              handleSortChange(sort, direction === 'asc' ? 'desc' : 'asc')
+            }
+          >
+            {direction === 'asc' ? 'Ascending' : 'Descending'}
+          </Button>
+        </div>
+      </div>
 
-      {error ? (
+      {runnersQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load runners: {error.message}
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>Failed to load runners: {runnersQuery.error.message}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void runnersQuery.refetch()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {!isLoading && !error ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Runner Inventory
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {runners.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No runners registered yet.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Last heartbeat</TableHead>
-                    <TableHead>Capabilities</TableHead>
-                    <TableHead>Registered by</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {runners.map((runner) => {
-                    const isEmbedded = !runner.registered_by
-                    const canRename = canWrite && !isEmbedded
-                    return (
-                      <TableRow key={runner.id}>
-                        <TableCell>
-                          <p className="font-medium">{runner.name}</p>
-                          <p className="font-mono text-xs text-muted-foreground">
-                            {runner.id.slice(0, 8)}
-                          </p>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center">
-                            <RunnerStatusDot status={runner.status} />
-                            <Badge
-                              variant={getRunnerStatusVariant(runner.status)}
-                            >
-                              {runner.status}
-                            </Badge>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {typeof runner.capabilities.version === 'string'
-                            ? runner.capabilities.version
-                            : 'Unknown'}
-                        </TableCell>
-                        <TableCell
-                          className={
-                            getHeartbeatStaleness(runner.last_heartbeat_at) ===
-                              'stale' && runner.status !== 'offline'
-                              ? 'text-warning'
-                              : 'text-muted-foreground'
-                          }
-                        >
-                          {formatRelativeTime(runner.last_heartbeat_at)}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {formatCapabilities(runner.capabilities)}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {runner.registered_by ?? 'embedded'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={!canRename}
-                            onClick={() => {
-                              setSelectedRunner(runner)
-                              setDialogOpen(true)
-                            }}
-                          >
-                            Rename
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+      {!runnersQuery.isLoading &&
+      !runnersQuery.error &&
+      runners.length === 0 ? (
+        <Empty className="bg-card">
+          <EmptyHeader>
+            <EmptyTitle>No runners registered</EmptyTitle>
+            <EmptyDescription>
+              Runners appear here after they connect to this instance.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : null}
 
-      <RenameRunnerDialog
-        open={dialogOpen}
-        runner={selectedRunner}
-        onOpenChange={(open) => {
-          setDialogOpen(() => open)
-          if (!open) {
-            setSelectedRunner(null)
+      {!runnersQuery.isLoading &&
+      !runnersQuery.error &&
+      runners.length > 0 &&
+      total === 0 ? (
+        <Empty className="bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={Search01Icon} />
+            </EmptyMedia>
+            <EmptyTitle>No matching runners</EmptyTitle>
+            <EmptyDescription>
+              Try a different search or clear the current query.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              variant="outline"
+              onClick={() => updateSearch({ q: undefined, page: undefined })}
+            >
+              Clear search
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : null}
+
+      {!runnersQuery.error && (runnersQuery.isLoading || total > 0) ? (
+        <RunnerInventory
+          canWrite={canWrite}
+          direction={direction}
+          isLoading={runnersQuery.isLoading}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
           }
-        }}
-      />
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onRename={openRename}
+          onSortChange={handleSortChange}
+          page={currentPage}
+          pageSize={pageSize}
+          runners={visibleRunners}
+          sort={sort}
+          total={total}
+        />
+      ) : null}
+
+      {canWrite ? (
+        <RenameRunnerDialog
+          open={dialogOpen}
+          runner={selectedRunner}
+          onOpenChange={(open) => {
+            setDialogOpen(() => open)
+            if (!open) {
+              setSelectedRunner(null)
+            }
+          }}
+        />
+      ) : null}
     </PageLayout>
   )
 }

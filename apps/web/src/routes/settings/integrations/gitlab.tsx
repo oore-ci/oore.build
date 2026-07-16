@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import { GitLabAuthStep } from './-gitlab-auth-step'
 import { GitLabHostStep } from './-gitlab-host-step'
@@ -23,7 +23,7 @@ import {
 import { useGitLabStart } from '@/hooks/use-integrations'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { gitLabPublicEndpoints, normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
@@ -35,7 +35,7 @@ export const Route = createFileRoute('/settings/integrations/gitlab')({
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: GitLabSetupPage,
 })

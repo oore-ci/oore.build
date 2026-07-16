@@ -6,6 +6,7 @@ import {
 } from '../data/integrations'
 import { ago } from '../seed'
 import type { Integration } from '@/lib/types'
+import { requireDemoInstancePermission } from '../authorization'
 
 const localGitIntegrations: Array<Integration> = []
 
@@ -18,8 +19,10 @@ export const integrationHandlers = [
     const integrations = provider
       ? combined.filter((item) => item.provider === provider)
       : combined
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200)
+    const offset = Number(url.searchParams.get('offset')) || 0
     return HttpResponse.json({
-      integrations,
+      integrations: integrations.slice(offset, offset + limit),
       total: integrations.length,
     })
   }),
@@ -45,8 +48,13 @@ export const integrationHandlers = [
     })
   }),
 
-  http.delete('/v1/integrations/:id', async () => {
+  http.delete('/v1/integrations/:id', async ({ request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:delete',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({ ok: true })
   }),
 
@@ -90,32 +98,60 @@ export const integrationHandlers = [
     })
   }),
 
-  http.post('/v1/integrations/:id/installations', async ({ params }) => {
-    await delay(300)
-    return HttpResponse.json({
-      installations: demoInstallations[params.id as string] ?? [],
-    })
-  }),
+  http.post(
+    '/v1/integrations/:id/installations',
+    async ({ params, request }) => {
+      await delay(300)
+      const forbidden = requireDemoInstancePermission(
+        request,
+        'integrations:write',
+      )
+      if (forbidden) return forbidden
+      return HttpResponse.json({
+        installations: demoInstallations[params.id as string] ?? [],
+      })
+    },
+  ),
 
   // GitHub App creation — return a no-op URL
-  http.post('/v1/integrations/github/start', async () => {
+  http.post('/v1/integrations/github/start', async ({ request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:write',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({ create_url: '#demo-github-app' })
   }),
 
-  http.post('/v1/integrations/github/complete', async () => {
+  http.post('/v1/integrations/github/complete', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:write',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({ integration: demoIntegrations[0] })
   }),
 
   // GitLab integration
-  http.post('/v1/integrations/gitlab/start', async () => {
+  http.post('/v1/integrations/gitlab/start', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:write',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({ integration: demoIntegrations[1] })
   }),
 
-  http.post('/v1/integrations/gitlab/authorize', async () => {
+  http.post('/v1/integrations/gitlab/authorize', async ({ request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:write',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({ authorize_url: '#demo-gitlab-auth' })
   }),
 
@@ -129,6 +165,11 @@ export const integrationHandlers = [
 
   http.post('/v1/integrations/local-git', async ({ request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:write',
+    )
+    if (forbidden) return forbidden
     const payload = (await request.json()) as {
       repository_path?: string
       display_name?: string
@@ -202,8 +243,13 @@ export const integrationHandlers = [
     })
   }),
 
-  http.delete('/v1/integrations/local-git/:id', async ({ params }) => {
+  http.delete('/v1/integrations/local-git/:id', async ({ params, request }) => {
     await delay(120)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'integrations:delete',
+    )
+    if (forbidden) return forbidden
     const index = localGitIntegrations.findIndex(
       (item) => item.id === params.id,
     )

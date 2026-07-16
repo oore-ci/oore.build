@@ -8,7 +8,7 @@ import {
   Link01Icon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type { Pipeline } from '@/lib/types'
 import { useUpdatePipeline } from '@/hooks/use-pipelines'

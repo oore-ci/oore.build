@@ -303,6 +303,69 @@ async fn test_build_list_and_detail_include_display_context() {
 }
 
 #[tokio::test]
+async fn test_build_list_sort_is_allowlisted() {
+    let (app, pool, session_token, runner_id, _runner_token, first_build_id) =
+        full_scaffold().await;
+    let (project_id, pipeline_id): (String, String) =
+        sqlx::query_as("SELECT project_id, pipeline_id FROM builds WHERE id = ?1")
+            .bind(&first_build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let failed_build_id = seed_running_build(&pool, &project_id, &pipeline_id, &runner_id).await;
+    sqlx::query("UPDATE builds SET status = 'failed' WHERE id = ?1")
+        .bind(&failed_build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, list) = json_request(
+        &app,
+        "GET",
+        "/v1/builds?sort=status&direction=asc",
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["builds"][0]["status"], "failed");
+
+    let (status, filtered) = json_request(
+        &app,
+        "GET",
+        "/v1/builds?status=failed%2Crunning&limit=1",
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(filtered["total"], 2);
+    assert_eq!(filtered["builds"].as_array().unwrap().len(), 1);
+
+    let (status, filtered) = json_request(
+        &app,
+        "GET",
+        "/v1/builds?status=%2C%2C",
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(filtered["total"], 0);
+
+    let (status, error) = json_request(
+        &app,
+        "GET",
+        "/v1/builds?direction=sideways",
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], "invalid_input");
+}
+
+#[tokio::test]
 async fn test_append_build_logs() {
     let (app, _pool, _session_token, runner_id, runner_token, build_id) = full_scaffold().await;
 
@@ -1007,6 +1070,34 @@ async fn test_list_artifacts() {
     assert_eq!(resp.status(), StatusCode::OK);
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["artifacts"].as_array().unwrap().len(), 2);
+
+    let req = Request::builder()
+        .uri(format!("/v1/projects/{project_id}/artifacts?limit=1"))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["artifacts"].as_array().unwrap().len(), 1);
+
+    let req = Request::builder()
+        .uri(format!("/v1/projects/{project_id}/artifacts?limit=0"))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["code"], "invalid_input");
 }
 
 #[tokio::test]

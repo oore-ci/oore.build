@@ -2,6 +2,7 @@ import { HttpResponse, delay, http } from 'msw'
 import { demoUsers } from '../data/users'
 import { ago } from '../seed'
 import { getDemoPersonaFromRequest } from '../personas'
+import { requireDemoInstancePermission } from '../authorization'
 
 function requireAdmin(request: Request): Response | null {
   const { role } = getDemoPersonaFromRequest(request)
@@ -25,6 +26,8 @@ export const userHandlers = [
 
   http.post('/v1/users/invite', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(request, 'users:invite')
+    if (forbidden) return forbidden
     const body = (await request.json()) as { email: string; role: string }
     return HttpResponse.json({
       user: {
@@ -40,6 +43,8 @@ export const userHandlers = [
 
   http.patch('/v1/users/:userId/role', async ({ params, request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(request, 'users:write')
+    if (forbidden) return forbidden
     const body = (await request.json()) as { role: string }
     const user = demoUsers.find((u) => u.id === params.userId)
     return HttpResponse.json({
@@ -49,8 +54,10 @@ export const userHandlers = [
     })
   }),
 
-  http.post('/v1/users/:userId/enable', async ({ params }) => {
+  http.post('/v1/users/:userId/enable', async ({ params, request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(request, 'users:enable')
+    if (forbidden) return forbidden
     const user = demoUsers.find((u) => u.id === params.userId)
     return HttpResponse.json({
       user: user
@@ -59,8 +66,10 @@ export const userHandlers = [
     })
   }),
 
-  http.delete('/v1/users/:userId', async () => {
+  http.delete('/v1/users/:userId', async ({ request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(request, 'users:delete')
+    if (forbidden) return forbidden
     return HttpResponse.json({ ok: true })
   }),
 ]

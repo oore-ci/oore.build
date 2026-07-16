@@ -64,11 +64,6 @@ export function useIndexAuthGuard(
     const hasValidToken =
       !!authToken && authExpiresAt != null && authExpiresAt > now
 
-    if (instance.qaPreviewSourceId && !hasValidToken) {
-      void navigate({ to: '/login', replace: true })
-      return
-    }
-
     if (status.runtime_mode === 'local') {
       const uiIsLoopback = isLoopbackHostname(window.location.hostname)
       const backendIsLoopback = isLoopbackHostname(

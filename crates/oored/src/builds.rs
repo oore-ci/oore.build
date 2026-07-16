@@ -427,6 +427,41 @@ pub struct ListBuildsQuery {
     pub branch: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub sort: Option<String>,
+    pub direction: Option<String>,
+}
+
+fn build_order_clause(
+    sort: Option<&str>,
+    direction: Option<&str>,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let column = match sort.unwrap_or("created_at") {
+        "created_at" => "builds.created_at",
+        "status" => "builds.status COLLATE NOCASE",
+        "project_name" => "projects.name COLLATE NOCASE",
+        "pipeline_name" => "pipelines.name COLLATE NOCASE",
+        "branch" => "builds.branch COLLATE NOCASE",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "sort must be created_at, status, project_name, pipeline_name, or branch",
+            ));
+        }
+    };
+    let direction = match direction.unwrap_or("desc") {
+        "asc" => "ASC",
+        "desc" => "DESC",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "direction must be asc or desc",
+            ));
+        }
+    };
+
+    Ok(format!("{column} {direction}, builds.id {direction}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -949,6 +984,7 @@ pub async fn list_builds(
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+    let order_by = build_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
     // Build dynamic query with filters
     let mut conditions = Vec::new();
@@ -970,8 +1006,31 @@ pub async fn list_builds(
         conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
     }
     if let Some(ref status) = params.status {
-        bind_values.push(status.clone());
-        conditions.push(format!("builds.status = ?{}", bind_values.len()));
+        let mut values = status
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        if values.len() > 9 {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "status accepts at most 9 comma-separated values",
+            ));
+        }
+        if values.is_empty() {
+            conditions.push("1 = 0".to_string());
+        }
+        let mut placeholders = Vec::new();
+        for value in values {
+            bind_values.push(value.to_string());
+            placeholders.push(format!("?{}", bind_values.len()));
+        }
+        if !placeholders.is_empty() {
+            conditions.push(format!("builds.status IN ({})", placeholders.join(", ")));
+        }
     }
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());
@@ -991,7 +1050,7 @@ pub async fn list_builds(
          LEFT JOIN projects ON projects.id = builds.project_id \
          LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
          LEFT JOIN runners ON runners.id = builds.runner_id \
-         {where_clause} ORDER BY builds.created_at DESC LIMIT ?{} OFFSET ?{}",
+         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
         bind_values.len() + 1,
         bind_values.len() + 2
     );

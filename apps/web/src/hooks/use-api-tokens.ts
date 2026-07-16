@@ -26,7 +26,7 @@ export function useApiTokens() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'api-tokens'],
-    queryFn: () => listApiTokens(baseUrl!, token!),
+    queryFn: ({ signal }) => listApiTokens(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }

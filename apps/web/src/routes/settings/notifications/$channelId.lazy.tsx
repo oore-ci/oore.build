@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Delete02Icon, TestTube01Icon } from '@hugeicons/core-free-icons'
 
@@ -156,7 +156,7 @@ function NotificationChannelSettingsFields({
   return (
     <>
       <div className="flex items-center gap-2 text-sm">
-        <Badge variant={channel.has_smtp_config ? 'default' : 'secondary'}>
+        <Badge variant={channel.has_smtp_config ? 'secondary' : 'outline'}>
           {channel.has_smtp_config ? 'SMTP configured' : 'No SMTP config'}
         </Badge>
       </div>
@@ -665,10 +665,10 @@ function NotificationChannelDetailPage() {
                       <Badge
                         variant={
                           delivery.status === 'delivered'
-                            ? 'default'
+                            ? 'secondary'
                             : delivery.status === 'failed'
                               ? 'destructive'
-                              : 'secondary'
+                              : 'outline'
                         }
                       >
                         {delivery.status}

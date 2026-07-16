@@ -30,7 +30,7 @@ export default function AppSidebar(
         <NavMain />
       </SidebarContent>
       <SidebarFooter>
-        <RuntimeUpdateNotice />
+        {authUser.role === 'owner' ? <RuntimeUpdateNotice /> : null}
         <NavUser />
       </SidebarFooter>
       <SidebarRail />

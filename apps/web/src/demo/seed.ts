@@ -16,8 +16,6 @@ export const DEMO_INSTANCE_LABEL = 'Demo Instance'
 
 export const DEMO_USER_ID = 'usr-demo-owner-001'
 export const DEMO_USER_EMAIL = 'demo+owner@oore.build'
-export const DEMO_USER_ROLE = 'owner' as const
-export const DEMO_OIDC_SUBJECT = 'demo-oidc-subject-001'
 
 export const LEGACY_DEMO_AUTH_TOKEN = 'demo-session-token-static'
 export const DEMO_PASSWORD = 'owner'

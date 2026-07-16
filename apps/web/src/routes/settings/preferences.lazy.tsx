@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import { useActiveInstance } from '@/stores/instance-store'
@@ -30,12 +30,22 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { ExternalAccessCard } from '@/components/settings/preferences-external-access-card'
-import { ExternalAccessNetworkDialog } from '@/components/settings/preferences-external-access-network-dialog'
-import { TrustedProxySettingsDialog } from '@/components/settings/preferences-trusted-proxy-settings-dialog'
-import { OidcSettingsDialog } from '@/components/settings/preferences-oidc-settings-dialog'
 import { RuntimeOverview } from '@/components/settings/preferences-runtime-overview'
 import { ArtifactStorageSettings } from '@/components/settings/preferences-artifact-storage-settings'
-import { ArtifactFolderPicker } from '@/components/settings/preferences-artifact-folder-picker'
+
+const preloadExternalAccessNetworkDialog = () =>
+  import('@/components/settings/preferences-external-access-network-dialog')
+const preloadTrustedProxySettingsDialog = () =>
+  import('@/components/settings/preferences-trusted-proxy-settings-dialog')
+const preloadOidcSettingsDialog = () =>
+  import('@/components/settings/preferences-oidc-settings-dialog')
+const preloadArtifactFolderPicker = () =>
+  import('@/components/settings/preferences-artifact-folder-picker')
+
+const ExternalAccessNetworkDialog = lazy(preloadExternalAccessNetworkDialog)
+const TrustedProxySettingsDialog = lazy(preloadTrustedProxySettingsDialog)
+const OidcSettingsDialog = lazy(preloadOidcSettingsDialog)
+const ArtifactFolderPicker = lazy(preloadArtifactFolderPicker)
 
 export const Route = createLazyFileRoute('/settings/preferences')({
   component: PreferencesPage,
@@ -698,6 +708,10 @@ function usePreferencesPageState() {
     onSubmitStorage,
     onSubmitTrustedProxy,
     preflightQuery,
+    preloadArtifactFolderPicker,
+    preloadExternalAccessNetworkDialog,
+    preloadOidcSettingsDialog,
+    preloadTrustedProxySettingsDialog,
     preferences,
     readinessOpen,
     readinessReady,
@@ -739,13 +753,29 @@ function PreferencesPage() {
         title="Preferences"
         description="Manage artifact storage and External Access policy for this instance."
       />
-      <ExternalAccessCard state={state} />
-      <ExternalAccessNetworkDialog state={state} />
-      <TrustedProxySettingsDialog state={state} />
-      <OidcSettingsDialog state={state} />
       <RuntimeOverview state={state} />
+      <ExternalAccessCard state={state} />
+      {state.networkEditorOpen ? (
+        <Suspense fallback={null}>
+          <ExternalAccessNetworkDialog state={state} />
+        </Suspense>
+      ) : null}
+      {state.trustedProxyDialogOpen ? (
+        <Suspense fallback={null}>
+          <TrustedProxySettingsDialog state={state} />
+        </Suspense>
+      ) : null}
+      {state.oidcDialogOpen ? (
+        <Suspense fallback={null}>
+          <OidcSettingsDialog state={state} />
+        </Suspense>
+      ) : null}
       <ArtifactStorageSettings state={state} />
-      <ArtifactFolderPicker state={state} />
+      {state.artifactDirPickerOpen ? (
+        <Suspense fallback={null}>
+          <ArtifactFolderPicker state={state} />
+        </Suspense>
+      ) : null}
     </PageLayout>
   )
 }

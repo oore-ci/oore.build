@@ -20,8 +20,11 @@ export interface RuntimeHealth extends BackendRelease {
   package_version?: string
 }
 
-async function fetchRuntimeHealth(path: string): Promise<RuntimeHealth> {
-  const response = await fetch(path, { cache: 'no-store' })
+async function fetchRuntimeHealth(
+  path: string,
+  signal?: AbortSignal,
+): Promise<RuntimeHealth> {
+  const response = await fetch(path, { cache: 'no-store', signal })
   if (!response.ok) {
     throw new Error(`Health check failed (${response.status})`)
   }
@@ -32,6 +35,7 @@ async function localUpdateRequest<T>(
   token: string,
   method: 'GET' | 'POST',
   search?: URLSearchParams,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(
     `/__oore_web_update${search ? `?${search}` : ''}`,
@@ -39,6 +43,7 @@ async function localUpdateRequest<T>(
       method,
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
+      signal,
     },
   )
   if (!response.ok) {
@@ -60,7 +65,7 @@ export function useRuntimeUpdates() {
 
   const frontendHealth = useQuery({
     queryKey: ['runtime-health', 'oore-web'],
-    queryFn: () => fetchRuntimeHealth('/__oore_web_healthz'),
+    queryFn: ({ signal }) => fetchRuntimeHealth('/__oore_web_healthz', signal),
     retry: false,
     staleTime: 30_000,
     refetchInterval: HEALTH_REFRESH_INTERVAL,
@@ -68,9 +73,9 @@ export function useRuntimeUpdates() {
 
   const backendHealth = useQuery({
     queryKey: [instanceKey, 'runtime-health', 'oored'],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       if (!baseUrl) throw new Error('No active instance URL')
-      return fetchRuntimeHealth(new URL('/healthz', baseUrl).toString())
+      return fetchRuntimeHealth(new URL('/healthz', baseUrl).toString(), signal)
     },
     enabled: !!baseUrl,
     retry: false,
@@ -82,7 +87,13 @@ export function useRuntimeUpdates() {
 
   const frontendRelease = useQuery({
     queryKey: [instanceKey, 'runtime-update', 'frontend-release'],
-    queryFn: () => localUpdateRequest<RuntimeReleaseStatus>(token!, 'GET'),
+    queryFn: ({ signal }) =>
+      localUpdateRequest<RuntimeReleaseStatus>(
+        token!,
+        'GET',
+        undefined,
+        signal,
+      ),
     enabled: !!token && isOwner,
     staleTime: 60_000,
     refetchInterval: (query) =>
@@ -101,7 +112,7 @@ export function useRuntimeUpdates() {
       backend.channel,
       backend.github_repo,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       localUpdateRequest<RuntimeReleaseStatus>(
         token!,
         'GET',
@@ -110,6 +121,7 @@ export function useRuntimeUpdates() {
           channel: backend.channel!,
           repo: backend.github_repo!,
         }),
+        signal,
       ),
     enabled:
       !!token &&
@@ -123,7 +135,8 @@ export function useRuntimeUpdates() {
 
   const backendUpdate = useQuery({
     queryKey: [instanceKey, 'runtime-update', 'backend-state'],
-    queryFn: () => getBackendUpdateStatus(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      getBackendUpdateStatus(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token && isOwner,
     refetchInterval: (query) =>
       query.state.data?.phase === 'updating' ||

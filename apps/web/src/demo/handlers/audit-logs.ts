@@ -6,7 +6,7 @@ export const auditLogHandlers = [
     await delay(200)
     const url = new URL(request.url)
 
-    const limit = Number(url.searchParams.get('limit')) || 25
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200)
     const offset = Number(url.searchParams.get('offset')) || 0
     const actorId = url.searchParams.get('actor_id')
     const action = url.searchParams.get('action')
@@ -35,6 +35,25 @@ export const auditLogHandlers = [
       const to = Number(toTs)
       filtered = filtered.filter((e) => e.created_at <= to)
     }
+
+    const sort = url.searchParams.get('sort')
+    const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
+    filtered.sort((left, right) => {
+      const value = (entry: (typeof demoAuditLogs)[number]) => {
+        if (sort === 'actor_email')
+          return entry.actor_email?.toLowerCase() ?? ''
+        if (sort === 'action') return entry.action.toLowerCase()
+        if (sort === 'resource_type') return entry.resource_type.toLowerCase()
+        return entry.created_at
+      }
+      const leftValue = value(left)
+      const rightValue = value(right)
+      const compared =
+        typeof leftValue === 'string'
+          ? leftValue.localeCompare(String(rightValue))
+          : leftValue - Number(rightValue)
+      return (compared || left.id - right.id) * direction
+    })
 
     const total = filtered.length
     const entries = filtered.slice(offset, offset + limit)

@@ -57,7 +57,8 @@ export function usePipelines(
       projectId,
       params ?? {},
     ],
-    queryFn: () => listPipelines(baseUrl!, token!, projectId, params),
+    queryFn: ({ signal }) =>
+      listPipelines(baseUrl!, token!, projectId, params, { signal }),
     enabled: enabled && !!baseUrl && !!token && !!projectId,
   })
 }
@@ -79,8 +80,10 @@ export function useRepositoryWorkflows(
       projectId,
       params ?? {},
     ],
-    queryFn: () =>
-      discoverRepositoryWorkflows(baseUrl!, token!, projectId, params),
+    queryFn: ({ signal }) =>
+      discoverRepositoryWorkflows(baseUrl!, token!, projectId, params, {
+        signal,
+      }),
     enabled: enabled && !!baseUrl && !!token && !!projectId,
     staleTime: 30_000,
   })
@@ -93,7 +96,8 @@ export function usePipeline(pipelineId: string) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline', pipelineId],
-    queryFn: () => getPipeline(baseUrl!, token!, pipelineId),
+    queryFn: ({ signal }) =>
+      getPipeline(baseUrl!, token!, pipelineId, { signal }),
     enabled: !!baseUrl && !!token && !!pipelineId,
   })
 }
@@ -204,7 +208,8 @@ export function usePipelineAndroidSigning(
       'pipeline-android-signing',
       pipelineId,
     ],
-    queryFn: () => getPipelineAndroidSigning(baseUrl!, token!, pipelineId),
+    queryFn: ({ signal }) =>
+      getPipelineAndroidSigning(baseUrl!, token!, pipelineId, { signal }),
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
   })
 }
@@ -256,7 +261,8 @@ export function usePipelineIosSigning(
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'pipeline-ios-signing', pipelineId],
-    queryFn: () => getPipelineIosSigning(baseUrl!, token!, pipelineId),
+    queryFn: ({ signal }) =>
+      getPipelineIosSigning(baseUrl!, token!, pipelineId, { signal }),
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
   })
 }
@@ -319,7 +325,8 @@ export function usePipelineIosDevices(
       'pipeline-ios-signing-devices',
       pipelineId,
     ],
-    queryFn: () => listPipelineIosDevices(baseUrl!, token!, pipelineId),
+    queryFn: ({ signal }) =>
+      listPipelineIosDevices(baseUrl!, token!, pipelineId, { signal }),
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
   })
 }

@@ -18,6 +18,7 @@ import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
 import { useBootstrapStepTransition } from '@/hooks/use-setup-route-transitions'
+import { SetupStepError } from '@/components/setup-route-components'
 
 const bootstrapTokenSchema = z.object({
   token: z.string().min(1, 'Bootstrap token is required'),
@@ -27,19 +28,8 @@ type BootstrapTokenForm = z.infer<typeof bootstrapTokenSchema>
 
 export const Route = createLazyFileRoute('/setup/')({
   component: BootstrapTokenStep,
-  errorComponent: BootstrapTokenError,
+  errorComponent: SetupStepError,
 })
-
-function BootstrapTokenError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
 
 function BootstrapTokenStep() {
   const navigate = useNavigate()

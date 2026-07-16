@@ -6,7 +6,7 @@ import type {
   ListRepositoriesResponse,
   ScmProvider,
 } from '@/lib/types'
-import { listIntegrationRepos, listIntegrations } from '@/lib/api'
+import { listAllIntegrations, listIntegrationRepos } from '@/lib/api'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -55,11 +55,13 @@ export function useSourceRepositories(enabled: boolean) {
     queryFn: async ({ signal }) => {
       signal.throwIfAborted()
       if (!baseUrl || !token) return []
-      const { integrations } = await listIntegrations(
+      const { integrations } = await listAllIntegrations(
         baseUrl,
         token,
         undefined,
-        { signal },
+        {
+          signal,
+        },
       )
       return discoverSourceRepositories(
         integrations,

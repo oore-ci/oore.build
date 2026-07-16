@@ -7,15 +7,14 @@ import {
   InformationCircleIcon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuilds } from '@/hooks/use-builds'
-import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import {
   useDeletePipeline,
@@ -64,7 +63,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { PipelineConfigurationCard } from './pipeline-configuration-card'
+import { PipelineConfigurationCard } from './-pipeline-configuration-card'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
@@ -78,7 +77,7 @@ export const Route = createFileRoute(
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
   component: PipelineDetailPage,
 })
@@ -92,16 +91,13 @@ function usePipelineDetailPageState() {
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
   const canWriteGlobally = useHasPermission('pipelines', 'write')
-  const canDeleteGlobally = useHasPermission('pipelines', 'delete')
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const { data: projectData } = useProject(projectId)
   const projectRole =
     projectData?.current_user_role ?? projectData?.project.current_user_role
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines', 'write')
-  const canDelete =
-    canDeleteGlobally &&
-    hasProjectPermission(projectRole, 'pipelines', 'delete')
+  const canDelete = hasProjectPermission(projectRole, 'pipelines', 'delete')
   const canTriggerBuild =
     canTriggerBuildGlobally &&
     hasProjectPermission(projectRole, 'builds', 'write')
@@ -117,9 +113,6 @@ function usePipelineDetailPageState() {
   })
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
-  const repoProviderQuery = useRepositoryProvider(
-    projectData?.project.repository_id,
-  )
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
@@ -144,7 +137,8 @@ function usePipelineDetailPageState() {
   const { pipeline } = data
   const builds = buildsData?.builds ?? []
   const projectHasSource = !!projectData?.project.repository_id
-  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
+  const manualOnlyTriggers =
+    projectData?.project.repository_provider === 'local_git'
 
   function handleToggleEnabled() {
     updateMutation.mutate(

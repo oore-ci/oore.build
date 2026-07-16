@@ -5,11 +5,11 @@ import {
   InformationCircleIcon,
   LinkSquare02Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { usePreviewGitHubAppSetup } from '@/hooks/use-authorization-start'
@@ -31,7 +31,7 @@ export const Route = createFileRoute('/settings/integrations/github')({
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: GitHubSetupPage,
 })

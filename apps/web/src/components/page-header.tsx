@@ -13,7 +13,7 @@ export default function PageHeader({
 }: PageHeaderProps) {
   return (
     <header className="space-y-3">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
           {description ? (

@@ -1,6 +1,7 @@
 import { HttpResponse, delay, http } from 'msw'
 import { demoRunners } from '../data/runners'
 import { ago } from '../seed'
+import { requireDemoInstancePermission } from '../authorization'
 
 export const runnerHandlers = [
   http.get('/v1/runners', async () => {
@@ -10,6 +11,8 @@ export const runnerHandlers = [
 
   http.patch('/v1/runners/:runnerId', async ({ params, request }) => {
     await delay(200)
+    const forbidden = requireDemoInstancePermission(request, 'runners:write')
+    if (forbidden) return forbidden
     const body = (await request.json()) as { name?: string }
     const runner = demoRunners.find((r) => r.id === params.runnerId)
     return HttpResponse.json({

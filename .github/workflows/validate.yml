@@ -32,6 +32,8 @@ jobs:
               - 'apps/web/**'
               - 'bun.lock'
               - 'package.json'
+              - 'Makefile'
+              - '.github/workflows/validate.yml'
             docs:
               - 'apps/docs-site/**'
               - 'docs/**'
@@ -67,6 +69,21 @@ jobs:
 
       - name: Test
         run: make test-web
+
+      - name: Install Playwright browsers
+        run: cd apps/web && bunx playwright install --with-deps chromium firefox webkit
+
+      - name: Browser test
+        run: make test-web-ui
+
+      - name: Upload browser audit screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-audit
+          path: apps/web/dist/playwright-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build
         run: make build-web

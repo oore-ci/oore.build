@@ -61,12 +61,14 @@ export function useBuilds(
   params?: {
     project_id?: string
     pipeline_id?: string
-    status?: string
+    status?: string | ReadonlyArray<string>
     branch?: string
+    sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
+    direction?: 'asc' | 'desc'
     limit?: number
     offset?: number
   },
-  options?: { refetchInterval?: number | false },
+  options?: { enabled?: boolean; refetchInterval?: number | false },
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -76,7 +78,7 @@ export function useBuilds(
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
     queryFn: ({ signal }) => listBuilds(baseUrl!, token!, params, { signal }),
-    enabled: !!baseUrl && !!token,
+    enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     staleTime: 5_000,
     refetchInterval: (query) =>
       hasActiveBuilds(query.state.data) ? pollInterval : false,
@@ -315,15 +317,20 @@ export function useArtifacts(
   })
 }
 
-export function useProjectArtifacts(projectId: string) {
+export function useProjectArtifacts(projectId: string, limit = 50) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
   return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'project-artifacts', projectId],
+    queryKey: [
+      instance?.id ?? '__none__',
+      'project-artifacts',
+      projectId,
+      limit,
+    ],
     queryFn: ({ signal }) =>
-      listProjectArtifacts(baseUrl!, token!, projectId, { signal }),
+      listProjectArtifacts(baseUrl!, token!, projectId, { limit }, { signal }),
     enabled: !!baseUrl && !!token && !!projectId,
     staleTime: 5_000,
   })
@@ -359,6 +366,8 @@ export function useArtifactDownloadLink() {
 export function useArtifactInstallLink() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
+  const queryClient = useQueryClient()
+  const instance = useActiveInstance()
 
   return useMutation({
     mutationFn: (artifactId: string) => {
@@ -366,6 +375,10 @@ export function useArtifactInstallLink() {
         return Promise.reject(new Error('Not authenticated'))
       return createArtifactInstallLink(baseUrl, token, artifactId)
     },
+    onSuccess: (_result, artifactId) =>
+      queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
+      }),
   })
 }
 

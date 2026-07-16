@@ -30,7 +30,7 @@ export function useRetentionPolicy() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'retention-policy'],
-    queryFn: () => getRetentionPolicy(baseUrl!, token!),
+    queryFn: ({ signal }) => getRetentionPolicy(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
@@ -66,7 +66,8 @@ export function useRetentionLastCleanup() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'retention-last-cleanup'],
-    queryFn: () => getRetentionLastCleanup(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      getRetentionLastCleanup(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }

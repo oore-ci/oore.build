@@ -14,7 +14,14 @@ type WebPersona =
   | 'qa_shell'
   | 'qa_install'
 type WebPerformanceMetric =
-  'lcp' | 'inp' | 'cls' | 'ttfb' | 'dom_content_loaded' | 'load'
+  | 'lcp'
+  | 'inp'
+  | 'cls'
+  | 'ttfb'
+  | 'dom_content_loaded'
+  | 'load'
+  | 'render_error'
+  | 'unhandled_rejection'
 
 interface WebPerformanceObservation {
   metric: WebPerformanceMetric
@@ -77,8 +84,12 @@ function currentContext() {
 function flush() {
   flushScheduled = false
   const context = currentContext()
-  const observations = pending.splice(0)
-  if (!context || observations.length === 0) return
+  if (!context) {
+    pending.splice(0)
+    return
+  }
+  const observations = pending.splice(0, 8)
+  if (observations.length === 0) return
 
   void fetch(`${context.baseUrl}/v1/telemetry/web-performance`, {
     method: 'POST',
@@ -95,14 +106,28 @@ function flush() {
   }).catch(() => {
     // Best-effort operational telemetry must never affect the product path.
   })
+
+  if (pending.length > 0) {
+    flushScheduled = true
+    queueMicrotask(flush)
+  }
 }
 
 function queue(observation: WebPerformanceObservation) {
+  if (!privacySignalsAllowMeasurement()) return
   if (!Number.isFinite(observation.value) || observation.value < 0) return
   pending.push(observation)
   if (flushScheduled) return
   flushScheduled = true
   queueMicrotask(flush)
+}
+
+export function reportWebRenderError() {
+  queue({ metric: 'render_error', value: 1 })
+}
+
+export function reportWebUnhandledRejection() {
+  queue({ metric: 'unhandled_rejection', value: 1 })
 }
 
 function reportVital(metric: Metric) {
@@ -143,6 +168,8 @@ export async function startWebPerformanceMonitoring() {
   onINP(reportVital)
   onLCP(reportVital)
   onTTFB(reportVital)
+
+  window.addEventListener('unhandledrejection', reportWebUnhandledRejection)
 
   if (document.readyState === 'complete') {
     reportNavigationTiming()

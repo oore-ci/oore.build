@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AlertCircleIcon,
@@ -7,7 +7,7 @@ import {
   File02Icon,
   RefreshIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type {
   ConcurrencyPolicy,
@@ -22,7 +22,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useAuthStore } from '@/stores/auth-store'
+import { requireProjectPermissionOrRedirect } from '@/lib/project-route-guard'
 import {
   useCreatePipeline,
   useRepositoryWorkflows,
@@ -30,7 +30,6 @@ import {
   useUpdatePipelineIosSigning,
   useValidatePipeline,
 } from '@/hooks/use-pipelines'
-import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useProject } from '@/hooks/use-projects'
 import {
   executionConfigFromForm,
@@ -57,15 +56,16 @@ export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
     breadcrumbLabel: 'New Pipeline',
     breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
   },
-  beforeLoad: ({ params }) => {
+  beforeLoad: async ({ params }) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-    if (useAuthStore.getState().user?.role === 'qa_viewer') {
-      throw redirect({
-        to: '/projects/$projectId',
-        params: { projectId: params.projectId },
-      })
-    }
+    const token = requireAuthOrRedirect(instance.id)
+    await requireProjectPermissionOrRedirect({
+      action: 'write',
+      instance,
+      projectId: params.projectId,
+      resource: 'pipelines',
+      token,
+    })
   },
   component: NewPipelinePage,
 })
@@ -284,10 +284,8 @@ function useNewPipelinePageState() {
   const workflowsQuery = useRepositoryWorkflows(projectId, undefined, {
     enabled: !!projectData?.project.repository_id,
   })
-  const repoProviderQuery = useRepositoryProvider(
-    projectData?.project.repository_id,
-  )
-  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
+  const manualOnlyTriggers =
+    projectData?.project.repository_provider === 'local_git'
   const createMutation = useCreatePipeline()
   const validateMutation = useValidatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()

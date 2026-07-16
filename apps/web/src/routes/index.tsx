@@ -28,11 +28,12 @@ import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
 import { useBuilds } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
+import { selectDashboardBuilds, selectDashboardProjects } from '@/lib/dashboard'
 import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
@@ -290,28 +291,11 @@ function ConfiguredDashboard({
   const [triggerOpen, setTriggerOpen] = useState(false)
   const [triggerProjectId, setTriggerProjectId] = useState<string | undefined>()
   const authUser = useAuthStore((s) => s.user)
-  const [showWelcome, setShowWelcome] = useState(() => {
-    try {
-      return !localStorage.getItem('oore_welcomed')
-    } catch {
-      return false
-    }
-  })
-
-  function dismissWelcome() {
-    setShowWelcome(false)
-    try {
-      localStorage.setItem('oore_welcomed', '1')
-    } catch {
-      // ignore
-    }
-  }
-
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteBuilds = useHasPermission('builds', 'write')
 
-  const projectsQuery = useProjects({ limit: 50 })
+  const projectsQuery = useProjects({ limit: 6 })
   const projects = useMemo(
     () => projectsQuery.data?.projects ?? [],
     [projectsQuery.data?.projects],
@@ -334,12 +318,11 @@ function ConfiguredDashboard({
     () => recentBuildsQuery.data?.builds ?? [],
     [recentBuildsQuery.data?.builds],
   )
-  const activeBuilds = useMemo(
-    () =>
-      recentBuilds.filter(
-        (build) => build.status === 'queued' || build.status === 'running',
-      ),
-    [recentBuilds],
+  const { active: activeBuilds, recentCompleted: recentCompletedBuilds } =
+    useMemo(() => selectDashboardBuilds(recentBuilds), [recentBuilds])
+  const recentProjects = useMemo(
+    () => selectDashboardProjects(projects),
+    [projects],
   )
   const hasProjects = projects.length > 0
   const integrationsResolved =
@@ -354,7 +337,27 @@ function ConfiguredDashboard({
     !runnersQuery.data.runners.some(
       (runner) => runner.status === 'online' || runner.status === 'busy',
     )
-  const canShowRunBuild = canWriteBuilds && hasProjects && !noOnlineRunners
+  const canActOnEveryProject =
+    authUser?.role === 'owner' || authUser?.role === 'admin'
+  const canTriggerProject = (projectId: string) => {
+    const project = projects.find((candidate) => candidate.id === projectId)
+    return (
+      canWriteBuilds &&
+      (canActOnEveryProject ||
+        hasProjectPermission(project?.current_user_role, 'builds', 'write'))
+    )
+  }
+  const canManageProject = (projectId: string) => {
+    const project = projects.find((candidate) => candidate.id === projectId)
+    return (
+      canActOnEveryProject ||
+      hasProjectPermission(project?.current_user_role, 'projects', 'write')
+    )
+  }
+  const canShowRunBuild =
+    hasProjects &&
+    !noOnlineRunners &&
+    projects.some((project) => canTriggerProject(project.id))
 
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
@@ -396,32 +399,6 @@ function ConfiguredDashboard({
         }
       />
 
-      {showWelcome ? (
-        <Alert>
-          <AlertTitle>
-            Welcome to Oore CI
-            {userName ? `, ${userName.split('@')[0]}` : ''}!
-          </AlertTitle>
-          <AlertDescription className="flex items-start justify-between gap-4">
-            <span>
-              {authUser?.role === 'qa_viewer'
-                ? 'You have view-only access. Browse projects and download build artifacts from the Builds page.'
-                : authUser?.role === 'developer'
-                  ? 'You can create projects, configure pipelines, and trigger builds. Start by exploring the Projects page.'
-                  : 'You have full admin access. Manage users, runners, and integrations from the sidebar.'}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              onClick={dismissWelcome}
-            >
-              Dismiss
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
       {noOnlineRunners ? (
         <Alert variant="destructive">
           <AlertTitle>No runner is available</AlertTitle>
@@ -444,7 +421,7 @@ function ConfiguredDashboard({
             <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Active Builds
             </h2>
-            <Badge variant="info">{activeBuilds.length}</Badge>
+            <Badge variant="secondary">{activeBuilds.length}</Badge>
           </div>
           <div className="space-y-1">
             {activeBuilds.map((build) => (
@@ -471,7 +448,20 @@ function ConfiguredDashboard({
           </Button>
         </div>
 
-        {projectsQuery.isLoading ? (
+        {projectsQuery.error ? (
+          <Alert variant="destructive">
+            <AlertDescription className="flex items-center justify-between gap-3">
+              <span>Projects could not be loaded.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void projectsQuery.refetch()}
+              >
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : projectsQuery.isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -487,9 +477,13 @@ function ConfiguredDashboard({
           />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((project) => (
+            {recentProjects.map((project) => (
               <ProjectCard
                 key={project.id}
+                canOpenSettings={canManageProject(project.id)}
+                canTriggerBuild={
+                  !noOnlineRunners && canTriggerProject(project.id)
+                }
                 project={project}
                 lastBuildStatus={lastBuildByProject.get(project.id)}
                 onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
@@ -501,14 +495,10 @@ function ConfiguredDashboard({
       </section>
 
       <DashboardRecentBuilds
-        builds={recentBuilds}
+        builds={recentCompletedBuilds}
+        error={recentBuildsQuery.error}
         isLoading={recentBuildsQuery.isLoading}
-        onOpenBuild={(buildId) =>
-          void navigate({
-            to: '/builds/$buildId',
-            params: { buildId },
-          })
-        }
+        onRetry={() => void recentBuildsQuery.refetch()}
         projects={projects}
       />
 

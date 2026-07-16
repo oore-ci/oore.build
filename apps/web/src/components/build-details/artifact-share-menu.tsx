@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Copy01Icon, Share08Icon } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type { Artifact, CreateScopedDownloadTokenResponse } from '@/lib/types'
 import {
@@ -113,7 +113,7 @@ export default function ArtifactShareMenu({
         <DropdownMenuTrigger
           render={
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon-xs"
               aria-label={`Share options for ${artifact.name}`}
               title="Share options"

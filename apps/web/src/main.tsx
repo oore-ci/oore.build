@@ -7,6 +7,14 @@ import { routeTree } from './routeTree.gen'
 
 import './styles.css'
 
+function reportRenderError() {
+  void import('./web-performance')
+    .then(({ reportWebRenderError }) => reportWebRenderError())
+    .catch(() => {
+      // Reliability telemetry is best-effort and contains no error details.
+    })
+}
+
 function createAppRouter() {
   return createRouter({
     routeTree,
@@ -44,7 +52,10 @@ async function boot() {
   const rootElement = document.getElementById('app')
   if (rootElement && !rootElement.dataset.reactRoot) {
     rootElement.dataset.reactRoot = 'true'
-    const root = ReactDOM.createRoot(rootElement)
+    const root = ReactDOM.createRoot(rootElement, {
+      onCaughtError: reportRenderError,
+      onUncaughtError: reportRenderError,
+    })
     root.render(
       <StrictMode>
         <RouterProvider router={router} />

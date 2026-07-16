@@ -1437,6 +1437,28 @@ async fn setup_oidc_verify(
 ) -> ApiResult<SetupOidcVerifyResponse> {
     info!("verify-oidc: request received");
 
+    // Once setup is complete, reject deterministically before inspecting or
+    // consuming callback state. The later check remains necessary in case the
+    // instance becomes ready while this request is in flight.
+    {
+        let store = state.store.lock().await;
+        let sf = store.load().await.map_err(|e| {
+            error!(error = %e, "failed to load setup state");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load setup state",
+            )
+        })?;
+        if sf.setup_state == SetupState::Ready {
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "already_configured",
+                "Setup is already complete",
+            ));
+        }
+    }
+
     let pending = {
         let mut pending_map = state.pending_auth.lock().await;
         pending_map.remove(&req.state).ok_or_else(|| {
@@ -2220,7 +2242,6 @@ async fn build_router_inner(
         )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
-        .route("/v1/users/{user_id}/preview", post(users::preview_qa_user))
         .route(
             "/v1/users/{user_id}/role",
             axum::routing::patch(users::update_user_role),
@@ -2351,6 +2372,10 @@ async fn build_router_inner(
         .route(
             "/v1/projects/{project_id}/members",
             get(project_members::list_project_members).post(project_members::add_project_member),
+        )
+        .route(
+            "/v1/projects/{project_id}/members/candidates",
+            get(project_members::list_project_member_candidates),
         )
         .route(
             "/v1/projects/{project_id}/members/{user_id}",

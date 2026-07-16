@@ -211,6 +211,8 @@ enum WebPerformanceMetric {
     Ttfb,
     DomContentLoaded,
     Load,
+    RenderError,
+    UnhandledRejection,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +227,9 @@ impl WebPerformanceObservation {
             && self.value >= 0.0
             && match self.metric {
                 WebPerformanceMetric::Cls => self.value <= 10.0,
+                WebPerformanceMetric::RenderError | WebPerformanceMetric::UnhandledRejection => {
+                    self.value == 1.0
+                }
                 _ => self.value <= 120_000.0,
             }
     }
@@ -251,6 +256,12 @@ impl WebPerformanceObservation {
             WebPerformanceMetric::Load => {
                 histogram!("oore_web_load_seconds", &labels).record(self.value / 1000.0)
             }
+            WebPerformanceMetric::RenderError => {
+                counter!("oore_web_render_errors_total", &labels).increment(1)
+            }
+            WebPerformanceMetric::UnhandledRejection => {
+                counter!("oore_web_unhandled_rejections_total", &labels).increment(1)
+            }
         }
     }
 }
@@ -262,7 +273,7 @@ pub struct WebPerformanceRequest {
     observations: Vec<WebPerformanceObservation>,
 }
 
-/// Records authenticated, anonymous browser performance histograms.
+/// Records authenticated, anonymous browser performance and reliability metrics.
 ///
 /// The fixed enums deliberately exclude URLs, user IDs, device IDs, and arbitrary labels.
 pub async fn record_web_performance(

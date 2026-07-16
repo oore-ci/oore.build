@@ -5,7 +5,6 @@ export interface Instance {
   label: string
   url: string
   icon?: string
-  qaPreviewSourceId?: string
   addedAt: number
 }
 
@@ -185,12 +184,6 @@ export interface UpdateUserRoleResponse {
 
 export interface ReEnableUserResponse {
   user: User
-}
-
-export interface PreviewQaUserResponse {
-  session_token: string
-  expires_at: number
-  user: AuthenticatedUser
 }
 
 export interface ListUsersResponse {
@@ -789,6 +782,7 @@ export interface ProjectMember {
   user_id: string
   role: ProjectRole
   user_email: string
+  user_role: UserRole
   user_display_name?: string
   user_avatar_url?: string
   created_at: number
@@ -814,6 +808,18 @@ export interface UpdateProjectMemberResponse {
 
 export interface ListProjectMembersResponse {
   members: Array<ProjectMember>
+}
+
+export interface ProjectMemberCandidate {
+  id: string
+  email: string
+  display_name?: string
+  role: 'developer' | 'qa_viewer'
+  status: 'active' | 'invited'
+}
+
+export interface ListProjectMemberCandidatesResponse {
+  candidates: Array<ProjectMemberCandidate>
 }
 
 // ── Pipeline domain types ───────────────────────────────────────

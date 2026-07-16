@@ -1,20 +1,49 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
-import { useAuthStore } from '@/stores/auth-store'
+
+export type RunnerSort = 'created_at' | 'last_heartbeat_at' | 'name' | 'status'
+
+export interface RunnersSearch {
+  direction?: 'asc' | 'desc'
+  page?: number
+  pageSize?: 20 | 50 | 100
+  q?: string
+  sort?: RunnerSort
+}
+
+const RUNNER_SORTS = new Set<RunnerSort>([
+  'created_at',
+  'last_heartbeat_at',
+  'name',
+  'status',
+])
+
+export function parseRunnersSearch(
+  search: Record<string, unknown>,
+): RunnersSearch {
+  const page = Number(search.page)
+  const pageSize = Number(search.pageSize)
+  const q = typeof search.q === 'string' ? search.q.trim() : ''
+  const sort = search.sort as RunnerSort
+
+  return {
+    q: q || undefined,
+    sort: RUNNER_SORTS.has(sort) ? sort : undefined,
+    direction: search.direction === 'asc' ? 'asc' : undefined,
+    page: Number.isInteger(page) && page > 1 ? page : undefined,
+    pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
+  }
+}
 
 export const Route = createFileRoute('/settings/runners')({
   staticData: { breadcrumbLabel: 'Runners' },
+  validateSearch: parseRunnersSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-
-    const user = useAuthStore.getState().user
-    if (!user || (user.role !== 'owner' && user.role !== 'admin')) {
-      throw redirect({ to: '/' })
-    }
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
 })

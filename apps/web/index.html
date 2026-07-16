@@ -2,10 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="alternate icon" href="/favicon.ico" />
-    <meta name="theme-color" content="#dc7702" />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+      data-theme="light"
+    />
+    <meta
+      name="theme-color"
+      content="#171717"
+      media="(prefers-color-scheme: dark)"
+      data-theme="dark"
+    />
     <meta
       name="description"
       content="Self-hosted, Flutter-first mobile CI and internal app distribution platform"
@@ -35,6 +49,25 @@
     <link rel="apple-touch-icon" href="/logo192.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>Oore CI | Self-Hosted Mobile CI</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem('theme')
+        const dark =
+          savedTheme === 'dark' ||
+          (savedTheme !== 'light' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.add(dark ? 'dark' : 'light')
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        document.querySelector('[data-theme="light"]').media = dark
+          ? 'not all'
+          : 'all'
+        document.querySelector('[data-theme="dark"]').media = dark
+          ? 'all'
+          : 'not all'
+      } catch {
+        // The system color-scheme media query below remains the fallback.
+      }
+    </script>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -59,20 +92,37 @@
     </script>
     <!-- Inline critical styles for instant first paint before CSS loads -->
     <style>
+      html {
+        --initial-background: #ffffff;
+        background: var(--initial-background);
+        color-scheme: light;
+      }
+      html.dark {
+        --initial-background: #171717;
+        color-scheme: dark;
+      }
+      html,
+      body,
+      #app {
+        min-height: 100%;
+        min-height: 100svh;
+        background: var(--initial-background);
+      }
       body {
         margin: 0;
-        background: #0a0a0a;
       }
-      @media (prefers-color-scheme: light) {
-        body {
-          background: #fff;
+      @media (prefers-color-scheme: dark) {
+        html:not(.light) {
+          --initial-background: #171717;
+          color-scheme: dark;
         }
       }
       .app-loading {
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 100vh;
+        min-height: 100svh;
+        min-height: 100dvh;
         opacity: 1;
         transition: opacity 0.15s;
       }

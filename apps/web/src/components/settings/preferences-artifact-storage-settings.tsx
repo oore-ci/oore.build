@@ -35,6 +35,7 @@ export function ArtifactStorageSettings({
     canBrowseLocalFs,
     canWrite,
     onSubmitStorage,
+    preloadArtifactFolderPicker,
     setArtifactDirPickerOpen,
     settingsQuery,
     storageForm,
@@ -151,6 +152,12 @@ export function ArtifactStorageSettings({
                                 size="icon"
                                 aria-label="Browse"
                                 title="Browse"
+                                onMouseEnter={() =>
+                                  void preloadArtifactFolderPicker()
+                                }
+                                onFocus={() =>
+                                  void preloadArtifactFolderPicker()
+                                }
                                 onClick={() => {
                                   setArtifactDirPickerOpen(true)
                                 }}

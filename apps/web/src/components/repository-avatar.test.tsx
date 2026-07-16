@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import RepositoryAvatar, { repositoryInitials } from './repository-avatar'
+import RepositoryAvatar from './repository-avatar'
+import { repositoryInitials } from '@/lib/repository-avatar'
 
 const { mockUseRepositoryAvatarUrl } = vi.hoisted(() => ({
   mockUseRepositoryAvatarUrl: vi.fn(),

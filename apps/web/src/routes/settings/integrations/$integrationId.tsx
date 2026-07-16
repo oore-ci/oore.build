@@ -8,13 +8,14 @@ import {
   Refresh01Icon,
   Setting07Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import {
   useDeleteIntegration,
@@ -46,14 +47,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableRow,
-} from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 import type { Integration } from '@/lib/types'
-import { IntegrationInventory } from './integration-inventory'
+import { IntegrationInventory } from './-integration-inventory'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: {
@@ -68,7 +64,7 @@ export const Route = createFileRoute('/settings/integrations/$integrationId')({
   }),
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
   component: IntegrationDetailPage,
 })
@@ -88,10 +84,12 @@ function humanizeAuthMode(mode: string): string {
 }
 
 function IntegrationConnectionDetails({
+  canWrite,
   gitLabWebhookUrl,
   integration,
   lastWebhookAt,
 }: {
+  canWrite: boolean
   gitLabWebhookUrl: string
   integration: Integration
   lastWebhookAt: number | undefined
@@ -120,7 +118,7 @@ function IntegrationConnectionDetails({
               <TableCell className="text-muted-foreground">Auth mode</TableCell>
               <TableCell>{humanizeAuthMode(integration.auth_mode)}</TableCell>
             </TableRow>
-            {integration.provider === 'gitlab' ? (
+            {integration.provider === 'gitlab' && canWrite ? (
               <>
                 <TableRow>
                   <TableCell className="text-muted-foreground">
@@ -183,13 +181,15 @@ function IntegrationConnectionDetails({
   )
 }
 
-function useIntegrationDetailPageState() {
+function useIntegrationDetailPageState(canWrite: boolean) {
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
   const navigate = useNavigate()
 
   const { data: detail, isLoading, error } = useIntegration(integrationId)
-  const { data: networkSettings } = useExternalAccessNetworkSettings()
+  const { data: networkSettings } = useExternalAccessNetworkSettings({
+    enabled: canWrite,
+  })
   const { data: installationsData } = useInstallations(integrationId)
   const { data: reposData } = useIntegrationRepos(integrationId)
   const syncMutation = useSyncInstallations()
@@ -309,7 +309,8 @@ function useIntegrationDetailPageState() {
 }
 
 function IntegrationDetailPage() {
-  const pageState = useIntegrationDetailPageState()
+  const canWrite = useHasPermission('integrations', 'write')
+  const pageState = useIntegrationDetailPageState(canWrite)
 
   if (pageState.status === 'loading') {
     return (
@@ -375,6 +376,14 @@ function IntegrationDetailPage() {
         }
       />
 
+      {!canWrite ? (
+        <Alert>
+          <AlertDescription>
+            You have read-only access to this source connection.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <section className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent>
@@ -418,6 +427,7 @@ function IntegrationDetailPage() {
       </section>
 
       <IntegrationConnectionDetails
+        canWrite={canWrite}
         gitLabWebhookUrl={gitLabWebhookUrl}
         integration={integration}
         lastWebhookAt={detail.last_webhook_at}
@@ -436,120 +446,122 @@ function IntegrationDetailPage() {
         </Alert>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Actions
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          {integration.provider === 'gitlab' &&
-          integration.auth_mode === 'oauth_app' &&
-          integration.status === 'inactive' ? (
-            <Button
-              onClick={() =>
-                gitlabAuthorizeMutation.mutate(
-                  {
-                    integration_id: integrationId,
-                    redirect_url: window.location.href,
-                  },
-                  {
-                    onError: (authorizationError) =>
-                      toast.error(
-                        `GitLab authorization failed: ${authorizationError.message}`,
-                      ),
-                  },
-                )
-              }
-              disabled={gitlabAuthorizeMutation.isPending}
-            >
-              <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
-              {gitlabAuthorizeMutation.isPending
-                ? 'Redirecting...'
-                : 'Authorize on GitLab'}
-            </Button>
-          ) : null}
+      {canWrite ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+              Actions
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {integration.provider === 'gitlab' &&
+            integration.auth_mode === 'oauth_app' &&
+            integration.status === 'inactive' ? (
+              <Button
+                onClick={() =>
+                  gitlabAuthorizeMutation.mutate(
+                    {
+                      integration_id: integrationId,
+                      redirect_url: window.location.href,
+                    },
+                    {
+                      onError: (authorizationError) =>
+                        toast.error(
+                          `GitLab authorization failed: ${authorizationError.message}`,
+                        ),
+                    },
+                  )
+                }
+                disabled={gitlabAuthorizeMutation.isPending}
+              >
+                <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+                {gitlabAuthorizeMutation.isPending
+                  ? 'Redirecting...'
+                  : 'Authorize on GitLab'}
+              </Button>
+            ) : null}
 
-          {integration.provider === 'github' && integration.app_slug ? (
-            <Button
-              variant="outline"
-              render={
-                <a
-                  href={
-                    installations.length > 0
-                      ? `https://github.com/apps/${integration.app_slug}/installations/select_target`
-                      : `https://github.com/apps/${integration.app_slug}/installations/new`
-                  }
-                  aria-label="Manage this source on GitHub"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                />
-              }
-              nativeButton={false}
-            >
-              <HugeiconsIcon icon={Setting07Icon} />
-              {installations.length > 0
-                ? 'Manage on GitHub'
-                : 'Install on GitHub'}
-            </Button>
-          ) : null}
+            {integration.provider === 'github' && integration.app_slug ? (
+              <Button
+                variant="outline"
+                render={
+                  <a
+                    href={
+                      installations.length > 0
+                        ? `https://github.com/apps/${integration.app_slug}/installations/select_target`
+                        : `https://github.com/apps/${integration.app_slug}/installations/new`
+                    }
+                    aria-label="Manage this source on GitHub"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+                nativeButton={false}
+              >
+                <HugeiconsIcon icon={Setting07Icon} />
+                {installations.length > 0
+                  ? 'Manage on GitHub'
+                  : 'Install on GitHub'}
+              </Button>
+            ) : null}
 
-          {integration.provider === 'gitlab' ? (
-            <Button
-              variant="outline"
-              render={
-                <a
-                  href={integration.host_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Open GitLab in a new tab"
-                />
-              }
-              nativeButton={false}
-            >
-              <HugeiconsIcon icon={Setting07Icon} />
-              Open GitLab
-            </Button>
-          ) : null}
+            {integration.provider === 'gitlab' ? (
+              <Button
+                variant="outline"
+                render={
+                  <a
+                    href={integration.host_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="Open GitLab in a new tab"
+                  />
+                }
+                nativeButton={false}
+              >
+                <HugeiconsIcon icon={Setting07Icon} />
+                Open GitLab
+              </Button>
+            ) : null}
 
-          {canSyncInstallations ? (
-            <Button
-              variant="outline"
-              onClick={handleSync}
-              disabled={syncMutation.isPending}
-            >
-              <HugeiconsIcon icon={Refresh01Icon} />
-              {syncMutation.isPending ? 'Syncing...' : syncLabel}
-            </Button>
-          ) : null}
+            {canSyncInstallations ? (
+              <Button
+                variant="outline"
+                onClick={handleSync}
+                disabled={syncMutation.isPending}
+              >
+                <HugeiconsIcon icon={Refresh01Icon} />
+                {syncMutation.isPending ? 'Syncing...' : syncLabel}
+              </Button>
+            ) : null}
 
-          <AlertDialog>
-            <AlertDialogTrigger
-              render={
-                <Button variant="destructive">
-                  <HugeiconsIcon icon={Delete02Icon} />
-                  Disconnect
-                </Button>
-              }
-            />
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This removes credentials, installations, repository links, and
-                  webhook behavior.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDisconnect}>
-                  Disconnect
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </CardContent>
-      </Card>
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button variant="destructive">
+                    <HugeiconsIcon icon={Delete02Icon} />
+                    Disconnect
+                  </Button>
+                }
+              />
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This removes credentials, installations, repository links,
+                    and webhook behavior.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleDisconnect}>
+                    Disconnect
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <IntegrationInventory
         installations={installations}

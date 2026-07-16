@@ -10,23 +10,91 @@ import { Card, CardContent } from '@/components/ui/card'
 import RepositoryAvatar from '@/components/repository-avatar'
 
 interface ProjectCardProps {
+  canOpenSettings: boolean
+  canTriggerBuild: boolean
   project: Project
-  pipelineCount?: number
   lastBuildStatus?: string
   onPreloadTriggerBuild: () => void
   onTriggerBuild: (projectId: string) => void
 }
 
 export default function ProjectCard({
+  canOpenSettings,
+  canTriggerBuild,
   project,
-  pipelineCount,
   lastBuildStatus,
   onPreloadTriggerBuild,
   onTriggerBuild,
 }: ProjectCardProps) {
   return (
-    <Card className="group relative h-full">
-      <CardContent className="flex h-full flex-col gap-3">
+    <Card size="sm" className="group relative sm:h-full">
+      <CardContent className="flex items-center gap-3 py-3 sm:hidden">
+        {project.repository_full_name ? (
+          <RepositoryAvatar
+            fullName={project.repository_full_name}
+            avatarUrl={project.repository_avatar_url}
+            repositoryId={project.repository_id}
+            provider={project.repository_provider}
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              to="/projects/$projectId"
+              params={{ projectId: project.id }}
+              className="min-w-0 truncate text-sm font-semibold hover:underline"
+            >
+              {project.name}
+            </Link>
+            <Badge
+              variant={
+                lastBuildStatus ? getStatusVariant(lastBuildStatus) : 'outline'
+              }
+              className="shrink-0 text-[10px]"
+            >
+              {lastBuildStatus ?? 'No builds'}
+            </Badge>
+          </div>
+          {project.description ? (
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {project.description}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {canTriggerBuild ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={`Run a build for ${project.name}`}
+              onMouseEnter={onPreloadTriggerBuild}
+              onFocus={onPreloadTriggerBuild}
+              onClick={() => onTriggerBuild(project.id)}
+            >
+              <HugeiconsIcon icon={PlayIcon} />
+            </Button>
+          ) : null}
+          {canOpenSettings ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Open settings for ${project.name}`}
+              render={
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: project.id }}
+                  search={{ tab: 'settings' }}
+                />
+              }
+              nativeButton={false}
+            >
+              <HugeiconsIcon icon={Setting07Icon} />
+            </Button>
+          ) : null}
+        </div>
+      </CardContent>
+
+      <CardContent className="hidden h-full flex-col gap-4 sm:flex">
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-3">
             {project.repository_full_name ? (
@@ -37,14 +105,26 @@ export default function ProjectCard({
                 provider={project.repository_provider}
               />
             ) : null}
-            <div className="min-w-0">
-              <Link
-                to="/projects/$projectId"
-                params={{ projectId: project.id }}
-                className="text-sm font-semibold hover:underline"
-              >
-                {project.name}
-              </Link>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: project.id }}
+                  className="min-w-0 truncate text-sm font-semibold hover:underline"
+                >
+                  {project.name}
+                </Link>
+                <Badge
+                  variant={
+                    lastBuildStatus
+                      ? getStatusVariant(lastBuildStatus)
+                      : 'outline'
+                  }
+                  className="shrink-0 text-[10px]"
+                >
+                  {lastBuildStatus ?? 'No builds'}
+                </Badge>
+              </div>
               {project.description ? (
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {project.description}
@@ -52,53 +132,40 @@ export default function ProjectCard({
               ) : null}
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            aria-label={`Open settings for ${project.name}`}
-            title={`Open settings for ${project.name}`}
-            render={
-              <Link
-                to="/projects/$projectId"
-                params={{ projectId: project.id }}
-              />
-            }
-            nativeButton={false}
-          >
-            <HugeiconsIcon icon={Setting07Icon} />
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          {pipelineCount != null ? (
-            <span>
-              {pipelineCount} pipeline{pipelineCount !== 1 ? 's' : ''}
-            </span>
-          ) : null}
-          {lastBuildStatus ? (
-            <Badge
-              variant={getStatusVariant(lastBuildStatus)}
-              className="text-[10px]"
+          {canOpenSettings ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0"
+              aria-label={`Open settings for ${project.name}`}
+              title={`Open settings for ${project.name}`}
+              render={
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: project.id }}
+                  search={{ tab: 'settings' }}
+                />
+              }
+              nativeButton={false}
             >
-              {lastBuildStatus}
-            </Badge>
-          ) : (
-            <span className="italic">No builds</span>
-          )}
+              <HugeiconsIcon icon={Setting07Icon} />
+            </Button>
+          ) : null}
         </div>
 
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-auto w-full"
-          onMouseEnter={onPreloadTriggerBuild}
-          onFocus={onPreloadTriggerBuild}
-          onClick={() => onTriggerBuild(project.id)}
-        >
-          <HugeiconsIcon icon={PlayIcon} />
-          Run build
-        </Button>
+        {canTriggerBuild ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-auto w-full"
+            onMouseEnter={onPreloadTriggerBuild}
+            onFocus={onPreloadTriggerBuild}
+            onClick={() => onTriggerBuild(project.id)}
+          >
+            <HugeiconsIcon icon={PlayIcon} />
+            Run build
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
   )

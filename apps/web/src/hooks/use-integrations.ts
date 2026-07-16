@@ -6,9 +6,9 @@ import {
   getIntegration,
   gitlabAuthorize,
   gitlabStart,
+  listAllIntegrations,
   listInstallations,
   listIntegrationRepos,
-  listIntegrations,
   syncInstallations,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -35,7 +35,8 @@ export function useIntegrations(provider?: string) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integrations', provider ?? 'all'],
-    queryFn: () => listIntegrations(baseUrl!, token!, { provider }),
+    queryFn: ({ signal }) =>
+      listAllIntegrations(baseUrl!, token!, provider, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
@@ -47,7 +48,7 @@ export function useIntegration(id: string) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integration', id],
-    queryFn: () => getIntegration(baseUrl!, token!, id),
+    queryFn: ({ signal }) => getIntegration(baseUrl!, token!, id, { signal }),
     enabled: !!baseUrl && !!token && !!id,
   })
 }
@@ -59,7 +60,8 @@ export function useInstallations(integrationId: string) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'installations', integrationId],
-    queryFn: () => listInstallations(baseUrl!, token!, integrationId),
+    queryFn: ({ signal }) =>
+      listInstallations(baseUrl!, token!, integrationId, { signal }),
     enabled: !!baseUrl && !!token && !!integrationId,
   })
 }
@@ -71,44 +73,9 @@ export function useIntegrationRepos(integrationId: string) {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integration-repos', integrationId],
-    queryFn: () => listIntegrationRepos(baseUrl!, token!, integrationId),
+    queryFn: ({ signal }) =>
+      listIntegrationRepos(baseUrl!, token!, integrationId, { signal }),
     enabled: !!baseUrl && !!token && !!integrationId,
-  })
-}
-
-export function useRepositoryProvider(repositoryId?: string, enabled = true) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
-    queryKey: [
-      instance?.id ?? '__none__',
-      'repository-provider',
-      repositoryId ?? '__none__',
-    ],
-    queryFn: async () => {
-      if (!baseUrl || !token || !repositoryId) return null
-      const integrations = await listIntegrations(baseUrl, token)
-
-      for (const integration of integrations.integrations) {
-        try {
-          const repos = await listIntegrationRepos(
-            baseUrl,
-            token,
-            integration.id,
-          )
-          if (repos.repositories.some((repo) => repo.id === repositoryId)) {
-            return integration.provider
-          }
-        } catch {
-          // skip integrations that fail to list repositories
-        }
-      }
-
-      return null
-    },
-    enabled: enabled && !!baseUrl && !!token && !!repositoryId,
   })
 }
 
@@ -209,7 +176,8 @@ export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
       'local-git-directory-browser',
       path ?? '__default__',
     ],
-    queryFn: () => browseLocalGitDirectories(baseUrl!, token!, path),
+    queryFn: ({ signal }) =>
+      browseLocalGitDirectories(baseUrl!, token!, path, { signal }),
     enabled: enabled && !!baseUrl && !!token,
   })
 }

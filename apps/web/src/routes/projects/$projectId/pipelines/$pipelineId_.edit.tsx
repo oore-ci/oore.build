@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { toast } from 'sonner'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { toast } from '@/lib/toast'
 
 import type {
   ConcurrencyPolicy,
@@ -14,7 +14,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
-import { useAuthStore } from '@/stores/auth-store'
+import { requireProjectPermissionOrRedirect } from '@/lib/project-route-guard'
 import {
   usePipeline,
   usePipelineAndroidSigning,
@@ -26,7 +26,6 @@ import {
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
 } from '@/hooks/use-pipelines'
-import { useRepositoryProvider } from '@/hooks/use-integrations'
 import { useProject } from '@/hooks/use-projects'
 import {
   executionConfigFromForm,
@@ -80,18 +79,16 @@ export const Route = createFileRoute(
     signingError:
       typeof search.signingError === 'string' ? search.signingError : undefined,
   }),
-  beforeLoad: ({ params }) => {
+  beforeLoad: async ({ params }) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-    if (useAuthStore.getState().user?.role === 'qa_viewer') {
-      throw redirect({
-        to: '/projects/$projectId/pipelines/$pipelineId',
-        params: {
-          projectId: params.projectId,
-          pipelineId: params.pipelineId,
-        },
-      })
-    }
+    const token = requireAuthOrRedirect(instance.id)
+    await requireProjectPermissionOrRedirect({
+      action: 'write',
+      instance,
+      projectId: params.projectId,
+      resource: 'pipelines',
+      token,
+    })
   },
   component: EditPipelinePage,
 })
@@ -101,10 +98,8 @@ function useEditPipelinePageState() {
   const { signing: retrySigning, signingError } = Route.useSearch()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
-  const repoProviderQuery = useRepositoryProvider(
-    projectData?.project.repository_id,
-  )
-  const manualOnlyTriggers = repoProviderQuery.data === 'local_git'
+  const manualOnlyTriggers =
+    projectData?.project.repository_provider === 'local_git'
   const { data, isLoading, error } = usePipeline(pipelineId)
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)

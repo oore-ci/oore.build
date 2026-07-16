@@ -30,8 +30,10 @@ export function useSetupStatus() {
 
   return useQuery({
     queryKey,
-    queryFn: () => getSetupStatus(requireInstance(instance)),
-    refetchInterval: 3000,
+    queryFn: ({ signal }) =>
+      getSetupStatus(requireInstance(instance), { signal }),
+    refetchInterval: (query) =>
+      query.state.data?.is_configured ? false : 3000,
     enabled: !!instance,
   })
 }
@@ -179,7 +181,8 @@ export function useSetupSummary() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'setup-summary'] as const,
-    queryFn: () => getSetupSummary(requireInstance(instance), sessionToken!),
+    queryFn: ({ signal }) =>
+      getSetupSummary(requireInstance(instance), sessionToken!, { signal }),
     enabled: !!instance && !!sessionToken,
   })
 }

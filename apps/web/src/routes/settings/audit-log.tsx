@@ -1,19 +1,33 @@
-import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
-
+import { useMemo } from 'react'
 import {
-  getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
-} from '@/lib/instance-context'
-import { useAuditLogs } from '@/hooks/use-audit-logs'
-import { useAuthStore } from '@/stores/auth-store'
+  Calendar03Icon,
+  InformationCircleIcon,
+  Search01Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
+import { format } from 'date-fns'
+import type { DateRange } from 'react-day-picker'
+
+import type { SortDirection } from '@/components/collection-controls'
+import PageHeader from '@/components/page-header'
+import PageLayout from '@/components/page-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { Calendar } from '@/components/ui/calendar'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -21,29 +35,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import PageHeader from '@/components/page-header'
-import PageLayout from '@/components/page-layout'
-import { Skeleton } from '@/components/ui/skeleton'
+import { useAuditLogs } from '@/hooks/use-audit-logs'
+import { CollectionSearchInput } from '@/components/collection-search-input'
+import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination'
-import { relativeTime } from '@/lib/format-utils'
+  getActiveInstanceOrRedirect,
+  requireAuthOrRedirect,
+} from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
+import { useAuthStore } from '@/stores/auth-store'
+import { AuditLogInventory } from './-audit-log-inventory'
+import type { AuditSort } from './-audit-log-inventory'
 
-const PAGE_SIZE = 25
+interface AuditLogSearch {
+  direction?: SortDirection
+  from?: string
+  page?: number
+  pageSize?: 20 | 50 | 100
+  q?: string
+  resource?: string
+  sort?: AuditSort
+  to?: string
+}
 
 const RESOURCE_TYPE_OPTIONS: Record<string, string> = {
   all: 'All resources',
@@ -58,11 +71,56 @@ const RESOURCE_TYPE_OPTIONS: Record<string, string> = {
   auth: 'Auth',
 }
 
+const AUDIT_SORT_OPTIONS: Record<AuditSort, string> = {
+  created_at: 'Time',
+  actor_email: 'Actor',
+  action: 'Action',
+  resource_type: 'Resource',
+}
+
+const AUDIT_SORT_VALUES = new Set<AuditSort>(
+  Object.keys(AUDIT_SORT_OPTIONS) as Array<AuditSort>,
+)
+
+function validDate(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return undefined
+  }
+  return Number.isNaN(new Date(`${value}T00:00:00`).getTime())
+    ? undefined
+    : value
+}
+
+function parseSearch(search: Record<string, unknown>): AuditLogSearch {
+  const page = Number(search.page)
+  const pageSize = Number(search.pageSize)
+  const q = typeof search.q === 'string' ? search.q.trim() : ''
+  const resource =
+    typeof search.resource === 'string' &&
+    search.resource !== 'all' &&
+    search.resource in RESOURCE_TYPE_OPTIONS
+      ? search.resource
+      : undefined
+  const sort = search.sort as AuditSort
+
+  return {
+    q: q || undefined,
+    resource,
+    from: validDate(search.from),
+    to: validDate(search.to),
+    sort: AUDIT_SORT_VALUES.has(sort) ? sort : undefined,
+    direction:
+      search.direction === 'asc' || search.direction === 'desc'
+        ? search.direction
+        : undefined,
+    page: Number.isInteger(page) && page > 1 ? page : undefined,
+    pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
+  }
+}
+
 export const Route = createFileRoute('/settings/audit-log')({
   staticData: { breadcrumbLabel: 'Audit Log' },
-  validateSearch: (search: Record<string, unknown>): { page?: number } => ({
-    page: Number(search.page) > 1 ? Number(search.page) : undefined,
-  }),
+  validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)
@@ -74,44 +132,129 @@ export const Route = createFileRoute('/settings/audit-log')({
   component: AuditLogPage,
 })
 
+function dateFromSearch(value?: string): Date | undefined {
+  if (!value) return undefined
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+function AuditDateRangePicker({
+  from,
+  onChange,
+  to,
+}: {
+  from?: string
+  onChange: (range: DateRange | undefined) => void
+  to?: string
+}) {
+  const fromDate = dateFromSearch(from)
+  const toDate = dateFromSearch(to)
+  const selected: DateRange | undefined =
+    fromDate || toDate ? { from: fromDate, to: toDate } : undefined
+  const label = fromDate
+    ? toDate
+      ? `${format(fromDate, 'MMM d, yyyy')} – ${format(toDate, 'MMM d, yyyy')}`
+      : `From ${format(fromDate, 'MMM d, yyyy')}`
+    : toDate
+      ? `Through ${format(toDate, 'MMM d, yyyy')}`
+      : 'Pick a date range'
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="outline"
+            data-empty={!selected}
+            className="col-span-2 w-full justify-start overflow-hidden text-left font-normal data-[empty=true]:text-muted-foreground sm:w-auto"
+            aria-label={`Date range: ${label}`}
+          />
+        }
+      >
+        <HugeiconsIcon
+          icon={Calendar03Icon}
+          data-icon="inline-start"
+          aria-hidden
+        />
+        <span className="truncate">{label}</span>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="max-h-[calc(100dvh-2rem)] w-auto max-w-[calc(100vw-2rem)] overflow-auto p-0"
+      >
+        <Calendar
+          mode="range"
+          selected={selected}
+          defaultMonth={fromDate ?? toDate}
+          numberOfMonths={2}
+          onSelect={onChange}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function AuditLogPage() {
   const navigate = Route.useNavigate()
   const search = useSearch({ from: '/settings/audit-log' })
   const page = search.page ?? 1
-  const offset = (page - 1) * PAGE_SIZE
-
-  const [resourceTypeFilter, setResourceTypeFilter] = useState<string>('all')
-  const [actionFilter, setActionFilter] = useState('')
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
-
-  const fromTs = fromDate
-    ? Math.floor(new Date(fromDate + 'T00:00:00').getTime() / 1000)
+  const pageSize = search.pageSize ?? 20
+  const sort = search.sort ?? 'created_at'
+  const direction = search.direction ?? 'desc'
+  const fromTs = search.from
+    ? Math.floor(new Date(`${search.from}T00:00:00`).getTime() / 1000)
     : undefined
-  const toTs = toDate
-    ? Math.floor(new Date(toDate + 'T23:59:59').getTime() / 1000)
+  const toTs = search.to
+    ? Math.floor(new Date(`${search.to}T23:59:59`).getTime() / 1000)
     : undefined
 
   const auditQuery = useAuditLogs({
-    limit: PAGE_SIZE,
-    offset,
-    resource_type:
-      resourceTypeFilter !== 'all' ? resourceTypeFilter : undefined,
-    action: actionFilter.trim() || undefined,
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    resource_type: search.resource,
+    action: search.q,
     from_ts: fromTs,
     to_ts: toTs,
+    sort,
+    direction,
   })
-
-  const total = auditQuery.data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const entries = useMemo(
     () => auditQuery.data?.entries ?? [],
     [auditQuery.data?.entries],
   )
-
+  const total = auditQuery.data?.total ?? 0
   const hasFilters =
-    resourceTypeFilter !== 'all' || actionFilter || fromDate || toDate
+    !!search.q || !!search.resource || !!search.from || !!search.to
+  const showFilteredEmpty =
+    !auditQuery.isLoading && !auditQuery.error && total === 0 && hasFilters
+  const showTrueEmpty =
+    !auditQuery.isLoading && !auditQuery.error && total === 0 && !hasFilters
+
+  function updateSearch(updates: Partial<AuditLogSearch>) {
+    void navigate({
+      search: (previous) => ({ ...previous, ...updates }),
+      replace: true,
+    })
+  }
+
+  usePageClamp(page, pageSize, auditQuery.data?.total, (nextPage) => {
+    updateSearch({ page: nextPage === 1 ? undefined : nextPage })
+  })
+
+  function clearFilters() {
+    updateSearch({
+      q: undefined,
+      resource: undefined,
+      from: undefined,
+      to: undefined,
+      page: undefined,
+    })
+  }
+
+  function handleSortChange(nextSort: AuditSort, next: SortDirection) {
+    updateSearch({ sort: nextSort, direction: next, page: undefined })
+  }
 
   return (
     <PageLayout width="wide">
@@ -121,223 +264,169 @@ function AuditLogPage() {
         description="Activity trail of user and system actions for compliance and security auditing."
       />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-        <Select
-          value={resourceTypeFilter}
-          onValueChange={(v) => {
-            setResourceTypeFilter(v ?? 'all')
-            void navigate({ search: { page: 1 } })
-          }}
-          items={RESOURCE_TYPE_OPTIONS}
-        >
-          <SelectTrigger className="w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(RESOURCE_TYPE_OPTIONS).map(([key, label]) => (
-              <SelectItem key={key} value={key}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          placeholder="Filter by action..."
-          value={actionFilter}
-          onChange={(e) => {
-            setActionFilter(e.target.value)
-            void navigate({ search: { page: 1 } })
-          }}
-          className="w-full sm:max-w-xs"
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <CollectionSearchInput
+          key={search.q ?? ''}
+          initialValue={search.q ?? ''}
+          onSearch={(value) =>
+            updateSearch({ q: value.trim() || undefined, page: undefined })
+          }
+          placeholder="Search actions"
+          ariaLabel="Search audit actions"
+          className="lg:max-w-sm"
         />
-        <Input
-          type="date"
-          value={fromDate}
-          onChange={(e) => {
-            setFromDate(e.target.value)
-            void navigate({ search: { page: 1 } })
-          }}
-          className="w-full sm:w-36"
-          aria-label="From date"
-        />
-        <Input
-          type="date"
-          value={toDate}
-          onChange={(e) => {
-            setToDate(e.target.value)
-            void navigate({ search: { page: 1 } })
-          }}
-          className="w-full sm:w-36"
-          aria-label="To date"
-        />
-        {hasFilters ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setResourceTypeFilter('all')
-              setActionFilter('')
-              setFromDate('')
-              setToDate('')
-              void navigate({ search: { page: 1 } })
-            }}
+        <div className="grid min-w-0 grid-cols-2 gap-3 sm:flex sm:flex-wrap lg:ml-auto">
+          <Select
+            value={search.resource ?? 'all'}
+            onValueChange={(value) =>
+              updateSearch({
+                resource: value && value !== 'all' ? value : undefined,
+                page: undefined,
+              })
+            }
+            items={RESOURCE_TYPE_OPTIONS}
           >
-            Clear filters
+            <SelectTrigger
+              className="w-full sm:w-40"
+              aria-label="Filter by resource"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(RESOURCE_TYPE_OPTIONS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={sort}
+            onValueChange={(value) =>
+              handleSortChange(value ?? 'created_at', direction)
+            }
+            items={AUDIT_SORT_OPTIONS}
+          >
+            <SelectTrigger
+              className="w-full sm:hidden"
+              aria-label="Sort audit log"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(AUDIT_SORT_OPTIONS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <AuditDateRangePicker
+            from={search.from}
+            to={search.to}
+            onChange={(range) =>
+              updateSearch({
+                from: range?.from
+                  ? format(range.from, 'yyyy-MM-dd')
+                  : undefined,
+                to: range?.to ? format(range.to, 'yyyy-MM-dd') : undefined,
+                page: undefined,
+              })
+            }
+          />
+          <Button
+            variant="outline"
+            className="w-full sm:hidden"
+            onClick={() =>
+              handleSortChange(sort, direction === 'desc' ? 'asc' : 'desc')
+            }
+            aria-label={`Sort ${direction === 'desc' ? 'ascending' : 'descending'}`}
+          >
+            {direction === 'desc' ? 'Descending' : 'Ascending'}
           </Button>
-        ) : null}
+          {hasFilters ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full sm:w-auto"
+              onClick={clearFilters}
+            >
+              Clear filters
+            </Button>
+          ) : null}
+        </div>
       </div>
-
-      {auditQuery.isLoading ? (
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
-      ) : null}
 
       {auditQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load audit log: {auditQuery.error.message}
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>Failed to load audit log: {auditQuery.error.message}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void auditQuery.refetch()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {!auditQuery.isLoading && !auditQuery.error ? (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Activity log
-              </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                {total} total
-              </span>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {entries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No audit log entries found.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Actor</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Resource</TableHead>
-                    <TableHead>Resource ID</TableHead>
-                    <TableHead>Details</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {entries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                        {relativeTime(entry.created_at)}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {entry.actor_email ?? (
-                          <span className="text-muted-foreground">System</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{entry.action}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{entry.resource_type}</Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-[11px] text-muted-foreground">
-                        {entry.resource_id
-                          ? entry.resource_id.slice(0, 8)
-                          : '—'}
-                      </TableCell>
-                      <TableCell className="max-w-xs truncate text-xs text-muted-foreground">
-                        {entry.details
-                          ? entry.details.length > 60
-                            ? entry.details.slice(0, 60) + '…'
-                            : entry.details
-                          : '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+      {showFilteredEmpty ? (
+        <Empty className="bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={Search01Icon} />
+            </EmptyMedia>
+            <EmptyTitle>No matching activity</EmptyTitle>
+            <EmptyDescription>
+              Change the current filters or clear them to see all activity.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button variant="outline" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          </EmptyContent>
+        </Empty>
       ) : null}
 
-      {!auditQuery.isLoading && !auditQuery.error && totalPages > 1 ? (
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <Pagination>
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  onClick={(e) => {
-                    e.preventDefault()
-                    if (page > 1)
-                      void navigate({
-                        search: { page: page - 1 > 1 ? page - 1 : undefined },
-                      })
-                  }}
-                  aria-disabled={page <= 1}
-                  className={page <= 1 ? 'pointer-events-none opacity-50' : ''}
-                />
-              </PaginationItem>
-              {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                let pageNum: number
-                if (totalPages <= 5) {
-                  pageNum = i + 1
-                } else if (page <= 3) {
-                  pageNum = i + 1
-                } else if (page >= totalPages - 2) {
-                  pageNum = totalPages - 4 + i
-                } else {
-                  pageNum = page - 2 + i
-                }
-                return (
-                  <PaginationItem key={pageNum}>
-                    <PaginationLink
-                      isActive={pageNum === page}
-                      onClick={(e) => {
-                        e.preventDefault()
-                        void navigate({
-                          search: {
-                            page: pageNum > 1 ? pageNum : undefined,
-                          },
-                        })
-                      }}
-                    >
-                      {pageNum}
-                    </PaginationLink>
-                  </PaginationItem>
-                )
-              })}
-              <PaginationItem>
-                <PaginationNext
-                  onClick={(e) => {
-                    e.preventDefault()
-                    if (page < totalPages)
-                      void navigate({ search: { page: page + 1 } })
-                  }}
-                  aria-disabled={page >= totalPages}
-                  className={
-                    page >= totalPages ? 'pointer-events-none opacity-50' : ''
-                  }
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </div>
+      {showTrueEmpty ? (
+        <Empty className="bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={InformationCircleIcon} />
+            </EmptyMedia>
+            <EmptyTitle>No activity yet</EmptyTitle>
+            <EmptyDescription>
+              User and system actions will appear here as they happen.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : null}
+
+      {!auditQuery.error && (auditQuery.isLoading || total > 0) ? (
+        <AuditLogInventory
+          direction={direction}
+          entries={entries}
+          isLoading={auditQuery.isLoading}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onSortChange={handleSortChange}
+          page={page}
+          pageSize={pageSize}
+          sort={sort}
+          total={total}
+        />
       ) : null}
     </PageLayout>
   )

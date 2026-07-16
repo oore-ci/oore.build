@@ -24,6 +24,7 @@ import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { useSetupStore } from '@/stores/setup-store'
 import { PageMeta } from '@/lib/seo'
 import { useOwnerStepTransition } from '@/hooks/use-setup-route-transitions'
+import { SetupStepError } from '@/components/setup-route-components'
 
 const localOwnerSchema = z.object({
   email: z.email('Enter a valid email address'),
@@ -33,19 +34,8 @@ type LocalOwnerForm = z.infer<typeof localOwnerSchema>
 
 export const Route = createLazyFileRoute('/setup/owner')({
   component: OwnerStep,
-  errorComponent: OwnerStepError,
+  errorComponent: SetupStepError,
 })
-
-function OwnerStepError({ error }: { error: Error }) {
-  return (
-    <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertTitle>Something went wrong</AlertTitle>
-        <AlertDescription>{error.message}</AlertDescription>
-      </Alert>
-    </div>
-  )
-}
 
 function getOidcErrorMessage(error: Error | null): string | null {
   if (!error) return null

@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 
-export function TrustedProxySettingsDialog({
+export default function TrustedProxySettingsDialog({
   state,
 }: {
   state: PreferencesPageState

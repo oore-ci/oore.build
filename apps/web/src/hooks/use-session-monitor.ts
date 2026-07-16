@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useAuthStore } from '@/stores/auth-store'
 

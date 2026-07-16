@@ -35,7 +35,8 @@ export function useNotificationChannels() {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'notification-channels'],
-    queryFn: () => listNotificationChannels(baseUrl!, token!),
+    queryFn: ({ signal }) =>
+      listNotificationChannels(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
   })
 }
@@ -130,7 +131,8 @@ export function useNotificationDeliveries(channelId: string) {
       'notification-deliveries',
       channelId,
     ],
-    queryFn: () => listNotificationDeliveries(baseUrl!, token!, channelId),
+    queryFn: ({ signal }) =>
+      listNotificationDeliveries(baseUrl!, token!, channelId, { signal }),
     enabled: !!baseUrl && !!token && !!channelId,
   })
 }

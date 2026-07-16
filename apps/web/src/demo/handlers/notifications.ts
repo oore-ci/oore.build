@@ -4,6 +4,7 @@ import {
   demoNotificationDeliveries,
 } from '../data/notification-channels'
 import type { NotificationChannel, NotificationDelivery } from '@/lib/types'
+import { requireDemoInstancePermission } from '../authorization'
 
 function now(): number {
   return Math.floor(Date.now() / 1000)
@@ -24,6 +25,11 @@ export const notificationHandlers = [
 
   http.post('/v1/settings/notification-channels', async ({ request }) => {
     await delay(300)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:write',
+    )
+    if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
 
     const channel: NotificationChannel = {
@@ -61,6 +67,11 @@ export const notificationHandlers = [
     '/v1/settings/notification-channels/:id',
     async ({ params, request }) => {
       await delay(300)
+      const forbidden = requireDemoInstancePermission(
+        request,
+        'instance_settings:write',
+      )
+      if (forbidden) return forbidden
       const idx = channels.findIndex((c) => c.id === params.id)
       if (idx === -1) {
         return HttpResponse.json(
@@ -87,24 +98,37 @@ export const notificationHandlers = [
     },
   ),
 
-  http.delete('/v1/settings/notification-channels/:id', async ({ params }) => {
-    await delay(300)
-    const idx = channels.findIndex((c) => c.id === params.id)
-    if (idx === -1) {
-      return HttpResponse.json(
-        { error: 'not_found', message: 'Channel not found' },
-        { status: 404 },
+  http.delete(
+    '/v1/settings/notification-channels/:id',
+    async ({ params, request }) => {
+      await delay(300)
+      const forbidden = requireDemoInstancePermission(
+        request,
+        'instance_settings:write',
       )
-    }
-    channels = channels.filter((_, i) => i !== idx)
-    deliveries = deliveries.filter((d) => d.channel_id !== params.id)
-    return HttpResponse.json({ deleted: true })
-  }),
+      if (forbidden) return forbidden
+      const idx = channels.findIndex((c) => c.id === params.id)
+      if (idx === -1) {
+        return HttpResponse.json(
+          { error: 'not_found', message: 'Channel not found' },
+          { status: 404 },
+        )
+      }
+      channels = channels.filter((_, i) => i !== idx)
+      deliveries = deliveries.filter((d) => d.channel_id !== params.id)
+      return HttpResponse.json({ deleted: true })
+    },
+  ),
 
   http.post(
     '/v1/settings/notification-channels/:id/test',
-    async ({ params }) => {
+    async ({ params, request }) => {
       await delay(500)
+      const forbidden = requireDemoInstancePermission(
+        request,
+        'instance_settings:write',
+      )
+      if (forbidden) return forbidden
       const channel = channels.find((c) => c.id === params.id)
       if (!channel) {
         return HttpResponse.json(

@@ -1,11 +1,16 @@
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, ArrowRight01Icon, Link04Icon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  ArrowRight01Icon,
+  Link04Icon,
+} from '@hugeicons/core-free-icons'
 
 import type { Build, Project, RuntimeMode } from '@/lib/types'
 import { getStatusVariant } from '@/lib/status-variants'
 import { relativeTime } from '@/lib/format-utils'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -128,15 +133,21 @@ export function DashboardGettingStarted({
 
 export function DashboardRecentBuilds({
   builds,
+  error,
   isLoading,
-  onOpenBuild,
   projects,
+  onRetry,
 }: {
   builds: Array<Build>
+  error?: Error | null
   isLoading: boolean
-  onOpenBuild: (buildId: string) => void
   projects: Array<Project>
+  onRetry: () => void
 }) {
+  const projectNames = new Map(
+    projects.map((project) => [project.id, project.name]),
+  )
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -154,7 +165,16 @@ export function DashboardRecentBuilds({
         </Button>
       </div>
 
-      {isLoading ? (
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-3">
+            <span>Build activity could not be loaded.</span>
+            <Button variant="outline" size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : isLoading ? (
         <Card>
           <CardContent className="space-y-3">
             <Skeleton className="h-8 w-full" />
@@ -171,35 +191,62 @@ export function DashboardRecentBuilds({
           </CardContent>
         </Card>
       ) : (
-        <Card>
+        <Card size="sm">
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Build</TableHead>
-                  <TableHead>Project</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Branch</TableHead>
-                  <TableHead>Commit</TableHead>
-                  <TableHead>When</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {builds.map((build) => {
-                  const projectName =
-                    projects.find((project) => project.id === build.project_id)
-                      ?.name ?? build.project_id.slice(0, 8)
-                  return (
-                    <TableRow
-                      key={build.id}
-                      className="group cursor-pointer"
-                      onClick={() => onOpenBuild(build.id)}
-                    >
-                      <TableCell className="font-mono text-sm group-hover:underline">
-                        #{build.build_number}
+            <div className="divide-y sm:hidden">
+              {builds.map((build) => (
+                <Link
+                  key={build.id}
+                  to="/builds/$buildId"
+                  params={{ buildId: build.id }}
+                  className="flex min-h-16 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {projectNames.get(build.project_id) ??
+                        build.context?.project_name ??
+                        build.project_id.slice(0, 8)}{' '}
+                      <span className="font-mono">#{build.build_number}</span>
+                    </p>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {build.branch ?? 'No branch'} ·{' '}
+                      {relativeTime(build.created_at)}
+                    </p>
+                  </div>
+                  <Badge variant={getStatusVariant(build.status)}>
+                    {build.status}
+                  </Badge>
+                </Link>
+              ))}
+            </div>
+            <div className="hidden sm:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Build</TableHead>
+                    <TableHead>Project</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Branch</TableHead>
+                    <TableHead>Commit</TableHead>
+                    <TableHead>When</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {builds.map((build) => (
+                    <TableRow key={build.id}>
+                      <TableCell className="font-mono text-sm">
+                        <Link
+                          to="/builds/$buildId"
+                          params={{ buildId: build.id }}
+                          className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          #{build.build_number}
+                        </Link>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {projectName}
+                        {projectNames.get(build.project_id) ??
+                          build.context?.project_name ??
+                          build.project_id.slice(0, 8)}
                       </TableCell>
                       <TableCell>
                         <Badge variant={getStatusVariant(build.status)}>
@@ -210,16 +257,18 @@ export function DashboardRecentBuilds({
                         {build.branch ?? 'n/a'}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {build.commit_sha ? build.commit_sha.slice(0, 8) : 'n/a'}
+                        {build.commit_sha
+                          ? build.commit_sha.slice(0, 8)
+                          : 'n/a'}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {relativeTime(build.created_at)}
                       </TableCell>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       )}

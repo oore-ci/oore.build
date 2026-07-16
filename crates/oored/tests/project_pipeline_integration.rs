@@ -284,6 +284,33 @@ async fn test_create_and_list_projects() {
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0]["id"].as_str().unwrap(), project_id);
 
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO projects (id, name, settings, created_by, created_at, updated_at) \
+         VALUES ('alpha-project', 'Alpha Project', '{}', ?1, ?2, ?2)",
+    )
+    .bind(&user_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (status, json) = json_request(
+        &app,
+        "GET",
+        "/v1/projects?sort=name&direction=asc",
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["projects"][0]["name"], "Alpha Project");
+
+    let (status, json) =
+        json_request(&app, "GET", "/v1/projects?sort=unsupported", &token, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["code"], "invalid_input");
+
     // List with search
     let (status, json) = json_request(&app, "GET", "/v1/projects?search=Test", &token, None).await;
 
@@ -1075,6 +1102,82 @@ async fn test_qa_session_is_capped_at_viewer_for_legacy_elevated_membership() {
 
     assert_eq!(status, StatusCode::FORBIDDEN, "response: {response}");
     assert_eq!(response["code"], "permission_denied");
+}
+
+#[tokio::test]
+async fn test_project_member_candidates_are_project_scoped() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let owner_token = create_session_token(&pool, &owner_id).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/member-candidates").await;
+
+    let maintainer_id = seed_user_with_role(&pool, "maintainer@example.com", "developer").await;
+    seed_project_member(&pool, &project_id, &maintainer_id, &owner_id, "maintainer").await;
+    let maintainer_token = create_session_token(&pool, &maintainer_id).await;
+
+    let member_id = seed_user_with_role(&pool, "member@example.com", "developer").await;
+    seed_project_member(&pool, &project_id, &member_id, &owner_id, "developer").await;
+    let member_token = create_session_token(&pool, &member_id).await;
+
+    let developer_id = seed_user_with_role(&pool, "candidate-dev@example.com", "developer").await;
+    let qa_id = seed_user_with_role(&pool, "candidate-qa@example.com", "qa_viewer").await;
+    let invited_id = seed_user_with_role(&pool, "candidate-invited@example.com", "developer").await;
+    sqlx::query("UPDATE users SET status = 'invited' WHERE id = ?1")
+        .bind(&invited_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let disabled_id =
+        seed_user_with_role(&pool, "candidate-disabled@example.com", "developer").await;
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = ?1")
+        .bind(&disabled_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let _admin_id = seed_user_with_role(&pool, "admin@example.com", "admin").await;
+    let outsider_id = seed_user_with_role(&pool, "outsider@example.com", "developer").await;
+    let outsider_token = create_session_token(&pool, &outsider_id).await;
+
+    let candidates_path = format!("/v1/projects/{project_id}/members/candidates");
+    for token in [&maintainer_token, &owner_token] {
+        let (status, response) = json_request(&app, "GET", &candidates_path, token, None).await;
+        assert_eq!(status, StatusCode::OK, "response: {response}");
+        let candidates = response["candidates"].as_array().unwrap();
+        let ids: std::collections::HashSet<_> = candidates
+            .iter()
+            .filter_map(|candidate| candidate["id"].as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            std::collections::HashSet::from([
+                developer_id.as_str(),
+                qa_id.as_str(),
+                invited_id.as_str(),
+                outsider_id.as_str(),
+            ])
+        );
+        assert!(candidates.iter().all(|candidate| {
+            candidate.as_object().unwrap().keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "id" | "email" | "display_name" | "role" | "status"
+                )
+            })
+        }));
+    }
+
+    let (status, response) = json_request(&app, "GET", "/v1/users", &maintainer_token, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "response: {response}");
+
+    let (status, _) = json_request(&app, "GET", &candidates_path, &member_token, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = json_request(&app, "GET", &candidates_path, &outsider_token, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

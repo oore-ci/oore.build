@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import { useBuildChangelogPreview, useCreateBuild } from '@/hooks/use-builds'
@@ -13,6 +13,14 @@ import { useProjects } from '@/hooks/use-projects'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -134,6 +142,73 @@ function PlatformSelectionField({
   )
 }
 
+function TriggerBuildBlockingAlerts({
+  issues,
+}: {
+  issues: {
+    noPipelines: boolean
+    noProjects: boolean
+    sourceMissing: boolean
+  }
+}) {
+  return (
+    <>
+      {issues.noProjects ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            No projects available. Create a project first.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {issues.noPipelines ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            This project has no pipelines. Add one before triggering builds.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {issues.sourceMissing ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            This project is not linked to a source repository. Link a repository
+            before triggering builds.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  )
+}
+
+function TriggerBuildFooter({
+  blocked,
+  onCancel,
+  onSubmit,
+  pending,
+}: {
+  blocked: boolean
+  onCancel: () => void
+  onSubmit: () => void
+  pending: boolean
+}) {
+  return (
+    <DialogFooter>
+      <Button type="button" variant="outline" onClick={onCancel}>
+        Cancel
+      </Button>
+      <Button type="button" disabled={pending || blocked} onClick={onSubmit}>
+        {pending ? (
+          <>
+            <Spinner className="size-4" />
+            Running...
+          </>
+        ) : (
+          'Run build'
+        )}
+      </Button>
+    </DialogFooter>
+  )
+}
+
 interface TriggerBuildDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -238,6 +313,24 @@ function useTriggerBuildDialogState({
     () => selectedPipeline?.execution_config.platforms ?? [],
     [selectedPipeline],
   )
+  const branchItems = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            defaultBranch,
+            activeProject?.default_branch,
+            ...(selectedPipeline?.trigger_config.branches ?? []).filter(
+              (branch) =>
+                !branch.includes('*') &&
+                !branch.includes('?') &&
+                !branch.includes('['),
+            ),
+          ].filter((branch): branch is string => !!branch),
+        ),
+      ),
+    [activeProject?.default_branch, defaultBranch, selectedPipeline],
+  )
   const changelogPreviewQuery = useBuildChangelogPreview(
     projectId,
     {
@@ -335,6 +428,7 @@ function useTriggerBuildDialogState({
     pipelines.length === 0
 
   return {
+    branchItems,
     createBuildMutation,
     changelogPreviewQuery,
     defaultBranch,
@@ -365,6 +459,7 @@ function useTriggerBuildDialogState({
 
 export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
   const {
+    branchItems,
     createBuildMutation,
     changelogPreviewQuery,
     defaultBranch,
@@ -532,13 +627,40 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Branch</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={defaultBranch ?? 'main'}
-                      autoComplete="off"
-                      {...field}
-                    />
-                  </FormControl>
+                  <Combobox
+                    items={branchItems}
+                    inputValue={field.value ?? ''}
+                    value={
+                      branchItems.includes(field.value ?? '')
+                        ? field.value
+                        : null
+                    }
+                    onInputValueChange={field.onChange}
+                    onValueChange={(value) => {
+                      if (value) field.onChange(value)
+                    }}
+                  >
+                    <FormControl>
+                      <ComboboxInput
+                        className="w-full"
+                        placeholder={defaultBranch ?? 'main'}
+                        autoComplete="off"
+                      />
+                    </FormControl>
+                    <ComboboxContent>
+                      <ComboboxEmpty>
+                        No matching known branches. Keep typing to use a custom
+                        branch.
+                      </ComboboxEmpty>
+                      <ComboboxList>
+                        {(branch) => (
+                          <ComboboxItem key={branch} value={branch}>
+                            {branch}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
                   <FormDescription>
                     The branch to build. If both branch and commit SHA are
                     provided, the commit takes precedence.
@@ -574,7 +696,7 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
               control={form.control}
               name="changelog"
               render={({ field }) => (
-                <FormItem>
+                <FormItem className="pb-4">
                   <FormLabel>What changed? (optional)</FormLabel>
                   <FormControl>
                     <Textarea
@@ -600,58 +722,21 @@ export default function TriggerBuildDialog(props: TriggerBuildDialogProps) {
               )}
             />
 
-            {noProjects ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  No projects available. Create a project first.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+            <TriggerBuildBlockingAlerts
+              issues={{ noPipelines, noProjects, sourceMissing }}
+            />
 
-            {noPipelines ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  This project has no pipelines. Add one before triggering
-                  builds.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            {sourceMissing ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  This project is not linked to a source repository. Link a
-                  repository before triggering builds.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={handleClose}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                disabled={
-                  createBuildMutation.isPending ||
-                  noProjects ||
-                  noPipelines ||
-                  sourceMissing ||
-                  (!fixedProjectId && !projectId)
-                }
-                onClick={() => {
-                  void form.handleSubmit(onSubmit)()
-                }}
-              >
-                {createBuildMutation.isPending ? (
-                  <>
-                    <Spinner className="size-4" />
-                    Running...
-                  </>
-                ) : (
-                  'Run build'
-                )}
-              </Button>
-            </DialogFooter>
+            <TriggerBuildFooter
+              blocked={
+                noProjects ||
+                noPipelines ||
+                sourceMissing ||
+                (!fixedProjectId && !projectId)
+              }
+              onCancel={handleClose}
+              onSubmit={() => void form.handleSubmit(onSubmit)()}
+              pending={createBuildMutation.isPending}
+            />
           </form>
         </Form>
       </DialogContent>

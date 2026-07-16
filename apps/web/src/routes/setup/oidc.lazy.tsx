@@ -20,10 +20,8 @@ import { useSetupStore } from '@/stores/setup-store'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
 import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
-import {
-  CopyableOidcRedirectUri,
-  OidcConfigError,
-} from '@/components/setup-oidc-components'
+import { CopyableOidcRedirectUri } from '@/components/setup-oidc-components'
+import { SetupStepError } from '@/components/setup-route-components'
 
 // ── Predefined OIDC providers ──────────────────────────────────
 
@@ -94,7 +92,7 @@ type OidcConfigForm = z.infer<typeof oidcConfigSchema>
 
 export const Route = createLazyFileRoute('/setup/oidc')({
   component: OidcConfigStep,
-  errorComponent: OidcConfigError,
+  errorComponent: SetupStepError,
 })
 
 // ── Component ──────────────────────────────────────────────────

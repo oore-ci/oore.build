@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import { PageMeta } from '@/lib/seo'
 import {
@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { RetentionSummaryCard } from './retention-summary-card'
+import { RetentionSummaryCard } from './-retention-summary-card'
 
 export const Route = createLazyFileRoute('/settings/retention')({
   component: RetentionPage,
@@ -56,6 +56,15 @@ const CLEANUP_INTERVALS = [
   { value: '21600', label: '6 hours' },
   { value: '86400', label: '24 hours' },
 ] as const
+
+const CLEANUP_TARGETS = {
+  artifacts_only: 'Artifacts only — keep build history',
+  full: 'Full delete — remove everything',
+} as const
+
+const CLEANUP_INTERVAL_OPTIONS = Object.fromEntries(
+  CLEANUP_INTERVALS.map(({ value, label }) => [value, label]),
+)
 
 const retentionSchema = z.object({
   enabled: z.boolean(),
@@ -157,7 +166,11 @@ function EnabledRetentionFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Cleanup mode</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={CLEANUP_TARGETS}
+                >
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue />
@@ -187,7 +200,11 @@ function EnabledRetentionFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Cleanup interval</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={CLEANUP_INTERVAL_OPTIONS}
+                >
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue />
@@ -421,6 +438,11 @@ function RetentionPage() {
         description="Configure automatic cleanup of old builds and artifacts to manage disk usage"
       />
 
+      <RetentionSummaryCard
+        isLoading={cleanupLoading}
+        lastCleanup={lastCleanup}
+      />
+
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           {/* Enable/Disable */}
@@ -428,7 +450,7 @@ function RetentionPage() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 <span>Global Retention Policy</span>
-                <Badge variant={enabled ? 'default' : 'outline'}>
+                <Badge variant={enabled ? 'secondary' : 'outline'}>
                   {enabled ? 'Active' : 'Disabled'}
                 </Badge>
               </CardTitle>
@@ -468,11 +490,6 @@ function RetentionPage() {
           </Card>
         </form>
       </Form>
-
-      <RetentionSummaryCard
-        isLoading={cleanupLoading}
-        lastCleanup={lastCleanup}
-      />
     </PageLayout>
   )
 }

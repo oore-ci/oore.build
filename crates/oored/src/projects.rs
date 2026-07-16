@@ -280,6 +280,39 @@ pub struct ListProjectsQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub search: Option<String>,
+    pub sort: Option<String>,
+    pub direction: Option<String>,
+}
+
+fn project_order_clause(
+    sort: Option<&str>,
+    direction: Option<&str>,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let column = match sort.unwrap_or("created_at") {
+        "created_at" => "p.created_at",
+        "updated_at" => "p.updated_at",
+        "name" => "p.name COLLATE NOCASE",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "sort must be created_at, updated_at, or name",
+            ));
+        }
+    };
+    let direction = match direction.unwrap_or("desc") {
+        "asc" => "ASC",
+        "desc" => "DESC",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "direction must be asc or desc",
+            ));
+        }
+    };
+
+    Ok(format!("{column} {direction}, p.id {direction}"))
 }
 
 // ── Handlers ────────────────────────────────────────────────────
@@ -450,6 +483,7 @@ pub async fn list_projects(
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+    let order_by = project_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
     let is_admin = auth.0.role == "owner" || auth.0.role == "admin";
 
@@ -467,7 +501,7 @@ pub async fn list_projects(
 
             let rows = sqlx::query(&format!(
                 "{PROJECT_SELECT} WHERE p.name LIKE ?1 OR p.description LIKE ?1 \
-                 ORDER BY p.created_at DESC LIMIT ?2 OFFSET ?3"
+                 ORDER BY {order_by} LIMIT ?2 OFFSET ?3"
             ))
             .bind(&pattern)
             .bind(limit)
@@ -491,7 +525,7 @@ pub async fn list_projects(
                 .unwrap_or(0);
 
             let rows = sqlx::query(&format!(
-                "{PROJECT_SELECT} ORDER BY p.created_at DESC LIMIT ?1 OFFSET ?2"
+                "{PROJECT_SELECT} ORDER BY {order_by} LIMIT ?1 OFFSET ?2"
             ))
             .bind(limit)
             .bind(offset)
@@ -527,7 +561,7 @@ pub async fn list_projects(
                 "{PROJECT_SELECT} \
                  INNER JOIN project_members pm ON pm.project_id = p.id \
                  WHERE pm.user_id = ?1 AND (p.name LIKE ?2 OR p.description LIKE ?2) \
-                 ORDER BY p.created_at DESC LIMIT ?3 OFFSET ?4"
+                 ORDER BY {order_by} LIMIT ?3 OFFSET ?4"
             ))
             .bind(&auth.0.user_id)
             .bind(&pattern)
@@ -560,7 +594,7 @@ pub async fn list_projects(
                 "{PROJECT_SELECT} \
                  INNER JOIN project_members pm ON pm.project_id = p.id \
                  WHERE pm.user_id = ?1 \
-                 ORDER BY p.created_at DESC LIMIT ?2 OFFSET ?3"
+                 ORDER BY {order_by} LIMIT ?2 OFFSET ?3"
             ))
             .bind(&auth.0.user_id)
             .bind(limit)

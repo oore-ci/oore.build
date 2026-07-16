@@ -469,6 +469,66 @@ export const demoBuilds: Array<Build> = [
   },
 ]
 
+const demoBuildHistoryApps = [
+  {
+    projectId: PROJECT_IDS.flutterShop,
+    pipelineId: PIPELINE_IDS.shopAndroid,
+    branch: 'main',
+    firstBuildNumber: 137,
+  },
+  {
+    projectId: PROJECT_IDS.internalAdmin,
+    pipelineId: PIPELINE_IDS.adminAndroid,
+    branch: 'develop',
+    firstBuildNumber: 86,
+  },
+  {
+    projectId: PROJECT_IDS.nativePayments,
+    pipelineId: PIPELINE_IDS.paymentsAll,
+    branch: 'main',
+    firstBuildNumber: 43,
+  },
+] as const
+
+for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
+  for (let index = 0; index < 24; index += 1) {
+    const age = 259_200 + index * 14_400 + projectIndex * 600
+    const status =
+      index % 6 === 4
+        ? 'failed'
+        : index % 6 === 5
+          ? 'canceled'
+          : 'succeeded'
+    demoBuilds.push({
+      id: `build-demo-history-${projectIndex + 1}-${String(index + 1).padStart(2, '0')}`,
+      project_id: app.projectId,
+      pipeline_id: app.pipelineId,
+      build_number: app.firstBuildNumber - index,
+      status,
+      trigger_type: 'webhook',
+      trigger_event: 'push',
+      trigger_ref: `refs/heads/${app.branch}`,
+      commit_sha: (projectIndex * 24 + index + 1)
+        .toString(16)
+        .padStart(40, '0'),
+      branch: app.branch,
+      changelog:
+        index % 3 === 0
+          ? 'Routine stability improvements and dependency updates.'
+          : undefined,
+      config_snapshot: {},
+      runner_id: index % 2 === 0 ? RUNNER_IDS.macStudio : RUNNER_IDS.macMini,
+      exit_code:
+        status === 'succeeded' ? 0 : status === 'failed' ? 1 : undefined,
+      queued_at: ago(age),
+      started_at: ago(age - 60),
+      finished_at: ago(age - 420),
+      created_at: ago(age),
+      updated_at: ago(age - 420),
+    })
+  }
+}
+
 // ── Build events for detail views ───────────────────────────────
 export const demoBuildEvents: Record<string, Array<BuildEvent>> = {
   [BUILD_IDS.running1]: [

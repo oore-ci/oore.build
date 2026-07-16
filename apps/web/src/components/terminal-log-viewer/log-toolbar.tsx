@@ -1,6 +1,5 @@
 import {
   AlertCircleIcon,
-  ArrowDown01Icon,
   Cancel01Icon,
   Download04Icon,
   Search01Icon,
@@ -21,28 +20,24 @@ interface LogToolbarProps {
   searchQuery: string
   searchInputRef: RefObject<HTMLInputElement | null>
   wrapLines: boolean
-  showScrollLatest: boolean
   hasErrors: boolean
   onSearchQueryChange: (query: string) => void
   onSearchClear: () => void
   onJumpToError: () => void
   onToggleWrap: () => void
   onDownload: () => void
-  onScrollLatest: () => void
 }
 
 export function LogToolbar({
   searchQuery,
   searchInputRef,
   wrapLines,
-  showScrollLatest,
   hasErrors,
   onSearchQueryChange,
   onSearchClear,
   onJumpToError,
   onToggleWrap,
   onDownload,
-  onScrollLatest,
 }: LogToolbarProps) {
   return (
     <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -95,15 +90,6 @@ export function LogToolbar({
       >
         <HugeiconsIcon icon={Download04Icon} />
       </ToolbarButton>
-      {showScrollLatest ? (
-        <ToolbarButton
-          label="Scroll to latest log"
-          title="Scroll to bottom"
-          onClick={onScrollLatest}
-        >
-          <HugeiconsIcon icon={ArrowDown01Icon} />
-        </ToolbarButton>
-      ) : null}
     </div>
   )
 }

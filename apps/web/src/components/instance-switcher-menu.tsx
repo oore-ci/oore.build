@@ -106,22 +106,18 @@ export default function InstanceSwitcherMenu({
                     />
                   </div>
                   <span className="truncate flex-1">{candidate.label}</span>
-                  {!candidate.qaPreviewSourceId ? (
-                    <button
-                      type="button"
-                      className="ml-auto text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        requestAnimationFrame(() =>
-                          setEditingInstance(candidate),
-                        )
-                      }}
-                      title={`Edit ${candidate.label}`}
-                      aria-label={`Edit ${candidate.label}`}
-                    >
-                      <HugeiconsIcon icon={PencilEdit02Icon} size={14} />
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    className="ml-auto text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      requestAnimationFrame(() => setEditingInstance(candidate))
+                    }}
+                    title={`Edit ${candidate.label}`}
+                    aria-label={`Edit ${candidate.label}`}
+                  >
+                    <HugeiconsIcon icon={PencilEdit02Icon} size={14} />
+                  </button>
                   {candidate.id === instance?.id ? (
                     <HugeiconsIcon
                       icon={Tick02Icon}

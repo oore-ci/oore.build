@@ -25,6 +25,8 @@ export function useAuditLogs(params?: {
   resource_type?: string
   from_ts?: number
   to_ts?: number
+  sort?: 'created_at' | 'actor_email' | 'action' | 'resource_type'
+  direction?: 'asc' | 'desc'
 }) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -32,7 +34,8 @@ export function useAuditLogs(params?: {
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'audit-logs', params ?? {}],
-    queryFn: () => listAuditLogs(baseUrl!, token!, params),
+    queryFn: ({ signal }) =>
+      listAuditLogs(baseUrl!, token!, params, { signal }),
     enabled: !!baseUrl && !!token,
     placeholderData: keepPreviousData,
   })

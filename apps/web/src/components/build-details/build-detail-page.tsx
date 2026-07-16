@@ -5,7 +5,7 @@ import {
   InformationCircleIcon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { BuildSummary } from './build-summary'
@@ -23,7 +23,8 @@ import {
   useRerunBuild,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
+import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -40,8 +41,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 export function BuildDetailPage({ buildId }: { buildId: string }) {
   const navigate = useNavigate()
   const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
-  const canTriggerBuild = useHasPermission('builds', 'write')
-  const canCancelBuild = useHasPermission('builds', 'cancel')
+  const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const canCancelBuildGlobally = useHasPermission('builds', 'cancel')
+  const canManageShareLinksGlobally = useHasPermission('artifacts', 'write')
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
@@ -50,6 +52,19 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         : 3000,
   })
   const { data, isLoading, error, refetch: refetchBuild } = buildQuery
+  const projectQuery = useProject(data?.build.project_id ?? '')
+  const projectRole =
+    projectQuery.data?.current_user_role ??
+    projectQuery.data?.project.current_user_role
+  const canTriggerBuild =
+    canTriggerBuildGlobally &&
+    hasProjectPermission(projectRole, 'builds', 'write')
+  const canCancelBuild =
+    canCancelBuildGlobally &&
+    hasProjectPermission(projectRole, 'builds', 'cancel')
+  const canManageShareLinks =
+    canManageShareLinksGlobally &&
+    hasProjectPermission(projectRole, 'artifacts', 'write')
   const buildStatus = data?.build.status
   const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
   const artifactsQuery = useArtifacts(buildId, {
@@ -268,6 +283,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                   artifacts={artifactsQuery.data?.artifacts ?? []}
                   isLoading={artifactsQuery.isLoading}
                   buildStatus={build.status}
+                  canManageShareLinks={canManageShareLinks}
                 />
               </TabsContent>
             ) : null}
@@ -278,6 +294,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 artifacts={artifactsQuery.data?.artifacts ?? []}
                 isLoading={artifactsQuery.isLoading}
                 buildStatus={build.status}
+                canManageShareLinks={canManageShareLinks}
               />
             </aside>
           ) : null}

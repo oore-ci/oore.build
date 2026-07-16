@@ -1,20 +1,19 @@
+import { useMemo, useState } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Delete02Icon,
-  InformationCircleIcon,
-  Link04Icon,
-} from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
-import { useMountEffect } from '@/hooks/use-mount-effect'
+import { InformationCircleIcon, Link04Icon } from '@hugeicons/core-free-icons'
+import { toast } from '@/lib/toast'
 
+import type { Integration } from '@/lib/types'
+import { useMountEffect } from '@/hooks/use-mount-effect'
+import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useDeleteIntegration, useIntegrations } from '@/hooks/use-integrations'
-import { getIntegrationStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -26,42 +25,86 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Skeleton } from '@/components/ui/skeleton'
+import type { SortDirection } from '@/components/collection-controls'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import SetupHint from '@/components/setup-hint'
-import { Skeleton } from '@/components/ui/skeleton'
+import type { IntegrationSort } from './-source-inventory'
+import { ConnectSourceOptions } from './-connect-source-options'
+import { ConnectedSourcesSection } from './-connected-sources-section'
+
+interface IntegrationsSearch {
+  direction?: SortDirection
+  github?: string
+  integration_id?: string
+  page?: number
+  pageSize?: 20 | 50 | 100
+  q?: string
+  sort?: IntegrationSort
+}
+
+const INTEGRATION_SORTS = new Set<IntegrationSort>([
+  'name',
+  'provider',
+  'status',
+  'updated_at',
+])
+
+function parseSearch(search: Record<string, unknown>): IntegrationsSearch {
+  const page = Number(search.page)
+  const pageSize = Number(search.pageSize)
+  const sort = search.sort as IntegrationSort
+  const q = typeof search.q === 'string' ? search.q.trim() : ''
+
+  return {
+    github: typeof search.github === 'string' ? search.github : undefined,
+    integration_id:
+      typeof search.integration_id === 'string'
+        ? search.integration_id
+        : undefined,
+    q: q || undefined,
+    sort: INTEGRATION_SORTS.has(sort) ? sort : undefined,
+    direction: search.direction === 'asc' ? 'asc' : undefined,
+    page: Number.isInteger(page) && page > 1 ? page : undefined,
+    pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
+  }
+}
 
 export const Route = createFileRoute('/settings/integrations/')({
   staticData: { breadcrumbLabel: 'Sources' },
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { github?: string; integration_id?: string } => ({
-    github: (search.github as string) || undefined,
-    integration_id: (search.integration_id as string) || undefined,
-  }),
+  validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
   component: IntegrationsPage,
 })
 
 function IntegrationsPage() {
+  const canWrite = useHasPermission('integrations', 'write')
   const search = useSearch({ from: '/settings/integrations/' })
-  const { data, isLoading, error } = useIntegrations()
-  const {
-    data: preferences,
-    isLoading: preferencesLoading,
-    error: preferencesError,
-  } = useInstancePreferences()
+  const navigate = Route.useNavigate()
+  const integrationsQuery = useIntegrations()
+  const preferencesQuery = useInstancePreferences({ enabled: canWrite })
   const deleteMutation = useDeleteIntegration()
-  const runtimeMode = preferences?.preferences.runtime_mode
-  const remoteEnabled = runtimeMode === 'remote'
+  const [disconnectTarget, setDisconnectTarget] = useState<Integration | null>(
+    null,
+  )
+  const runtimeMode = preferencesQuery.data?.preferences.runtime_mode
+  const remoteEnabled = !canWrite || runtimeMode === 'remote'
+  const pageSize = search.pageSize ?? 20
+  const sort = search.sort ?? 'updated_at'
+  const direction = search.direction ?? 'desc'
 
   useMountEffect(() => {
     if (search.github === 'success') {
@@ -70,284 +113,280 @@ function IntegrationsPage() {
     }
   })
 
-  function handleDisconnect(id: string, name: string) {
-    deleteMutation.mutate(id, {
-      onSuccess: () => {
-        toast.success(`Disconnected source: ${name}`)
-      },
-      onError: (err) => {
-        toast.error(`Failed to disconnect: ${err.message}`)
-      },
+  const filteredIntegrations = useMemo(() => {
+    const query = search.q?.toLocaleLowerCase()
+    const integrations = (integrationsQuery.data?.integrations ?? []).filter(
+      (integration) =>
+        query
+          ? [
+              integration.display_name,
+              integration.provider,
+              integration.host_url,
+              integration.auth_mode,
+              integration.status,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLocaleLowerCase()
+              .includes(query)
+          : true,
+    )
+
+    return integrations.sort((left, right) => {
+      const leftValue =
+        sort === 'provider'
+          ? left.provider
+          : sort === 'status'
+            ? left.status
+            : sort === 'updated_at'
+              ? left.updated_at
+              : (left.display_name ?? left.provider).toLocaleLowerCase()
+      const rightValue =
+        sort === 'provider'
+          ? right.provider
+          : sort === 'status'
+            ? right.status
+            : sort === 'updated_at'
+              ? right.updated_at
+              : (right.display_name ?? right.provider).toLocaleLowerCase()
+      const result =
+        typeof leftValue === 'number'
+          ? leftValue - Number(rightValue)
+          : leftValue.localeCompare(String(rightValue))
+      return direction === 'asc' ? result : -result
+    })
+  }, [direction, integrationsQuery.data?.integrations, search.q, sort])
+
+  const total = filteredIntegrations.length
+  const requestedPage = search.page ?? 1
+  const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)))
+  const visibleIntegrations = filteredIntegrations.slice(
+    (page - 1) * pageSize,
+    page * pageSize,
+  )
+
+  function updateSearch(updates: Partial<IntegrationsSearch>) {
+    void navigate({
+      search: (previous) => ({ ...previous, ...updates }),
+      replace: true,
     })
   }
 
-  const integrations = data?.integrations ?? []
+  usePageClamp(
+    requestedPage,
+    pageSize,
+    integrationsQuery.isLoading ? undefined : total,
+    (nextPage) => {
+      updateSearch({ page: nextPage === 1 ? undefined : nextPage })
+    },
+  )
 
+  function handleSortChange(nextSort: IntegrationSort, next: SortDirection) {
+    updateSearch({ sort: nextSort, direction: next, page: undefined })
+  }
+
+  function handleDisconnect(integration: Integration) {
+    deleteMutation.mutate(integration.id, {
+      onSuccess: () => {
+        toast.success(
+          `Disconnected source: ${integration.display_name ?? integration.provider}`,
+        )
+        setDisconnectTarget(null)
+      },
+      onError: (error) => toast.error(`Failed to disconnect: ${error.message}`),
+    })
+  }
+
+  const hasSearch = !!search.q
+  const sourceCount = integrationsQuery.data?.integrations.length ?? 0
+  const hasConnectedSources = sourceCount > 0
   return (
     <PageLayout width="wide">
       <PageMeta title="Sources" noindex />
       <PageHeader
         title="Sources"
         description="Source connections used to discover repositories and trigger builds."
+        actions={
+          remoteEnabled && canWrite && hasConnectedSources ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button />}>
+                <HugeiconsIcon
+                  icon={Link04Icon}
+                  data-icon="inline-start"
+                  aria-hidden
+                />
+                Connect source
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void navigate({ to: '/settings/integrations/github' })
+                    }
+                  >
+                    GitHub
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void navigate({ to: '/settings/integrations/gitlab' })
+                    }
+                  >
+                    GitLab
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null
+        }
       />
 
-      {preferencesLoading ? (
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-2/3" />
-          </CardContent>
-        </Card>
-      ) : preferencesError ? (
+      {canWrite && preferencesQuery.isLoading ? (
+        <section aria-label="Source access policy" className="space-y-3">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-16 w-full" />
+        </section>
+      ) : canWrite && preferencesQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load access policy: {preferencesError.message}
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load access policy: {preferencesQuery.error.message}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void preferencesQuery.refetch()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       ) : !remoteEnabled ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              External Access Required
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Source connections (GitHub/GitLab) are available only when the
-              backend is in Remote mode. In Local Only mode, choose a local
-              repository during project creation.
+        <section className="space-y-4" aria-labelledby="external-access-title">
+          <div>
+            <h2
+              id="external-access-title"
+              className="text-sm font-medium uppercase tracking-wider text-muted-foreground"
+            >
+              External access required
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              GitHub and GitLab connections require Remote mode. In Local Only
+              mode, choose a repository path during project creation.
             </p>
-            <SetupHint
-              title="Local only path"
-              items={[
-                'Use Projects to create a project from a repository path available on the runner host.',
-                'Switch to Remote mode only when browser users or external webhooks need to reach the backend.',
-              ]}
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                render={<Link to="/settings/preferences" />}
-                nativeButton={false}
-              >
-                Open preferences
-              </Button>
-              <Button render={<Link to="/projects" />} nativeButton={false}>
-                Go to projects
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <section className="grid gap-4 md:grid-cols-2">
-          <Card className="h-full">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                GitHub Source
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3">
-              <p className="text-sm text-muted-foreground">
-                Create and install a GitHub App to enable repository discovery
-                and webhook events.
-              </p>
-              <SetupHint
-                title="What GitHub will ask for"
-                items={[
-                  'Repository contents and metadata read access for checkout and repository discovery.',
-                  'Pull request read access plus statuses/checks write access for CI feedback.',
-                  'Webhook events for pushes and pull requests.',
-                ]}
-              />
-              <Button
-                className="mt-auto self-start"
-                render={<Link to="/settings/integrations/github" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} />
-                Connect GitHub
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="h-full">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                GitLab Source
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-3">
-              <p className="text-sm text-muted-foreground">
-                Connect GitLab.com or a self-managed GitLab host through a
-                personal access token or OAuth application.
-              </p>
-              <SetupHint
-                title="Personal access token scopes"
-                items={[
-                  <span>
-                    Use <code>read_user</code>, <code>read_api</code>, and{' '}
-                    <code>read_repository</code>.
-                  </span>,
-                  <span>
-                    Avoid full <code>api</code> unless a future GitLab write
-                    feature explicitly needs it.
-                  </span>,
-                ]}
-              />
-              <Button
-                className="mt-auto self-start"
-                render={<Link to="/settings/integrations/gitlab" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} />
-                Connect GitLab
-              </Button>
-            </CardContent>
-          </Card>
+          </div>
+          <SetupHint
+            title="Local only path"
+            items={[
+              'Create a project from a repository path available on the runner host.',
+              'Switch to Remote mode only when browser users or external webhooks need to reach the backend.',
+            ]}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              render={<Link to="/settings/preferences" />}
+              nativeButton={false}
+            >
+              Open preferences
+            </Button>
+            <Button render={<Link to="/projects" />} nativeButton={false}>
+              Go to projects
+            </Button>
+          </div>
         </section>
-      )}
+      ) : null}
 
-      {!preferencesLoading && !preferencesError && !remoteEnabled ? (
+      {remoteEnabled &&
+      (integrationsQuery.isLoading ||
+        integrationsQuery.error ||
+        hasConnectedSources ||
+        hasSearch ||
+        !canWrite) ? (
+        <ConnectedSourcesSection
+          collection={{
+            canWrite,
+            integrations: visibleIntegrations,
+            total,
+          }}
+          direction={direction}
+          onClearSearch={() => updateSearch({ q: undefined, page: undefined })}
+          onDisconnect={setDisconnectTarget}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onRetry={() => void integrationsQuery.refetch()}
+          onSearch={(value) =>
+            updateSearch({ q: value.trim() || undefined, page: undefined })
+          }
+          onSortChange={handleSortChange}
+          page={page}
+          pageSize={pageSize}
+          query={{
+            error: integrationsQuery.error,
+            isLoading: integrationsQuery.isLoading,
+            search: search.q,
+          }}
+          sort={sort}
+        />
+      ) : null}
+
+      {remoteEnabled &&
+      canWrite &&
+      !integrationsQuery.isLoading &&
+      !integrationsQuery.error &&
+      !hasConnectedSources ? (
+        <ConnectSourceOptions />
+      ) : null}
+
+      {remoteEnabled && !canWrite ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Access mode is <code>local only</code>. GitHub/GitLab sources are
-            disabled until the backend is switched to Remote mode from
-            Preferences. Local repositories are selected in project creation.
+            You have read-only access to connected sources. An owner or admin
+            can add, reconnect, or disconnect providers.
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {isLoading ? (
-        <Card size="sm">
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {error ? (
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load sources: {error.message}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!isLoading && !error && remoteEnabled ? (
-        <Card size="sm">
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Connected Sources
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {integrations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No connected sources yet. Connect GitHub or GitLab above.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  Click a source tile to open details.
-                </p>
-                {integrations.map((integration) => (
-                  <div
-                    key={integration.id}
-                    className="group flex flex-col border border-border/60 bg-card transition-colors hover:border-primary/30 hover:bg-primary/5 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
-                  >
-                    <Link
-                      to="/settings/integrations/$integrationId"
-                      params={{ integrationId: integration.id }}
-                      className="min-w-0 flex-1 p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                    >
-                      <div className="space-y-2">
-                        <div>
-                          <p className="font-medium">
-                            {integration.display_name ?? integration.provider}
-                          </p>
-                          <p className="font-mono text-xs text-muted-foreground">
-                            {integration.id.slice(0, 8)}
-                          </p>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">
-                            {integration.provider}
-                          </Badge>
-                          <Badge variant="outline">
-                            {integration.provider === 'local_git'
-                              ? 'Single repo'
-                              : 'Multi repo'}
-                          </Badge>
-                          <Badge
-                            variant={getIntegrationStatusVariant(
-                              integration.status,
-                            )}
-                          >
-                            {integration.status}
-                          </Badge>
-                          <Badge variant="outline">
-                            {integration.auth_mode}
-                          </Badge>
-                        </div>
-
-                        <p className="truncate text-xs text-muted-foreground">
-                          {integration.host_url}
-                        </p>
-                      </div>
-                    </Link>
-
-                    <div className="p-4 pt-0 sm:pl-0 sm:pt-4">
-                      <AlertDialog>
-                        <AlertDialogTrigger
-                          render={
-                            <Button variant="ghost" size="sm">
-                              <HugeiconsIcon icon={Delete02Icon} />
-                              Disconnect
-                            </Button>
-                          }
-                        />
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Disconnect source?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This removes credentials, installations,
-                              repository links, and webhook behavior.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() =>
-                                handleDisconnect(
-                                  integration.id,
-                                  integration.display_name ??
-                                    integration.provider,
-                                )
-                              }
-                              disabled={deleteMutation.isPending}
-                            >
-                              {deleteMutation.isPending
-                                ? 'Disconnecting...'
-                                : 'Disconnect'}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
+      <AlertDialog
+        open={disconnectTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDisconnectTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes credentials, installations, repository links, and
+              webhook behavior for{' '}
+              {disconnectTarget?.display_name ??
+                disconnectTarget?.provider ??
+                'this source'}
+              .
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (disconnectTarget) handleDisconnect(disconnectTarget)
+              }}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Disconnecting...' : 'Disconnect'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageLayout>
   )
 }
