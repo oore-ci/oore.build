@@ -35,9 +35,9 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3 border p-3">
-          <div className="space-y-1">
+      <CardContent className="flex flex-col gap-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
             <p className="text-sm font-medium">Current access</p>
             <p className="text-xs text-muted-foreground">
               {externalAccessEnabled

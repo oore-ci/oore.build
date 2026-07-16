@@ -37,9 +37,19 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button-variants'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -315,6 +325,8 @@ function IntegrationsPage() {
   }
 
   const hasSearch = !!search.q
+  const sourceCount = integrationsQuery.data?.integrations.length ?? 0
+  const hasConnectedSources = sourceCount > 0
   const showTrueEmpty =
     remoteEnabled &&
     !integrationsQuery.isLoading &&
@@ -334,6 +346,38 @@ function IntegrationsPage() {
       <PageHeader
         title="Sources"
         description="Source connections used to discover repositories and trigger builds."
+        actions={
+          remoteEnabled && canWrite && hasConnectedSources ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button size="sm" />}>
+                <HugeiconsIcon
+                  icon={Link04Icon}
+                  data-icon="inline-start"
+                  aria-hidden
+                />
+                Connect source
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void navigate({ to: '/settings/integrations/github' })
+                    }
+                  >
+                    GitHub
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void navigate({ to: '/settings/integrations/gitlab' })
+                    }
+                  >
+                    GitLab
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null
+        }
       />
 
       {canWrite && preferencesQuery.isLoading ? (
@@ -391,292 +435,138 @@ function IntegrationsPage() {
             </Button>
           </div>
         </section>
-      ) : canWrite ? (
-        <section className="space-y-4" aria-labelledby="connect-source-title">
-          <h2
-            id="connect-source-title"
-            className="text-sm font-medium uppercase tracking-wider text-muted-foreground"
-          >
-            Connect a source
-          </h2>
-          <div className="grid gap-6 md:grid-cols-2">
-            <article className="flex flex-col gap-3">
-              <div>
-                <h3 className="font-medium">GitHub</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Create and install a GitHub App for repository discovery and
-                  webhook events.
-                </p>
-              </div>
-              <SetupHint
-                title="Requested access"
-                items={[
-                  'Repository contents and metadata read access.',
-                  'Pull request read plus statuses/checks write access.',
-                  'Push and pull request webhook events.',
-                ]}
-              />
-              <Button
-                className="self-start"
-                render={<Link to="/settings/integrations/github" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} />
-                Connect GitHub
-              </Button>
-            </article>
-
-            <article className="flex flex-col gap-3">
-              <div>
-                <h3 className="font-medium">GitLab</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Connect GitLab.com or a self-managed host with a personal
-                  access token or OAuth application.
-                </p>
-              </div>
-              <SetupHint
-                title="Token scopes"
-                items={[
-                  <span key="scopes">
-                    Use <code>read_user</code>, <code>read_api</code>, and{' '}
-                    <code>read_repository</code>.
-                  </span>,
-                  <span key="avoid-api">
-                    Avoid full <code>api</code> unless a write feature needs it.
-                  </span>,
-                ]}
-              />
-              <Button
-                className="self-start"
-                render={<Link to="/settings/integrations/gitlab" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} />
-                Connect GitLab
-              </Button>
-            </article>
-          </div>
-        </section>
-      ) : (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            You have read-only access to connected sources. An owner or admin
-            can add, reconnect, or disconnect providers.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {remoteEnabled ? (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <SourceSearch
-            key={search.q ?? ''}
-            initialValue={search.q ?? ''}
-            onSearch={(value) =>
-              updateSearch({ q: value.trim() || undefined, page: undefined })
-            }
-          />
-          <NativeSelect
-            className="w-full sm:hidden"
-            aria-label="Sort connected sources"
-            value={sort}
-            onChange={(event) =>
-              handleSortChange(event.target.value as IntegrationSort, direction)
-            }
-          >
-            {Object.entries(INTEGRATION_SORT_OPTIONS).map(([value, label]) => (
-              <NativeSelectOption key={value} value={value}>
-                {label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-      ) : null}
-
-      {remoteEnabled && integrationsQuery.error ? (
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Failed to load sources: {integrationsQuery.error.message}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void integrationsQuery.refetch()}
-            >
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {showTrueEmpty ? (
-        <Empty className="bg-card">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Link04Icon} />
-            </EmptyMedia>
-            <EmptyTitle>No connected sources</EmptyTitle>
-            <EmptyDescription>
-              {canWrite
-                ? 'Connect GitHub or GitLab above to discover repositories.'
-                : 'An owner or admin can connect the first source.'}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
-
-      {showFilteredEmpty ? (
-        <Empty className="bg-card">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
-            </EmptyMedia>
-            <EmptyTitle>No matching sources</EmptyTitle>
-            <EmptyDescription>
-              Try a different search or clear the current query.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button
-              variant="outline"
-              onClick={() => updateSearch({ q: undefined, page: undefined })}
-            >
-              Clear search
-            </Button>
-          </EmptyContent>
-        </Empty>
       ) : null}
 
       {remoteEnabled &&
-      !integrationsQuery.error &&
-      (integrationsQuery.isLoading || total > 0) ? (
-        <section aria-label="Connected source inventory" className="min-w-0">
-          <div className="divide-y sm:hidden">
-            {integrationsQuery.isLoading
-              ? Array.from({ length: 3 }, (_, index) => (
-                  <div key={index} className="space-y-2 py-4">
-                    <Skeleton className="h-5 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </div>
-                ))
-              : visibleIntegrations.map((integration) => (
-                  <article key={integration.id} className="space-y-3 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <SourceIdentity integration={integration} />
-                      {canWrite ? (
-                        <SourceActions
-                          integration={integration}
-                          onDisconnect={() => setDisconnectTarget(integration)}
-                        />
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">{integration.provider}</Badge>
-                      <Badge
-                        variant={getIntegrationStatusVariant(
-                          integration.status,
-                        )}
-                      >
-                        {integration.status}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        Updated {relativeTime(integration.updated_at)}
-                      </span>
-                    </div>
-                  </article>
-                ))}
-          </div>
+      (integrationsQuery.isLoading ||
+        integrationsQuery.error ||
+        hasConnectedSources ||
+        hasSearch ||
+        !canWrite) ? (
+        <section
+          aria-label="Connected sources"
+          className="flex min-w-0 flex-col gap-4"
+        >
+          {integrationsQuery.isLoading || hasConnectedSources || hasSearch ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <SourceSearch
+                key={search.q ?? ''}
+                initialValue={search.q ?? ''}
+                onSearch={(value) =>
+                  updateSearch({
+                    q: value.trim() || undefined,
+                    page: undefined,
+                  })
+                }
+              />
+              <NativeSelect
+                className="w-full sm:hidden"
+                aria-label="Sort connected sources"
+                value={sort}
+                onChange={(event) =>
+                  handleSortChange(
+                    event.target.value as IntegrationSort,
+                    direction,
+                  )
+                }
+              >
+                {Object.entries(INTEGRATION_SORT_OPTIONS).map(
+                  ([value, label]) => (
+                    <NativeSelectOption key={value} value={value}>
+                      {label}
+                    </NativeSelectOption>
+                  ),
+                )}
+              </NativeSelect>
+            </div>
+          ) : null}
 
-          <div className="hidden sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="name"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Source
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="provider"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Provider
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="status"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Status
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Authentication
-                  </TableHead>
-                  <TableHead className="hidden lg:table-cell">Host</TableHead>
-                  <SortableTableHead
-                    className="hidden lg:table-cell"
-                    sort={sort}
-                    sortKey="updated_at"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Updated
-                  </SortableTableHead>
-                  {canWrite ? (
-                    <TableHead className="text-right">
-                      <span className="sr-only">Actions</span>
-                    </TableHead>
-                  ) : null}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+          {integrationsQuery.error ? (
+            <Alert variant="destructive">
+              <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Failed to load sources: {integrationsQuery.error.message}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void integrationsQuery.refetch()}
+                >
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {showTrueEmpty ? (
+            <Empty className="bg-card">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <HugeiconsIcon icon={Link04Icon} />
+                </EmptyMedia>
+                <EmptyTitle>No connected sources</EmptyTitle>
+                <EmptyDescription>
+                  {canWrite
+                    ? 'Choose GitHub or GitLab below to discover repositories.'
+                    : 'An owner or admin can connect the first source.'}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : null}
+
+          {showFilteredEmpty ? (
+            <Empty className="bg-card">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <HugeiconsIcon icon={Search01Icon} />
+                </EmptyMedia>
+                <EmptyTitle>No matching sources</EmptyTitle>
+                <EmptyDescription>
+                  Try a different search or clear the current query.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    updateSearch({ q: undefined, page: undefined })
+                  }
+                >
+                  Clear search
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : null}
+
+          {!integrationsQuery.error &&
+          (integrationsQuery.isLoading || total > 0) ? (
+            <div aria-label="Connected source inventory" className="min-w-0">
+              <div className="divide-y sm:hidden">
                 {integrationsQuery.isLoading
-                  ? Array.from({ length: 4 }, (_, index) => (
-                      <TableRow key={index}>
-                        <TableCell>
-                          <Skeleton className="h-8 w-40" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-16" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-16" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-24" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-36" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        {canWrite ? (
-                          <TableCell>
-                            <Skeleton className="ml-auto h-8 w-8" />
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
+                  ? Array.from({ length: 3 }, (_, index) => (
+                      <div key={index} className="space-y-2 py-4">
+                        <Skeleton className="h-5 w-2/3" />
+                        <Skeleton className="h-4 w-1/2" />
+                      </div>
                     ))
                   : visibleIntegrations.map((integration) => (
-                      <TableRow key={integration.id}>
-                        <TableCell>
+                      <article key={integration.id} className="space-y-3 py-4">
+                        <div className="flex items-start justify-between gap-3">
                           <SourceIdentity integration={integration} />
-                        </TableCell>
-                        <TableCell>
+                          {canWrite ? (
+                            <SourceActions
+                              integration={integration}
+                              onDisconnect={() =>
+                                setDisconnectTarget(integration)
+                              }
+                            />
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline">
                             {integration.provider}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
                           <Badge
                             variant={getIntegrationStatusVariant(
                               integration.status,
@@ -684,52 +574,277 @@ function IntegrationsPage() {
                           >
                             {integration.status}
                           </Badge>
-                        </TableCell>
-                        <TableCell className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
-                          {integration.auth_mode}
-                        </TableCell>
-                        <TableCell className="hidden max-w-[24ch] truncate text-xs text-muted-foreground lg:table-cell">
-                          {integration.host_url}
-                        </TableCell>
-                        <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
-                          {relativeTime(integration.updated_at)}
-                        </TableCell>
-                        {canWrite ? (
-                          <TableCell className="text-right">
-                            <SourceActions
-                              integration={integration}
-                              onDisconnect={() =>
-                                setDisconnectTarget(integration)
-                              }
-                            />
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
+                          <span className="text-xs text-muted-foreground">
+                            Updated {relativeTime(integration.updated_at)}
+                          </span>
+                        </div>
+                      </article>
                     ))}
-              </TableBody>
-            </Table>
-          </div>
+              </div>
 
-          {!integrationsQuery.isLoading ? (
-            <CollectionPagination
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={(nextPage) =>
-                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
-              }
-              onPageSizeChange={(nextPageSize) =>
-                updateSearch({
-                  pageSize:
-                    nextPageSize === 20
-                      ? undefined
-                      : (nextPageSize as 50 | 100),
-                  page: undefined,
-                })
-              }
-            />
+              <div className="hidden sm:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <SortableTableHead
+                        sort={sort}
+                        sortKey="name"
+                        direction={direction}
+                        onSortChange={handleSortChange}
+                      >
+                        Source
+                      </SortableTableHead>
+                      <SortableTableHead
+                        sort={sort}
+                        sortKey="provider"
+                        direction={direction}
+                        onSortChange={handleSortChange}
+                      >
+                        Provider
+                      </SortableTableHead>
+                      <SortableTableHead
+                        sort={sort}
+                        sortKey="status"
+                        direction={direction}
+                        onSortChange={handleSortChange}
+                      >
+                        Status
+                      </SortableTableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        Authentication
+                      </TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        Host
+                      </TableHead>
+                      <SortableTableHead
+                        className="hidden lg:table-cell"
+                        sort={sort}
+                        sortKey="updated_at"
+                        direction={direction}
+                        onSortChange={handleSortChange}
+                      >
+                        Updated
+                      </SortableTableHead>
+                      {canWrite ? (
+                        <TableHead className="text-right">
+                          <span className="sr-only">Actions</span>
+                        </TableHead>
+                      ) : null}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {integrationsQuery.isLoading
+                      ? Array.from({ length: 4 }, (_, index) => (
+                          <TableRow key={index}>
+                            <TableCell>
+                              <Skeleton className="h-8 w-40" />
+                            </TableCell>
+                            <TableCell>
+                              <Skeleton className="h-6 w-16" />
+                            </TableCell>
+                            <TableCell>
+                              <Skeleton className="h-6 w-16" />
+                            </TableCell>
+                            <TableCell className="hidden lg:table-cell">
+                              <Skeleton className="h-4 w-24" />
+                            </TableCell>
+                            <TableCell className="hidden lg:table-cell">
+                              <Skeleton className="h-4 w-36" />
+                            </TableCell>
+                            <TableCell className="hidden lg:table-cell">
+                              <Skeleton className="h-4 w-20" />
+                            </TableCell>
+                            {canWrite ? (
+                              <TableCell>
+                                <Skeleton className="ml-auto h-8 w-8" />
+                              </TableCell>
+                            ) : null}
+                          </TableRow>
+                        ))
+                      : visibleIntegrations.map((integration) => (
+                          <TableRow key={integration.id}>
+                            <TableCell>
+                              <SourceIdentity integration={integration} />
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">
+                                {integration.provider}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={getIntegrationStatusVariant(
+                                  integration.status,
+                                )}
+                              >
+                                {integration.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
+                              {integration.auth_mode}
+                            </TableCell>
+                            <TableCell className="hidden max-w-[24ch] truncate text-xs text-muted-foreground lg:table-cell">
+                              {integration.host_url}
+                            </TableCell>
+                            <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
+                              {relativeTime(integration.updated_at)}
+                            </TableCell>
+                            {canWrite ? (
+                              <TableCell className="text-right">
+                                <SourceActions
+                                  integration={integration}
+                                  onDisconnect={() =>
+                                    setDisconnectTarget(integration)
+                                  }
+                                />
+                              </TableCell>
+                            ) : null}
+                          </TableRow>
+                        ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {!integrationsQuery.isLoading ? (
+                <CollectionPagination
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={(nextPage) =>
+                    updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+                  }
+                  onPageSizeChange={(nextPageSize) =>
+                    updateSearch({
+                      pageSize:
+                        nextPageSize === 20
+                          ? undefined
+                          : (nextPageSize as 50 | 100),
+                      page: undefined,
+                    })
+                  }
+                />
+              ) : null}
+            </div>
           ) : null}
         </section>
+      ) : null}
+
+      {remoteEnabled &&
+      canWrite &&
+      !integrationsQuery.isLoading &&
+      !integrationsQuery.error &&
+      !hasConnectedSources ? (
+        <section
+          className="flex flex-col gap-4"
+          aria-labelledby="connect-source-title"
+        >
+          <div>
+            <h2
+              id="connect-source-title"
+              className="text-sm font-medium uppercase tracking-wider text-muted-foreground"
+            >
+              Connect a source
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose a provider to start discovering repositories.
+            </p>
+          </div>
+
+          <div className="grid items-stretch gap-4 md:grid-cols-2">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>GitHub</CardTitle>
+                <CardDescription>
+                  Create and install a GitHub App for repository discovery and
+                  webhook events.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex-1">
+                <div className="flex h-full flex-col gap-2 text-xs text-muted-foreground">
+                  <p className="font-medium uppercase tracking-wider text-foreground">
+                    Requested access
+                  </p>
+                  <ul className="flex list-disc flex-col gap-1 pl-4 leading-relaxed">
+                    <li>Repository contents and metadata read access.</li>
+                    <li>
+                      Pull request read plus statuses/checks write access.
+                    </li>
+                    <li>Push and pull request webhook events.</li>
+                  </ul>
+                </div>
+              </CardContent>
+              <CardFooter className="mt-auto">
+                <Link
+                  to="/settings/integrations/github"
+                  className={buttonVariants({
+                    size: 'sm',
+                    className: 'w-full sm:w-auto',
+                  })}
+                >
+                  <HugeiconsIcon
+                    icon={Link04Icon}
+                    data-icon="inline-start"
+                    aria-hidden
+                  />
+                  Connect GitHub
+                </Link>
+              </CardFooter>
+            </Card>
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>GitLab</CardTitle>
+                <CardDescription>
+                  Connect GitLab.com or a self-managed host with a personal
+                  access token or OAuth application.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex-1">
+                <div className="flex h-full flex-col gap-2 text-xs text-muted-foreground">
+                  <p className="font-medium uppercase tracking-wider text-foreground">
+                    Token scopes
+                  </p>
+                  <ul className="flex list-disc flex-col gap-1 pl-4 leading-relaxed">
+                    <li>
+                      Use <code>read_user</code>, <code>read_api</code>, and{' '}
+                      <code>read_repository</code>.
+                    </li>
+                    <li>
+                      Avoid full <code>api</code> unless a write feature needs
+                      it.
+                    </li>
+                  </ul>
+                </div>
+              </CardContent>
+              <CardFooter className="mt-auto">
+                <Link
+                  to="/settings/integrations/gitlab"
+                  className={buttonVariants({
+                    size: 'sm',
+                    className: 'w-full sm:w-auto',
+                  })}
+                >
+                  <HugeiconsIcon
+                    icon={Link04Icon}
+                    data-icon="inline-start"
+                    aria-hidden
+                  />
+                  Connect GitLab
+                </Link>
+              </CardFooter>
+            </Card>
+          </div>
+        </section>
+      ) : null}
+
+      {remoteEnabled && !canWrite ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            You have read-only access to connected sources. An owner or admin
+            can add, reconnect, or disconnect providers.
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       <AlertDialog

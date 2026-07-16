@@ -23,6 +23,11 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import {
+  InputGroup,
+  InputGroupInput,
+  InputGroupText,
+} from '@/components/ui/input-group'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -293,32 +298,36 @@ function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <Input
-            type="date"
-            value={search.from ?? ''}
-            onChange={(event) =>
-              updateSearch({
-                from: event.target.value || undefined,
-                page: undefined,
-              })
-            }
-            max={search.to}
-            className="min-w-0 sm:w-36"
-            aria-label="From date"
-          />
-          <Input
-            type="date"
-            value={search.to ?? ''}
-            onChange={(event) =>
-              updateSearch({
-                to: event.target.value || undefined,
-                page: undefined,
-              })
-            }
-            min={search.from}
-            className="min-w-0 sm:w-36"
-            aria-label="To date"
-          />
+          <InputGroup className="col-span-2 sm:w-auto" aria-label="Date range">
+            <InputGroupText className="pl-2 text-xs">From</InputGroupText>
+            <InputGroupInput
+              type="date"
+              value={search.from ?? ''}
+              onChange={(event) =>
+                updateSearch({
+                  from: event.target.value || undefined,
+                  page: undefined,
+                })
+              }
+              max={search.to}
+              className="min-w-0 basis-0 px-1 text-xs"
+              aria-label="From date"
+            />
+            <InputGroupText className="text-xs">To</InputGroupText>
+            <InputGroupInput
+              type="date"
+              value={search.to ?? ''}
+              onChange={(event) =>
+                updateSearch({
+                  to: event.target.value || undefined,
+                  page: undefined,
+                })
+              }
+              min={search.from}
+              className="min-w-0 basis-0 px-1 text-xs"
+              aria-label="To date"
+            />
+          </InputGroup>
           <Button
             variant="outline"
             className="w-full sm:hidden"

@@ -44,13 +44,13 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -346,27 +346,34 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>User</FormLabel>
-                        <Command className="rounded-md! border">
+                        <Combobox
+                          items={candidates}
+                          value={candidatesById.get(field.value) ?? null}
+                          onValueChange={(user) => {
+                            field.onChange(user?.id ?? '')
+                            if (user?.role === 'qa_viewer') {
+                              form.setValue('role', 'viewer')
+                            }
+                          }}
+                          itemToStringLabel={(user) =>
+                            user.display_name
+                              ? `${user.display_name} (${user.email})`
+                              : user.email
+                          }
+                        >
                           <FormControl>
-                            <CommandInput placeholder="Search eligible users..." />
+                            <ComboboxInput
+                              className="w-full"
+                              placeholder="Search eligible users..."
+                            />
                           </FormControl>
-                          <CommandList className="max-h-48">
-                            <CommandEmpty>
+                          <ComboboxContent>
+                            <ComboboxEmpty>
                               No eligible users found.
-                            </CommandEmpty>
-                            <CommandGroup>
-                              {candidates.map((user) => (
-                                <CommandItem
-                                  key={user.id}
-                                  value={`${user.email} ${user.display_name ?? ''}`}
-                                  data-checked={field.value === user.id}
-                                  onSelect={() => {
-                                    field.onChange(user.id)
-                                    if (user.role === 'qa_viewer') {
-                                      form.setValue('role', 'viewer')
-                                    }
-                                  }}
-                                >
+                            </ComboboxEmpty>
+                            <ComboboxList>
+                              {(user) => (
+                                <ComboboxItem key={user.id} value={user}>
                                   <span className="min-w-0 flex-1 truncate">
                                     {user.email}
                                   </span>
@@ -376,11 +383,11 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                                       ? ' · Invited'
                                       : ''}
                                   </span>
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
+                                </ComboboxItem>
+                              )}
+                            </ComboboxList>
+                          </ComboboxContent>
+                        </Combobox>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -423,7 +430,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                       </FormItem>
                     )}
                   />
-                  <DialogFooter>
+                  <DialogFooter className="static">
                     <Button
                       type="button"
                       variant="outline"
@@ -438,7 +445,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                           Adding...
                         </>
                       ) : (
-                        'Add member'
+                        'Add'
                       )}
                     </Button>
                   </DialogFooter>

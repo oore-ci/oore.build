@@ -68,6 +68,7 @@ import {
 import type { SortDirection } from '@/components/collection-controls'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
+import { cn } from '@/lib/utils'
 import type { Build, Project } from '@/lib/types'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
@@ -375,7 +376,7 @@ function OperationsBuildsPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="col-span-2"
+                className="col-span-2 sm:hidden"
                 onClick={() =>
                   updateSearch({
                     q: undefined,
@@ -388,6 +389,26 @@ function OperationsBuildsPage() {
                 Clear filters
               </Button>
             ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'hidden sm:inline-flex',
+                !hasFilters && 'invisible',
+              )}
+              aria-hidden={!hasFilters}
+              tabIndex={hasFilters ? undefined : -1}
+              onClick={() =>
+                updateSearch({
+                  q: undefined,
+                  project: undefined,
+                  status: undefined,
+                  page: undefined,
+                })
+              }
+            >
+              Clear filters
+            </Button>
           </div>
         </div>
       ) : null}

@@ -57,6 +57,15 @@ const CLEANUP_INTERVALS = [
   { value: '86400', label: '24 hours' },
 ] as const
 
+const CLEANUP_TARGETS = {
+  artifacts_only: 'Artifacts only — keep build history',
+  full: 'Full delete — remove everything',
+} as const
+
+const CLEANUP_INTERVAL_OPTIONS = Object.fromEntries(
+  CLEANUP_INTERVALS.map(({ value, label }) => [value, label]),
+)
+
 const retentionSchema = z.object({
   enabled: z.boolean(),
   max_age_days: z.string(),
@@ -157,7 +166,11 @@ function EnabledRetentionFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Cleanup mode</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={CLEANUP_TARGETS}
+                >
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue />
@@ -187,7 +200,11 @@ function EnabledRetentionFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Cleanup interval</FormLabel>
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={CLEANUP_INTERVAL_OPTIONS}
+                >
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue />

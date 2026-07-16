@@ -5,7 +5,6 @@ import {
   Download04Icon,
   File01Icon,
   Share08Icon,
-  SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from 'sonner'
 
@@ -70,7 +69,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
 
   const trigger = (
     <Button
-      variant="ghost"
+      variant="outline"
       size="icon-xs"
       aria-label={`Share options for ${artifact.name}`}
       title="Share options"
@@ -144,7 +143,8 @@ function ArtifactRow({
       <div className="flex shrink-0 items-center gap-1">
         {installReady ? (
           <Button
-            size="xs"
+            variant="outline"
+            size="icon-xs"
             render={
               <Link
                 to="/builds/$buildId"
@@ -156,25 +156,27 @@ function ArtifactRow({
             }
             nativeButton={false}
             disabled={expired}
+            aria-label={`Install ${artifact.name}`}
+            title="Install"
           >
-            <HugeiconsIcon icon={SmartPhone01Icon} />
-            Install
-          </Button>
-        ) : null}
-        <Button
-          variant="outline"
-          size="icon-xs"
-          title="Download"
-          aria-label={`Download ${artifact.name}`}
-          onClick={() => onDownload(artifact.id, artifact.name)}
-          disabled={isDownloadPending || expired}
-        >
-          {isDownloadPending ? (
-            <Spinner />
-          ) : (
             <HugeiconsIcon icon={Download04Icon} />
-          )}
-        </Button>
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="icon-xs"
+            title="Download"
+            aria-label={`Download ${artifact.name}`}
+            onClick={() => onDownload(artifact.id, artifact.name)}
+            disabled={isDownloadPending || expired}
+          >
+            {isDownloadPending ? (
+              <Spinner />
+            ) : (
+              <HugeiconsIcon icon={Download04Icon} />
+            )}
+          </Button>
+        )}
         {canManageShareLinks ? (
           <ArtifactShareControl artifact={artifact} />
         ) : null}

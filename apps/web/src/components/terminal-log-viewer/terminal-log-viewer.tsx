@@ -136,11 +136,6 @@ export default function TerminalLogViewer({
     URL.revokeObjectURL(url)
   }
 
-  function scrollToLatest() {
-    setAutoScroll(true)
-    virtualizer.scrollToIndex(filteredLogs.length - 1, { align: 'end' })
-  }
-
   const lineCountLabel = deferredSearchQuery
     ? `${filteredLogs.length} of ${selectedLogs.length} lines`
     : `${selectedLogs.length} lines`
@@ -179,14 +174,12 @@ export default function TerminalLogViewer({
             searchQuery={searchQuery}
             searchInputRef={searchInputRef}
             wrapLines={wrapLines}
-            showScrollLatest={!autoScroll && filteredLogs.length > 0}
             hasErrors={hasErrors}
             onSearchQueryChange={setSearchQuery}
             onSearchClear={() => setSearchQuery('')}
             onJumpToError={jumpToFirstError}
             onToggleWrap={() => setWrapLines((value) => !value)}
             onDownload={downloadRawLogs}
-            onScrollLatest={scrollToLatest}
           />
         </div>
       </div>

@@ -113,7 +113,7 @@ export default function ArtifactShareMenu({
         <DropdownMenuTrigger
           render={
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon-xs"
               aria-label={`Share options for ${artifact.name}`}
               title="Share options"
