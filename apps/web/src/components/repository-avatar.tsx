@@ -1,16 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useRepositoryAvatarUrl } from '@/hooks/use-repository-avatar-url'
 import type { ScmProvider } from '@/lib/types'
-
-export function repositoryInitials(fullName: string): string {
-  const repositoryName = fullName.split('/').filter(Boolean).at(-1) ?? fullName
-  return (
-    repositoryName
-      .replaceAll(/[^a-z0-9]/gi, '')
-      .slice(0, 2)
-      .toUpperCase() || 'R'
-  )
-}
+import { repositoryInitials } from '@/lib/repository-avatar'
 
 export default function RepositoryAvatar({
   fullName,

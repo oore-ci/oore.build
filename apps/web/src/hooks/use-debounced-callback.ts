@@ -6,7 +6,10 @@ export function useDebouncedCallback<TArgs extends Array<unknown>>(
 ) {
   const callbackRef = useRef(callback)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  callbackRef.current = callback
+
+  useEffect(() => {
+    callbackRef.current = callback
+  }, [callback])
 
   useEffect(
     () => () => {

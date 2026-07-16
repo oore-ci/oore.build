@@ -12,15 +12,8 @@ import type {
   RowSelectionState,
   SortingState,
 } from '@tanstack/react-table'
-import {
-  InformationCircleIcon,
-  Search01Icon,
-  UserAdd01Icon,
-  UserMultiple02Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
-import { toast } from 'sonner'
+import { useCallback, useMemo, useState } from 'react'
+import { toast } from '@/lib/toast'
 
 import { getColumns } from './-users-columns'
 import { UsersToolbar } from './-users-toolbar'
@@ -30,18 +23,7 @@ import {
   CollectionPagination,
   SortableTableHead,
 } from '@/components/collection-controls'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -68,6 +50,10 @@ import { ApiClientError } from '@/lib/api'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { PageMeta } from '@/lib/seo'
+import { InviteUserAction } from './-invite-user-action'
+import { UsersSummary } from './-users-summary'
+import { UsersEmptyState } from './-users-empty-state'
+import { UsersErrorAlert } from './-users-error-alert'
 
 export type UserSort = 'created_at' | 'email' | 'role' | 'status'
 
@@ -115,35 +101,6 @@ export const Route = createFileRoute('/settings/users')({
 })
 
 const EMPTY_USERS: Array<User> = []
-const loadInviteUserDialog = () => import('./-invite-user-dialog')
-const InviteUserDialog = lazy(loadInviteUserDialog)
-
-function InviteUserAction() {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <>
-      <Button
-        onMouseEnter={() => void loadInviteUserDialog()}
-        onFocus={() => void loadInviteUserDialog()}
-        onClick={() => setOpen(true)}
-      >
-        <HugeiconsIcon
-          icon={UserAdd01Icon}
-          data-icon="inline-start"
-          aria-hidden
-        />
-        Invite user
-      </Button>
-      {open ? (
-        <Suspense fallback={null}>
-          <InviteUserDialog open onOpenChange={setOpen} />
-        </Suspense>
-      ) : null}
-    </>
-  )
-}
-
 interface ConfirmAction {
   type: 'disable' | 'role_change' | 'bulk_disable'
   userId: string
@@ -410,63 +367,21 @@ function UsersSettingsPage() {
       />
 
       {!usersQuery.error ? (
-        <section
-          aria-label="User summary"
-          className="grid grid-cols-3 gap-2 md:gap-4"
-        >
-          {usersQuery.isLoading ? (
-            Array.from({ length: 3 }, (_, index) => (
-              <Card key={index}>
-                <CardContent>
-                  <div className="flex flex-col gap-2">
-                    <Skeleton className="h-3 w-14" />
-                    <Skeleton className="h-7 w-10" />
-                    <Skeleton className="hidden h-3 w-24 md:block" />
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <>
-              <SummaryMetric
-                label="Total"
-                value={users.length}
-                description="All instance users"
-              />
-              <SummaryMetric
-                label="Active"
-                value={userStatusCounts.active}
-                description="Can currently sign in"
-              />
-              <SummaryMetric
-                label="Invited"
-                value={userStatusCounts.invited}
-                description="Awaiting activation"
-              />
-            </>
-          )}
-        </section>
+        <UsersSummary
+          counts={{
+            active: userStatusCounts.active,
+            invited: userStatusCounts.invited,
+            total: users.length,
+          }}
+          isLoading={usersQuery.isLoading}
+        />
       ) : null}
 
       {usersQuery.error ? (
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Failed to load users:{' '}
-              {usersQuery.error instanceof Error
-                ? usersQuery.error.message
-                : 'Unknown error'}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void usersQuery.refetch()}
-            >
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <UsersErrorAlert
+          error={usersQuery.error}
+          onRetry={() => void usersQuery.refetch()}
+        />
       ) : (
         <section aria-label="User inventory" className="min-w-0 space-y-4">
           <UsersToolbar
@@ -489,46 +404,14 @@ function UsersSettingsPage() {
             }
           />
 
-          {showTrueEmpty ? (
-            <Empty className="bg-card">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={UserMultiple02Icon} />
-                </EmptyMedia>
-                <EmptyTitle>No users yet</EmptyTitle>
-                <EmptyDescription>
-                  Invite the first person who needs access to this instance.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <InviteUserAction />
-              </EmptyContent>
-            </Empty>
-          ) : null}
-
-          {showFilteredEmpty ? (
-            <Empty className="bg-card">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={Search01Icon} />
-                </EmptyMedia>
-                <EmptyTitle>No matching users</EmptyTitle>
-                <EmptyDescription>
-                  Try a different search or clear the current query.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    updateSearch({ q: undefined, page: undefined })
-                  }
-                >
-                  Clear search
-                </Button>
-              </EmptyContent>
-            </Empty>
-          ) : null}
+          <UsersEmptyState
+            onClearSearch={() =>
+              updateSearch({ q: undefined, page: undefined })
+            }
+            state={
+              showTrueEmpty ? 'empty' : showFilteredEmpty ? 'no-results' : null
+            }
+          />
 
           {usersQuery.isLoading || filteredTotal > 0 ? (
             <>
@@ -729,29 +612,5 @@ function UsersSettingsPage() {
         onConfirm={() => void handleConfirm()}
       />
     </PageLayout>
-  )
-}
-
-function SummaryMetric({
-  description,
-  label,
-  value,
-}: {
-  description: string
-  label: string
-  value: number
-}) {
-  return (
-    <Card>
-      <CardContent>
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {label}
-        </p>
-        <p className="mt-3 text-2xl font-bold tracking-tight">{value}</p>
-        <p className="mt-1 hidden text-xs text-muted-foreground md:block">
-          {description}
-        </p>
-      </CardContent>
-    </Card>
   )
 }

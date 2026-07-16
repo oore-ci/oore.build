@@ -1,8 +1,5 @@
-import type { VariantProps } from 'class-variance-authority'
-import type { badgeVariants } from '@/components/ui/badge'
+import type { BadgeVariant } from '@/components/ui/badge'
 import type { BuildStatus } from '@/lib/types'
-
-type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>['variant']>
 
 export const BUILD_STATUS_FILTER_OPTIONS = {
   all: 'All statuses',

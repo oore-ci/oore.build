@@ -366,6 +366,8 @@ export function useArtifactDownloadLink() {
 export function useArtifactInstallLink() {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
+  const queryClient = useQueryClient()
+  const instance = useActiveInstance()
 
   return useMutation({
     mutationFn: (artifactId: string) => {
@@ -373,6 +375,10 @@ export function useArtifactInstallLink() {
         return Promise.reject(new Error('Not authenticated'))
       return createArtifactInstallLink(baseUrl, token, artifactId)
     },
+    onSuccess: (_result, artifactId) =>
+      queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'scoped-tokens', artifactId],
+      }),
   })
 }
 

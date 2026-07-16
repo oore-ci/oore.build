@@ -3,13 +3,10 @@ import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
-  Delete02Icon,
   InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
   Search01Icon,
-  TestTube01Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type { NotificationChannel } from '@/lib/types'
 import {
@@ -21,10 +18,9 @@ import {
   useNotificationChannels,
   useTestNotificationChannel,
 } from '@/hooks/use-notification-channels'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { CollectionSearchInput } from '@/components/collection-search-input'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { PageMeta } from '@/lib/seo'
-import { relativeTime } from '@/lib/format-utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -36,15 +32,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import {
   Empty,
   EmptyContent,
@@ -53,26 +41,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  CollectionPagination,
-  SortableTableHead,
-} from '@/components/collection-controls'
 import type { SortDirection } from '@/components/collection-controls'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-
-type NotificationSort = 'name' | 'type' | 'status' | 'updated_at'
+import { NotificationInventory } from './-notification-inventory'
+import type { NotificationSort } from './-notification-inventory'
 
 interface NotificationsSearch {
   direction?: SortDirection
@@ -120,108 +94,6 @@ export const Route = createFileRoute('/settings/notifications/')({
   },
   component: NotificationsPage,
 })
-
-function channelTypeLabel(type: string): string {
-  switch (type) {
-    case 'webhook':
-      return 'Webhook'
-    case 'mattermost':
-      return 'Mattermost'
-    case 'email':
-      return 'Email (SMTP)'
-    default:
-      return type
-  }
-}
-
-function ChannelSearch({
-  initialValue,
-  onSearch,
-}: {
-  initialValue: string
-  onSearch: (value: string) => void
-}) {
-  const [value, setValue] = useState(initialValue)
-  const debouncedSearch = useDebouncedCallback(onSearch, 300)
-
-  return (
-    <div className="relative w-full sm:max-w-sm">
-      <HugeiconsIcon
-        icon={Search01Icon}
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden
-      />
-      <Input
-        type="search"
-        value={value}
-        onChange={(event) => {
-          const nextValue = event.target.value
-          setValue(nextValue)
-          debouncedSearch(nextValue)
-        }}
-        placeholder="Search channels"
-        aria-label="Search notification channels"
-        className="pl-9"
-      />
-    </div>
-  )
-}
-
-function ChannelIdentity({ channel }: { channel: NotificationChannel }) {
-  return (
-    <Link
-      to="/settings/notifications/$channelId"
-      params={{ channelId: channel.id }}
-      className="group block min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span className="block truncate font-medium group-hover:underline">
-        {channel.name}
-      </span>
-      <span className="block truncate font-mono text-[11px] text-muted-foreground">
-        {channel.id.slice(0, 8)}
-      </span>
-    </Link>
-  )
-}
-
-function ChannelActions({
-  channel,
-  pending,
-  onDelete,
-  onTest,
-}: {
-  channel: NotificationChannel
-  pending: boolean
-  onDelete: () => void
-  onTest: () => void
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Actions for ${channel.name}`}
-          />
-        }
-      >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-auto">
-        <DropdownMenuItem onClick={onTest} disabled={pending}>
-          <HugeiconsIcon icon={TestTube01Icon} />
-          Send test
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={onDelete}>
-          <HugeiconsIcon icon={Delete02Icon} />
-          Delete channel
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
 
 function NotificationsPage() {
   const search = useSearch({ from: '/settings/notifications/' })
@@ -350,12 +222,14 @@ function NotificationsPage() {
       />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <ChannelSearch
+        <CollectionSearchInput
           key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
           }
+          placeholder="Search channels"
+          ariaLabel="Search notification channels"
         />
         <NativeSelect
           className="w-full sm:hidden"
@@ -438,172 +312,29 @@ function NotificationsPage() {
       ) : null}
 
       {!channelsQuery.error && (channelsQuery.isLoading || total > 0) ? (
-        <section
-          aria-label="Notification channel inventory"
-          className="min-w-0"
-        >
-          <div className="divide-y sm:hidden">
-            {channelsQuery.isLoading
-              ? Array.from({ length: 4 }, (_, index) => (
-                  <div key={index} className="space-y-2 py-4">
-                    <Skeleton className="h-5 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </div>
-                ))
-              : visibleChannels.map((channel) => (
-                  <article key={channel.id} className="space-y-3 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <ChannelIdentity channel={channel} />
-                      <ChannelActions
-                        channel={channel}
-                        pending={testMutation.isPending}
-                        onDelete={() => setDeleteTarget(channel)}
-                        onTest={() => handleTest(channel)}
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">
-                        {channelTypeLabel(channel.channel_type)}
-                      </Badge>
-                      <Badge
-                        variant={channel.enabled ? 'secondary' : 'outline'}
-                      >
-                        {channel.enabled ? 'Enabled' : 'Disabled'}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        Updated {relativeTime(channel.updated_at)}
-                      </span>
-                    </div>
-                  </article>
-                ))}
-          </div>
-
-          <div className="hidden sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="name"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Channel
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="type"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Type
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="status"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Status
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">Events</TableHead>
-                  <SortableTableHead
-                    className="hidden lg:table-cell"
-                    sort={sort}
-                    sortKey="updated_at"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Updated
-                  </SortableTableHead>
-                  <TableHead className="text-right">
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {channelsQuery.isLoading
-                  ? Array.from({ length: 5 }, (_, index) => (
-                      <TableRow key={index}>
-                        <TableCell>
-                          <Skeleton className="h-8 w-40" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-20" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-16" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-32" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="ml-auto h-8 w-8" />
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : visibleChannels.map((channel) => (
-                      <TableRow key={channel.id}>
-                        <TableCell>
-                          <ChannelIdentity channel={channel} />
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {channelTypeLabel(channel.channel_type)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={channel.enabled ? 'secondary' : 'outline'}
-                          >
-                            {channel.enabled ? 'Enabled' : 'Disabled'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="hidden max-w-[28ch] truncate text-xs text-muted-foreground lg:table-cell">
-                          {channel.events.length > 0
-                            ? channel.events.join(', ')
-                            : 'All events'}
-                        </TableCell>
-                        <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
-                          {relativeTime(channel.updated_at)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <ChannelActions
-                            channel={channel}
-                            pending={testMutation.isPending}
-                            onDelete={() => setDeleteTarget(channel)}
-                            onTest={() => handleTest(channel)}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {!channelsQuery.isLoading ? (
-            <CollectionPagination
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={(nextPage) =>
-                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
-              }
-              onPageSizeChange={(nextPageSize) =>
-                updateSearch({
-                  pageSize:
-                    nextPageSize === 20
-                      ? undefined
-                      : (nextPageSize as 50 | 100),
-                  page: undefined,
-                })
-              }
-            />
-          ) : null}
-        </section>
+        <NotificationInventory
+          channels={visibleChannels}
+          direction={direction}
+          isLoading={channelsQuery.isLoading}
+          onDelete={setDeleteTarget}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onSortChange={handleSortChange}
+          onTest={handleTest}
+          page={page}
+          pageSize={pageSize}
+          pending={testMutation.isPending}
+          sort={sort}
+          total={total}
+        />
       ) : null}
 
       <AlertDialog

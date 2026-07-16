@@ -8,7 +8,7 @@ import {
   InformationCircleIcon,
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import {
   artifactInstallReadiness,
@@ -59,6 +59,101 @@ function copyPageLink() {
   void navigator.clipboard.writeText(window.location.href).then(
     () => toast.success('Install page link copied'),
     () => toast.error('Failed to copy install page link'),
+  )
+}
+
+function QaInstallReadinessAlerts({
+  conditions,
+  platform,
+  readiness,
+}: {
+  conditions: {
+    desktopIos: boolean
+    expired: boolean
+    needsSafari: boolean
+    wrongPhone: boolean
+  }
+  platform: 'iOS' | 'Android'
+  readiness: ReturnType<typeof artifactInstallReadiness> | null
+}) {
+  return (
+    <>
+      {readiness && !readiness.ready ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>Not install-ready</AlertTitle>
+          <AlertDescription>{readiness.reason}</AlertDescription>
+        </Alert>
+      ) : null}
+      {conditions.expired ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>Artifact expired</AlertTitle>
+          <AlertDescription>
+            Ask a developer to run a fresh build before installing.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {conditions.needsSafari ? (
+        <Alert>
+          <HugeiconsIcon icon={Globe02Icon} />
+          <AlertTitle>Open this page in Safari</AlertTitle>
+          <AlertDescription>
+            iOS installation can only start from Safari on this iPhone.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {conditions.desktopIos ? (
+        <Alert>
+          <HugeiconsIcon icon={SmartPhone01Icon} />
+          <AlertTitle>Open this page on the registered iPhone</AlertTitle>
+          <AlertDescription>
+            Use Safari on a device included in this version’s provisioning
+            profile.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {conditions.wrongPhone ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>Open this page on the right device</AlertTitle>
+          <AlertDescription>This version is for {platform}.</AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  )
+}
+
+function ArtifactInstallLoading() {
+  return (
+    <PageLayout width="narrow">
+      <PageMeta title="Install artifact" noindex />
+      <Skeleton className="h-8 w-56" />
+      <Skeleton className="h-72 w-full" />
+    </PageLayout>
+  )
+}
+
+function ArtifactInstallError({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}) {
+  return (
+    <PageLayout width="narrow">
+      <PageMeta title="Install artifact" noindex />
+      <Alert variant="destructive">
+        <HugeiconsIcon icon={InformationCircleIcon} />
+        <AlertDescription>
+          Failed to load this build: {message}
+        </AlertDescription>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      </Alert>
+    </PageLayout>
   )
 }
 
@@ -207,7 +302,7 @@ function QaReleaseDetail({
                 <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
               ) : null}
             </div>
-            <p className="mt-3 break-words text-2xl font-bold tracking-tight sm:text-3xl">
+            <p className="mt-3 wrap-break-word text-2xl font-bold tracking-tight sm:text-3xl">
               {appName}
             </p>
             {artifact ? (
@@ -259,50 +354,16 @@ function QaReleaseDetail({
             </Alert>
           ) : null}
 
-          {readiness && !readiness.ready ? (
-            <Alert variant="destructive">
-              <HugeiconsIcon icon={InformationCircleIcon} />
-              <AlertTitle>Not install-ready</AlertTitle>
-              <AlertDescription>{readiness.reason}</AlertDescription>
-            </Alert>
-          ) : null}
-          {expired ? (
-            <Alert variant="destructive">
-              <HugeiconsIcon icon={InformationCircleIcon} />
-              <AlertTitle>Artifact expired</AlertTitle>
-              <AlertDescription>
-                Ask a developer to run a fresh build before installing.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {needsSafari ? (
-            <Alert>
-              <HugeiconsIcon icon={Globe02Icon} />
-              <AlertTitle>Open this page in Safari</AlertTitle>
-              <AlertDescription>
-                iOS installation can only start from Safari on this iPhone.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {isDesktopIos ? (
-            <Alert>
-              <HugeiconsIcon icon={SmartPhone01Icon} />
-              <AlertTitle>Open this page on the registered iPhone</AlertTitle>
-              <AlertDescription>
-                Use Safari on a device included in this version’s provisioning
-                profile.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {wrongPhone ? (
-            <Alert>
-              <HugeiconsIcon icon={InformationCircleIcon} />
-              <AlertTitle>Open this page on the right device</AlertTitle>
-              <AlertDescription>
-                This version is for {isIos ? 'iOS' : 'Android'}.
-              </AlertDescription>
-            </Alert>
-          ) : null}
+          <QaInstallReadinessAlerts
+            conditions={{
+              desktopIos: isDesktopIos,
+              expired,
+              needsSafari,
+              wrongPhone,
+            }}
+            platform={isIos ? 'iOS' : 'Android'}
+            readiness={readiness}
+          />
 
           {artifact ? (
             <>
@@ -327,7 +388,7 @@ function QaReleaseDetail({
                   </ol>
                 )}
               </section>
-              <div className="fixed inset-x-0 bottom-0 z-[60] border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+              <div className="fixed inset-x-0 bottom-0 z-60 border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
@@ -365,7 +426,7 @@ function QaReleaseDetail({
           ) : null}
         </div>
       ) : (
-        <div id="qa-logs-panel" role="tabpanel" className="min-h-[24rem]">
+        <div id="qa-logs-panel" role="tabpanel" className="min-h-96">
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             <QaBuildLogs build={build} />
           </Suspense>
@@ -417,37 +478,19 @@ export function ArtifactInstallPage({
       )
 
   if (buildQuery.isLoading || artifactsQuery.isLoading) {
-    return (
-      <PageLayout width="narrow">
-        <PageMeta title="Install artifact" noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-72 w-full" />
-      </PageLayout>
-    )
+    return <ArtifactInstallLoading />
   }
 
   const queryError = buildQuery.error ?? artifactsQuery.error
   if (queryError) {
     return (
-      <PageLayout width="narrow">
-        <PageMeta title="Install artifact" noindex />
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription>
-            Failed to load this build: {queryError.message}
-          </AlertDescription>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void buildQuery.refetch()
-              void artifactsQuery.refetch()
-            }}
-          >
-            Retry
-          </Button>
-        </Alert>
-      </PageLayout>
+      <ArtifactInstallError
+        message={queryError.message}
+        onRetry={() => {
+          void buildQuery.refetch()
+          void artifactsQuery.refetch()
+        }}
+      />
     )
   }
 
@@ -542,7 +585,7 @@ export function ArtifactInstallPage({
       <section className="flex flex-col gap-5 pt-2 sm:pt-6">
         <header>
           <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
-          <h1 className="mt-3 break-words text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="mt-3 wrap-break-word text-2xl font-bold tracking-tight sm:text-3xl">
             {appName}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -609,7 +652,7 @@ export function ArtifactInstallPage({
           </Alert>
         ) : null}
 
-        <div className="fixed inset-x-0 bottom-0 z-[60] border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+        <div className="fixed inset-x-0 bottom-0 z-60 border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
           <div className="flex gap-2">
             <Button
               variant="outline"

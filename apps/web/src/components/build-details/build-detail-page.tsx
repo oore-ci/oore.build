@@ -5,7 +5,7 @@ import {
   InformationCircleIcon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { BuildSummary } from './build-summary'

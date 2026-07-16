@@ -7,7 +7,7 @@ import {
   File02Icon,
   RefreshIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type {
   ConcurrencyPolicy,

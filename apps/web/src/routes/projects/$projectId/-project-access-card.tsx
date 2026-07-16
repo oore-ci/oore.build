@@ -7,7 +7,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import * as z from 'zod'
 
 import type {
@@ -232,28 +232,17 @@ function MemberActions({
   )
 }
 
-export function ProjectAccessCard({ projectId }: { projectId: string }) {
-  const membersQuery = useProjectMembers(projectId)
+function AddProjectMemberDialog({ projectId }: { projectId: string }) {
   const candidatesQuery = useProjectMemberCandidates(projectId)
   const addMutation = useAddProjectMember(projectId)
-  const updateMutation = useUpdateProjectMember(projectId)
-  const removeMutation = useRemoveProjectMember(projectId)
-  const [addOpen, setAddOpen] = useState(false)
-  const [memberToRemove, setMemberToRemove] = useState<ProjectMember | null>(
-    null,
-  )
+  const [open, setOpen] = useState(false)
   const form = useForm<AccessForm>({
     resolver: zodResolver(accessSchema),
     defaultValues: { user_id: '', role: 'viewer' },
   })
-
   const candidates = useMemo(
     () => candidatesQuery.data?.candidates ?? [],
     [candidatesQuery.data],
-  )
-  const members = useMemo(
-    () => membersQuery.data?.members ?? [],
-    [membersQuery.data],
   )
   const candidatesById = useMemo(
     () => new Map(candidates.map((candidate) => [candidate.id, candidate])),
@@ -265,17 +254,18 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
       ? (['viewer'] as Array<ProjectRole>)
       : PROJECT_ROLE_OPTIONS
 
-  function setDialogOpen(open: boolean) {
-    setAddOpen(open)
-    if (!open) form.reset({ user_id: '', role: 'viewer' })
+  function setDialogOpen(nextOpen: boolean) {
+    setOpen(nextOpen)
+    if (!nextOpen) form.reset({ user_id: '', role: 'viewer' })
   }
 
   function addMember(values: AccessForm) {
     const user = candidatesById.get(values.user_id)
-    const role: ProjectRole =
-      user?.role === 'qa_viewer' ? 'viewer' : values.role
     addMutation.mutate(
-      { user_id: values.user_id, role },
+      {
+        user_id: values.user_id,
+        role: user?.role === 'qa_viewer' ? 'viewer' : values.role,
+      },
       {
         onSuccess: () => {
           toast.success(`${user?.email ?? 'User'} added to this project`)
@@ -285,6 +275,162 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
       },
     )
   }
+
+  return (
+    <Dialog open={open} onOpenChange={setDialogOpen}>
+      <DialogTrigger
+        render={
+          <Button
+            size="icon-sm"
+            aria-label="Add project member"
+            title="Add project member"
+          />
+        }
+      >
+        <HugeiconsIcon icon={Add01Icon} aria-hidden />
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add project member</DialogTitle>
+          <DialogDescription>
+            Choose an eligible user and their project role.
+          </DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <form className="space-y-4" onSubmit={form.handleSubmit(addMember)}>
+            <FormField
+              control={form.control}
+              name="user_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>User</FormLabel>
+                  <Combobox
+                    items={candidates}
+                    value={candidatesById.get(field.value) ?? null}
+                    onValueChange={(user) => {
+                      field.onChange(user?.id ?? '')
+                      if (user?.role === 'qa_viewer') {
+                        form.setValue('role', 'viewer')
+                      }
+                    }}
+                    itemToStringLabel={(user) =>
+                      user.display_name
+                        ? `${user.display_name} (${user.email})`
+                        : user.email
+                    }
+                  >
+                    <FormControl>
+                      <ComboboxInput
+                        className="w-full"
+                        placeholder="Search eligible users..."
+                      />
+                    </FormControl>
+                    <ComboboxContent>
+                      <ComboboxEmpty>No eligible users found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(user) => (
+                          <ComboboxItem key={user.id} value={user}>
+                            <span className="min-w-0 flex-1 truncate">
+                              {user.email}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {INSTANCE_ROLE_LABELS[user.role]}
+                              {user.status === 'invited' ? ' · Invited' : ''}
+                            </span>
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="role"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Project role</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    items={Object.fromEntries(
+                      availableRoles.map((role) => [
+                        role,
+                        PROJECT_ROLE_LABELS[role],
+                      ]),
+                    )}
+                  >
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {availableRoles.map((role) => (
+                        <SelectItem key={role} value={role}>
+                          {PROJECT_ROLE_LABELS[role]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedUser?.role === 'qa_viewer' ? (
+                    <FormDescription>
+                      QA viewers always receive read-only Viewer access.
+                    </FormDescription>
+                  ) : null}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {candidatesQuery.error ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  Failed to load eligible users: {candidatesQuery.error.message}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <DialogFooter className="static">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={addMutation.isPending || candidatesQuery.isLoading}
+              >
+                {addMutation.isPending ? (
+                  <>
+                    <Spinner className="size-4" />
+                    Adding...
+                  </>
+                ) : (
+                  'Add'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function ProjectAccessCard({ projectId }: { projectId: string }) {
+  const membersQuery = useProjectMembers(projectId)
+  const updateMutation = useUpdateProjectMember(projectId)
+  const removeMutation = useRemoveProjectMember(projectId)
+  const [memberToRemove, setMemberToRemove] = useState<ProjectMember | null>(
+    null,
+  )
+  const members = useMemo(
+    () => membersQuery.data?.members ?? [],
+    [membersQuery.data],
+  )
 
   function updateRole(member: ProjectMember, role: ProjectRole) {
     if (role === member.role) return
@@ -309,8 +455,8 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     })
   }
 
-  const isLoading = membersQuery.isLoading || candidatesQuery.isLoading
-  const error = membersQuery.error ?? candidatesQuery.error
+  const isLoading = membersQuery.isLoading
+  const error = membersQuery.error
 
   return (
     <>
@@ -323,143 +469,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
             Grant developers or QA viewers access to this project.
           </CardDescription>
           <CardAction>
-            <Dialog open={addOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger
-                render={
-                  <Button
-                    size="icon-sm"
-                    aria-label="Add project member"
-                    title="Add project member"
-                  />
-                }
-              >
-                <HugeiconsIcon icon={Add01Icon} aria-hidden />
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Add project member</DialogTitle>
-                  <DialogDescription>
-                    Choose an eligible user and their project role.
-                  </DialogDescription>
-                </DialogHeader>
-                <Form {...form}>
-                  <form
-                    className="space-y-4"
-                    onSubmit={form.handleSubmit(addMember)}
-                  >
-                    <FormField
-                      control={form.control}
-                      name="user_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>User</FormLabel>
-                          <Combobox
-                            items={candidates}
-                            value={candidatesById.get(field.value) ?? null}
-                            onValueChange={(user) => {
-                              field.onChange(user?.id ?? '')
-                              if (user?.role === 'qa_viewer') {
-                                form.setValue('role', 'viewer')
-                              }
-                            }}
-                            itemToStringLabel={(user) =>
-                              user.display_name
-                                ? `${user.display_name} (${user.email})`
-                                : user.email
-                            }
-                          >
-                            <FormControl>
-                              <ComboboxInput
-                                className="w-full"
-                                placeholder="Search eligible users..."
-                              />
-                            </FormControl>
-                            <ComboboxContent>
-                              <ComboboxEmpty>
-                                No eligible users found.
-                              </ComboboxEmpty>
-                              <ComboboxList>
-                                {(user) => (
-                                  <ComboboxItem key={user.id} value={user}>
-                                    <span className="min-w-0 flex-1 truncate">
-                                      {user.email}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {INSTANCE_ROLE_LABELS[user.role]}
-                                      {user.status === 'invited'
-                                        ? ' · Invited'
-                                        : ''}
-                                    </span>
-                                  </ComboboxItem>
-                                )}
-                              </ComboboxList>
-                            </ComboboxContent>
-                          </Combobox>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="role"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Project role</FormLabel>
-                          <Select
-                            value={field.value}
-                            onValueChange={field.onChange}
-                            items={Object.fromEntries(
-                              availableRoles.map((role) => [
-                                role,
-                                PROJECT_ROLE_LABELS[role],
-                              ]),
-                            )}
-                          >
-                            <FormControl>
-                              <SelectTrigger className="w-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {availableRoles.map((role) => (
-                                <SelectItem key={role} value={role}>
-                                  {PROJECT_ROLE_LABELS[role]}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {selectedUser?.role === 'qa_viewer' ? (
-                            <FormDescription>
-                              QA viewers always receive read-only Viewer access.
-                            </FormDescription>
-                          ) : null}
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <DialogFooter className="static">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setDialogOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={addMutation.isPending}>
-                        {addMutation.isPending ? (
-                          <>
-                            <Spinner className="size-4" />
-                            Adding...
-                          </>
-                        ) : (
-                          'Add'
-                        )}
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </Form>
-              </DialogContent>
-            </Dialog>
+            <AddProjectMemberDialog projectId={projectId} />
           </CardAction>
         </CardHeader>
         <CardContent>

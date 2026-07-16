@@ -7,16 +7,15 @@ import {
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
 
 import type { Runner } from '@/lib/types'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { CollectionSearchInput } from '@/components/collection-search-input'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
-import { getRunnerStatusVariant } from '@/lib/status-variants'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
@@ -49,52 +48,17 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { Spinner } from '@/components/ui/spinner'
 import { Card, CardContent } from '@/components/ui/card'
-import RunnerStatusDot from '@/components/runner-status-dot'
-import {
-  CollectionPagination,
-  SortableTableHead,
-} from '@/components/collection-controls'
 import type { SortDirection } from '@/components/collection-controls'
 import type { RunnerSort, RunnersSearch } from './runners'
+import { RunnerInventory } from './-runner-inventory'
 
 const EMPTY_RUNNERS: Array<Runner> = []
 
 export const Route = createLazyFileRoute('/settings/runners')({
   component: RunnersSettingsPage,
 })
-
-function formatRelativeTime(epochSeconds?: number): string {
-  if (!epochSeconds) return 'never'
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
-
-function getHeartbeatStaleness(
-  epochSeconds?: number,
-): 'fresh' | 'stale' | 'none' {
-  if (!epochSeconds) return 'none'
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diffSecs > 60) return 'stale'
-  return 'fresh'
-}
 
 function formatCapabilities(capabilities: Runner['capabilities']): string {
   const entries = Object.entries(capabilities)
@@ -235,39 +199,6 @@ const RUNNER_SORT_OPTIONS: Record<RunnerSort, string> = {
   last_heartbeat_at: 'Last heartbeat',
   name: 'Name',
   status: 'Status',
-}
-
-function RunnerSearch({
-  initialValue,
-  onSearch,
-}: {
-  initialValue: string
-  onSearch: (value: string) => void
-}) {
-  const [value, setValue] = useState(initialValue)
-  const debouncedSearch = useDebouncedCallback(onSearch, 300)
-
-  return (
-    <div className="relative w-full sm:max-w-sm">
-      <HugeiconsIcon
-        icon={Search01Icon}
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden
-      />
-      <Input
-        type="search"
-        value={value}
-        onChange={(event) => {
-          const next = event.target.value
-          setValue(next)
-          debouncedSearch(next)
-        }}
-        placeholder="Search runners"
-        aria-label="Search runners"
-        className="pl-9"
-      />
-    </div>
-  )
 }
 
 function compareRunners(left: Runner, right: Runner, sort: RunnerSort): number {
@@ -435,12 +366,14 @@ function RunnersSettingsPage() {
       </section>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <RunnerSearch
+        <CollectionSearchInput
           key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
           }
+          placeholder="Search runners"
+          ariaLabel="Search runners"
         />
         <div className="flex gap-2 sm:hidden">
           <NativeSelect
@@ -523,215 +456,28 @@ function RunnersSettingsPage() {
       ) : null}
 
       {!runnersQuery.error && (runnersQuery.isLoading || total > 0) ? (
-        <section aria-label="Runner inventory" className="min-w-0">
-          <div className="divide-y sm:hidden">
-            {runnersQuery.isLoading
-              ? Array.from({ length: 4 }, (_, index) => (
-                  <div key={index} className="space-y-2 py-4">
-                    <Skeleton className="h-5 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </div>
-                ))
-              : visibleRunners.map((runner) => {
-                  const canRename = canWrite && !!runner.registered_by
-                  return (
-                    <article key={runner.id} className="space-y-3 py-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h2 className="truncate font-medium">
-                            {runner.name}
-                          </h2>
-                          <p className="truncate font-mono text-xs text-muted-foreground">
-                            {runner.id.slice(0, 8)}
-                          </p>
-                        </div>
-                        <div className="flex items-center">
-                          <RunnerStatusDot status={runner.status} />
-                          <Badge
-                            variant={getRunnerStatusVariant(runner.status)}
-                          >
-                            {runner.status}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                        <span>
-                          Heartbeat{' '}
-                          {formatRelativeTime(runner.last_heartbeat_at)}
-                        </span>
-                        <span>{runner.registered_by ?? 'Embedded runner'}</span>
-                      </div>
-                      {canRename ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openRename(runner)}
-                        >
-                          Rename
-                        </Button>
-                      ) : null}
-                    </article>
-                  )
-                })}
-          </div>
-
-          <div className="hidden sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="name"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Name
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="status"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Status
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Version
-                  </TableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="last_heartbeat_at"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Last heartbeat
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Capabilities
-                  </TableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Registered by
-                  </TableHead>
-                  {canWrite ? (
-                    <TableHead className="text-right">Action</TableHead>
-                  ) : null}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {runnersQuery.isLoading
-                  ? Array.from({ length: 5 }, (_, index) => (
-                      <TableRow key={index}>
-                        <TableCell>
-                          <Skeleton className="h-8 w-40" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-20" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-16" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-36" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-32" />
-                        </TableCell>
-                        {canWrite ? (
-                          <TableCell>
-                            <Skeleton className="ml-auto h-8 w-16" />
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))
-                  : visibleRunners.map((runner) => {
-                      const canRename = canWrite && !!runner.registered_by
-                      return (
-                        <TableRow key={runner.id}>
-                          <TableCell>
-                            <p className="font-medium">{runner.name}</p>
-                            <p className="font-mono text-xs text-muted-foreground">
-                              {runner.id.slice(0, 8)}
-                            </p>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center">
-                              <RunnerStatusDot status={runner.status} />
-                              <Badge
-                                variant={getRunnerStatusVariant(runner.status)}
-                              >
-                                {runner.status}
-                              </Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
-                            {typeof runner.capabilities.version === 'string'
-                              ? runner.capabilities.version
-                              : 'Unknown'}
-                          </TableCell>
-                          <TableCell
-                            className={
-                              getHeartbeatStaleness(
-                                runner.last_heartbeat_at,
-                              ) === 'stale' && runner.status !== 'offline'
-                                ? 'text-warning'
-                                : 'text-muted-foreground'
-                            }
-                          >
-                            {formatRelativeTime(runner.last_heartbeat_at)}
-                          </TableCell>
-                          <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">
-                            {formatCapabilities(runner.capabilities)}
-                          </TableCell>
-                          <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
-                            {runner.registered_by ?? 'embedded'}
-                          </TableCell>
-                          {canWrite ? (
-                            <TableCell className="text-right">
-                              {canRename ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openRename(runner)}
-                                >
-                                  Rename
-                                </Button>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  Managed by daemon
-                                </span>
-                              )}
-                            </TableCell>
-                          ) : null}
-                        </TableRow>
-                      )
-                    })}
-              </TableBody>
-            </Table>
-          </div>
-
-          {!runnersQuery.isLoading ? (
-            <CollectionPagination
-              page={currentPage}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={(nextPage) =>
-                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
-              }
-              onPageSizeChange={(nextPageSize) =>
-                updateSearch({
-                  pageSize:
-                    nextPageSize === 20
-                      ? undefined
-                      : (nextPageSize as 50 | 100),
-                  page: undefined,
-                })
-              }
-            />
-          ) : null}
-        </section>
+        <RunnerInventory
+          canWrite={canWrite}
+          direction={direction}
+          isLoading={runnersQuery.isLoading}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onRename={openRename}
+          onSortChange={handleSortChange}
+          page={currentPage}
+          pageSize={pageSize}
+          runners={visibleRunners}
+          sort={sort}
+          total={total}
+        />
       ) : null}
 
       {canWrite ? (

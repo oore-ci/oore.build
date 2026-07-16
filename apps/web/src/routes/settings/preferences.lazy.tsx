@@ -3,7 +3,7 @@ import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import { useActiveInstance } from '@/stores/instance-store'

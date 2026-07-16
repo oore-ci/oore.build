@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   Calendar03Icon,
   InformationCircleIcon,
@@ -9,15 +9,10 @@ import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
 import { format } from 'date-fns'
 import type { DateRange } from 'react-day-picker'
 
-import {
-  CollectionPagination,
-  SortableTableHead,
-} from '@/components/collection-controls'
 import type { SortDirection } from '@/components/collection-controls'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import {
@@ -28,7 +23,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverContent,
@@ -41,27 +35,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { useAuditLogs } from '@/hooks/use-audit-logs'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { CollectionSearchInput } from '@/components/collection-search-input'
 import { usePageClamp } from '@/hooks/use-page-clamp'
-import { relativeTime } from '@/lib/format-utils'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
-
-type AuditSort = 'created_at' | 'actor_email' | 'action' | 'resource_type'
+import { AuditLogInventory } from './-audit-log-inventory'
+import type { AuditSort } from './-audit-log-inventory'
 
 interface AuditLogSearch {
   direction?: SortDirection
@@ -147,39 +131,6 @@ export const Route = createFileRoute('/settings/audit-log')({
   },
   component: AuditLogPage,
 })
-
-function ActionSearch({
-  initialValue,
-  onSearch,
-}: {
-  initialValue: string
-  onSearch: (value: string) => void
-}) {
-  const [value, setValue] = useState(initialValue)
-  const debouncedSearch = useDebouncedCallback(onSearch, 300)
-
-  return (
-    <div className="relative w-full lg:max-w-sm">
-      <HugeiconsIcon
-        icon={Search01Icon}
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden
-      />
-      <Input
-        type="search"
-        value={value}
-        onChange={(event) => {
-          const next = event.target.value
-          setValue(next)
-          debouncedSearch(next)
-        }}
-        placeholder="Search actions"
-        aria-label="Search audit actions"
-        className="pl-9"
-      />
-    </div>
-  )
-}
 
 function dateFromSearch(value?: string): Date | undefined {
   if (!value) return undefined
@@ -314,12 +265,15 @@ function AuditLogPage() {
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-        <ActionSearch
+        <CollectionSearchInput
           key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
           }
+          placeholder="Search actions"
+          ariaLabel="Search audit actions"
+          className="lg:max-w-sm"
         />
         <div className="grid min-w-0 grid-cols-2 gap-3 sm:flex sm:flex-wrap lg:ml-auto">
           <Select
@@ -453,184 +407,26 @@ function AuditLogPage() {
       ) : null}
 
       {!auditQuery.error && (auditQuery.isLoading || total > 0) ? (
-        <section aria-label="Audit activity" className="min-w-0">
-          <ul className="divide-y sm:hidden">
-            {auditQuery.isLoading
-              ? Array.from({ length: 5 }, (_, index) => (
-                  <li key={index} className="space-y-2 py-4">
-                    <Skeleton className="h-5 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                    <Skeleton className="h-4 w-full" />
-                  </li>
-                ))
-              : entries.map((entry) => (
-                  <li key={entry.id} className="space-y-2 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <Badge variant="outline" className="min-w-0 truncate">
-                        {entry.action}
-                      </Badge>
-                      <time
-                        dateTime={new Date(
-                          entry.created_at * 1000,
-                        ).toISOString()}
-                        className="shrink-0 text-xs text-muted-foreground"
-                      >
-                        {relativeTime(entry.created_at)}
-                      </time>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Badge variant="secondary">{entry.resource_type}</Badge>
-                      <span className="truncate font-mono">
-                        {entry.resource_id
-                          ? entry.resource_id.slice(0, 8)
-                          : 'No resource ID'}
-                      </span>
-                    </div>
-                    <p className="truncate text-sm">
-                      {entry.actor_email ?? 'System'}
-                    </p>
-                    {entry.details ? (
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
-                        {entry.details}
-                      </p>
-                    ) : null}
-                  </li>
-                ))}
-          </ul>
-
-          <div className="hidden sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="created_at"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Time
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="actor_email"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Actor
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="action"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Action
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="resource_type"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Resource
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Resource ID
-                  </TableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Details
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {auditQuery.isLoading
-                  ? Array.from({ length: 5 }, (_, index) => (
-                      <TableRow key={index}>
-                        <TableCell>
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-4 w-32" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-28" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-20" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-16" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-40" />
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : entries.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                          <time
-                            dateTime={new Date(
-                              entry.created_at * 1000,
-                            ).toISOString()}
-                          >
-                            {relativeTime(entry.created_at)}
-                          </time>
-                        </TableCell>
-                        <TableCell className="max-w-40 truncate text-sm">
-                          {entry.actor_email ?? (
-                            <span className="text-muted-foreground">
-                              System
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="max-w-48">
-                          <Badge
-                            variant="outline"
-                            className="max-w-full truncate"
-                          >
-                            {entry.action}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">
-                            {entry.resource_type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="hidden font-mono text-[11px] text-muted-foreground lg:table-cell">
-                          {entry.resource_id
-                            ? entry.resource_id.slice(0, 8)
-                            : '—'}
-                        </TableCell>
-                        <TableCell className="hidden max-w-xs truncate text-xs text-muted-foreground lg:table-cell">
-                          {entry.details ?? '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {!auditQuery.isLoading ? (
-            <CollectionPagination
-              page={page}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={(nextPage) =>
-                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
-              }
-              onPageSizeChange={(nextPageSize) =>
-                updateSearch({
-                  pageSize:
-                    nextPageSize === 20
-                      ? undefined
-                      : (nextPageSize as 50 | 100),
-                  page: undefined,
-                })
-              }
-            />
-          ) : null}
-        </section>
+        <AuditLogInventory
+          direction={direction}
+          entries={entries}
+          isLoading={auditQuery.isLoading}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onSortChange={handleSortChange}
+          page={page}
+          pageSize={pageSize}
+          sort={sort}
+          total={total}
+        />
       ) : null}
     </PageLayout>
   )

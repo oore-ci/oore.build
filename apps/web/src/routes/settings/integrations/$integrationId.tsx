@@ -8,7 +8,7 @@ import {
   Refresh01Icon,
   Setting07Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import {

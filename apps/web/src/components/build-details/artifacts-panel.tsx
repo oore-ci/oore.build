@@ -6,7 +6,7 @@ import {
   File01Icon,
   Share08Icon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import type { Artifact, BuildStatus } from '@/lib/types'
 import { useArtifactDownloadLink } from '@/hooks/use-builds'

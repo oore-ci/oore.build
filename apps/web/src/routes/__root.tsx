@@ -3,7 +3,6 @@ import {
   Outlet,
   createRootRoute,
   useMatches,
-  useRouterState,
 } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
@@ -12,8 +11,11 @@ import { Search01Icon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
+import DeferredToaster from '@/components/deferred-toaster'
 import PageBreadcrumb from '@/components/page-breadcrumb'
 import QaAppHeader from '@/components/qa-app-header'
+import RouteTransitionBar from '@/components/route-transition-bar'
+import ThemeColorSync from '@/components/theme-color-sync'
 import { Separator } from '@/components/ui/separator'
 import {
   SidebarInset,
@@ -21,8 +23,6 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Kbd } from '@/components/ui/kbd'
-import { Toaster } from '@/components/ui/sonner'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
@@ -59,46 +59,6 @@ const DevTools = import.meta.env.DEV
       })),
     )
   : () => null
-
-function RouteTransitionBar() {
-  const isLoading = useRouterState({
-    select: (s) => s.status === 'pending',
-  })
-  if (!isLoading) return null
-  return (
-    <div className="fixed top-0 left-0 right-0 z-50 h-0.5 overflow-hidden bg-primary/20">
-      <div className="h-full w-1/3 animate-[route-slide_1s_ease-in-out_infinite] bg-primary" />
-    </div>
-  )
-}
-
-function ThemeColorSync() {
-  useMountEffect(() => {
-    const root = document.documentElement
-    const light = document.querySelector<HTMLMetaElement>(
-      'meta[name="theme-color"][data-theme="light"]',
-    )
-    const dark = document.querySelector<HTMLMetaElement>(
-      'meta[name="theme-color"][data-theme="dark"]',
-    )
-    if (!light || !dark) return
-
-    const sync = () => {
-      const isDark =
-        root.classList.contains('dark') ||
-        (!root.classList.contains('light') &&
-          window.matchMedia('(prefers-color-scheme: dark)').matches)
-      light.media = isDark ? 'not all' : 'all'
-      dark.media = isDark ? 'all' : 'not all'
-    }
-    const observer = new MutationObserver(sync)
-    observer.observe(root, { attributes: true, attributeFilter: ['class'] })
-    sync()
-    return () => observer.disconnect()
-  })
-
-  return null
-}
 
 export const Route = createRootRoute({
   beforeLoad: () => {
@@ -233,7 +193,7 @@ function RootLayout() {
             </div>
           </main>
         )}
-        <Toaster />
+        <DeferredToaster />
         {showAppChrome && !showQaChrome && commandPaletteOpen ? (
           <Suspense fallback={null}>
             <CommandPalette />

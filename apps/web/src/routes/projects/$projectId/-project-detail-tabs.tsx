@@ -1,29 +1,18 @@
 import { useState } from 'react'
 import {
-  Add01Icon,
   InformationCircleIcon,
   PlayIcon,
   Search01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Link, useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 
-import type { Build, Pipeline } from '@/lib/types'
-import {
-  BUILD_STATUS_FILTER_OPTIONS,
-  getStatusVariant,
-} from '@/lib/status-variants'
-import { relativeTime } from '@/lib/format-utils'
+import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
 import { useBuilds } from '@/hooks/use-builds'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import type { SortDirection } from '@/components/collection-controls'
-import {
-  CollectionPagination,
-  SortableTableHead,
-} from '@/components/collection-controls'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Empty,
@@ -41,28 +30,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { TabsContent } from '@/components/ui/tabs'
-import { Spinner } from '@/components/ui/spinner'
-import PipelineCard from '@/components/pipeline-card'
 import { cn } from '@/lib/utils'
-
-export const PROJECT_BUILD_SORT_OPTIONS = {
-  created_at: 'Newest first',
-  status: 'Status',
-  pipeline_name: 'Pipeline',
-  branch: 'Branch',
-} as const
-
-export type ProjectBuildSort = keyof typeof PROJECT_BUILD_SORT_OPTIONS
+import { PROJECT_BUILD_SORT_OPTIONS } from './-project-build-sort'
+import type { ProjectBuildSort } from './-project-build-sort'
+import { ProjectBuildInventory } from './-project-build-inventory'
 
 type ProjectBuildSearchUpdates = Partial<{
   direction: SortDirection
@@ -107,23 +79,6 @@ function BranchSearch({
   )
 }
 
-function BuildIdentity({ build }: { build: Build }) {
-  return (
-    <Link
-      to="/builds/$buildId"
-      params={{ buildId: build.id }}
-      className="group block rounded-sm font-mono outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span className="block text-sm group-hover:underline">
-        #{build.build_number}
-      </span>
-      <span className="block text-[11px] text-muted-foreground">
-        {build.id.slice(0, 8)}
-      </span>
-    </Link>
-  )
-}
-
 export function ProjectBuildsTab({
   active,
   canTriggerBuild,
@@ -142,7 +97,7 @@ export function ProjectBuildsTab({
   projectId: string
 }) {
   const search = useSearch({ from: '/projects/$projectId/' })
-  const navigate = useNavigate()
+  const navigate = useNavigate({ from: '/projects/$projectId/' })
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'created_at'
@@ -354,293 +309,31 @@ export function ProjectBuildsTab({
           ) : null}
 
           {!buildsQuery.error && (buildsQuery.isLoading || total > 0) ? (
-            <section aria-label="Project build history" className="min-w-0">
-              <div className="divide-y sm:hidden">
-                {buildsQuery.isLoading
-                  ? Array.from({ length: 5 }, (_, index) => (
-                      <div key={index} className="space-y-2 py-4">
-                        <Skeleton className="h-5 w-1/3" />
-                        <Skeleton className="h-4 w-2/3" />
-                      </div>
-                    ))
-                  : builds.map((build) => (
-                      <div key={build.id} className="space-y-2 py-4">
-                        <div className="flex items-start justify-between gap-4">
-                          <BuildIdentity build={build} />
-                          <Badge variant={getStatusVariant(build.status)}>
-                            {build.status}
-                          </Badge>
-                        </div>
-                        {build.context?.pipeline_name ? (
-                          <p className="truncate text-sm">
-                            {build.context.pipeline_name}
-                          </p>
-                        ) : null}
-                        <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-                          <span className="truncate font-mono">
-                            {build.branch ?? 'No branch'}
-                          </span>
-                          <span className="shrink-0">
-                            {relativeTime(build.created_at)}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-              </div>
-
-              <div className="hidden sm:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Build</TableHead>
-                      <SortableTableHead
-                        sort={sort}
-                        sortKey="pipeline_name"
-                        direction={direction}
-                        onSortChange={handleSortChange}
-                      >
-                        Pipeline
-                      </SortableTableHead>
-                      <SortableTableHead
-                        sort={sort}
-                        sortKey="status"
-                        direction={direction}
-                        onSortChange={handleSortChange}
-                      >
-                        Status
-                      </SortableTableHead>
-                      <TableHead className="hidden lg:table-cell">
-                        Trigger
-                      </TableHead>
-                      <SortableTableHead
-                        className="hidden lg:table-cell"
-                        sort={sort}
-                        sortKey="branch"
-                        direction={direction}
-                        onSortChange={handleSortChange}
-                      >
-                        Branch
-                      </SortableTableHead>
-                      <TableHead className="hidden lg:table-cell">
-                        Commit
-                      </TableHead>
-                      <SortableTableHead
-                        sort={sort}
-                        sortKey="created_at"
-                        direction={direction}
-                        onSortChange={handleSortChange}
-                      >
-                        Created
-                      </SortableTableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {buildsQuery.isLoading
-                      ? Array.from({ length: 5 }, (_, index) => (
-                          <TableRow key={index}>
-                            <TableCell>
-                              <Skeleton className="h-8 w-20" />
-                            </TableCell>
-                            <TableCell>
-                              <Skeleton className="h-8 w-32" />
-                            </TableCell>
-                            <TableCell>
-                              <Skeleton className="h-6 w-20" />
-                            </TableCell>
-                            <TableCell className="hidden lg:table-cell">
-                              <Skeleton className="h-6 w-24" />
-                            </TableCell>
-                            <TableCell className="hidden lg:table-cell">
-                              <Skeleton className="h-4 w-24" />
-                            </TableCell>
-                            <TableCell className="hidden lg:table-cell">
-                              <Skeleton className="h-4 w-20" />
-                            </TableCell>
-                            <TableCell>
-                              <Skeleton className="h-4 w-20" />
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      : builds.map((build) => (
-                          <TableRow key={build.id}>
-                            <TableCell>
-                              <BuildIdentity build={build} />
-                            </TableCell>
-                            <TableCell>
-                              <p className="text-sm">
-                                {build.context?.pipeline_name ??
-                                  'Unknown pipeline'}
-                              </p>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={getStatusVariant(build.status)}>
-                                {build.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="hidden lg:table-cell">
-                              <Badge variant="outline">
-                                {build.trigger_type}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
-                              {build.branch ?? 'n/a'}
-                            </TableCell>
-                            <TableCell className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
-                              {build.commit_sha
-                                ? build.commit_sha.slice(0, 10)
-                                : 'n/a'}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {relativeTime(build.created_at)}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {!buildsQuery.isLoading ? (
-                <CollectionPagination
-                  page={page}
-                  pageSize={pageSize}
-                  total={total}
-                  onPageChange={(nextPage) =>
-                    updateSearch({
-                      page: nextPage > 1 ? nextPage : undefined,
-                    })
-                  }
-                  onPageSizeChange={(nextPageSize) =>
-                    updateSearch({
-                      pageSize:
-                        nextPageSize === 20
-                          ? undefined
-                          : (nextPageSize as 50 | 100),
-                      page: undefined,
-                    })
-                  }
-                />
-              ) : null}
-            </section>
+            <ProjectBuildInventory
+              builds={builds}
+              direction={direction}
+              isLoading={buildsQuery.isLoading}
+              onPageChange={(nextPage) =>
+                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+              }
+              onPageSizeChange={(nextPageSize) =>
+                updateSearch({
+                  pageSize:
+                    nextPageSize === 20
+                      ? undefined
+                      : (nextPageSize as 50 | 100),
+                  page: undefined,
+                })
+              }
+              onSortChange={handleSortChange}
+              page={page}
+              pageSize={pageSize}
+              sort={sort}
+              total={total}
+            />
           ) : null}
         </div>
       ) : null}
-    </TabsContent>
-  )
-}
-
-export function ProjectPipelinesTab({
-  canTriggerBuild,
-  canWritePipelines,
-  defaultBranch,
-  hasValidRepositoryWorkflow,
-  lastBuildByPipeline,
-  onPreloadTriggerBuild,
-  onTriggerBuild,
-  pipelines,
-  projectHasSource,
-  projectId,
-  workflowDiscoveryFailed,
-  workflowDiscoveryLoading,
-}: {
-  canTriggerBuild: boolean
-  canWritePipelines: boolean
-  defaultBranch: string | undefined
-  hasValidRepositoryWorkflow: boolean
-  lastBuildByPipeline: Map<string, { status: string; time: number }>
-  onPreloadTriggerBuild: () => void
-  onTriggerBuild: (pipelineId: string) => void
-  pipelines: Array<Pipeline>
-  projectHasSource: boolean
-  projectId: string
-  workflowDiscoveryFailed: boolean
-  workflowDiscoveryLoading: boolean
-}) {
-  return (
-    <TabsContent value="pipelines">
-      <div className="space-y-4 pt-2">
-        {canWritePipelines && pipelines.length > 0 ? (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              render={
-                <Link
-                  to="/projects/$projectId/pipelines/new"
-                  params={{ projectId }}
-                />
-              }
-            >
-              <HugeiconsIcon icon={Add01Icon} />
-              Add pipeline
-            </Button>
-          </div>
-        ) : null}
-
-        {pipelines.length === 0 ? (
-          <Empty className="border p-8">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                {workflowDiscoveryLoading ? (
-                  <Spinner className="size-5" />
-                ) : (
-                  <HugeiconsIcon icon={Add01Icon} />
-                )}
-              </EmptyMedia>
-              <EmptyTitle>
-                {workflowDiscoveryLoading
-                  ? 'Checking your repository'
-                  : hasValidRepositoryWorkflow
-                    ? 'Your repository is ready'
-                    : 'Set up your first build'}
-              </EmptyTitle>
-              <EmptyDescription>
-                {!canWritePipelines
-                  ? 'Ask a developer or admin to set up the first build.'
-                  : workflowDiscoveryLoading
-                    ? `Looking for Oore workflows on ${defaultBranch ?? 'the default branch'}...`
-                    : workflowDiscoveryFailed
-                      ? 'Oore could not inspect the repository. Open setup to retry or continue manually.'
-                      : hasValidRepositoryWorkflow
-                        ? 'Oore found a checked-in workflow. Review it, name the pipeline, and run your first build.'
-                        : 'Choose a clear starter for your app. Advanced build details stay out of the way until you need them.'}
-              </EmptyDescription>
-            </EmptyHeader>
-            {canWritePipelines ? (
-              <EmptyContent>
-                <Button
-                  render={
-                    <Link
-                      to="/projects/$projectId/pipelines/new"
-                      params={{ projectId }}
-                    />
-                  }
-                >
-                  <HugeiconsIcon icon={Add01Icon} />
-                  {hasValidRepositoryWorkflow
-                    ? 'Use repository workflow'
-                    : 'Set up a build'}
-                </Button>
-              </EmptyContent>
-            ) : null}
-          </Empty>
-        ) : (
-          pipelines.map((pipeline) => {
-            const lastBuild = lastBuildByPipeline.get(pipeline.id)
-            return (
-              <PipelineCard
-                key={pipeline.id}
-                pipeline={pipeline}
-                projectId={projectId}
-                canWrite={canWritePipelines}
-                canTriggerBuild={canTriggerBuild && projectHasSource}
-                onPreloadTriggerBuild={onPreloadTriggerBuild}
-                onTriggerBuild={onTriggerBuild}
-                lastBuildStatus={lastBuild?.status}
-                lastBuildTime={lastBuild?.time}
-              />
-            )
-          })
-        )}
-      </div>
     </TabsContent>
   )
 }

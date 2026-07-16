@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
@@ -8,7 +8,7 @@ import {
   InformationCircleIcon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import {
   getActiveInstanceOrRedirect,
@@ -46,15 +46,17 @@ import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  PROJECT_BUILD_SORT_OPTIONS,
-  ProjectBuildsTab,
-  ProjectPipelinesTab,
-} from './-project-detail-tabs'
-import type { ProjectBuildSort } from './-project-detail-tabs'
+import { ProjectPipelinesTab } from './-project-pipelines-tab'
+import { PROJECT_BUILD_SORT_OPTIONS } from './-project-build-sort'
+import type { ProjectBuildSort } from './-project-build-sort'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
+const ProjectBuildsTab = lazy(() =>
+  import('./-project-detail-tabs').then((module) => ({
+    default: module.ProjectBuildsTab,
+  })),
+)
 const loadProjectSettingsForm = () => import('./-project-settings-form')
 const ProjectSettingsForm = lazy(() =>
   loadProjectSettingsForm().then((module) => ({
@@ -129,7 +131,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
 function useProjectDetailPageState() {
   const { projectId } = Route.useParams()
   const { tab } = Route.useSearch()
-  const navigate = useNavigate()
+  const navigate = Route.useNavigate()
   const { data, isLoading, error } = useProject(projectId)
   const { data: pipelinesData } = usePipelines(projectId)
   const { data: summaryBuildsData } = useBuilds(
@@ -447,15 +449,19 @@ function ProjectDetailPage() {
           workflowDiscoveryLoading={repositoryWorkflowsQuery.isLoading}
         />
 
-        <ProjectBuildsTab
-          active={activeTab === 'builds'}
-          canTriggerBuild={canTriggerBuild}
-          onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
-          onTriggerBuild={() => openTriggerBuild()}
-          pipelineCount={pipelines.length}
-          projectHasSource={projectHasSource}
-          projectId={projectId}
-        />
+        {activeTab === 'builds' ? (
+          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <ProjectBuildsTab
+              active
+              canTriggerBuild={canTriggerBuild}
+              onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
+              onTriggerBuild={() => openTriggerBuild()}
+              pipelineCount={pipelines.length}
+              projectHasSource={projectHasSource}
+              projectId={projectId}
+            />
+          </Suspense>
+        ) : null}
 
         {/* ---- Settings tab ---- */}
         <TabsContent value="settings">

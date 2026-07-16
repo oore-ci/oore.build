@@ -7,7 +7,7 @@ import {
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -19,7 +19,7 @@ import type { ApiTokenSummary, CreateApiTokenResponse } from '@/lib/types'
 import { getApiErrorMessage } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { CollectionSearchInput } from '@/components/collection-search-input'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   useApiTokens,
@@ -30,7 +30,6 @@ import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -66,25 +65,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Card, CardContent } from '@/components/ui/card'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import TokenCreatedDialog from '@/components/token-created-dialog'
-import {
-  CollectionPagination,
-  SortableTableHead,
-} from '@/components/collection-controls'
 import type { SortDirection } from '@/components/collection-controls'
 import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
+import { ApiTokenInventory } from './-api-token-inventory'
+import { ApiTokenStats } from './-api-token-summary'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
@@ -92,38 +79,12 @@ export const Route = createLazyFileRoute('/settings/api-tokens')({
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function formatRelativeTime(epochSeconds?: number | null): string {
-  if (!epochSeconds) return 'Never'
-  const diffSecs = Math.floor(Date.now() / 1000) - epochSeconds
-  if (diffSecs < 5) return 'just now'
-  if (diffSecs < 60) return `${diffSecs}s ago`
-  const mins = Math.floor(diffSecs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
-
 function getTokenStatus(
   token: ApiTokenSummary,
 ): 'active' | 'expired' | 'revoked' {
   if (token.is_revoked) return 'revoked'
   if (token.is_expired) return 'expired'
   return 'active'
-}
-
-function getStatusVariant(
-  status: 'active' | 'expired' | 'revoked',
-): 'secondary' | 'outline' | 'destructive' {
-  switch (status) {
-    case 'active':
-      return 'secondary'
-    case 'expired':
-      return 'outline'
-    case 'revoked':
-      return 'destructive'
-  }
 }
 
 const ROLE_HIERARCHY: Array<string> = [
@@ -356,39 +317,6 @@ const API_TOKEN_SORT_OPTIONS: Record<ApiTokenSort, string> = {
   status: 'Status',
 }
 
-function TokenSearch({
-  initialValue,
-  onSearch,
-}: {
-  initialValue: string
-  onSearch: (value: string) => void
-}) {
-  const [value, setValue] = useState(initialValue)
-  const debouncedSearch = useDebouncedCallback(onSearch, 300)
-
-  return (
-    <div className="relative w-full sm:max-w-sm">
-      <HugeiconsIcon
-        icon={Search01Icon}
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden
-      />
-      <Input
-        type="search"
-        value={value}
-        onChange={(event) => {
-          const next = event.target.value
-          setValue(next)
-          debouncedSearch(next)
-        }}
-        placeholder="Search API tokens"
-        aria-label="Search API tokens"
-        className="pl-9"
-      />
-    </div>
-  )
-}
-
 function compareTokens(
   left: ApiTokenSummary,
   right: ApiTokenSummary,
@@ -435,7 +363,10 @@ function ApiTokensPage() {
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
-  const tokens = tokensQuery.data?.tokens ?? []
+  const tokens = useMemo(
+    () => tokensQuery.data?.tokens ?? [],
+    [tokensQuery.data?.tokens],
+  )
   const activeCount = tokens.filter(
     (t) => !t.is_revoked && !t.is_expired,
   ).length
@@ -523,60 +454,21 @@ function ApiTokensPage() {
         }
       />
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Total tokens
-            </p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
-              {tokens.length}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Active, expired, and revoked
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Active tokens
-              </p>
-              {activeCount > 0 ? (
-                <Badge variant="secondary">{activeCount}</Badge>
-              ) : null}
-            </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
-              {activeCount}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Currently valid for API access
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Revoked tokens
-            </p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
-              {tokens.filter((t) => t.is_revoked).length}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              No longer valid
-            </p>
-          </CardContent>
-        </Card>
-      </section>
+      <ApiTokenStats
+        active={activeCount}
+        revoked={tokens.filter((token) => token.is_revoked).length}
+        total={tokens.length}
+      />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <TokenSearch
+        <CollectionSearchInput
           key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
           }
+          placeholder="Search API tokens"
+          ariaLabel="Search API tokens"
         />
         <div className="flex gap-2 sm:hidden">
           <NativeSelect
@@ -662,207 +554,28 @@ function ApiTokensPage() {
       ) : null}
 
       {!tokensQuery.error && (tokensQuery.isLoading || total > 0) ? (
-        <section aria-label="API token inventory" className="min-w-0">
-          <div className="divide-y sm:hidden">
-            {tokensQuery.isLoading
-              ? Array.from({ length: 4 }, (_, index) => (
-                  <div key={index} className="space-y-2 py-4">
-                    <Skeleton className="h-5 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                  </div>
-                ))
-              : visibleTokens.map((token) => {
-                  const status = getTokenStatus(token)
-                  return (
-                    <article key={token.id} className="space-y-3 py-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h2 className="truncate font-medium">{token.name}</h2>
-                          <code className="block truncate font-mono text-xs text-muted-foreground">
-                            {token.prefix}...
-                          </code>
-                        </div>
-                        <Badge variant={getStatusVariant(status)}>
-                          {status}
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
-                        <Badge variant="secondary">
-                          {ROLE_LABELS[token.role] ?? token.role}
-                        </Badge>
-                        <span>
-                          Created {formatRelativeTime(token.created_at)}
-                        </span>
-                        <span>
-                          Used {formatRelativeTime(token.last_used_at)}
-                        </span>
-                      </div>
-                      {status === 'active' && canDelete ? (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => setRevokeTarget(token)}
-                        >
-                          Revoke
-                        </Button>
-                      ) : null}
-                    </article>
-                  )
-                })}
-          </div>
-
-          <div className="hidden sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="name"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Name
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">Prefix</TableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="role"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Role
-                  </SortableTableHead>
-                  <TableHead className="hidden lg:table-cell">
-                    Created by
-                  </TableHead>
-                  <SortableTableHead
-                    className="hidden lg:table-cell"
-                    sort={sort}
-                    sortKey="created_at"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Created
-                  </SortableTableHead>
-                  <SortableTableHead
-                    className="hidden lg:table-cell"
-                    sort={sort}
-                    sortKey="last_used_at"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Last used
-                  </SortableTableHead>
-                  <SortableTableHead
-                    sort={sort}
-                    sortKey="status"
-                    direction={direction}
-                    onSortChange={handleSortChange}
-                  >
-                    Status
-                  </SortableTableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tokensQuery.isLoading
-                  ? Array.from({ length: 5 }, (_, index) => (
-                      <TableRow key={index}>
-                        <TableCell>
-                          <Skeleton className="h-5 w-36" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-20" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-40" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        <TableCell className="hidden lg:table-cell">
-                          <Skeleton className="h-4 w-20" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="h-6 w-16" />
-                        </TableCell>
-                        <TableCell>
-                          <Skeleton className="ml-auto h-8 w-16" />
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : visibleTokens.map((token) => {
-                      const status = getTokenStatus(token)
-                      return (
-                        <TableRow key={token.id}>
-                          <TableCell className="font-medium">
-                            {token.name}
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell">
-                            <code className="font-mono text-xs text-muted-foreground">
-                              {token.prefix}...
-                            </code>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">
-                              {ROLE_LABELS[token.role] ?? token.role}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
-                            {token.created_by_email}
-                          </TableCell>
-                          <TableCell className="hidden text-muted-foreground lg:table-cell">
-                            {formatRelativeTime(token.created_at)}
-                          </TableCell>
-                          <TableCell className="hidden text-muted-foreground lg:table-cell">
-                            {formatRelativeTime(token.last_used_at)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={getStatusVariant(status)}>
-                              {status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {status === 'active' && canDelete ? (
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => setRevokeTarget(token)}
-                              >
-                                Revoke
-                              </Button>
-                            ) : null}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-              </TableBody>
-            </Table>
-          </div>
-
-          {!tokensQuery.isLoading ? (
-            <CollectionPagination
-              page={currentPage}
-              pageSize={pageSize}
-              total={total}
-              onPageChange={(nextPage) =>
-                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
-              }
-              onPageSizeChange={(nextPageSize) =>
-                updateSearch({
-                  pageSize:
-                    nextPageSize === 20
-                      ? undefined
-                      : (nextPageSize as 50 | 100),
-                  page: undefined,
-                })
-              }
-            />
-          ) : null}
-        </section>
+        <ApiTokenInventory
+          canDelete={canDelete}
+          direction={direction}
+          isLoading={tokensQuery.isLoading}
+          onPageChange={(nextPage) =>
+            updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+          }
+          onPageSizeChange={(nextPageSize) =>
+            updateSearch({
+              pageSize:
+                nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+              page: undefined,
+            })
+          }
+          onRevoke={setRevokeTarget}
+          onSortChange={handleSortChange}
+          page={currentPage}
+          pageSize={pageSize}
+          sort={sort}
+          tokens={visibleTokens}
+          total={total}
+        />
       ) : null}
 
       <CreateTokenDialog

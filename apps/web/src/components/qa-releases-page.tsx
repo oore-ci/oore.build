@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -34,15 +34,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from '@/components/ui/combobox'
-import { InputGroupAddon } from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
 import {
   Empty,
@@ -72,6 +63,81 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 
 const RELEASES_PER_PAGE = 10
+const QaProjectPicker = lazy(() => import('./qa-project-picker'))
+
+function QaActivityPagination({
+  disabled,
+  onPageChange,
+  page,
+  totalPages,
+}: {
+  disabled: boolean
+  onPageChange: (page: number) => void
+  page: number
+  totalPages: number
+}) {
+  if (totalPages <= 1) return null
+  const items =
+    totalPages <= 5
+      ? Array.from({ length: totalPages }, (_, index) => index + 1)
+      : page <= 3
+        ? [1, 2, 3, 'end', totalPages]
+        : page >= totalPages - 2
+          ? [1, 'start', totalPages - 2, totalPages - 1, totalPages]
+          : [1, 'start', page, 'end', totalPages]
+
+  return (
+    <Pagination className="mt-4 border-t pt-4">
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious
+            href="#"
+            aria-disabled={page === 1 || disabled}
+            className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            onClick={(event) => {
+              event.preventDefault()
+              if (page > 1 && !disabled) onPageChange(page - 1)
+            }}
+          />
+        </PaginationItem>
+        {items.map((item) =>
+          typeof item === 'number' ? (
+            <PaginationItem key={item}>
+              <PaginationLink
+                href="#"
+                isActive={page === item}
+                aria-label={`Go to page ${item}`}
+                aria-disabled={disabled}
+                className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+                onClick={(event) => {
+                  event.preventDefault()
+                  if (!disabled) onPageChange(item)
+                }}
+              >
+                {item}
+              </PaginationLink>
+            </PaginationItem>
+          ) : (
+            <PaginationItem key={item}>
+              <PaginationEllipsis />
+            </PaginationItem>
+          ),
+        )}
+        <PaginationItem>
+          <PaginationNext
+            href="#"
+            aria-disabled={page === totalPages || disabled}
+            className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
+            onClick={(event) => {
+              event.preventDefault()
+              if (page < totalPages && !disabled) onPageChange(page + 1)
+            }}
+          />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
+  )
+}
 
 function QaActivityRow({
   artifactState,
@@ -163,6 +229,8 @@ function ActivityPanel({
   const [statuses, setStatuses] = useState<Array<BuildStatus>>([])
   const [draftStatuses, setDraftStatuses] = useState<Array<BuildStatus>>([])
   const [filterOpen, setFilterOpen] = useState(false)
+  const [pickerReady, setPickerReady] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const offset = (page - 1) * RELEASES_PER_PAGE
   const buildsQuery = useBuilds({
     project_id: project.id,
@@ -176,9 +244,9 @@ function ActivityPanel({
   )
   const succeededBuildIds = useMemo(
     () =>
-      builds
-        .filter((build) => build.status === 'succeeded')
-        .map((build) => build.id),
+      builds.flatMap((build) =>
+        build.status === 'succeeded' ? [build.id] : [],
+      ),
     [builds],
   )
   const artifactsQuery = useArtifactsForBuilds(succeededBuildIds)
@@ -210,76 +278,49 @@ function ActivityPanel({
     statuses.length === 0
       ? 'All statuses'
       : statuses.length === 1
-        ? BUILD_STATUS_FILTER_OPTIONS[statuses[0]!]
+        ? BUILD_STATUS_FILTER_OPTIONS[statuses[0]]
         : `${statuses.length} statuses`
   const totalPages = Math.max(1, Math.ceil(total / RELEASES_PER_PAGE))
-  const paginationItems =
-    totalPages <= 5
-      ? Array.from({ length: totalPages }, (_, index) => index + 1)
-      : page <= 3
-        ? [1, 2, 3, 'end', totalPages]
-        : page >= totalPages - 2
-          ? [1, 'start', totalPages - 2, totalPages - 1, totalPages]
-          : [1, 'start', page, 'end', totalPages]
+  const draftStatusSet = new Set(draftStatuses)
   usePageClamp(page, RELEASES_PER_PAGE, buildsQuery.data?.total, setPage)
 
   return (
     <Card className="min-w-0 bg-transparent shadow-none ring-0">
       <CardHeader className="grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-0">
-        <Combobox
-          items={projects}
-          value={project}
-          onValueChange={(nextProject) => {
-            if (nextProject) onProjectChange(nextProject.id)
-          }}
-          itemToStringLabel={(item) => item.name}
-        >
-          <ComboboxInput
-            className="w-full"
-            placeholder="Choose an app"
-            aria-label="Choose an app"
+        {pickerReady ? (
+          <Suspense fallback={<Skeleton className="h-9 w-full" />}>
+            <QaProjectPicker
+              hasMoreProjects={hasMoreProjects}
+              isFetchingMoreProjects={isFetchingMoreProjects}
+              onLoadMoreProjects={onLoadMoreProjects}
+              onOpenChange={setPickerOpen}
+              onProjectChange={onProjectChange}
+              open={pickerOpen}
+              project={project}
+              projects={projects}
+            />
+          </Suspense>
+        ) : (
+          <Button
+            variant="outline"
+            className="w-full justify-start px-3 font-normal"
+            onPointerEnter={() => void import('./qa-project-picker')}
+            onFocus={() => void import('./qa-project-picker')}
+            onClick={() => {
+              setPickerReady(true)
+              setPickerOpen(true)
+            }}
           >
-            <InputGroupAddon align="inline-start">
-              <RepositoryAvatar
-                fullName={project.repository_full_name ?? project.name}
-                avatarUrl={project.repository_avatar_url}
-                repositoryId={project.repository_id}
-                provider={project.repository_provider}
-                size="sm"
-              />
-            </InputGroupAddon>
-          </ComboboxInput>
-          <ComboboxContent>
-            <ComboboxEmpty>No matching apps.</ComboboxEmpty>
-            <ComboboxList>
-              {(item) => (
-                <ComboboxItem key={item.id} value={item}>
-                  <RepositoryAvatar
-                    fullName={item.repository_full_name ?? item.name}
-                    avatarUrl={item.repository_avatar_url}
-                    repositoryId={item.repository_id}
-                    provider={item.repository_provider}
-                    size="sm"
-                  />
-                  <span className="truncate">{item.name}</span>
-                </ComboboxItem>
-              )}
-            </ComboboxList>
-            {hasMoreProjects ? (
-              <div className="border-t p-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full"
-                  disabled={isFetchingMoreProjects}
-                  onClick={onLoadMoreProjects}
-                >
-                  {isFetchingMoreProjects ? 'Loading more…' : 'Load more apps'}
-                </Button>
-              </div>
-            ) : null}
-          </ComboboxContent>
-        </Combobox>
+            <RepositoryAvatar
+              fullName={project.repository_full_name ?? project.name}
+              avatarUrl={project.repository_avatar_url}
+              repositoryId={project.repository_id}
+              provider={project.repository_provider}
+              size="sm"
+            />
+            <span className="truncate">{project.name}</span>
+          </Button>
+        )}
         <Sheet
           open={filterOpen}
           onOpenChange={(open) => {
@@ -313,7 +354,7 @@ function ActivityPanel({
           </SheetTrigger>
           <SheetContent
             side="bottom"
-            className="max-h-[calc(100dvh_-_1rem_-_var(--safe-area-top))] overflow-y-auto overscroll-contain"
+            className="max-h-[calc(100dvh-1rem-var(--safe-area-top))] overflow-y-auto overscroll-contain"
           >
             <SheetHeader className="mx-auto w-full max-w-lg">
               <SheetTitle>Filter builds</SheetTitle>
@@ -324,11 +365,11 @@ function ActivityPanel({
             <fieldset className="mx-auto w-full max-w-lg px-4">
               <legend className="sr-only">Build statuses</legend>
               <div className="grid grid-cols-2 gap-x-4">
-                {Object.entries(BUILD_STATUS_FILTER_OPTIONS)
-                  .filter(([value]) => value !== 'all')
-                  .map(([value, label]) => {
+                {Object.entries(BUILD_STATUS_FILTER_OPTIONS).flatMap(
+                  ([value, label]) => {
+                    if (value === 'all') return []
                     const buildStatus = value as BuildStatus
-                    return (
+                    return [
                       <Label
                         key={value}
                         htmlFor={`qa-build-status-${value}`}
@@ -336,7 +377,7 @@ function ActivityPanel({
                       >
                         <Checkbox
                           id={`qa-build-status-${value}`}
-                          checked={draftStatuses.includes(buildStatus)}
+                          checked={draftStatusSet.has(buildStatus)}
                           onCheckedChange={(checked) =>
                             setDraftStatuses((current) =>
                               checked
@@ -348,9 +389,10 @@ function ActivityPanel({
                           }
                         />
                         {label}
-                      </Label>
-                    )
-                  })}
+                      </Label>,
+                    ]
+                  },
+                )}
               </div>
             </fieldset>
             <SheetFooter className="mx-auto w-full max-w-lg flex-row">
@@ -457,61 +499,12 @@ function ActivityPanel({
             </div>
           </>
         )}
-        {totalPages > 1 ? (
-          <Pagination className="mt-4 border-t pt-4">
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  href="#"
-                  aria-disabled={page === 1 || buildsQuery.isFetching}
-                  className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    if (page > 1 && !buildsQuery.isFetching) {
-                      setPage((value) => value - 1)
-                    }
-                  }}
-                />
-              </PaginationItem>
-              {paginationItems.map((item) =>
-                typeof item === 'number' ? (
-                  <PaginationItem key={item}>
-                    <PaginationLink
-                      href="#"
-                      isActive={page === item}
-                      aria-label={`Go to page ${item}`}
-                      aria-disabled={buildsQuery.isFetching}
-                      className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                      onClick={(event) => {
-                        event.preventDefault()
-                        if (!buildsQuery.isFetching) setPage(item)
-                      }}
-                    >
-                      {item}
-                    </PaginationLink>
-                  </PaginationItem>
-                ) : (
-                  <PaginationItem key={item}>
-                    <PaginationEllipsis />
-                  </PaginationItem>
-                ),
-              )}
-              <PaginationItem>
-                <PaginationNext
-                  href="#"
-                  aria-disabled={page === totalPages || buildsQuery.isFetching}
-                  className="aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    if (page < totalPages && !buildsQuery.isFetching) {
-                      setPage((value) => value + 1)
-                    }
-                  }}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        ) : null}
+        <QaActivityPagination
+          disabled={buildsQuery.isFetching}
+          onPageChange={setPage}
+          page={page}
+          totalPages={totalPages}
+        />
       </CardContent>
     </Card>
   )

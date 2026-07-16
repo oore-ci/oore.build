@@ -7,7 +7,7 @@ import {
   InformationCircleIcon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 
 import {
   getActiveInstanceOrRedirect,

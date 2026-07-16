@@ -244,7 +244,9 @@ test.describe('role and direct-route policy', () => {
 
       await page.goto(`/projects/${PROJECT_IDS.flutterShop}?tab=settings`)
       await waitForStableUi(page)
-      await expect(page.getByRole('button', { name: 'Add member' })).toBeVisible()
+      await expect(
+        page.getByRole('button', { name: 'Add project member' }),
+      ).toBeVisible()
 
       await page.goto(
         `/projects/${PROJECT_IDS.nativePayments}/pipelines/${PIPELINE_IDS.paymentsAll}/edit`,
