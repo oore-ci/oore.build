@@ -59,6 +59,9 @@ deploy-web: build-web
 deploy-web-only:
 	$(WRANGLER) pages deploy apps/web/dist --project-name=$(PAGES_PROJECT_WEB)$(PAGES_BRANCH_FLAG)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
 
+run-demo:
+	cd apps/web && VITE_DEMO_MODE=true bun run dev
+
 build-demo:
 	cd apps/web && VITE_DEMO_MODE=true bun run build
 
