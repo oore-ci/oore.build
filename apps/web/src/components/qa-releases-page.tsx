@@ -284,7 +284,15 @@ function ActivityPanel({
               />
             }
           >
-            <HugeiconsIcon icon={FilterIcon} data-icon="inline-start" />
+            <span className="relative flex">
+              <HugeiconsIcon icon={FilterIcon} data-icon="inline-start" />
+              {status !== 'all' ? (
+                <Badge
+                  aria-hidden
+                  className="absolute -top-1 -right-1 size-2 p-0"
+                />
+              ) : null}
+            </span>
             <span className="hidden sm:inline">
               {status === 'all'
                 ? 'Filter'
