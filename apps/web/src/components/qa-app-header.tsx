@@ -1,6 +1,11 @@
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Logout03Icon } from '@hugeicons/core-free-icons'
+import {
+  Logout03Icon,
+  Moon02Icon,
+  Sun03Icon,
+} from '@hugeicons/core-free-icons'
+import { useTheme } from 'next-themes'
 
 import { Button } from '@/components/ui/button'
 import { useLogout } from '@/hooks/use-auth'
@@ -9,6 +14,8 @@ import { useAuthStore } from '@/stores/auth-store'
 export default function QaAppHeader() {
   const user = useAuthStore((state) => state.user)
   const logoutMutation = useLogout()
+  const { resolvedTheme, setTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background pt-[var(--safe-area-top)]">
@@ -22,6 +29,14 @@ export default function QaAppHeader() {
           <span className="hidden max-w-64 truncate text-xs text-muted-foreground md:block">
             {user?.email}
           </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Switch to ${isDark ? 'light' : 'dark'} theme`}
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+          >
+            <HugeiconsIcon icon={isDark ? Sun03Icon : Moon02Icon} />
+          </Button>
           <Button
             variant="ghost"
             aria-label="Sign out"
