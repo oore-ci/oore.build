@@ -31,22 +31,21 @@ export const ROLE_LABELS: Record<string, string> = {
   qa_viewer: 'QA Viewer',
 }
 
-const ROLE_BADGE_VARIANT: Record<
-  string,
-  'warning' | 'info' | 'secondary' | 'outline'
-> = {
-  owner: 'warning',
-  admin: 'info',
+const ROLE_BADGE_VARIANT: Record<string, 'secondary' | 'outline'> = {
+  owner: 'outline',
+  admin: 'outline',
   developer: 'secondary',
   qa_viewer: 'outline',
 }
 
-const STATUS_BADGE_VARIANT: Record<string, 'success' | 'info' | 'destructive'> =
-  {
-    active: 'success',
-    invited: 'info',
-    disabled: 'destructive',
-  }
+const STATUS_BADGE_VARIANT: Record<
+  string,
+  'secondary' | 'outline' | 'destructive'
+> = {
+  active: 'secondary',
+  invited: 'outline',
+  disabled: 'destructive',
+}
 
 export interface UserColumnOptions {
   authUserId: string | undefined

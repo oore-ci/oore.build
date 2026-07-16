@@ -156,7 +156,7 @@ function NotificationChannelSettingsFields({
   return (
     <>
       <div className="flex items-center gap-2 text-sm">
-        <Badge variant={channel.has_smtp_config ? 'default' : 'secondary'}>
+        <Badge variant={channel.has_smtp_config ? 'secondary' : 'outline'}>
           {channel.has_smtp_config ? 'SMTP configured' : 'No SMTP config'}
         </Badge>
       </div>
@@ -665,10 +665,10 @@ function NotificationChannelDetailPage() {
                       <Badge
                         variant={
                           delivery.status === 'delivered'
-                            ? 'default'
+                            ? 'secondary'
                             : delivery.status === 'failed'
                               ? 'destructive'
-                              : 'secondary'
+                              : 'outline'
                         }
                       >
                         {delivery.status}

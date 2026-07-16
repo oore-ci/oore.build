@@ -21,19 +21,6 @@ import { Spinner } from '@/components/ui/spinner'
 const loadArtifactShareMenu = () => import('./artifact-share-menu')
 const ArtifactShareMenu = lazy(loadArtifactShareMenu)
 
-function artifactTypeBadgeVariant(type: Artifact['artifact_type']) {
-  switch (type) {
-    case 'apk':
-      return 'info' as const
-    case 'ipa':
-      return 'success' as const
-    case 'app':
-      return 'warning' as const
-    default:
-      return 'secondary' as const
-  }
-}
-
 function isArtifactExpired(artifact: Artifact): boolean {
   if (artifact.expires_at == null) return false
   return artifact.expires_at <= Math.floor(Date.now() / 1000)
@@ -120,10 +107,7 @@ function ArtifactRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium">{artifact.name}</p>
         <div className="mt-0.5 flex items-center gap-1.5">
-          <Badge
-            variant={artifactTypeBadgeVariant(artifact.artifact_type)}
-            className="text-[10px]"
-          >
+          <Badge variant="outline" className="text-[10px]">
             {artifact.artifact_type}
           </Badge>
           <span className="text-[10px] text-muted-foreground">

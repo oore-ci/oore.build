@@ -15,6 +15,7 @@ import type {
 import {
   InformationCircleIcon,
   Search01Icon,
+  UserAdd01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -127,6 +128,11 @@ function InviteUserAction() {
         onFocus={() => void loadInviteUserDialog()}
         onClick={() => setOpen(true)}
       >
+        <HugeiconsIcon
+          icon={UserAdd01Icon}
+          data-icon="inline-start"
+          aria-hidden
+        />
         Invite user
       </Button>
       {open ? (
@@ -404,31 +410,41 @@ function UsersSettingsPage() {
       />
 
       {!usersQuery.error ? (
-        <section aria-label="User summary">
-          <Card size="sm">
-            <CardContent className="grid grid-cols-3 gap-4">
-              {usersQuery.isLoading ? (
-                Array.from({ length: 3 }, (_, index) => (
-                  <div key={index} className="space-y-2">
+        <section
+          aria-label="User summary"
+          className="grid grid-cols-3 gap-2 md:gap-4"
+        >
+          {usersQuery.isLoading ? (
+            Array.from({ length: 3 }, (_, index) => (
+              <Card key={index}>
+                <CardContent>
+                  <div className="flex flex-col gap-2">
                     <Skeleton className="h-3 w-14" />
                     <Skeleton className="h-7 w-10" />
+                    <Skeleton className="hidden h-3 w-24 md:block" />
                   </div>
-                ))
-              ) : (
-                <>
-                  <SummaryMetric label="Total" value={users.length} />
-                  <SummaryMetric
-                    label="Active"
-                    value={userStatusCounts.active}
-                  />
-                  <SummaryMetric
-                    label="Invited"
-                    value={userStatusCounts.invited}
-                  />
-                </>
-              )}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <>
+              <SummaryMetric
+                label="Total"
+                value={users.length}
+                description="All instance users"
+              />
+              <SummaryMetric
+                label="Active"
+                value={userStatusCounts.active}
+                description="Can currently sign in"
+              />
+              <SummaryMetric
+                label="Invited"
+                value={userStatusCounts.invited}
+                description="Awaiting activation"
+              />
+            </>
+          )}
         </section>
       ) : null}
 
@@ -716,15 +732,26 @@ function UsersSettingsPage() {
   )
 }
 
-function SummaryMetric({ label, value }: { label: string; value: number }) {
+function SummaryMetric({
+  description,
+  label,
+  value,
+}: {
+  description: string
+  label: string
+  value: number
+}) {
   return (
-    <div className="min-w-0">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-1 text-xl font-bold tracking-tight sm:text-2xl">
-        {value}
-      </p>
-    </div>
+    <Card>
+      <CardContent>
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </p>
+        <p className="mt-3 text-2xl font-bold tracking-tight">{value}</p>
+        <p className="mt-1 hidden text-xs text-muted-foreground md:block">
+          {description}
+        </p>
+      </CardContent>
+    </Card>
   )
 }

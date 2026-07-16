@@ -54,7 +54,7 @@ export function ProjectBuildsTab({
           <CardContent>
             {latestSucceededBuild ? (
               <div className="mb-3 flex items-center gap-2 text-sm">
-                <Badge variant="default" className="text-[10px]">
+                <Badge variant="secondary" className="text-[10px]">
                   Latest
                 </Badge>
                 <Link

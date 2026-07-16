@@ -403,7 +403,7 @@ function RunnersSettingsPage() {
                 Online runners
               </p>
               {onlineCount > 0 ? (
-                <Badge variant="success">{onlineCount}</Badge>
+                <Badge variant="secondary">{onlineCount}</Badge>
               ) : null}
             </div>
             <p className="mt-3 text-2xl font-bold tracking-tight">

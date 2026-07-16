@@ -155,9 +155,7 @@ function QaReleaseDetail({
           aria-selected={section === 'release'}
           aria-controls="qa-release-panel"
           variant="ghost"
-          className={
-            section === 'release' ? 'border-b-2 border-b-primary' : ''
-          }
+          className={section === 'release' ? 'border-b-2 border-b-primary' : ''}
           onClick={() => setSection('release')}
         >
           Release
@@ -167,9 +165,7 @@ function QaReleaseDetail({
           aria-selected={section === 'logs'}
           aria-controls="qa-logs-panel"
           variant="ghost"
-          className={
-            section === 'logs' ? 'border-b-2 border-b-primary' : ''
-          }
+          className={section === 'logs' ? 'border-b-2 border-b-primary' : ''}
           onMouseEnter={() => void import('./qa-build-logs')}
           onFocus={() => void import('./qa-build-logs')}
           onClick={() => setSection('logs')}
@@ -208,9 +204,7 @@ function QaReleaseDetail({
                 {build.status.replaceAll('_', ' ')}
               </Badge>
               {artifact ? (
-                <Badge variant={isIos ? 'success' : 'info'}>
-                  {isIos ? 'iOS' : 'Android'}
-                </Badge>
+                <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
               ) : null}
             </div>
             <p className="mt-3 break-words text-2xl font-bold tracking-tight sm:text-3xl">
@@ -547,9 +541,7 @@ export function ArtifactInstallPage({
 
       <section className="flex flex-col gap-5 pt-2 sm:pt-6">
         <header>
-          <Badge variant={isIos ? 'success' : 'info'}>
-            {isIos ? 'iOS' : 'Android'}
-          </Badge>
+          <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
           <h1 className="mt-3 break-words text-2xl font-bold tracking-tight sm:text-3xl">
             {appName}
           </h1>

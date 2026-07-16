@@ -42,9 +42,7 @@ export function SetupStepIndicator({
                 />
               ) : null}
               <Badge
-                variant={
-                  isActive ? 'default' : isCompleted ? 'secondary' : 'outline'
-                }
+                variant={isActive ? 'secondary' : 'outline'}
                 className="text-xs"
                 aria-current={isActive ? 'step' : undefined}
               >

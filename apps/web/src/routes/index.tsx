@@ -421,7 +421,7 @@ function ConfiguredDashboard({
             <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Active Builds
             </h2>
-            <Badge variant="info">{activeBuilds.length}</Badge>
+            <Badge variant="secondary">{activeBuilds.length}</Badge>
           </div>
           <div className="space-y-1">
             {activeBuilds.map((build) => (

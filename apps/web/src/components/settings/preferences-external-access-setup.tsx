@@ -67,7 +67,7 @@ export function ExternalAccessSetup({
               </p>
             )}
           </div>
-          <Badge variant={readinessReady ? 'success' : 'secondary'}>
+          <Badge variant={readinessReady ? 'secondary' : 'outline'}>
             {readinessReady
               ? 'Ready to enable'
               : `${setupStepsComplete}/${setupStepCount} ready`}
@@ -91,7 +91,7 @@ export function ExternalAccessSetup({
                     'Set Public URL and allowed origins.'}
                 </p>
               </div>
-              <Badge variant={networkReady ? 'success' : 'outline'}>
+              <Badge variant={networkReady ? 'secondary' : 'outline'}>
                 {networkReady ? 'Ready' : 'Setup'}
               </Badge>
             </div>
@@ -133,7 +133,7 @@ export function ExternalAccessSetup({
                     : `Configure ${authModeLabel(remoteAuthMode)}.`}
                 </p>
               </div>
-              <Badge variant={identityReady ? 'success' : 'outline'}>
+              <Badge variant={identityReady ? 'secondary' : 'outline'}>
                 {identityReady ? 'Ready' : 'Setup'}
               </Badge>
             </div>
@@ -289,7 +289,7 @@ export function ExternalAccessSetup({
                       </div>
                     </div>
                     <Badge
-                      variant={check.ok ? 'success' : 'warning'}
+                      variant={check.ok ? 'secondary' : 'outline'}
                       className="mt-0.5"
                     >
                       {check.ok ? 'Ready' : 'Needs setup'}

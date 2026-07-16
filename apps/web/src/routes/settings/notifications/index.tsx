@@ -466,7 +466,7 @@ function NotificationsPage() {
                         {channelTypeLabel(channel.channel_type)}
                       </Badge>
                       <Badge
-                        variant={channel.enabled ? 'default' : 'secondary'}
+                        variant={channel.enabled ? 'secondary' : 'outline'}
                       >
                         {channel.enabled ? 'Enabled' : 'Disabled'}
                       </Badge>
@@ -557,7 +557,7 @@ function NotificationsPage() {
                         </TableCell>
                         <TableCell>
                           <Badge
-                            variant={channel.enabled ? 'default' : 'secondary'}
+                            variant={channel.enabled ? 'secondary' : 'outline'}
                           >
                             {channel.enabled ? 'Enabled' : 'Disabled'}
                           </Badge>

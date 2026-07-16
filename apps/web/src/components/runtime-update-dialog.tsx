@@ -61,7 +61,7 @@ function RuntimeUpdateCard({
         </CardTitle>
         <CardDescription>{release.channel} channel</CardDescription>
         <CardAction>
-          <Badge variant="warning">Update available</Badge>
+          <Badge variant="outline">Update available</Badge>
         </CardAction>
       </CardHeader>
       <CardContent>

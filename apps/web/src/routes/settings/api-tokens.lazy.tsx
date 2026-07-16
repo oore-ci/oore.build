@@ -115,12 +115,12 @@ function getTokenStatus(
 
 function getStatusVariant(
   status: 'active' | 'expired' | 'revoked',
-): 'success' | 'secondary' | 'destructive' {
+): 'secondary' | 'outline' | 'destructive' {
   switch (status) {
     case 'active':
-      return 'success'
-    case 'expired':
       return 'secondary'
+    case 'expired':
+      return 'outline'
     case 'revoked':
       return 'destructive'
   }
@@ -544,7 +544,7 @@ function ApiTokensPage() {
                 Active tokens
               </p>
               {activeCount > 0 ? (
-                <Badge variant="success">{activeCount}</Badge>
+                <Badge variant="secondary">{activeCount}</Badge>
               ) : null}
             </div>
             <p className="mt-3 text-2xl font-bold tracking-tight">

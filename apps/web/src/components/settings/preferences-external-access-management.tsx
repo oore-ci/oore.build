@@ -34,7 +34,7 @@ export function ExternalAccessManagement({
           onFocus={() => void preloadExternalAccessNetworkDialog()}
           onClick={() => setNetworkEditorOpen(true)}
           disabled={!isOwner || networkSettingsQuery.isLoading}
-          className="group h-auto w-full justify-start whitespace-normal p-3 text-left"
+          className="group h-auto w-full justify-start whitespace-normal px-0 py-2 text-left"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Network settings</span>
@@ -68,7 +68,7 @@ export function ExternalAccessManagement({
               : setOidcDialogOpen(true)
           }
           disabled={!isOwner}
-          className="group h-auto w-full justify-start whitespace-normal p-3 text-left"
+          className="group h-auto w-full justify-start whitespace-normal px-0 py-2 text-left"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Identity settings</span>

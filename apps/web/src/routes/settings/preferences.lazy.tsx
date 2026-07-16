@@ -753,6 +753,7 @@ function PreferencesPage() {
         title="Preferences"
         description="Manage artifact storage and External Access policy for this instance."
       />
+      <RuntimeOverview state={state} />
       <ExternalAccessCard state={state} />
       {state.networkEditorOpen ? (
         <Suspense fallback={null}>
@@ -769,7 +770,6 @@ function PreferencesPage() {
           <OidcSettingsDialog state={state} />
         </Suspense>
       ) : null}
-      <RuntimeOverview state={state} />
       <ArtifactStorageSettings state={state} />
       {state.artifactDirPickerOpen ? (
         <Suspense fallback={null}>

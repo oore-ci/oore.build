@@ -28,7 +28,7 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
           <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
             External Access
           </CardTitle>
-          <Badge variant={externalAccessEnabled ? 'default' : 'secondary'}>
+          <Badge variant={externalAccessEnabled ? 'secondary' : 'outline'}>
             {externalAccessEnabled
               ? `External Access - ${authModeLabel(remoteAuthMode)}`
               : 'Local Only'}

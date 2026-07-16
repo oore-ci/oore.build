@@ -302,6 +302,7 @@ function ActivityPanel({
               {statuses.length > 0 ? (
                 <Badge
                   aria-hidden
+                  variant="secondary"
                   className="absolute -top-1 -right-1 size-2 p-0"
                 />
               ) : null}

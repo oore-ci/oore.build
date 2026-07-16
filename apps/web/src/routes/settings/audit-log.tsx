@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react'
-import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
-import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
+import {
+  Calendar03Icon,
+  InformationCircleIcon,
+  Search01Icon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
+import { format } from 'date-fns'
+import type { DateRange } from 'react-day-picker'
 
 import {
   CollectionPagination,
@@ -13,6 +19,7 @@ import PageLayout from '@/components/page-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Calendar } from '@/components/ui/calendar'
 import {
   Empty,
   EmptyContent,
@@ -23,10 +30,10 @@ import {
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import {
-  InputGroup,
-  InputGroupInput,
-  InputGroupText,
-} from '@/components/ui/input-group'
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -174,6 +181,68 @@ function ActionSearch({
   )
 }
 
+function dateFromSearch(value?: string): Date | undefined {
+  if (!value) return undefined
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? undefined : date
+}
+
+function AuditDateRangePicker({
+  from,
+  onChange,
+  to,
+}: {
+  from?: string
+  onChange: (range: DateRange | undefined) => void
+  to?: string
+}) {
+  const fromDate = dateFromSearch(from)
+  const toDate = dateFromSearch(to)
+  const selected: DateRange | undefined =
+    fromDate || toDate ? { from: fromDate, to: toDate } : undefined
+  const label = fromDate
+    ? toDate
+      ? `${format(fromDate, 'MMM d, yyyy')} – ${format(toDate, 'MMM d, yyyy')}`
+      : `From ${format(fromDate, 'MMM d, yyyy')}`
+    : toDate
+      ? `Through ${format(toDate, 'MMM d, yyyy')}`
+      : 'Pick a date range'
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="outline"
+            data-empty={!selected}
+            className="col-span-2 w-full justify-start overflow-hidden text-left font-normal data-[empty=true]:text-muted-foreground sm:w-auto"
+            aria-label={`Date range: ${label}`}
+          />
+        }
+      >
+        <HugeiconsIcon
+          icon={Calendar03Icon}
+          data-icon="inline-start"
+          aria-hidden
+        />
+        <span className="truncate">{label}</span>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="max-h-[calc(100dvh-2rem)] w-auto max-w-[calc(100vw-2rem)] overflow-auto p-0"
+      >
+        <Calendar
+          mode="range"
+          selected={selected}
+          defaultMonth={fromDate ?? toDate}
+          numberOfMonths={2}
+          onSelect={onChange}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function AuditLogPage() {
   const navigate = Route.useNavigate()
   const search = useSearch({ from: '/settings/audit-log' })
@@ -298,36 +367,19 @@ function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <InputGroup className="col-span-2 sm:w-auto" aria-label="Date range">
-            <InputGroupText className="pl-2 text-xs">From</InputGroupText>
-            <InputGroupInput
-              type="date"
-              value={search.from ?? ''}
-              onChange={(event) =>
-                updateSearch({
-                  from: event.target.value || undefined,
-                  page: undefined,
-                })
-              }
-              max={search.to}
-              className="min-w-0 basis-0 px-1 text-xs"
-              aria-label="From date"
-            />
-            <InputGroupText className="text-xs">To</InputGroupText>
-            <InputGroupInput
-              type="date"
-              value={search.to ?? ''}
-              onChange={(event) =>
-                updateSearch({
-                  to: event.target.value || undefined,
-                  page: undefined,
-                })
-              }
-              min={search.from}
-              className="min-w-0 basis-0 px-1 text-xs"
-              aria-label="To date"
-            />
-          </InputGroup>
+          <AuditDateRangePicker
+            from={search.from}
+            to={search.to}
+            onChange={(range) =>
+              updateSearch({
+                from: range?.from
+                  ? format(range.from, 'yyyy-MM-dd')
+                  : undefined,
+                to: range?.to ? format(range.to, 'yyyy-MM-dd') : undefined,
+                page: undefined,
+              })
+            }
+          />
           <Button
             variant="outline"
             className="w-full sm:hidden"

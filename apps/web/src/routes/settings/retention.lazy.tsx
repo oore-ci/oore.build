@@ -445,7 +445,7 @@ function RetentionPage() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between text-sm font-medium uppercase tracking-wider text-muted-foreground">
                 <span>Global Retention Policy</span>
-                <Badge variant={enabled ? 'default' : 'outline'}>
+                <Badge variant={enabled ? 'secondary' : 'outline'}>
                   {enabled ? 'Active' : 'Disabled'}
                 </Badge>
               </CardTitle>

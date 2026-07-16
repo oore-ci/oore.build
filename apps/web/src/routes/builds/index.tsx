@@ -294,6 +294,26 @@ function OperationsBuildsPage() {
             }
           />
           <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap lg:ml-auto">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'hidden sm:inline-flex',
+                !hasFilters && 'invisible',
+              )}
+              aria-hidden={!hasFilters}
+              tabIndex={hasFilters ? undefined : -1}
+              onClick={() =>
+                updateSearch({
+                  q: undefined,
+                  project: undefined,
+                  status: undefined,
+                  page: undefined,
+                })
+              }
+            >
+              Clear filters
+            </Button>
             <Select
               value={search.project ?? 'all'}
               onValueChange={(value) =>
@@ -389,26 +409,6 @@ function OperationsBuildsPage() {
                 Clear filters
               </Button>
             ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'hidden sm:inline-flex',
-                !hasFilters && 'invisible',
-              )}
-              aria-hidden={!hasFilters}
-              tabIndex={hasFilters ? undefined : -1}
-              onClick={() =>
-                updateSearch({
-                  q: undefined,
-                  project: undefined,
-                  status: undefined,
-                  page: undefined,
-                })
-              }
-            >
-              Clear filters
-            </Button>
           </div>
         </div>
       ) : null}
