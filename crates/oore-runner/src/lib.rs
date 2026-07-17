@@ -478,10 +478,16 @@ fn android_artifact_extension(command: &str) -> Option<&'static str> {
 }
 
 fn find_apksigner() -> PathBuf {
-    for root in ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
         .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
-    {
+        .collect::<Vec<_>>();
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
+    }
+
+    for root in roots {
         let build_tools = root.join("build-tools");
         let mut candidates = fs::read_dir(build_tools)
             .into_iter()
@@ -509,7 +515,9 @@ fn run_android_signer_command(
         .env(ANDROID_SIGNER_STORE_PASSWORD_ENV, &inputs.keystore_password)
         .env(ANDROID_SIGNER_KEY_PASSWORD_ENV, &inputs.key_password)
         .output()
-        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+        .map_err(|error| {
+            anyhow::anyhow!("failed to {action} with {}: {error}", program.display())
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         anyhow::bail!("failed to {action}: {stderr}");
@@ -5332,6 +5340,49 @@ mod tests {
         let inputs = signing_inputs_from_runner_profile(&profile).expect("runner inputs");
         assert_eq!(inputs.keystore_bytes, b"fake-keystore-bytes");
         assert_eq!(inputs.keystore_password, "store-pass");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_signer_lookup_helper() {
+        let Ok(result_path) = std::env::var("OORE_APKSIGNER_LOOKUP_RESULT") else {
+            return;
+        };
+        fs::write(result_path, find_apksigner().display().to_string())
+            .expect("write resolved apksigner path");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_signer_uses_default_macos_sdk_without_env_overrides() {
+        let workspace = temp_workspace();
+        let home = workspace.join("home");
+        let apksigner = home.join("Library/Android/sdk/build-tools/36.1.0/apksigner");
+        fs::create_dir_all(apksigner.parent().expect("apksigner parent"))
+            .expect("create fake Android SDK");
+        fs::write(&apksigner, b"fake signer").expect("write fake apksigner");
+        let result_path = workspace.join("resolved-apksigner");
+
+        let output = Command::new(std::env::current_exe().expect("resolve test binary"))
+            .args(["--exact", "tests::android_signer_lookup_helper"])
+            .env_remove("ANDROID_HOME")
+            .env_remove("ANDROID_SDK_ROOT")
+            .env("HOME", &home)
+            .env("PATH", "/usr/bin:/bin")
+            .env("OORE_APKSIGNER_LOOKUP_RESULT", &result_path)
+            .output()
+            .expect("run isolated apksigner lookup");
+
+        assert!(
+            output.status.success(),
+            "lookup helper failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            PathBuf::from(fs::read_to_string(&result_path).expect("read resolved apksigner")),
+            apksigner
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]
