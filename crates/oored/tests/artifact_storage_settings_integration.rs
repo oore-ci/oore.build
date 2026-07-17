@@ -503,9 +503,14 @@ async fn test_local_storage_large_artifact_upload_download() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let downloaded = resp.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(downloaded.len(), bytes.len());
-    assert_eq!(downloaded.as_ref(), bytes.as_slice());
+    let mut body = resp.into_body();
+    let mut downloaded = Vec::with_capacity(bytes.len());
+    while let Some(frame) = body.frame().await {
+        let data = frame.unwrap().into_data().expect("data frame");
+        assert!(data.len() <= 64 * 1024, "local download was not streamed");
+        downloaded.extend_from_slice(&data);
+    }
+    assert_eq!(downloaded, bytes);
 }
 
 #[tokio::test]

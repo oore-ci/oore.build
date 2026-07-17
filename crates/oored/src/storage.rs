@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -7,9 +7,11 @@ use std::time::Duration;
 use anyhow::Context;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::presigning::PresigningConfig;
+use axum::body::{Body, Bytes};
 use oore_contract::{ArtifactStorageProvider, ArtifactStorageSettings, ArtifactStorageSource};
 use sqlx::Row;
-use tokio::sync::Mutex;
+use tokio::io::AsyncReadExt;
+use tokio::sync::{Mutex, Semaphore};
 use tracing::{error, info, warn};
 
 use crate::crypto;
@@ -59,7 +61,11 @@ pub struct StorageClient {
 }
 
 impl StorageClient {
-    pub fn new(config: StorageConfig) -> Self {
+    pub fn new(config: StorageConfig) -> anyhow::Result<Self> {
+        if let Some(endpoint) = config.endpoint.as_deref() {
+            validate_s3_transport_url(endpoint)?;
+        }
+
         let credentials = Credentials::new(
             &config.access_key_id,
             &config.secret_access_key,
@@ -83,10 +89,10 @@ impl StorageClient {
 
         info!(bucket = %config.bucket, endpoint = ?config.endpoint, provider = %config.provider, "S3-compatible storage client initialized");
 
-        Self {
+        Ok(Self {
             client,
             bucket: config.bucket,
-        }
+        })
     }
 
     pub async fn generate_upload_url(
@@ -106,7 +112,9 @@ impl StorageClient {
             .presigned(presigning_config)
             .await?;
 
-        Ok(presigned.uri().to_string())
+        let url = presigned.uri().to_string();
+        validate_s3_transport_url(&url)?;
+        Ok(url)
     }
 
     pub async fn generate_download_url(
@@ -126,7 +134,9 @@ impl StorageClient {
             .presigned(presigning_config)
             .await?;
 
-        Ok(presigned.uri().to_string())
+        let url = presigned.uri().to_string();
+        validate_s3_transport_url(&url)?;
+        Ok(url)
     }
 
     pub async fn delete_object(&self, key: &str) -> Result<(), anyhow::Error> {
@@ -141,21 +151,128 @@ impl StorageClient {
     }
 }
 
+fn validate_s3_transport_url(value: &str) -> anyhow::Result<()> {
+    let parsed = url::Url::parse(value).context("invalid S3 endpoint URL")?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        anyhow::bail!("S3 endpoint URL must not include credentials");
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("S3 endpoint URL must include a host"))?;
+    let loopback_host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if crate::is_loopback_host(loopback_host) => Ok(()),
+        "http" => anyhow::bail!("non-loopback S3 endpoints must use HTTPS"),
+        _ => anyhow::bail!("S3 endpoint URL must use HTTP or HTTPS"),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LocalTokenEntry {
     key: String,
     expires_at: i64,
+    sequence: u64,
+}
+
+const MAX_LOCAL_TOKENS: usize = 4096;
+const MAX_CONCURRENT_LOCAL_DOWNLOADS: usize = 16;
+const LOCAL_DOWNLOAD_CHUNK_BYTES: usize = 64 * 1024;
+
+struct LocalTokenStore {
+    entries: HashMap<String, LocalTokenEntry>,
+    expiry_order: BTreeMap<(i64, u64), String>,
+    capacity: usize,
+    next_sequence: u64,
+}
+
+impl LocalTokenStore {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::with_capacity(capacity),
+            expiry_order: BTreeMap::new(),
+            capacity,
+            next_sequence: 0,
+        }
+    }
+
+    fn purge_expired(&mut self, now: i64) {
+        while let Some((expires_at, token_hash)) = self
+            .expiry_order
+            .first_key_value()
+            .map(|((expires_at, _), token_hash)| (*expires_at, token_hash.clone()))
+        {
+            if expires_at > now {
+                break;
+            }
+            self.expiry_order.pop_first();
+            self.entries.remove(&token_hash);
+        }
+    }
+
+    fn insert(&mut self, token_hash: String, mut entry: LocalTokenEntry, now: i64) {
+        self.purge_expired(now);
+        while self.entries.len() >= self.capacity {
+            let Some(((expires_at, _), oldest_hash)) = self.expiry_order.pop_first() else {
+                break;
+            };
+            self.entries.remove(&oldest_hash);
+            debug_assert!(expires_at > now);
+        }
+        entry.sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.expiry_order
+            .insert((entry.expires_at, entry.sequence), token_hash.clone());
+        self.entries.insert(token_hash, entry);
+    }
+
+    fn get(&mut self, token_hash: &str, now: i64) -> Option<LocalTokenEntry> {
+        self.purge_expired(now);
+        self.entries.get(token_hash).cloned()
+    }
+
+    fn remove(&mut self, token_hash: &str, now: i64) -> Option<LocalTokenEntry> {
+        self.purge_expired(now);
+        let entry = self.entries.remove(token_hash)?;
+        self.expiry_order
+            .remove(&(entry.expires_at, entry.sequence));
+        Some(entry)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 pub struct LocalStorageClient {
     base_dir: PathBuf,
     public_base_url: String,
-    upload_tokens: Mutex<HashMap<String, LocalTokenEntry>>,
-    download_tokens: Mutex<HashMap<String, LocalTokenEntry>>,
+    upload_tokens: Mutex<LocalTokenStore>,
+    download_tokens: Mutex<LocalTokenStore>,
+    download_slots: Arc<Semaphore>,
 }
 
 impl LocalStorageClient {
     pub fn new(base_dir: PathBuf, public_base_url: Option<String>) -> anyhow::Result<Self> {
+        Self::new_with_limits(
+            base_dir,
+            public_base_url,
+            MAX_LOCAL_TOKENS,
+            MAX_CONCURRENT_LOCAL_DOWNLOADS,
+        )
+    }
+
+    fn new_with_limits(
+        base_dir: PathBuf,
+        public_base_url: Option<String>,
+        token_capacity: usize,
+        download_concurrency: usize,
+    ) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&base_dir).with_context(|| {
             format!(
                 "failed to create local artifacts directory: {}",
@@ -176,8 +293,9 @@ impl LocalStorageClient {
         Ok(Self {
             base_dir,
             public_base_url,
-            upload_tokens: Mutex::new(HashMap::new()),
-            download_tokens: Mutex::new(HashMap::new()),
+            upload_tokens: Mutex::new(LocalTokenStore::new(token_capacity)),
+            download_tokens: Mutex::new(LocalTokenStore::new(token_capacity)),
+            download_slots: Arc::new(Semaphore::new(download_concurrency)),
         })
     }
 
@@ -205,22 +323,19 @@ impl LocalStorageClient {
         Ok(self.base_dir.join(rel))
     }
 
-    async fn issue_token(
-        map: &Mutex<HashMap<String, LocalTokenEntry>>,
-        key: &str,
-        ttl_secs: u64,
-    ) -> String {
+    async fn issue_token(map: &Mutex<LocalTokenStore>, key: &str, ttl_secs: u64) -> String {
         let token = generate_token();
         let token_hash = hash_token(&token);
         let now = now_unix();
         let mut guard = map.lock().await;
-        guard.retain(|_, entry| entry.expires_at > now);
         guard.insert(
             token_hash,
             LocalTokenEntry {
                 key: key.to_string(),
                 expires_at: now + ttl_secs as i64,
+                sequence: 0,
             },
+            now,
         );
         token
     }
@@ -267,8 +382,7 @@ impl LocalStorageClient {
         let now = now_unix();
         let entry = {
             let mut guard = self.upload_tokens.lock().await;
-            guard.retain(|_, v| v.expires_at > now);
-            guard.remove(&token_hash)
+            guard.remove(&token_hash, now)
         };
 
         let Some(entry) = entry else {
@@ -298,8 +412,7 @@ impl LocalStorageClient {
 
         let entry = {
             let mut guard = self.download_tokens.lock().await;
-            guard.retain(|_, v| v.expires_at > now);
-            guard.get(&token_hash).cloned()
+            guard.get(&token_hash, now)
         };
 
         let Some(entry) = entry else {
@@ -307,13 +420,38 @@ impl LocalStorageClient {
         };
 
         let path = self.full_path_for_key(&entry.key)?;
-        let bytes = match tokio::fs::read(&path).await {
-            Ok(b) => b,
+        let permit = self
+            .download_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .context("local artifact download limiter closed")?;
+        let file = match tokio::fs::File::open(&path).await {
+            Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => {
-                return Err(e).with_context(|| format!("failed to read {}", path.display()));
+                return Err(e).with_context(|| format!("failed to open {}", path.display()));
             }
         };
+
+        let bytes = Body::from_stream(async_stream::stream! {
+            let _permit = permit;
+            let mut file = file;
+            loop {
+                let mut chunk = vec![0_u8; LOCAL_DOWNLOAD_CHUNK_BYTES];
+                match file.read(&mut chunk).await {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        chunk.truncate(read);
+                        yield Ok::<Bytes, std::io::Error>(Bytes::from(chunk));
+                    }
+                    Err(error) => {
+                        yield Err(error);
+                        break;
+                    }
+                }
+            }
+        });
 
         let file_name = Path::new(&entry.key)
             .file_name()
@@ -340,7 +478,7 @@ impl LocalStorageClient {
 }
 
 pub struct LocalDownloadPayload {
-    pub bytes: Vec<u8>,
+    pub bytes: Body,
     pub file_name: String,
 }
 
@@ -510,7 +648,7 @@ pub fn build_backend_from_config(
                 secret_access_key,
             };
 
-            Ok(StorageBackend::S3(StorageClient::new(storage_config)))
+            Ok(StorageBackend::S3(StorageClient::new(storage_config)?))
         }
     }
 }
@@ -633,5 +771,87 @@ mod tests {
 
         assert!(url.starts_with("https://install.ci.example.com/install/download/"));
         assert!(url.ends_with("?warpgate-ticket=ticket+with+%2F%3F"));
+    }
+
+    #[tokio::test]
+    async fn local_download_token_store_has_a_hard_capacity() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client =
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage");
+
+        let first = client.generate_download_url("builds/0.apk", 900).await;
+        let mut newest = String::new();
+        for index in 1..=4096 {
+            newest = client
+                .generate_download_url(&format!("builds/{index}.apk"), 900)
+                .await;
+        }
+
+        let first_hash = hash_token(first.rsplit('/').next().expect("first token"));
+        let newest_hash = hash_token(newest.rsplit('/').next().expect("newest token"));
+        let tokens = client.download_tokens.lock().await;
+        assert_eq!(tokens.len(), 4096);
+        assert!(!tokens.entries.contains_key(&first_hash));
+        assert!(tokens.entries.contains_key(&newest_hash));
+    }
+
+    #[tokio::test]
+    async fn reusable_local_downloads_have_bounded_stream_concurrency() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client = LocalStorageClient::new_with_limits(temp.path().to_path_buf(), None, 8, 2)
+            .expect("local storage");
+        tokio::fs::write(temp.path().join("artifact.bin"), b"artifact")
+            .await
+            .expect("artifact");
+
+        let mut tokens = Vec::new();
+        for _ in 0..3 {
+            let url = client.generate_download_url("artifact.bin", 900).await;
+            tokens.push(url.rsplit('/').next().expect("token").to_string());
+        }
+
+        let first = client
+            .handle_download(&tokens[0])
+            .await
+            .expect("first download")
+            .expect("first payload");
+        let second = client
+            .handle_download(&tokens[1])
+            .await
+            .expect("second download")
+            .expect("second payload");
+
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                client.handle_download(&tokens[2])
+            )
+            .await
+            .is_err(),
+            "third download should wait for a stream slot"
+        );
+
+        drop(first);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), client.handle_download(&tokens[2]))
+                .await
+                .expect("third download released")
+                .expect("third download")
+                .is_some()
+        );
+        drop(second);
+    }
+
+    #[test]
+    fn non_loopback_http_storage_endpoint_is_rejected() {
+        assert!(validate_s3_transport_url("http://storage.example.invalid:9000").is_err());
+        assert!(validate_s3_transport_url("http://10.0.0.8:9000").is_err());
+        assert!(validate_s3_transport_url("http://localhost.example.invalid:9000").is_err());
+        assert!(validate_s3_transport_url("http://user:secret@127.0.0.1:9000").is_err());
+        assert!(validate_s3_transport_url("ftp://storage.example.invalid").is_err());
+
+        assert!(validate_s3_transport_url("http://127.0.0.1:9000").is_ok());
+        assert!(validate_s3_transport_url("http://[::1]:9000").is_ok());
+        assert!(validate_s3_transport_url("https://storage.example.invalid:9000").is_ok());
     }
 }

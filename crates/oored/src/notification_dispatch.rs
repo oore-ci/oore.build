@@ -4,9 +4,10 @@
 //! dispatches notifications to configured channels when builds reach terminal
 //! states or runners go offline.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use ipnet::IpNet;
 use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
@@ -22,6 +23,84 @@ use crate::util::now_unix;
 
 /// Terminal build statuses that trigger notifications.
 const TERMINAL_STATUSES: &[&str] = &["succeeded", "failed", "canceled", "timed_out", "expired"];
+const MAX_NOTIFICATION_ERROR_BODY_BYTES: usize = 1024;
+
+fn notification_addresses_allowed(host: &str, addresses: &[std::net::SocketAddr]) -> bool {
+    !addresses.is_empty()
+        && if host.eq_ignore_ascii_case("localhost") {
+            addresses.iter().all(|address| address.ip().is_loopback())
+        } else {
+            addresses
+                .iter()
+                .all(|address| is_public_notification_ip(address.ip()))
+        }
+}
+
+fn is_public_notification_ip(ip: std::net::IpAddr) -> bool {
+    static NON_PUBLIC_NETWORKS: OnceLock<Vec<IpNet>> = OnceLock::new();
+    let networks = NON_PUBLIC_NETWORKS.get_or_init(|| {
+        [
+            "0.0.0.0/8",
+            "10.0.0.0/8",
+            "100.64.0.0/10",
+            "127.0.0.0/8",
+            "169.254.0.0/16",
+            "172.16.0.0/12",
+            "192.0.0.0/24",
+            "192.0.2.0/24",
+            "192.88.99.0/24",
+            "192.168.0.0/16",
+            "198.18.0.0/15",
+            "198.51.100.0/24",
+            "203.0.113.0/24",
+            "224.0.0.0/4",
+            "240.0.0.0/4",
+            "::/96",
+            "::ffff:0:0/96",
+            "64:ff9b:1::/48",
+            "100::/64",
+            "2001::/23",
+            "2002::/16",
+            "3fff::/20",
+            "fc00::/7",
+            "fe80::/10",
+            "fec0::/10",
+            "ff00::/8",
+        ]
+        .into_iter()
+        .map(|network| network.parse().expect("valid notification CIDR"))
+        .collect()
+    });
+    !networks.iter().any(|network| network.contains(&ip))
+}
+
+async fn notification_http_client(url: &url::Url) -> anyhow::Result<reqwest::Client> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("notification URL must include a host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("notification URL must include a port"))?;
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none());
+
+    if matches!(url.host(), Some(url::Host::Domain(_))) {
+        let addresses: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|_| anyhow::anyhow!("notification destination resolution failed"))?
+            .collect();
+        if !notification_addresses_allowed(host, &addresses) {
+            anyhow::bail!("notification destination is outside the allowed network policy");
+        }
+
+        builder = builder.resolve_to_addrs(host, &addresses);
+    }
+
+    builder
+        .build()
+        .map_err(|_| anyhow::anyhow!("failed to initialize notification HTTP client"))
+}
 
 /// Start the notification dispatch background task.
 pub fn start_notification_dispatcher(
@@ -34,18 +113,13 @@ pub fn start_notification_dispatcher(
     let build_key = encryption_key.clone();
     let mut build_rx = scheduler.subscribe_events();
     tokio::spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
         loop {
             match build_rx.recv().await {
                 Ok(event) => {
                     if !TERMINAL_STATUSES.contains(&event.to_status.as_str()) {
                         continue;
                     }
-                    if let Err(e) = dispatch_event(&build_pool, &client, &build_key, &event).await {
+                    if let Err(e) = dispatch_event(&build_pool, &build_key, &event).await {
                         error!(error = %e, build_id = %event.build_id, "notification dispatch error");
                     }
                 }
@@ -66,20 +140,13 @@ pub fn start_notification_dispatcher(
     // Runner event dispatcher
     let mut runner_rx = scheduler.subscribe_runner_events();
     tokio::spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
         loop {
             match runner_rx.recv().await {
                 Ok(event) => {
                     if event.to_status != "offline" {
                         continue;
                     }
-                    if let Err(e) =
-                        dispatch_runner_event(&pool, &client, &encryption_key, &event).await
-                    {
+                    if let Err(e) = dispatch_runner_event(&pool, &encryption_key, &event).await {
                         error!(
                             error = %e,
                             runner_id = %event.runner_id,
@@ -105,7 +172,6 @@ pub fn start_notification_dispatcher(
 /// Dispatch notifications for a single build state event.
 async fn dispatch_event(
     pool: &SqlitePool,
-    client: &reqwest::Client,
     encryption_key: &[u8],
     event: &BuildStateEvent,
 ) -> anyhow::Result<()> {
@@ -189,7 +255,6 @@ async fn dispatch_event(
                     _ => payload.clone(),
                 };
                 dispatch_http(
-                    client,
                     channel_row,
                     encryption_key,
                     &channel_id,
@@ -248,7 +313,6 @@ async fn dispatch_event(
 /// Dispatch notifications for a runner state event (e.g. runner going offline).
 async fn dispatch_runner_event(
     pool: &SqlitePool,
-    client: &reqwest::Client,
     encryption_key: &[u8],
     event: &RunnerStateEvent,
 ) -> anyhow::Result<()> {
@@ -312,7 +376,6 @@ async fn dispatch_runner_event(
                     _ => payload.clone(),
                 };
                 dispatch_http(
-                    client,
                     channel_row,
                     encryption_key,
                     &channel_id,
@@ -486,32 +549,15 @@ pub async fn send_notification(
     channel_type: NotificationChannelType,
     payload: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
-    send_notification_with_client(&client, url, secret, channel_type, payload).await
-}
-
-/// Send a build notification using a provided reqwest client.
-///
-/// Transforms the payload for Mattermost channels automatically.
-async fn send_notification_with_client(
-    client: &reqwest::Client,
-    url: &str,
-    secret: Option<&str>,
-    channel_type: NotificationChannelType,
-    payload: &serde_json::Value,
-) -> anyhow::Result<()> {
     let body = match channel_type {
         NotificationChannelType::Webhook | NotificationChannelType::Email => payload.clone(),
         NotificationChannelType::Mattermost => build_mattermost_payload(payload),
     };
-    send_raw_http_payload(client, url, secret, channel_type, &body).await
+    send_raw_http_payload(url, secret, channel_type, &body).await
 }
 
 /// Dispatch an HTTP-based notification (webhook/mattermost) from within a dispatch loop.
 async fn dispatch_http(
-    client: &reqwest::Client,
     channel_row: &sqlx::sqlite::SqliteRow,
     encryption_key: &[u8],
     channel_id: &str,
@@ -546,7 +592,7 @@ async fn dispatch_http(
         }
     };
 
-    send_raw_http_payload(client, &url, secret.as_deref(), channel_type, payload).await
+    send_raw_http_payload(&url, secret.as_deref(), channel_type, payload).await
 }
 
 /// Dispatch an email notification from within a dispatch loop.
@@ -581,12 +627,19 @@ where
 
 /// Send a pre-formatted payload to an HTTP notification channel.
 async fn send_raw_http_payload(
-    client: &reqwest::Client,
     url: &str,
     secret: Option<&str>,
     channel_type: NotificationChannelType,
     body: &serde_json::Value,
 ) -> anyhow::Result<()> {
+    let parsed = url::Url::parse(url).map_err(|_| anyhow::anyhow!("invalid notification URL"))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        anyhow::bail!("notification URL must not include credentials");
+    }
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("notification URL must use HTTP or HTTPS");
+    }
+    let client = notification_http_client(&parsed).await?;
     let body_bytes = serde_json::to_vec(body)?;
 
     let mut request = client
@@ -604,11 +657,15 @@ async fn send_raw_http_payload(
         request = request.header("X-Oore-Signature", format!("sha256={sig_hex}"));
     }
 
-    let response = request.body(body_bytes).send().await?;
+    let response = request
+        .body(body_bytes)
+        .send()
+        .await
+        .map_err(safe_notification_transport_error)?;
 
     let status = response.status();
     if !status.is_success() {
-        let body_text = response.text().await.unwrap_or_default();
+        let body_text = bounded_notification_error_body(response).await;
         anyhow::bail!(
             "notification delivery failed: HTTP {} — {}",
             status,
@@ -617,6 +674,50 @@ async fn send_raw_http_payload(
     }
 
     Ok(())
+}
+
+fn safe_notification_transport_error(error: reqwest::Error) -> anyhow::Error {
+    let category = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connection"
+    } else if error.is_redirect() {
+        "redirect"
+    } else if error.is_request() {
+        "request"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else {
+        "transport"
+    };
+    anyhow::anyhow!("notification transport failed ({category})")
+}
+
+async fn bounded_notification_error_body(mut response: reqwest::Response) -> String {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_NOTIFICATION_ERROR_BODY_BYTES as u64)
+    {
+        return "response body exceeded diagnostic limit".to_string();
+    }
+
+    let mut body = Vec::with_capacity(MAX_NOTIFICATION_ERROR_BODY_BYTES);
+    while body.len() < MAX_NOTIFICATION_ERROR_BODY_BYTES {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(_) => return "response body unavailable".to_string(),
+        };
+        let remaining = MAX_NOTIFICATION_ERROR_BODY_BYTES - body.len();
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        if chunk.len() >= remaining {
+            break;
+        }
+    }
+
+    String::from_utf8_lossy(&body).into_owned()
 }
 
 // ── Email notification functions ─────────────────────────────────
@@ -784,4 +885,156 @@ fn runner_email_html(payload: &serde_json::Value) -> (String, String) {
     );
 
     (subject, html)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn notification_dns_policy_rejects_non_public_and_mixed_results() {
+        let public_v4 = "93.184.216.34:443".parse().unwrap();
+        let public_v6 = "[2606:2800:220:1:248:1893:25c8:1946]:443".parse().unwrap();
+        let private = "10.0.0.8:443".parse().unwrap();
+        let loopback = "127.0.0.1:443".parse().unwrap();
+
+        assert!(notification_addresses_allowed(
+            "receiver.example",
+            &[public_v4, public_v6]
+        ));
+        assert!(!notification_addresses_allowed(
+            "receiver.example",
+            &[private]
+        ));
+        assert!(!notification_addresses_allowed(
+            "receiver.example",
+            &[public_v4, private]
+        ));
+        assert!(notification_addresses_allowed("localhost", &[loopback]));
+    }
+
+    #[tokio::test]
+    async fn notification_redirects_are_not_followed_but_success_still_works() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let target_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_addr = target_listener.local_addr().unwrap();
+        let target_hits = hits.clone();
+        let target = axum::Router::new().route(
+            "/target",
+            axum::routing::post(move || {
+                let target_hits = target_hits.clone();
+                async move {
+                    target_hits.fetch_add(1, Ordering::SeqCst);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let target_task = tokio::spawn(async move {
+            let _ = axum::serve(target_listener, target).await;
+        });
+
+        let redirect_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect_addr = redirect_listener.local_addr().unwrap();
+        let location = format!("http://{target_addr}/target");
+        let redirect = axum::Router::new()
+            .route(
+                "/redirect",
+                axum::routing::post(move || {
+                    let location = location.clone();
+                    async move {
+                        (
+                            axum::http::StatusCode::TEMPORARY_REDIRECT,
+                            [(axum::http::header::LOCATION, location)],
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/ok",
+                axum::routing::post(|| async { axum::http::StatusCode::NO_CONTENT }),
+            );
+        let redirect_task = tokio::spawn(async move {
+            let _ = axum::serve(redirect_listener, redirect).await;
+        });
+
+        let error = send_notification(
+            &format!("http://{redirect_addr}/redirect"),
+            None,
+            NotificationChannelType::Webhook,
+            &test_payload(),
+        )
+        .await
+        .expect_err("redirect must not be followed");
+        assert!(error.to_string().contains("HTTP 307"));
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        send_notification(
+            &format!("http://{redirect_addr}/ok"),
+            None,
+            NotificationChannelType::Webhook,
+            &test_payload(),
+        )
+        .await
+        .expect("direct success remains supported");
+
+        redirect_task.abort();
+        target_task.abort();
+    }
+
+    #[tokio::test]
+    async fn notification_error_body_is_bounded_before_the_peer_finishes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n400\r\n",
+                )
+                .await
+                .unwrap();
+            socket.write_all(&vec![b'x'; 1024]).await.unwrap();
+            socket.write_all(b"\r\n").await.unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            send_notification(
+                &format!("http://{addr}/slow-error"),
+                None,
+                NotificationChannelType::Webhook,
+                &test_payload(),
+            ),
+        )
+        .await
+        .expect("error prefix should not wait for the full body")
+        .expect_err("500 response");
+        assert!(result.to_string().contains("HTTP 500"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn notification_transport_errors_do_not_expose_the_url() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let error = send_notification(
+            &format!("http://{addr}/opaque-secret-path?token=opaque-secret-query"),
+            None,
+            NotificationChannelType::Webhook,
+            &test_payload(),
+        )
+        .await
+        .expect_err("closed listener must fail");
+        let message = error.to_string();
+        assert!(!message.contains("opaque-secret-path"));
+        assert!(!message.contains("opaque-secret-query"));
+    }
 }

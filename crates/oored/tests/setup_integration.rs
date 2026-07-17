@@ -739,6 +739,63 @@ async fn test_verify_invalid_bootstrap_token() {
 }
 
 #[tokio::test]
+async fn test_distinct_invalid_bootstrap_tokens_share_a_bounded_budget() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let app = create_test_app(&db_path).await;
+    let valid_token = seed_bootstrap_token(&db_path).await;
+
+    for attempt in 0..5 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/setup/bootstrap-token/verify")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({"token": format!("wrong-{attempt}")})).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/bootstrap-token/verify")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({"token": "sixth-distinct-wrong-token"})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/setup/bootstrap-token/verify")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({"token": valid_token})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
 async fn test_verify_no_bootstrap_token_record() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("oore.db");

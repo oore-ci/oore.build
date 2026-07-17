@@ -83,3 +83,41 @@ async fn authenticated_web_performance_is_exported_without_private_labels() {
     assert!(metrics.contains("persona=\"qa_install\""));
     assert!(!metrics.contains("owner@local"));
 }
+
+#[tokio::test]
+async fn unmatched_paths_share_one_metrics_label() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let app = common::create_test_app(&tmp.path().join("test.db")).await;
+
+    for suffix in ["alpha", "bravo", "charlie"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/security-regression-unmatched-{suffix}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("unmatched request");
+        assert_eq!(response.status(), 404);
+    }
+
+    let metrics = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("metrics scrape")
+        .into_body()
+        .collect()
+        .await
+        .expect("metrics body")
+        .to_bytes();
+    let metrics = String::from_utf8(metrics.to_vec()).expect("utf8 metrics");
+    assert!(metrics.contains("path=\"__unmatched__\""));
+    assert!(!metrics.contains("security-regression-unmatched"));
+}

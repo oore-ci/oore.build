@@ -93,8 +93,8 @@ pub struct AppState {
     /// endpoint URLs. Only available with test-support feature or in tests.
     #[cfg(any(test, feature = "test-support"))]
     pub skip_oidc_discovery: bool,
-    /// Failed bootstrap token verification attempts (keyed by token hash).
-    pub bootstrap_failures: Mutex<HashMap<String, u32>>,
+    /// Fixed-size failure budget for the active bootstrap token.
+    pub bootstrap_failures: Mutex<BootstrapFailureBudget>,
     /// In-process job scheduler for runner dispatch.
     pub scheduler: Arc<scheduler::Scheduler>,
     /// Runtime-configurable artifact storage backend.
@@ -151,6 +151,28 @@ const MAX_PENDING_AUTH: usize = 1000;
 
 /// Maximum allowed failed bootstrap token attempts before lockout.
 const MAX_BOOTSTRAP_FAILURES: u32 = 5;
+
+#[derive(Default)]
+pub struct BootstrapFailureBudget {
+    active_token_hash: Option<String>,
+    failures: u32,
+}
+
+impl BootstrapFailureBudget {
+    fn record_failure(&mut self, active_token_hash: &str) -> u32 {
+        if self.active_token_hash.as_deref() != Some(active_token_hash) {
+            self.active_token_hash = Some(active_token_hash.to_string());
+            self.failures = 0;
+        }
+        self.failures = self.failures.saturating_add(1);
+        self.failures
+    }
+
+    fn clear(&mut self) {
+        self.active_token_hash = None;
+        self.failures = 0;
+    }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -567,20 +589,6 @@ async fn verify_bootstrap_token(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BootstrapTokenVerifyRequest>,
 ) -> ApiResult<BootstrapTokenVerifyResponse> {
-    // H6: Check failed attempt counter
-    let token_hash_for_tracking = hash_token(&req.token);
-    {
-        let failures = state.bootstrap_failures.lock().await;
-        let count = failures.get(&token_hash_for_tracking).copied().unwrap_or(0);
-        if count >= MAX_BOOTSTRAP_FAILURES {
-            return Err(api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_attempts",
-                "Too many failed verification attempts. Generate a new bootstrap token.",
-            ));
-        }
-    }
-
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
@@ -630,17 +638,24 @@ async fn verify_bootstrap_token(
     // Hash must match
     let request_hash = hash_token(&req.token);
     if request_hash != bt.hash {
-        // H6: Increment failed attempt counter
         let mut failures = state.bootstrap_failures.lock().await;
-        let count = failures.entry(token_hash_for_tracking).or_insert(0);
-        *count += 1;
-        warn!(attempts = *count, "invalid bootstrap token attempt");
+        let attempts = failures.record_failure(&bt.hash);
+        warn!(attempts, "invalid bootstrap token attempt");
+        if attempts > MAX_BOOTSTRAP_FAILURES {
+            return Err(api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+                "Too many failed verification attempts. Generate a new bootstrap token.",
+            ));
+        }
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
             "invalid_token",
             "Bootstrap token is invalid",
         ));
     }
+
+    state.bootstrap_failures.lock().await.clear();
 
     // Mark token as consumed
     let now = now_unix();
@@ -2111,7 +2126,7 @@ async fn build_router_inner(
         enforcer,
         #[cfg(any(test, feature = "test-support"))]
         skip_oidc_discovery: _skip_oidc_discovery,
-        bootstrap_failures: Mutex::new(HashMap::new()),
+        bootstrap_failures: Mutex::new(BootstrapFailureBudget::default()),
         scheduler: sched.clone(),
         storage: Arc::new(RwLock::new(storage_backend)),
         stream_tokens: logs::StreamTokenStore::new(),
