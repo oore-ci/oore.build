@@ -62,6 +62,14 @@ function formatAuthMethodLabel(
   return 'OIDC'
 }
 
+export function buildLoginBackendCommands(backendUrl: string) {
+  const backendUrlArgument = `'${backendUrl.replaceAll("'", `'"'"'`)}'`
+  return {
+    cloudflared: `cloudflared tunnel --url ${backendUrlArgument}`,
+    ooreWeb: `oore-web --backend-url ${backendUrlArgument}`,
+  }
+}
+
 function isLoopbackHostname(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
@@ -365,6 +373,7 @@ function LoginPage() {
     showAddInstance,
     trustedProxyLoginAvailable,
   } = useLoginPageState()
+  const backendCommands = buildLoginBackendCommands(instance?.url ?? '')
 
   if (isDemoMode) {
     return (
@@ -504,14 +513,14 @@ function LoginPage() {
                     Expose backend with tunnel
                   </p>
                   <code className="block bg-muted px-2 py-1 text-xs">
-                    cloudflared tunnel --url {instance.url}
+                    {backendCommands.cloudflared}
                   </code>
                 </div>
 
                 {hostedUi ? (
                   <p className="text-xs text-muted-foreground">
                     For local-only backends, run the bundled local web launcher:{' '}
-                    <code>oore-web --backend-url {instance.url}</code>.
+                    <code>{backendCommands.ooreWeb}</code>.
                   </p>
                 ) : null}
               </div>
