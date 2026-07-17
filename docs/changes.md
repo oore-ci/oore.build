@@ -14,6 +14,12 @@ Rules:
 
 ## 2026-07-17
 
+- **macOS runner checkout sandbox compatibility**:
+  - Repository commands may query only their own PID metadata, allowing the Apple `/usr/bin/git` Xcode-select shim to initialize without restoring access to unrelated processes. The sandbox also permits metadata lookup of the runner workspace root required to resolve the repository working directory while continuing to deny sibling contents.
+  - The Keychain CLI is denied explicitly, and the detached-descendant regression continues to prove that repository code cannot inspect or signal a later runner-owned signer or reach its protected workspace.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Runner sandbox ADR: https://linear.app/oorebuild/document/adr-0014-external-process-and-os-sandbox-boundary-for-v1-runners-69d1382f1539
+
 - **Safe frontend service installs and updates across protected transports**:
   - Frontend installer commands and generated systemd/launchd services now persist explicit browser-ingress and backend-hop transport assertions. Remote HTTP fails before service state changes when its assertion is missing, and backend URLs are validated before pairing exchanges any capability or durable proof.
   - Managed web UI updates preflight the candidate launcher against the active service configuration before replacing files, and release packaging exercises that contract on the compiled native launcher. Installer health checks require the launcher JSON response, while `oore-web status` reports an upstream HTML `503` by status instead of misdiagnosing it as malformed launcher JSON.

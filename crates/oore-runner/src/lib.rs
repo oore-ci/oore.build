@@ -220,12 +220,15 @@ fn repository_shell_command(
 (allow default)
 (deny file* (subpath "{runner_workspace_root}"))
 (allow file* (subpath "{workspace}"))
+(allow file-read-metadata (literal "{runner_workspace_root}"))
 (deny process-info*)
+(allow process-info-pidinfo (target self))
 (deny mach-task-name)
 (deny signal)
 (allow signal (target same-sandbox))
 (deny job-creation)
 (deny appleevent-send)
+(deny process-exec (literal "/usr/bin/security"))
 (deny mach-lookup
   (global-name "com.apple.securityd")
   (global-name "com.apple.securityd.xpc")
@@ -5113,6 +5116,37 @@ mod tests {
         for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
             assert!(!environment.contains(&format!("{key}=")));
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn repository_shell_command_allows_apple_git_init() {
+        let parent = temp_workspace();
+        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
+            .expect("create protected runner root");
+        let repository_workspace =
+            create_private_workspace_in(&runner_workspace_root, "repository")
+                .expect("create repository workspace");
+
+        let output = repository_shell_command(
+            "/usr/bin/git init --quiet",
+            &repository_workspace,
+            &runner_workspace_root,
+        )
+        .expect("build contained repository command")
+        .output()
+        .await
+        .expect("run Apple Git through repository sandbox");
+
+        assert!(
+            output.status.success(),
+            "Apple Git init failed: status={:?}, stdout={}, stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(repository_workspace.join(".git").is_dir());
+        cleanup_workspace(&parent);
     }
 
     #[cfg(target_os = "macos")]
