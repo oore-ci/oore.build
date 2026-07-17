@@ -113,6 +113,23 @@ pub async fn seed_test_user(pool: &SqlitePool) -> String {
     user_id
 }
 
+/// Create a session token for an existing test user.
+pub async fn create_session_token(pool: &SqlitePool, user_id: &str) -> String {
+    let token = oored::token::generate_session_token();
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(oored::token::hash_token(&token))
+    .bind(user_id)
+    .bind(now)
+    .bind(now + 86_400)
+    .execute(pool)
+    .await
+    .expect("failed to create test session");
+    token
+}
+
 /// Seed a GitHub integration with a known webhook secret and return the integration_id.
 pub async fn seed_github_integration(
     pool: &SqlitePool,

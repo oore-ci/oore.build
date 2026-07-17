@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -23,6 +24,7 @@ use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
+use crate::token::hash_token;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
@@ -30,6 +32,67 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 /// Maximum age (seconds) for a GitLab OAuth state token.
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
 const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone)]
+struct PendingGitLabState {
+    integration_id: String,
+    user_id: String,
+    expires_at: i64,
+}
+
+// ponytail: process-local state fails closed across daemon restarts; persist it if
+// callback continuity across restarts becomes a product requirement.
+static PENDING_OAUTH_STATES: OnceLock<tokio::sync::Mutex<HashMap<String, PendingGitLabState>>> =
+    OnceLock::new();
+
+fn pending_oauth_states() -> &'static tokio::sync::Mutex<HashMap<String, PendingGitLabState>> {
+    PENDING_OAUTH_STATES.get_or_init(Default::default)
+}
+
+async fn register_pending_oauth_state(token: &str, integration_id: &str, user_id: &str) {
+    let now = now_unix();
+    let mut pending = pending_oauth_states().lock().await;
+    pending.retain(|_, state| state.expires_at >= now && state.integration_id != integration_id);
+    pending.insert(
+        callback_state_hash(token),
+        PendingGitLabState {
+            integration_id: integration_id.to_string(),
+            user_id: user_id.to_string(),
+            expires_at: now + STATE_MAX_AGE_SECS,
+        },
+    );
+}
+
+async fn consume_pending_oauth_state(token: &str) -> Option<PendingGitLabState> {
+    let now = now_unix();
+    let mut pending = pending_oauth_states().lock().await;
+    pending.retain(|_, state| state.expires_at >= now);
+    pending.remove(&callback_state_hash(token))
+}
+
+fn callback_state_hash(token: &str) -> String {
+    hash_token(urlencoding::decode(token).as_deref().unwrap_or(token))
+}
+
+async fn current_integration_writer(
+    state: &AppState,
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+) -> bool {
+    let role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM users WHERE id = ?1 AND status = 'active'")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    match role {
+        Some(role) => check_permission(&state.enforcer, &role, "integrations", "write")
+            .await
+            .is_ok(),
+        None => false,
+    }
+}
 
 fn avatar_content_type(declared: Option<&str>, body: &[u8]) -> Option<&'static str> {
     match declared.map(str::trim) {
@@ -252,6 +315,7 @@ pub(crate) async fn resolve_branch_commit(
     repository_external_id: &str,
     branch: &str,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let host_url = normalize_gitlab_host_url(host_url)?;
     let token = access_token(pool, encryption_key, integration_id).await?;
     let client = build_http_client().map_err(|e| {
         error!(error = %e, "failed to build GitLab client");
@@ -264,7 +328,7 @@ pub(crate) async fn resolve_branch_commit(
     let mut request = client
         .get(format!(
             "{}/api/v4/projects/{}/repository/commits/{}",
-            host_url.trim_end_matches('/'),
+            host_url,
             urlencoding::encode(repository_external_id),
             urlencoding::encode(branch)
         ))
@@ -337,6 +401,7 @@ pub(crate) async fn compare_commits(
     }
 
     let (host_url, auth_mode, repository_external_id) = target;
+    let host_url = normalize_gitlab_host_url(host_url)?;
     let token = access_token(pool, encryption_key, integration_id).await?;
     let client = build_http_client().map_err(|e| {
         error!(error = %e, "failed to build GitLab client");
@@ -349,7 +414,7 @@ pub(crate) async fn compare_commits(
     let mut request = client
         .get(format!(
             "{}/api/v4/projects/{}/repository/compare",
-            host_url.trim_end_matches('/'),
+            host_url,
             urlencoding::encode(repository_external_id)
         ))
         .query(&[("from", base), ("to", head), ("straight", "true")])
@@ -405,10 +470,21 @@ fn normalize_gitlab_host_url(raw: &str) -> Result<String, (StatusCode, Json<ApiE
         api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "host_url must be an http or https origin",
+            "host_url must be an https origin",
         )
     })?;
-    if !matches!(parsed.scheme(), "http" | "https")
+    let transport_allowed = parsed.scheme() == "https"
+        || (parsed.scheme() == "http"
+            && matches!(
+                parsed.host(),
+                Some(url::Host::Ipv4(address)) if address.is_loopback()
+            ))
+        || (parsed.scheme() == "http"
+            && matches!(
+                parsed.host(),
+                Some(url::Host::Ipv6(address)) if address.is_loopback()
+            ));
+    if !transport_allowed
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()
         || parsed.password().is_some()
@@ -419,7 +495,7 @@ fn normalize_gitlab_host_url(raw: &str) -> Result<String, (StatusCode, Json<ApiE
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "host_url must be an http or https origin without credentials, a path, query, or fragment",
+            "host_url must be an https origin without credentials, a path, query, or fragment; http is allowed only for literal loopback addresses",
         ));
     }
     Ok(parsed.origin().ascii_serialization())
@@ -503,6 +579,7 @@ pub(crate) async fn perform_sync_installations(
     }
 
     let host_url: String = row.get("host_url");
+    let host_url = normalize_gitlab_host_url(&host_url)?;
     let auth_mode: String = row.get("auth_mode");
     let use_bearer_auth = auth_mode == "oauth_app";
 
@@ -932,6 +1009,7 @@ async fn sync_gitlab_projects(
     use_bearer_auth: bool,
     now: i64,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let host_url = normalize_gitlab_host_url(host_url)?;
     let api_base = format!("{}/api/v4", host_url);
 
     #[derive(serde::Deserialize)]
@@ -1128,7 +1206,7 @@ pub async fn proxy_git_checkout(
          JOIN integration_installations inst ON inst.id = r.installation_id \
          JOIN integrations i ON i.id = inst.integration_id \
          JOIN integration_credentials c ON c.integration_id = i.id \
-         WHERE b.id = ?1 AND b.runner_id = ?2 AND i.provider = 'gitlab' \
+         WHERE b.id = ?1 AND b.runner_id = ?2 AND b.status = 'running' AND i.provider = 'gitlab' \
          AND i.status = 'active' AND c.credential_type = 'access_token'",
     )
     .bind(&job_id)
@@ -1152,6 +1230,7 @@ pub async fn proxy_git_checkout(
     })?;
 
     let host_url: String = row.get("host_url");
+    let host_url = normalize_gitlab_host_url(&host_url)?;
     let full_name: String = row.get("full_name");
     let encrypted_token: String = row.get("encrypted_value");
 
@@ -1263,6 +1342,7 @@ pub async fn proxy_git_checkout(
 #[derive(Debug, Serialize, Deserialize)]
 struct GitLabOAuthState {
     integration_id: String,
+    user_id: String,
     redirect_url: String,
     #[serde(default)]
     callback_url: String,
@@ -1392,6 +1472,7 @@ pub async fn gitlab_authorize(
     let auth_mode: String = row.get("auth_mode");
     let status: String = row.get("status");
     let host_url: String = row.get("host_url");
+    let host_url = normalize_gitlab_host_url(&host_url)?;
 
     if auth_mode != "oauth_app" {
         return Err(api_err(
@@ -1448,6 +1529,7 @@ pub async fn gitlab_authorize(
     // Seal the state token
     let oauth_state = GitLabOAuthState {
         integration_id: req.integration_id.clone(),
+        user_id: auth.0.user_id.clone(),
         redirect_url: req.redirect_url,
         callback_url: callback_url.clone(),
         created_at: now_unix(),
@@ -1461,6 +1543,7 @@ pub async fn gitlab_authorize(
             "Failed to create state token",
         )
     })?;
+    register_pending_oauth_state(&state_token, &req.integration_id, &auth.0.user_id).await;
 
     // Build the authorize URL
     let authorize_url = format!(
@@ -1556,6 +1639,30 @@ pub async fn gitlab_callback(
             .into_response();
         }
     };
+    let pending_state = match consume_pending_oauth_state(&state_token).await {
+        Some(pending)
+            if pending.integration_id == oauth_state.integration_id
+                && pending.user_id == oauth_state.user_id =>
+        {
+            pending
+        }
+        _ => {
+            warn!("replayed or unissued GitLab callback state token");
+            return Html(error_page(
+                "Invalid or expired link",
+                "The authorization link has expired. Please go back and start again.",
+            ))
+            .into_response();
+        }
+    };
+    if !current_integration_writer(&state, &pool, &pending_state.user_id).await {
+        warn!(user_id = %pending_state.user_id, "GitLab callback initiator is no longer authorized");
+        return Html(error_page(
+            "Authorization expired",
+            "The user who started this authorization is no longer authorized. Please start again.",
+        ))
+        .into_response();
+    }
 
     // Validate the redirect_url from the sealed state against the configured frontend origin
     let allowed_origins = state.allowed_origins.read().await.clone();
@@ -1623,14 +1730,21 @@ async fn exchange_gitlab_code(
         let store = app_state.store.lock().await;
         let pool = store.pool().clone();
 
-        let row = sqlx::query("SELECT host_url FROM integrations WHERE id = ?1")
+        let row = sqlx::query("SELECT host_url, auth_mode, status FROM integrations WHERE id = ?1")
             .bind(integration_id)
             .fetch_optional(&pool)
             .await
             .map_err(|e| format!("Failed to fetch integration: {e}"))?
             .ok_or_else(|| "Integration not found".to_string())?;
 
+        let auth_mode: String = row.get("auth_mode");
+        let status: String = row.get("status");
+        if auth_mode != "oauth_app" || status != "inactive" {
+            return Err("Integration is no longer awaiting OAuth authorization".to_string());
+        }
         let host_url: String = row.get("host_url");
+        let host_url = normalize_gitlab_host_url(&host_url)
+            .map_err(|_| "GitLab host must use HTTPS".to_string())?;
 
         let encrypted_client_id: String = sqlx::query_scalar(
             "SELECT encrypted_value FROM integration_credentials \
@@ -1848,9 +1962,9 @@ async fn exchange_gitlab_code(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_http_client, fetch_repository_avatar, git_checkout_request_allowed,
-        normalize_gitlab_host_url, oauth_callback_url, sync_gitlab_projects,
-        validate_redirect_origin,
+        build_http_client, consume_pending_oauth_state, fetch_repository_avatar,
+        git_checkout_request_allowed, normalize_gitlab_host_url, oauth_callback_url,
+        register_pending_oauth_state, sync_gitlab_projects, validate_redirect_origin,
     };
     use crate::crypto;
     use axum::Json;
@@ -1860,14 +1974,18 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn gitlab_host_accepts_http_and_https_origins() {
+    fn gitlab_host_accepts_https_and_literal_loopback_http() {
         assert_eq!(
             normalize_gitlab_host_url("https://gitlab.example.com/").unwrap(),
             "https://gitlab.example.com"
         );
         assert_eq!(
-            normalize_gitlab_host_url("http://gitlab.internal:8080").unwrap(),
-            "http://gitlab.internal:8080"
+            normalize_gitlab_host_url("http://127.0.0.1:8080").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            normalize_gitlab_host_url("http://[::1]:8080").unwrap(),
+            "http://[::1]:8080"
         );
     }
 
@@ -1879,6 +1997,10 @@ mod tests {
             "https://gitlab.example.com/gitlab",
             "https://gitlab.example.com?x=1",
             "https://gitlab.example.com/#x",
+            "http://gitlab.internal:8080",
+            "http://localhost:8080",
+            "http://10.0.0.8",
+            "http://100.64.0.8",
         ] {
             assert!(normalize_gitlab_host_url(host).is_err(), "accepted {host}");
         }
@@ -1982,6 +2104,19 @@ mod tests {
             None,
             "group/app",
         ));
+    }
+
+    #[tokio::test]
+    async fn gitlab_oauth_state_is_single_use_and_replaced_per_integration() {
+        let integration_id = uuid::Uuid::new_v4().to_string();
+        let first = format!("gitlab-state-{}", uuid::Uuid::new_v4());
+        let replacement = format!("gitlab-state-{}", uuid::Uuid::new_v4());
+        register_pending_oauth_state(&first, &integration_id, "user-1").await;
+        register_pending_oauth_state(&replacement, &integration_id, "user-1").await;
+
+        assert!(consume_pending_oauth_state(&first).await.is_none());
+        assert!(consume_pending_oauth_state(&replacement).await.is_some());
+        assert!(consume_pending_oauth_state(&replacement).await.is_none());
     }
 
     #[tokio::test]

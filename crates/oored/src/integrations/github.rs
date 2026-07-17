@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -20,6 +21,7 @@ use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
+use crate::token::hash_token;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
@@ -28,6 +30,56 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
 /// Maximum age (seconds) for GitHub install-callback browser cookie.
 const INSTALL_STATE_MAX_AGE_SECS: i64 = 1800; // 30 minutes
+
+type PendingStates = tokio::sync::Mutex<HashMap<String, i64>>;
+
+// ponytail: process-local state fails closed across daemon restarts; persist it if
+// callback continuity across restarts becomes a product requirement.
+static PENDING_OAUTH_STATES: OnceLock<PendingStates> = OnceLock::new();
+static PENDING_INSTALL_STATES: OnceLock<PendingStates> = OnceLock::new();
+
+fn pending_oauth_states() -> &'static PendingStates {
+    PENDING_OAUTH_STATES.get_or_init(Default::default)
+}
+
+fn pending_install_states() -> &'static PendingStates {
+    PENDING_INSTALL_STATES.get_or_init(Default::default)
+}
+
+async fn register_pending_state(store: &PendingStates, token: &str, max_age_secs: i64) {
+    let now = now_unix();
+    let mut pending = store.lock().await;
+    pending.retain(|_, expires_at| *expires_at >= now);
+    pending.insert(callback_state_hash(token), now + max_age_secs);
+}
+
+async fn consume_pending_state(store: &PendingStates, token: &str) -> bool {
+    let now = now_unix();
+    let mut pending = store.lock().await;
+    pending.retain(|_, expires_at| *expires_at >= now);
+    pending.remove(&callback_state_hash(token)).is_some()
+}
+
+fn callback_state_hash(token: &str) -> String {
+    hash_token(urlencoding::decode(token).as_deref().unwrap_or(token))
+}
+
+async fn current_integration_writer(
+    state: &AppState,
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Option<String> {
+    let row = sqlx::query("SELECT email, role FROM users WHERE id = ?1 AND status = 'active'")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .ok()??;
+    let role: String = row.get("role");
+    check_permission(&state.enforcer, &role, "integrations", "write")
+        .await
+        .ok()?;
+    Some(row.get("email"))
+}
 
 fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
@@ -148,6 +200,7 @@ struct GitHubOAuthState {
 #[derive(Debug, Serialize, Deserialize)]
 struct GitHubInstallState {
     integration_id: String,
+    user_id: String,
     created_at: i64,
 }
 
@@ -315,6 +368,7 @@ pub async fn github_start(
             "Failed to create state token",
         )
     })?;
+    register_pending_state(pending_oauth_states(), &token, STATE_MAX_AGE_SECS).await;
 
     let base_url = base_url_from_webhook(&req.webhook_url);
     let create_url = format!("{}/v1/integrations/github/create?state={}", base_url, token);
@@ -474,6 +528,24 @@ pub async fn github_callback(
             .into_response();
         }
     };
+    if !consume_pending_state(pending_oauth_states(), &state_token).await {
+        warn!("replayed or unissued github callback state token");
+        return Html(error_page(
+            "Invalid or expired link",
+            "The setup link has expired. Please go back and start again.",
+        ))
+        .into_response();
+    }
+    let Some(current_user_email) =
+        current_integration_writer(&state, &pool, &oauth_state.user_id).await
+    else {
+        warn!(user_id = %oauth_state.user_id, "github callback initiator is no longer authorized");
+        return Html(error_page(
+            "Authorization expired",
+            "The user who started this setup is no longer authorized. Please start again.",
+        ))
+        .into_response();
+    };
     let allowed_origins = state.allowed_origins.read().await.clone();
     if validate_redirect_origin(&oauth_state.redirect_url, &allowed_origins).is_err() {
         warn!(
@@ -491,7 +563,7 @@ pub async fn github_callback(
     );
 
     // Exchange code for credentials
-    match exchange_and_store(&state, &code, &oauth_state.user_id, &oauth_state.user_email).await {
+    match exchange_and_store(&state, &code, &oauth_state.user_id, &current_user_email).await {
         Ok(integration) => {
             info!(
                 integration_id = %integration.id,
@@ -501,10 +573,25 @@ pub async fn github_callback(
 
             let install_state = GitHubInstallState {
                 integration_id: integration.id.clone(),
+                user_id: oauth_state.user_id.clone(),
                 created_at: now_unix(),
             };
             let sealed_install_state =
-                seal_install_state(&install_state, &state.encryption_key).ok();
+                match seal_install_state(&install_state, &state.encryption_key) {
+                    Ok(token) => {
+                        register_pending_state(
+                            pending_install_states(),
+                            &token,
+                            INSTALL_STATE_MAX_AGE_SECS,
+                        )
+                        .await;
+                        Some(token)
+                    }
+                    Err(error) => {
+                        warn!(%error, "failed to seal github install state");
+                        None
+                    }
+                };
 
             // Redirect to GitHub install page so user can install the app on their org/account
             if let Some(ref slug) = integration.app_slug {
@@ -578,37 +665,38 @@ pub async fn github_installed(
         "GitHub App installation callback"
     );
 
-    // Clone the pool and find integration_id, then release the store lock
-    // so perform_sync (which makes HTTP calls) doesn't hold it.
-    let install_state_integration_id = cookie_value(&headers, "oore_gh_install_state")
-        .and_then(|token| open_install_state(&token, &state.encryption_key).ok())
-        .map(|s| s.integration_id);
-
-    let (pool, integration_id) = {
+    let install_state = if let Some(token) = cookie_value(&headers, "oore_gh_install_state") {
+        match open_install_state(&token, &state.encryption_key) {
+            Ok(install_state) if consume_pending_state(pending_install_states(), &token).await => {
+                Some(install_state)
+            }
+            _ => {
+                warn!("invalid, expired, or replayed github install callback state");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    // Clone the pool, then release the store lock so perform_sync (which makes
+    // HTTP calls) doesn't hold it.
+    let pool = {
         let store = state.store.lock().await;
-        let pool = store.pool().clone();
-
-        // First try to resolve integration by known installation ID (if we already synced once).
-        let integration_id: Option<String> = if let Some(inst_id) = params.installation_id {
-            let external_id = inst_id.to_string();
-            sqlx::query_scalar(
-                "SELECT i.id FROM integrations i \
-                 JOIN integration_installations ii ON ii.integration_id = i.id \
-                 WHERE ii.external_id = ?1 AND i.provider = 'github' \
-                 LIMIT 1",
-            )
-            .bind(&external_id)
-            .fetch_optional(&pool)
-            .await
-            .unwrap_or(None)
-        } else {
+        store.pool().clone()
+    };
+    let integration_id = match install_state {
+        Some(install_state)
+            if current_integration_writer(&state, &pool, &install_state.user_id)
+                .await
+                .is_some() =>
+        {
+            Some(install_state.integration_id)
+        }
+        Some(install_state) => {
+            warn!(user_id = %install_state.user_id, "github install callback initiator is no longer authorized");
             None
-        };
-
-        // If installation lookup misses (common for first install), fall back to
-        // signed browser cookie set during app creation callback.
-        let resolved = integration_id.or(install_state_integration_id);
-        (pool, resolved)
+        }
+        None => None,
     };
 
     if require_remote_mode(&pool).await.is_err() {
@@ -1575,7 +1663,9 @@ use super::{error_page, favicon_data_uri, html_escape, require_remote_mode};
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_cookie_secure_override, preferred_frontend_origin, validate_redirect_origin,
+        INSTALL_STATE_MAX_AGE_SECS, consume_pending_state, parse_cookie_secure_override,
+        pending_install_states, preferred_frontend_origin, register_pending_state,
+        validate_redirect_origin,
     };
 
     #[test]
@@ -1635,5 +1725,13 @@ mod tests {
         let allowed = vec!["https://daemon.example.com".to_string()];
         let resolved = preferred_frontend_origin(&allowed, Some("https://daemon.example.com"));
         assert_eq!(resolved, "https://daemon.example.com");
+    }
+
+    #[tokio::test]
+    async fn install_callback_state_is_single_use() {
+        let token = format!("install-state-{}", uuid::Uuid::new_v4());
+        register_pending_state(pending_install_states(), &token, INSTALL_STATE_MAX_AGE_SECS).await;
+        assert!(consume_pending_state(pending_install_states(), &token).await);
+        assert!(!consume_pending_state(pending_install_states(), &token).await);
     }
 }

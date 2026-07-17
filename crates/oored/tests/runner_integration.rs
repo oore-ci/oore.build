@@ -383,6 +383,10 @@ async fn test_runner_claim_and_execute() {
 
 #[tokio::test]
 async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
+    use base64::Engine as _;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -390,6 +394,57 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
     let user_id = seed_test_user(&pool).await;
     let session_token = create_session_token(&pool, &user_id).await;
     let integration_id = seed_gitlab_integration(&pool, &user_id, "webhook-secret").await;
+    let upstream_hits = Arc::new(AtomicUsize::new(0));
+    let hits = upstream_hits.clone();
+    let upstream = axum::Router::new().route(
+        "/internal/mobile/app.git/info/refs",
+        axum::routing::get(move |headers: axum::http::HeaderMap| {
+            let hits = hits.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let expected =
+                    base64::engine::general_purpose::STANDARD.encode("oauth2:gitlab-access-token");
+                let expected = format!("Basic {expected}");
+                assert_eq!(
+                    headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok()),
+                    Some(expected.as_str())
+                );
+                (
+                    [(
+                        "content-type",
+                        "application/x-git-upload-pack-advertisement",
+                    )],
+                    "git-upload-pack",
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let host_url = format!("http://{}", listener.local_addr().unwrap());
+    let upstream_server =
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    sqlx::query("UPDATE integrations SET host_url = ?1 WHERE id = ?2")
+        .bind(&host_url)
+        .bind(&integration_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let encrypted_access_token =
+        oored::crypto::encrypt("gitlab-access-token", &common::TEST_ENCRYPTION_KEY).unwrap();
+    sqlx::query(
+        "INSERT INTO integration_credentials \
+         (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
+         VALUES (?1, ?2, 'access_token', ?3, ?4, ?4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&integration_id)
+    .bind(encrypted_access_token)
+    .bind(common::now_unix())
+    .execute(&pool)
+    .await
+    .unwrap();
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "internal/mobile/app").await;
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
@@ -403,7 +458,7 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
         .header(http::header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"protocol_version":2}"#))
         .unwrap();
-    let response = app.oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let json = body_json(response.into_body()).await;
     let snapshot = &json["job"]["config_snapshot"];
@@ -417,6 +472,64 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
         !json.to_string().contains(&runner_token),
         "runner token must not be embedded in the claimed job"
     );
+
+    let running = Request::post(format!("/v1/runners/{runner_id}/jobs/{build_id}/status"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"status":"running","steps":[]}"#))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(running).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    let checkout_path = format!(
+        "/v1/runners/{runner_id}/jobs/{build_id}/gitlab/internal/mobile/app.git/info/refs?service=git-upload-pack"
+    );
+    let live_checkout = Request::get(&checkout_path)
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(live_checkout).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(upstream_hits.load(Ordering::SeqCst), 1);
+
+    let succeeded = Request::post(format!("/v1/runners/{runner_id}/jobs/{build_id}/status"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"status":"succeeded","exit_code":0,"steps":[]}"#,
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(succeeded).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    let replay = Request::get(&checkout_path)
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.oneshot(replay).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(upstream_hits.load(Ordering::SeqCst), 1);
+    upstream_server.abort();
 }
 
 #[tokio::test]
