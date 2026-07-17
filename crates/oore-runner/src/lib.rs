@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::net::IpAddr;
@@ -188,20 +189,50 @@ fn repository_shell_command(
     script: &str,
     workspace: &Path,
     runner_workspace_root: &Path,
+    protected_host_paths: &[PathBuf],
 ) -> anyhow::Result<tokio::process::Command> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let runner_workspace_root = fs::canonicalize(runner_workspace_root)
+        let runner_workspace_root_path = fs::canonicalize(runner_workspace_root)
             .context("failed to resolve runner workspace root")?;
-        let workspace = fs::canonicalize(workspace).context("failed to resolve build workspace")?;
+        let workspace_path =
+            fs::canonicalize(workspace).context("failed to resolve build workspace")?;
         anyhow::ensure!(
-            workspace.parent() == Some(runner_workspace_root.as_path()),
+            workspace_path.parent() == Some(runner_workspace_root_path.as_path()),
             "build workspace is outside the runner workspace root"
         );
-        let runner_workspace_root = runner_workspace_root
+        let mut protected_host_write_denials = String::new();
+        for protected_path in protected_host_paths {
+            let protected_path = fs::canonicalize(protected_path).with_context(|| {
+                format!(
+                    "failed to resolve protected host toolchain path {}",
+                    protected_path.display()
+                )
+            })?;
+            anyhow::ensure!(
+                protected_path.is_absolute()
+                    && !protected_path.starts_with(&workspace_path)
+                    && !workspace_path.starts_with(&protected_path),
+                "protected host toolchain path {} is not outside the repository workspace",
+                protected_path.display()
+            );
+            let protected_path = protected_path
+                .to_str()
+                .context("protected host toolchain path is not valid UTF-8")?;
+            anyhow::ensure!(
+                !protected_path.chars().any(char::is_control),
+                "protected host toolchain path contains control characters"
+            );
+            let protected_path = protected_path.replace('\\', "\\\\").replace('"', "\\\"");
+            protected_host_write_denials.push_str(&format!(
+                "(deny file-write* (literal \"{protected_path}\"))\n\
+                 (deny file-write* (subpath \"{protected_path}\"))\n"
+            ));
+        }
+        let runner_workspace_root = runner_workspace_root_path
             .to_str()
             .context("runner workspace root path is not valid UTF-8")?;
-        let workspace = workspace
+        let workspace = workspace_path
             .to_str()
             .context("build workspace path is not valid UTF-8")?;
         anyhow::ensure!(
@@ -221,6 +252,7 @@ fn repository_shell_command(
 (deny file* (subpath "{runner_workspace_root}"))
 (allow file* (subpath "{workspace}"))
 (allow file-read-metadata (literal "{runner_workspace_root}"))
+{protected_host_write_denials}
 (deny process-info*)
 (allow process-info-pidinfo (target self))
 (deny mach-task-name)
@@ -477,7 +509,42 @@ fn android_artifact_extension(command: &str) -> Option<&'static str> {
     }
 }
 
-fn find_apksigner() -> PathBuf {
+#[derive(Debug, Clone)]
+struct AndroidSigningToolchain {
+    apksigner: PathBuf,
+    jarsigner: PathBuf,
+    zip: PathBuf,
+    java_home: Option<PathBuf>,
+    protected_host_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug)]
+struct ResolvedAndroidJava {
+    home: PathBuf,
+    jarsigner: PathBuf,
+    protected_host_paths: Vec<PathBuf>,
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.contains(&path) {
+        paths.push(path);
+    }
+}
+
+fn canonical_file(path: &Path) -> Option<PathBuf> {
+    if !path.is_file() {
+        return None;
+    }
+    fs::canonicalize(path).ok()
+}
+
+fn fixed_system_executable(name: &str) -> Option<PathBuf> {
+    ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        .into_iter()
+        .find_map(|root| canonical_file(&Path::new(root).join(name)))
+}
+
+fn find_apksigner() -> (PathBuf, Vec<PathBuf>) {
     let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
         .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
@@ -497,30 +564,194 @@ fn find_apksigner() -> PathBuf {
             .filter(|path| path.is_file())
             .collect::<Vec<_>>();
         candidates.sort();
-        if let Some(path) = candidates.pop() {
-            return path;
+        while let Some(path) = candidates.pop() {
+            let Some(apksigner) = canonical_file(&path) else {
+                continue;
+            };
+            let mut protected_host_paths = Vec::new();
+            if let Ok(root) = fs::canonicalize(&root) {
+                push_unique_path(&mut protected_host_paths, root);
+            }
+            if let Some(version_root) = apksigner.parent() {
+                push_unique_path(&mut protected_host_paths, version_root.to_path_buf());
+            }
+            return (apksigner, protected_host_paths);
         }
     }
-    PathBuf::from("apksigner")
+    (
+        fixed_system_executable("apksigner").unwrap_or_else(|| PathBuf::from("apksigner")),
+        Vec::new(),
+    )
+}
+
+fn resolve_android_signing_java(
+    home: &Path,
+    protection_root: Option<&Path>,
+) -> Option<ResolvedAndroidJava> {
+    let home = fs::canonicalize(home).ok()?;
+    let java = canonical_file(&home.join("bin/java"))?;
+    let jarsigner = canonical_file(&home.join("bin/jarsigner"))?;
+    let mut protected_host_paths = Vec::new();
+    if let Some(protection_root) = protection_root
+        && let Ok(protection_root) = fs::canonicalize(protection_root)
+    {
+        push_unique_path(&mut protected_host_paths, protection_root);
+    }
+    push_unique_path(&mut protected_host_paths, home.clone());
+    for executable in [&java, &jarsigner] {
+        if let Some(parent) = executable.parent() {
+            push_unique_path(&mut protected_host_paths, parent.to_path_buf());
+        }
+    }
+    Some(ResolvedAndroidJava {
+        home,
+        jarsigner,
+        protected_host_paths,
+    })
+}
+
+fn find_android_signing_java() -> Option<ResolvedAndroidJava> {
+    if let Some(path) = std::env::var_os("JAVA_HOME").map(PathBuf::from)
+        && let Some(java) = resolve_android_signing_java(&path, Some(&path))
+    {
+        return Some(java);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut application_roots = Vec::new();
+        if let Some(home) = std::env::var_os("HOME") {
+            application_roots.push(PathBuf::from(home).join("Applications"));
+        }
+        application_roots.push(PathBuf::from("/Applications"));
+        for root in application_roots {
+            for app in ["Android Studio.app", "Android Studio Preview.app"] {
+                let app_root = root.join(app);
+                let home = app_root.join("Contents/jbr/Contents/Home");
+                if let Some(java) = resolve_android_signing_java(&home, Some(&app_root)) {
+                    return Some(java);
+                }
+            }
+        }
+
+        if let Ok(output) = Command::new("/usr/libexec/java_home").output()
+            && output.status.success()
+        {
+            let home = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            let bundle_root = home.parent().and_then(Path::parent);
+            if let Some(java) = resolve_android_signing_java(&home, bundle_root) {
+                return Some(java);
+            }
+        }
+    }
+
+    None
+}
+
+impl AndroidSigningToolchain {
+    fn discover() -> Self {
+        let (apksigner, mut protected_host_paths) = find_apksigner();
+        let java = find_android_signing_java();
+        let (java_home, jarsigner) = if let Some(java) = java {
+            for path in java.protected_host_paths {
+                push_unique_path(&mut protected_host_paths, path);
+            }
+            (Some(java.home), java.jarsigner)
+        } else {
+            (
+                None,
+                fixed_system_executable("jarsigner").unwrap_or_else(|| PathBuf::from("jarsigner")),
+            )
+        };
+        Self {
+            apksigner,
+            jarsigner,
+            zip: fixed_system_executable("zip").unwrap_or_else(|| PathBuf::from("zip")),
+            java_home,
+            protected_host_paths,
+        }
+    }
+
+    fn system_path() -> anyhow::Result<OsString> {
+        std::env::join_paths(
+            ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+                .into_iter()
+                .map(PathBuf::from),
+        )
+        .context("invalid fixed system PATH")
+    }
+
+    fn signer_path(&self) -> anyhow::Result<OsString> {
+        let mut paths = Vec::new();
+        if let Some(java_home) = &self.java_home {
+            paths.push(java_home.join("bin"));
+        }
+        paths.extend(
+            ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+                .into_iter()
+                .map(PathBuf::from),
+        );
+        std::env::join_paths(paths).context("invalid fixed Android signer PATH")
+    }
 }
 
 fn run_android_signer_command(
+    toolchain: &AndroidSigningToolchain,
     program: &Path,
     args: &[String],
     inputs: &AndroidSigningInputs,
     action: &str,
 ) -> anyhow::Result<()> {
-    let output = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .env(ANDROID_SIGNER_STORE_PASSWORD_ENV, &inputs.keystore_password)
         .env(ANDROID_SIGNER_KEY_PASSWORD_ENV, &inputs.key_password)
-        .output()
-        .map_err(|error| {
-            anyhow::anyhow!("failed to {action} with {}: {error}", program.display())
-        })?;
+        .env("PATH", toolchain.signer_path()?);
+    if let Some(java_home) = &toolchain.java_home {
+        command.env("JAVA_HOME", java_home);
+    } else {
+        command.env_remove("JAVA_HOME");
+    }
+    let output = command.output().map_err(|error| {
+        anyhow::anyhow!("failed to {action} with {}: {error}", program.display())
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         anyhow::bail!("failed to {action}: {stderr}");
+    }
+    Ok(())
+}
+
+fn strip_android_bundle_signatures(
+    toolchain: &AndroidSigningToolchain,
+    artifact: &Path,
+) -> anyhow::Result<()> {
+    let output = Command::new(&toolchain.zip)
+        .args([
+            "-d",
+            artifact.to_str().unwrap_or_default(),
+            "META-INF/*.SF",
+            "META-INF/*.RSA",
+            "META-INF/*.DSA",
+            "META-INF/*.EC",
+            "META-INF/MANIFEST.MF",
+        ])
+        .env("PATH", AndroidSigningToolchain::system_path()?)
+        .env_remove(ANDROID_SIGNER_STORE_PASSWORD_ENV)
+        .env_remove(ANDROID_SIGNER_KEY_PASSWORD_ENV)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to strip existing AAB signatures with {}",
+                toolchain.zip.display()
+            )
+        })?;
+    if !output.status.success() && output.status.code() != Some(12) {
+        anyhow::bail!(
+            "failed to strip existing AAB signatures: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     Ok(())
 }
@@ -555,6 +786,7 @@ fn sign_android_artifacts(
     signing_workspace: &Path,
     command: &str,
     inputs: &AndroidSigningInputs,
+    toolchain: &AndroidSigningToolchain,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let extension = android_artifact_extension(command)
         .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
@@ -568,9 +800,9 @@ fn sign_android_artifacts(
     for (index, artifact) in artifacts.iter().enumerate() {
         let signed_artifact = signing_dir.join(format!("signed-{index}.{extension}"));
         if extension == "apk" {
-            let apksigner = find_apksigner();
             run_android_signer_command(
-                &apksigner,
+                toolchain,
+                &toolchain.apksigner,
                 &[
                     "sign".to_string(),
                     "--ks".to_string(),
@@ -589,7 +821,8 @@ fn sign_android_artifacts(
                 "sign Android APK",
             )?;
             run_android_signer_command(
-                &apksigner,
+                toolchain,
+                &toolchain.apksigner,
                 &[
                     "verify".to_string(),
                     "--verbose".to_string(),
@@ -601,26 +834,10 @@ fn sign_android_artifacts(
             )?;
         } else {
             fs::copy(artifact, &signed_artifact)?;
-            let strip = Command::new("zip")
-                .args([
-                    "-d",
-                    signed_artifact.to_str().unwrap_or_default(),
-                    "META-INF/*.SF",
-                    "META-INF/*.RSA",
-                    "META-INF/*.DSA",
-                    "META-INF/*.EC",
-                    "META-INF/MANIFEST.MF",
-                ])
-                .output()
-                .context("failed to strip existing AAB signatures")?;
-            if !strip.status.success() && strip.status.code() != Some(12) {
-                anyhow::bail!(
-                    "failed to strip existing AAB signatures: {}",
-                    String::from_utf8_lossy(&strip.stderr).trim()
-                );
-            }
+            strip_android_bundle_signatures(toolchain, &signed_artifact)?;
             run_android_signer_command(
-                Path::new("jarsigner"),
+                toolchain,
+                &toolchain.jarsigner,
                 &[
                     "-keystore".to_string(),
                     keystore_path.display().to_string(),
@@ -635,7 +852,8 @@ fn sign_android_artifacts(
                 "sign Android App Bundle",
             )?;
             run_android_signer_command(
-                Path::new("jarsigner"),
+                toolchain,
+                &toolchain.jarsigner,
                 &[
                     "-verify".to_string(),
                     "-strict".to_string(),
@@ -3000,6 +3218,8 @@ async fn execute_build(
     daemon_url: &str,
     config: &RunnerConfig,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
+    // Pin signer executables before any repository-controlled checkout or build stage runs.
+    let android_signing_toolchain = AndroidSigningToolchain::discover();
     let runner_workspace_root = match prepare_runner_workspace_root() {
         Ok(root) => root,
         Err(error) => return (vec![], Err(error)),
@@ -3090,6 +3310,7 @@ async fn execute_build(
         &checkout.shell_script,
         &workspace,
         &runner_workspace_root,
+        &android_signing_toolchain.protected_host_paths,
     ) {
         Ok(command) => command,
         Err(error) => return (steps, Err(error)),
@@ -3404,6 +3625,7 @@ async fn execute_build(
                 &normalized_command,
                 &workspace,
                 &runner_workspace_root,
+                &android_signing_toolchain.protected_host_paths,
             ) {
                 Ok(command) => command,
                 Err(error) => return (steps, Err(error)),
@@ -3526,8 +3748,13 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             ),
                         )
                         .await;
-                        let signing_result =
-                            sign_android_artifacts(&workspace, &signing_workspace, command, inputs);
+                        let signing_result = sign_android_artifacts(
+                            &workspace,
+                            &signing_workspace,
+                            command,
+                            inputs,
+                            &android_signing_toolchain,
+                        );
                         let signing_finished = now_unix();
                         let signing_succeeded = signing_result.is_ok();
                         steps.push(StepResult {
@@ -5140,6 +5367,7 @@ mod tests {
             "/usr/bin/git init --quiet",
             &repository_workspace,
             &runner_workspace_root,
+            &[],
         )
         .expect("build contained repository command")
         .output()
@@ -5154,6 +5382,73 @@ mod tests {
             String::from_utf8_lossy(&output.stderr),
         );
         assert!(repository_workspace.join(".git").is_dir());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn repository_command_cannot_mutate_android_signing_toolchain() {
+        let parent = temp_workspace();
+        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
+            .expect("create protected runner root");
+        let repository_workspace =
+            create_private_workspace_in(&runner_workspace_root, "repository")
+                .expect("create repository workspace");
+        let sdk_root = parent.join("host-android-sdk");
+        let java_home = parent.join("host-jdk");
+        let apksigner = sdk_root.join("build-tools/36.1.0/apksigner");
+        let java = java_home.join("bin/java");
+        let jarsigner = java_home.join("bin/jarsigner");
+        for path in [&apksigner, &java, &jarsigner] {
+            fs::create_dir_all(path.parent().expect("tool parent"))
+                .expect("create synthetic tool parent");
+            fs::write(path, b"TRUSTED_TOOL").expect("write synthetic trusted tool");
+        }
+
+        let allowed_write = repository_workspace.join("allowed-write");
+        let protected_host_paths = vec![
+            fs::canonicalize(&sdk_root).expect("resolve synthetic SDK root"),
+            fs::canonicalize(&java_home).expect("resolve synthetic JDK root"),
+        ];
+        let mut command = repository_shell_command(
+            r#"printf 'REPOSITORY_CONTROLLED' > "$OORE_TEST_APKSIGNER"
+printf 'REPOSITORY_CONTROLLED' > "$OORE_TEST_JAVA"
+printf 'REPOSITORY_CONTROLLED' > "$OORE_TEST_JARSIGNER"
+printf 'ALLOWED' > "$OORE_TEST_ALLOWED_WRITE""#,
+            &repository_workspace,
+            &runner_workspace_root,
+            &protected_host_paths,
+        )
+        .expect("build contained repository command");
+        command
+            .env("OORE_TEST_APKSIGNER", &apksigner)
+            .env("OORE_TEST_JAVA", &java)
+            .env("OORE_TEST_JARSIGNER", &jarsigner)
+            .env("OORE_TEST_ALLOWED_WRITE", &allowed_write);
+        let output = command
+            .output()
+            .await
+            .expect("run repository toolchain mutation attempt");
+        assert!(
+            output.status.success(),
+            "mutation probe failed: status={:?}, stdout={}, stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert_eq!(
+            fs::read(&apksigner).expect("read apksigner"),
+            b"TRUSTED_TOOL"
+        );
+        assert_eq!(fs::read(&java).expect("read java"), b"TRUSTED_TOOL");
+        assert_eq!(
+            fs::read(&jarsigner).expect("read jarsigner"),
+            b"TRUSTED_TOOL"
+        );
+        assert_eq!(
+            fs::read(&allowed_write).expect("read allowed write"),
+            b"ALLOWED"
+        );
         cleanup_workspace(&parent);
     }
 
@@ -5248,6 +5543,7 @@ mod tests {
             "\"$OORE_ESCAPE_HELPER\" --exact tests::repository_descendant_escape_helper >/dev/null 2>&1 &",
             &repository_workspace,
             &runner_workspace_root,
+            &[],
         )
         .expect("build contained repository command");
         repository_command
@@ -5348,8 +5644,14 @@ mod tests {
         let Ok(result_path) = std::env::var("OORE_APKSIGNER_LOOKUP_RESULT") else {
             return;
         };
-        fs::write(result_path, find_apksigner().display().to_string())
-            .expect("write resolved apksigner path");
+        fs::write(
+            result_path,
+            AndroidSigningToolchain::discover()
+                .apksigner
+                .display()
+                .to_string(),
+        )
+        .expect("write resolved apksigner path");
     }
 
     #[cfg(target_os = "macos")]
@@ -5380,7 +5682,232 @@ mod tests {
         );
         assert_eq!(
             PathBuf::from(fs::read_to_string(&result_path).expect("read resolved apksigner")),
-            apksigner
+            fs::canonicalize(&apksigner).expect("resolve expected apksigner")
+        );
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_signer_runtime_helper() {
+        let Ok(result_path) = std::env::var("OORE_ANDROID_SIGNER_RUNTIME_RESULT") else {
+            return;
+        };
+        let inputs = AndroidSigningInputs {
+            keystore_bytes: Vec::new(),
+            keystore_password: "unused-store-password".to_string(),
+            key_alias: "unused-alias".to_string(),
+            key_password: "unused-key-password".to_string(),
+        };
+        let result = (|| {
+            let toolchain = AndroidSigningToolchain::discover();
+            run_android_signer_command(
+                &toolchain,
+                &toolchain.apksigner,
+                &["version".to_string()],
+                &inputs,
+                "query Android APK signer version",
+            )?;
+            run_android_signer_command(
+                &toolchain,
+                &toolchain.jarsigner,
+                &["-version".to_string()],
+                &inputs,
+                "query Android App Bundle signer version",
+            )
+        })();
+        fs::write(
+            result_path,
+            result
+                .as_ref()
+                .map(|_| "ok".to_string())
+                .unwrap_or_else(|error| format!("{error:#}")),
+        )
+        .expect("write signer runtime result");
+        result.expect("Android signing tools should execute");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_aab_signer_runtime_helper() {
+        let Some(workspace) = std::env::var_os("OORE_AAB_SIGNER_WORKSPACE") else {
+            return;
+        };
+        let signing_workspace = PathBuf::from(
+            std::env::var_os("OORE_AAB_SIGNING_WORKSPACE")
+                .expect("AAB signing workspace is configured"),
+        );
+        let jarsigner = PathBuf::from(
+            std::env::var_os("OORE_AAB_JARSIGNER").expect("AAB jarsigner is configured"),
+        );
+        let result_path = PathBuf::from(
+            std::env::var_os("OORE_AAB_SIGNER_RESULT").expect("AAB result path is configured"),
+        );
+        let toolchain = AndroidSigningToolchain {
+            apksigner: PathBuf::from("/usr/bin/true"),
+            jarsigner,
+            zip: fixed_system_executable("zip").expect("system zip is installed"),
+            java_home: None,
+            protected_host_paths: Vec::new(),
+        };
+        let inputs = AndroidSigningInputs {
+            keystore_bytes: b"synthetic-keystore".to_vec(),
+            keystore_password: "store-password".to_string(),
+            key_alias: "upload".to_string(),
+            key_password: "key-password".to_string(),
+        };
+        let result = sign_android_artifacts(
+            Path::new(&workspace),
+            &signing_workspace,
+            "flutter build appbundle --release",
+            &inputs,
+            &toolchain,
+        );
+        fs::write(
+            result_path,
+            result
+                .as_ref()
+                .map(|_| "ok".to_string())
+                .unwrap_or_else(|error| format!("{error:#}")),
+        )
+        .expect("write AAB signer result");
+        result.expect("AAB signing should use pinned host tools");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_aab_signing_ignores_repository_controlled_zip_on_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace();
+        let workspace = root.join("repository");
+        let signing_workspace = root.join("signing");
+        let artifact = workspace.join("build/app/outputs/bundle/release/app-release.aab");
+        let payload = workspace.join("payload.txt");
+        let hostile_bin = root.join("hostile-bin");
+        let hostile_zip = hostile_bin.join("zip");
+        let hostile_marker = root.join("hostile-zip-ran");
+        let jarsigner = root.join("pinned-jarsigner");
+        let result_path = root.join("aab-signer-result");
+        fs::create_dir_all(artifact.parent().expect("artifact parent"))
+            .expect("create artifact output directory");
+        fs::create_dir_all(&signing_workspace).expect("create signing workspace");
+        fs::create_dir_all(&hostile_bin).expect("create hostile PATH directory");
+        fs::write(&payload, b"bundle payload").expect("write bundle payload");
+        let zip = fixed_system_executable("zip").expect("system zip is installed");
+        let archive = Command::new(&zip)
+            .current_dir(&workspace)
+            .args([
+                "-q",
+                artifact.to_str().expect("artifact path is UTF-8"),
+                payload.file_name().unwrap().to_str().unwrap(),
+            ])
+            .status()
+            .expect("create synthetic AAB");
+        assert!(archive.success(), "failed to create synthetic AAB");
+        fs::write(
+            &hostile_zip,
+            "#!/bin/sh\nprintf 'ran' > \"$OORE_HOSTILE_ZIP_MARKER\"\nexit 99\n",
+        )
+        .expect("write hostile zip shim");
+        fs::write(&jarsigner, "#!/bin/sh\nexit 0\n").expect("write pinned jarsigner");
+        for executable in [&hostile_zip, &jarsigner] {
+            fs::set_permissions(executable, fs::Permissions::from_mode(0o755))
+                .expect("make synthetic tool executable");
+        }
+
+        let output = Command::new(std::env::current_exe().expect("resolve test binary"))
+            .args(["--exact", "tests::android_aab_signer_runtime_helper"])
+            .env("PATH", format!("{}:/usr/bin:/bin", hostile_bin.display()))
+            .env("OORE_HOSTILE_ZIP_MARKER", &hostile_marker)
+            .env("OORE_AAB_SIGNER_WORKSPACE", &workspace)
+            .env("OORE_AAB_SIGNING_WORKSPACE", &signing_workspace)
+            .env("OORE_AAB_JARSIGNER", &jarsigner)
+            .env("OORE_AAB_SIGNER_RESULT", &result_path)
+            .output()
+            .expect("run isolated AAB signer");
+        assert!(
+            output.status.success(),
+            "AAB signer failed: {}\n{}",
+            fs::read_to_string(&result_path).unwrap_or_default(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&result_path).expect("read AAB signer result"),
+            "ok"
+        );
+        assert!(
+            !hostile_marker.exists(),
+            "repository-controlled zip shim executed"
+        );
+        cleanup_workspace(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_signer_executes_with_default_macos_toolchain_under_launchd_environment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let workspace = temp_workspace();
+        let home = workspace.join("home");
+        let result_path = workspace.join("signer-runtime-result");
+        let apksigner = home.join("Library/Android/sdk/build-tools/36.1.0/apksigner");
+        let java_home = home.join("Applications/Android Studio.app/Contents/jbr/Contents/Home");
+        let blocked_bin = workspace.join("blocked-bin");
+        let java = java_home.join("bin/java");
+        let jarsigner = java_home.join("bin/jarsigner");
+        let blocked_java = blocked_bin.join("java");
+        let blocked_jarsigner = blocked_bin.join("jarsigner");
+        let blocked_dirname = blocked_bin.join("dirname");
+        for (path, contents) in [
+            (
+                &apksigner,
+                "#!/bin/sh\ndirname \"$0\" >/dev/null || exit 1\nexec java \"$@\"\n",
+            ),
+            (&java, "#!/bin/sh\nexit 0\n"),
+            (
+                &jarsigner,
+                "#!/bin/sh\ndirname \"$0\" >/dev/null || exit 1\nexit 0\n",
+            ),
+            (
+                &blocked_java,
+                "#!/bin/sh\necho 'Unable to locate a Java Runtime.' >&2\nexit 1\n",
+            ),
+            (
+                &blocked_jarsigner,
+                "#!/bin/sh\necho 'Unable to locate a Java Runtime.' >&2\nexit 1\n",
+            ),
+            (&blocked_dirname, "#!/bin/sh\nexit 1\n"),
+        ] {
+            fs::create_dir_all(path.parent().expect("tool parent"))
+                .expect("create synthetic tool parent");
+            fs::write(path, contents).expect("write synthetic tool");
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .expect("make synthetic tool executable");
+        }
+
+        let output = Command::new(std::env::current_exe().expect("resolve test binary"))
+            .args(["--exact", "tests::android_signer_runtime_helper"])
+            .env_remove("ANDROID_HOME")
+            .env_remove("ANDROID_SDK_ROOT")
+            .env_remove("JAVA_HOME")
+            .env_remove("JDK_HOME")
+            .env_remove("STUDIO_JDK")
+            .env("HOME", &home)
+            .env("PATH", format!("{}:/usr/bin:/bin", blocked_bin.display()))
+            .env("OORE_ANDROID_SIGNER_RUNTIME_RESULT", &result_path)
+            .output()
+            .expect("run isolated Android signer runtime check");
+
+        assert!(
+            output.status.success(),
+            "signer runtime failed: {}\n{}",
+            fs::read_to_string(&result_path).unwrap_or_default(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&result_path).expect("read signer runtime result"),
+            "ok"
         );
         cleanup_workspace(&workspace);
     }

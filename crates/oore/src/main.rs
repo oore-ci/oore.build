@@ -2783,11 +2783,11 @@ fn handle_config_get(args: ConfigGetArgs) -> anyhow::Result<()> {
     }
 }
 
-fn command_output(cmd: &str, args: &[&str]) -> Option<std::process::Output> {
+fn command_output(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<std::process::Output> {
     std::process::Command::new(cmd).args(args).output().ok()
 }
 
-fn command_version(cmd: &str, args: &[&str]) -> Option<String> {
+fn command_version(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<String> {
     command_output(cmd, args)
         .and_then(|out| {
             if out.status.success() {
@@ -2823,13 +2823,94 @@ fn doctor_has_platform(args: &DoctorArgs, platform: DoctorPlatform) -> bool {
 }
 
 fn android_sdk_root() -> Option<PathBuf> {
-    ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
-        .find_map(|key| {
-            std::env::var_os(key)
-                .map(PathBuf::from)
-                .filter(|path| path.is_dir())
-        })
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
+        .collect::<Vec<_>>();
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
+    }
+    roots
+        .into_iter()
+        .find(|path| path.join("platform-tools/adb").is_file())
+}
+
+fn valid_android_signing_java_home(path: &Path) -> bool {
+    path.join("bin/java").is_file() && path.join("bin/jarsigner").is_file()
+}
+
+fn android_signing_java_home() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("JAVA_HOME").map(PathBuf::from)
+        && valid_android_signing_java_home(&path)
+    {
+        return Some(path);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut application_roots = Vec::new();
+        if let Some(home) = std::env::var_os("HOME") {
+            application_roots.push(PathBuf::from(home).join("Applications"));
+        }
+        application_roots.push(PathBuf::from("/Applications"));
+        for root in application_roots {
+            for app in ["Android Studio.app", "Android Studio Preview.app"] {
+                let path = root.join(app).join("Contents/jbr/Contents/Home");
+                if valid_android_signing_java_home(&path) {
+                    return Some(path);
+                }
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new("/usr/libexec/java_home").output()
+            && output.status.success()
+        {
+            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            if valid_android_signing_java_home(&path) {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+fn add_android_checks(checks: &mut Vec<DoctorCheckResult>) {
+    let java = android_signing_java_home()
+        .map(|home| home.join("bin/java"))
+        .unwrap_or_else(|| PathBuf::from("java"));
+    if let Some(version) = command_version(&java, &["-version"]) {
+        let detail = if java.is_absolute() {
+            format!("{version} ({})", java.display())
+        } else {
+            version
+        };
+        checks.push(doctor_check("java", "ok", Some(detail), None));
+    } else {
+        checks.push(doctor_check(
+            "java",
+            "missing",
+            None,
+            Some("install Android Studio or a supported JDK and set JAVA_HOME"),
+        ));
+    }
+
+    if let Some(sdk_root) = android_sdk_root() {
+        checks.push(doctor_check(
+            "android_sdk",
+            "ok",
+            Some(sdk_root.display().to_string()),
+            None,
+        ));
+    } else {
+        checks.push(doctor_check(
+            "android_sdk",
+            "missing",
+            None,
+            Some("install Android Studio or set ANDROID_HOME to an SDK with Platform-Tools"),
+        ));
+    }
 }
 
 fn add_xcode_checks(checks: &mut Vec<DoctorCheckResult>) {
@@ -2934,42 +3015,7 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     }
 
     if doctor_has_platform(&args, DoctorPlatform::Android) {
-        if let Some(version) = command_version("java", &["-version"]) {
-            checks.push(doctor_check("java", "ok", Some(version), None));
-        } else {
-            checks.push(doctor_check(
-                "java",
-                "missing",
-                None,
-                Some("install a supported JDK and set JAVA_HOME"),
-            ));
-        }
-
-        if let Some(sdk_root) = android_sdk_root() {
-            let adb = sdk_root.join("platform-tools/adb");
-            if adb.is_file() {
-                checks.push(doctor_check(
-                    "android_sdk",
-                    "ok",
-                    Some(sdk_root.display().to_string()),
-                    None,
-                ));
-            } else {
-                checks.push(doctor_check(
-                    "android_sdk",
-                    "missing",
-                    Some(sdk_root.display().to_string()),
-                    Some("install Android SDK Platform-Tools in this SDK"),
-                ));
-            }
-        } else {
-            checks.push(doctor_check(
-                "android_sdk",
-                "missing",
-                None,
-                Some("install Android Studio, then set ANDROID_HOME to its SDK directory"),
-            ));
-        }
+        add_android_checks(&mut checks);
     } else {
         checks.push(doctor_check(
             "android",
@@ -3749,6 +3795,38 @@ const DAEMON_SERVICE_LABEL: &str = "build.oore.oored";
 const WEB_SERVICE_LABEL: &str = "build.oore.oore-web";
 const RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
 
+fn managed_runner_update_service_from_program_arguments(
+    install_root: &Path,
+    runner_is_managed: bool,
+    program_arguments: &[String],
+) -> Option<&'static str> {
+    if !runner_is_managed {
+        return None;
+    }
+    let configured = fs::canonicalize(Path::new(program_arguments.first()?)).ok()?;
+    let installed = fs::canonicalize(install_root.join("bin/oore")).ok()?;
+    (configured == installed).then_some(RUNNER_SERVICE_LABEL)
+}
+
+fn managed_runner_update_service(
+    install_root: &Path,
+    runner_is_managed: bool,
+) -> anyhow::Result<Option<&'static str>> {
+    if !runner_is_managed {
+        return Ok(None);
+    }
+    let (plist, _) = managed_service_plist(RUNNER_SERVICE_LABEL)?;
+    if !plist.is_file() {
+        return Ok(None);
+    }
+    let program_arguments = plist_program_arguments(&plist)?;
+    Ok(managed_runner_update_service_from_program_arguments(
+        install_root,
+        true,
+        &program_arguments,
+    ))
+}
+
 fn launchd_xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -4172,8 +4250,11 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
         "bin/oored",
         "bin/oore-web",
         "VERSION",
+        "WEB_VERSION",
         "CHANNEL",
+        "WEB_CHANNEL",
         "GITHUB_REPO",
+        "WEB_GITHUB_REPO",
         "LICENSE",
     ] {
         let source = install_root.join(relative);
@@ -4249,8 +4330,11 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
         "bin/oored",
         "bin/oore-web",
         "VERSION",
+        "WEB_VERSION",
         "CHANNEL",
+        "WEB_CHANNEL",
         "GITHUB_REPO",
+        "WEB_GITHUB_REPO",
         "LICENSE",
     ] {
         let source = snapshot.join(relative);
@@ -4290,7 +4374,13 @@ fn install_staged_release(
     }
     let web = stage.join("web-dist");
     if web.is_dir() {
+        let version = stage.join("VERSION");
+        if version.is_file() {
+            atomic_replace_file(&version, &install_root.join("WEB_VERSION"), false)?;
+        }
         atomic_replace_directory(&web, &install_root.join("web-dist"))?;
+        fs::write(install_root.join("WEB_CHANNEL"), channel.as_str())?;
+        fs::write(install_root.join("WEB_GITHUB_REPO"), repo)?;
     }
     let license = stage.join("LICENSE");
     if license.is_file() {
@@ -4309,6 +4399,128 @@ where
     tokio::task::spawn_blocking(operation)
         .await
         .context("blocking update step failed")?
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReleaseActivation {
+    Installed,
+    Restored,
+}
+
+struct UpdateServicePlan {
+    defer_daemon_restart: bool,
+    daemon_is_managed: bool,
+    unmanaged_daemon_listen: Option<String>,
+    daemon_should_be_running: bool,
+    daemon_ready_url: String,
+    runner_service: Option<&'static str>,
+    web_is_managed: bool,
+    web_was_running: bool,
+    web_ready_url: Option<String>,
+}
+
+trait UpdateServiceControl {
+    fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()>;
+
+    async fn restart_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()>;
+
+    async fn wait_for_endpoint(&mut self, url: &str, name: &str) -> anyhow::Result<()>;
+}
+
+struct LiveUpdateServiceControl<'a> {
+    install_root: &'a Path,
+    daemon_url: &'a str,
+    client: &'a reqwest::Client,
+}
+
+impl UpdateServiceControl for LiveUpdateServiceControl<'_> {
+    fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+        restart_launchd_service(label)
+    }
+
+    async fn restart_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+        restart_daemon(self.install_root, listen, self.daemon_url, self.client).await
+    }
+
+    async fn wait_for_endpoint(&mut self, url: &str, name: &str) -> anyhow::Result<()> {
+        wait_for_endpoint(self.client, url, name).await
+    }
+}
+
+impl UpdateServicePlan {
+    async fn activate<C: UpdateServiceControl>(
+        &self,
+        control: &mut C,
+        activation: ReleaseActivation,
+    ) -> anyhow::Result<()> {
+        if self.daemon_is_managed && !self.defer_daemon_restart {
+            control.restart_managed_service(DAEMON_SERVICE_LABEL)?;
+        } else if let Some(listen) = &self.unmanaged_daemon_listen {
+            control.restart_unmanaged_daemon(listen).await?;
+        }
+        if self.daemon_should_be_running && !self.defer_daemon_restart {
+            let name = if activation == ReleaseActivation::Restored {
+                "rollback oored"
+            } else {
+                "oored"
+            };
+            control
+                .wait_for_endpoint(&self.daemon_ready_url, name)
+                .await?;
+        }
+        if let Some(label) = self.runner_service {
+            control.restart_managed_service(label)?;
+        }
+        if self.web_is_managed {
+            control.restart_managed_service(WEB_SERVICE_LABEL)?;
+        } else if self.web_was_running && activation == ReleaseActivation::Installed {
+            anyhow::bail!(
+                "refusing to replace an unmanaged local web process; install it as the launchd service first"
+            );
+        }
+        if let Some(url) = &self.web_ready_url {
+            let name = if activation == ReleaseActivation::Restored {
+                "rollback oore-web"
+            } else {
+                "oore-web"
+            };
+            control.wait_for_endpoint(url, name).await?;
+        }
+        Ok(())
+    }
+}
+
+async fn install_release_with_rollback<C: UpdateServiceControl>(
+    staged_release: &Path,
+    install_root: &Path,
+    previous_release: &Path,
+    channel: ReleaseChannel,
+    repo: &str,
+    services: &UpdateServicePlan,
+    control: &mut C,
+) -> anyhow::Result<()> {
+    let update_result = async {
+        install_staged_release(staged_release, install_root, channel, repo)?;
+        services
+            .activate(control, ReleaseActivation::Installed)
+            .await
+    }
+    .await;
+    if let Err(error) = update_result {
+        eprintln!("Update failed; restoring the previous release...");
+        let rollback = async {
+            restore_release_snapshot(install_root, previous_release)?;
+            services
+                .activate(control, ReleaseActivation::Restored)
+                .await
+        }
+        .await;
+        if let Err(rollback_error) = rollback {
+            return Err(error.context(format!("rollback also failed: {rollback_error}")));
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
@@ -4487,6 +4699,10 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     };
     let daemon_should_be_running = daemon_is_managed || daemon_was_running;
     let daemon_ready_url = endpoint_url(&daemon_url, "/readyz");
+    let runner_is_managed = launchd_service_loaded(RUNNER_SERVICE_LABEL);
+    let runner_update_service = managed_runner_update_service(&install_root, runner_is_managed)?;
+    let runner_is_system_managed =
+        runner_update_service.is_some() && managed_service_plist(RUNNER_SERVICE_LABEL)?.1;
 
     let web_is_managed = launchd_service_loaded(WEB_SERVICE_LABEL);
     let web_ready_url = web_is_managed
@@ -4506,6 +4722,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let system_service_restart_required = (!defer_daemon_restart
         && daemon_is_managed
         && managed_service_plist(DAEMON_SERVICE_LABEL)?.1)
+        || runner_is_system_managed
         || (web_is_managed && managed_service_plist(WEB_SERVICE_LABEL)?.1);
     if system_service_restart_required {
         authorize_system_service_restart()?;
@@ -4518,53 +4735,32 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
 
     // 10. Atomically install the staged release and only retain it if every
     // readiness check succeeds. On any failure, restore the prior release.
-    let update_result = async {
-        install_staged_release(&staged_release, &install_root, channel, &repo)?;
-        if daemon_is_managed && !defer_daemon_restart {
-            restart_launchd_service(DAEMON_SERVICE_LABEL)?;
-        } else if let Some(listen) = &unmanaged_daemon_listen {
-            restart_daemon(&install_root, listen, &daemon_url, &client).await?;
-        }
-        if daemon_should_be_running && !defer_daemon_restart {
-            wait_for_endpoint(&client, &daemon_ready_url, "oored").await?;
-        }
-        if web_is_managed {
-            restart_launchd_service(WEB_SERVICE_LABEL)?;
-        } else if web_was_running {
-            anyhow::bail!("refusing to replace an unmanaged local web process; install it as the launchd service first");
-        }
-        if let Some(url) = &web_ready_url {
-            wait_for_endpoint(&client, url, "oore-web").await?;
-        }
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
-    if let Err(error) = update_result {
-        eprintln!("Update failed; restoring the previous release...");
-        let rollback = async {
-            restore_release_snapshot(&install_root, &previous_release)?;
-            if daemon_is_managed && !defer_daemon_restart {
-                restart_launchd_service(DAEMON_SERVICE_LABEL)?;
-            } else if let Some(listen) = &unmanaged_daemon_listen {
-                restart_daemon(&install_root, listen, &daemon_url, &client).await?;
-            }
-            if daemon_should_be_running && !defer_daemon_restart {
-                wait_for_endpoint(&client, &daemon_ready_url, "rollback oored").await?;
-            }
-            if web_is_managed {
-                restart_launchd_service(WEB_SERVICE_LABEL)?;
-            }
-            if let Some(url) = &web_ready_url {
-                wait_for_endpoint(&client, url, "rollback oore-web").await?;
-            }
-            Ok::<(), anyhow::Error>(())
-        }
-        .await;
-        if let Err(rollback_error) = rollback {
-            return Err(error.context(format!("rollback also failed: {rollback_error}")));
-        }
-        return Err(error);
-    }
+    let services = UpdateServicePlan {
+        defer_daemon_restart,
+        daemon_is_managed,
+        unmanaged_daemon_listen,
+        daemon_should_be_running,
+        daemon_ready_url,
+        runner_service: runner_update_service,
+        web_is_managed,
+        web_was_running,
+        web_ready_url,
+    };
+    let mut control = LiveUpdateServiceControl {
+        install_root: &install_root,
+        daemon_url: &daemon_url,
+        client: &client,
+    };
+    install_release_with_rollback(
+        &staged_release,
+        &install_root,
+        &previous_release,
+        channel,
+        &repo,
+        &services,
+        &mut control,
+    )
+    .await?;
     println!("Updated to version {latest}.");
 
     // 12. Note about current process
@@ -4769,6 +4965,255 @@ mod tests {
     }
 
     #[test]
+    fn managed_runner_restart_requires_the_installed_oore_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let install = temp.path().join("install");
+        let managed_oore = install.join("bin/oore");
+        let managed_oore_alias = temp.path().join("managed-oore-alias");
+        let unrelated_oore = temp.path().join("other/oore");
+        fs::create_dir_all(managed_oore.parent().unwrap()).unwrap();
+        fs::create_dir_all(unrelated_oore.parent().unwrap()).unwrap();
+        fs::write(&managed_oore, "managed").unwrap();
+        fs::write(&unrelated_oore, "unrelated").unwrap();
+        std::os::unix::fs::symlink(&managed_oore, &managed_oore_alias).unwrap();
+
+        assert_eq!(
+            managed_runner_update_service_from_program_arguments(
+                &install,
+                true,
+                &[
+                    managed_oore_alias.display().to_string(),
+                    "runner".to_string(),
+                ],
+            ),
+            Some(RUNNER_SERVICE_LABEL)
+        );
+        assert_eq!(
+            managed_runner_update_service_from_program_arguments(
+                &install,
+                true,
+                &[unrelated_oore.display().to_string(), "runner".to_string()],
+            ),
+            None
+        );
+        assert_eq!(
+            managed_runner_update_service_from_program_arguments(
+                &install,
+                false,
+                &[managed_oore.display().to_string(), "runner".to_string()],
+            ),
+            None
+        );
+    }
+
+    struct RecordingUpdateServiceControl {
+        install_root: PathBuf,
+        restarts: Vec<(String, String)>,
+        fail_service_once: Option<&'static str>,
+    }
+
+    impl UpdateServiceControl for RecordingUpdateServiceControl {
+        fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            let binary = fs::read_to_string(self.install_root.join("bin/oore"))?;
+            self.restarts.push((label.to_string(), binary));
+            if self.fail_service_once == Some(label) {
+                self.fail_service_once = None;
+                anyhow::bail!("injected {label} restart failure");
+            }
+            Ok(())
+        }
+
+        async fn restart_unmanaged_daemon(&mut self, _listen: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn wait_for_endpoint(&mut self, _url: &str, _name: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn deferred_daemon_update_plan(web_is_managed: bool) -> UpdateServicePlan {
+        UpdateServicePlan {
+            defer_daemon_restart: true,
+            daemon_is_managed: true,
+            unmanaged_daemon_listen: None,
+            daemon_should_be_running: true,
+            daemon_ready_url: "http://127.0.0.1:8787/readyz".to_string(),
+            runner_service: Some(RUNNER_SERVICE_LABEL),
+            web_is_managed,
+            web_was_running: false,
+            web_ready_url: None,
+        }
+    }
+
+    fn prepare_update_transaction() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let install = temp.path().join("install");
+        let stage = temp.path().join("stage");
+        let snapshot = temp.path().join("snapshot");
+        fs::create_dir_all(install.join("bin")).unwrap();
+        fs::create_dir_all(stage.join("bin")).unwrap();
+        fs::write(install.join("bin/oore"), "old-binary").unwrap();
+        fs::write(install.join("VERSION"), "1.0.0").unwrap();
+        fs::write(stage.join("bin/oore"), "new-binary").unwrap();
+        fs::write(stage.join("VERSION"), "2.0.0").unwrap();
+        copy_release_snapshot(&install, &snapshot).unwrap();
+        (temp, install, stage, snapshot)
+    }
+
+    #[test]
+    fn deferred_daemon_update_still_restarts_the_updated_runner() {
+        let (_temp, install, stage, snapshot) = prepare_update_transaction();
+        let mut control = RecordingUpdateServiceControl {
+            install_root: install.clone(),
+            restarts: Vec::new(),
+            fail_service_once: None,
+        };
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(install_release_with_rollback(
+                &stage,
+                &install,
+                &snapshot,
+                ReleaseChannel::Stable,
+                "oorebuild/oore",
+                &deferred_daemon_update_plan(false),
+                &mut control,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            control.restarts,
+            vec![(RUNNER_SERVICE_LABEL.to_string(), "new-binary".to_string())]
+        );
+    }
+
+    #[test]
+    fn failed_update_restarts_the_runner_after_restoring_the_old_binary() {
+        let (_temp, install, stage, snapshot) = prepare_update_transaction();
+        let mut control = RecordingUpdateServiceControl {
+            install_root: install.clone(),
+            restarts: Vec::new(),
+            fail_service_once: Some(WEB_SERVICE_LABEL),
+        };
+
+        let error = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(install_release_with_rollback(
+                &stage,
+                &install,
+                &snapshot,
+                ReleaseChannel::Stable,
+                "oorebuild/oore",
+                &deferred_daemon_update_plan(true),
+                &mut control,
+            ))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected"));
+        assert_eq!(
+            control.restarts,
+            vec![
+                (RUNNER_SERVICE_LABEL.to_string(), "new-binary".to_string()),
+                (WEB_SERVICE_LABEL.to_string(), "new-binary".to_string()),
+                (RUNNER_SERVICE_LABEL.to_string(), "old-binary".to_string()),
+                (WEB_SERVICE_LABEL.to_string(), "old-binary".to_string()),
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("bin/oore")).unwrap(),
+            "old-binary"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_doctor_runtime_helper() {
+        let Some(expected_sdk) = std::env::var_os("OORE_DOCTOR_EXPECTED_SDK_ROOT") else {
+            return;
+        };
+        let expected_java_home =
+            PathBuf::from(std::env::var_os("OORE_DOCTOR_EXPECTED_JAVA_HOME").unwrap());
+        let mut checks = Vec::new();
+        add_android_checks(&mut checks);
+
+        let java = checks.iter().find(|check| check.name == "java").unwrap();
+        assert_eq!(java.status, "ok");
+        assert!(
+            java.detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&expected_java_home.join("bin/java").display().to_string()),
+            "unexpected Java detail: {:?}",
+            java.detail
+        );
+        let sdk = checks
+            .iter()
+            .find(|check| check.name == "android_sdk")
+            .unwrap();
+        assert_eq!(sdk.status, "ok");
+        assert_eq!(sdk.detail.as_deref(), Path::new(&expected_sdk).to_str());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn android_doctor_supports_launchd_defaults_and_valid_explicit_overrides() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let default_sdk = home.join("Library/Android/sdk");
+        let default_java_home =
+            home.join("Applications/Android Studio.app/Contents/jbr/Contents/Home");
+        let explicit_sdk = temp.path().join("explicit-sdk");
+        let explicit_java_home = temp.path().join("explicit-jdk");
+
+        for sdk in [&default_sdk, &explicit_sdk] {
+            let adb = sdk.join("platform-tools/adb");
+            fs::create_dir_all(adb.parent().unwrap()).unwrap();
+            fs::write(adb, "synthetic adb").unwrap();
+        }
+        for java_home in [&default_java_home, &explicit_java_home] {
+            for (tool, contents) in [
+                ("java", "#!/bin/sh\necho 'synthetic Java 21' >&2\n"),
+                ("jarsigner", "#!/bin/sh\nexit 0\n"),
+            ] {
+                let path = java_home.join("bin").join(tool);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, contents).unwrap();
+                set_executable(&path).unwrap();
+            }
+        }
+
+        for (configured, expected_sdk, expected_java_home) in [
+            (false, &default_sdk, &default_java_home),
+            (true, &explicit_sdk, &explicit_java_home),
+        ] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "tests::android_doctor_runtime_helper"])
+                .env_remove("ANDROID_HOME")
+                .env_remove("ANDROID_SDK_ROOT")
+                .env_remove("JAVA_HOME")
+                .env("HOME", &home)
+                .env("PATH", "/usr/bin:/bin")
+                .env("OORE_DOCTOR_EXPECTED_SDK_ROOT", expected_sdk)
+                .env("OORE_DOCTOR_EXPECTED_JAVA_HOME", expected_java_home);
+            if configured {
+                command
+                    .env("ANDROID_HOME", &explicit_sdk)
+                    .env("JAVA_HOME", &explicit_java_home);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "isolated doctor helper failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
     fn command_timeout_stops_stalled_service_commands() {
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "sleep 1"]);
@@ -4832,6 +5277,18 @@ mod tests {
             fs::read_to_string(install.join("VERSION")).unwrap(),
             "2.0.0"
         );
+        assert_eq!(
+            fs::read_to_string(install.join("WEB_VERSION")).unwrap(),
+            "2.0.0"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("WEB_CHANNEL")).unwrap(),
+            "stable"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("WEB_GITHUB_REPO")).unwrap(),
+            "oorebuild/oore"
+        );
 
         restore_release_snapshot(&install, &snapshot).unwrap();
         assert_eq!(
@@ -4842,6 +5299,9 @@ mod tests {
             fs::read_to_string(install.join("VERSION")).unwrap(),
             "1.0.0"
         );
+        assert!(!install.join("WEB_VERSION").exists());
+        assert!(!install.join("WEB_CHANNEL").exists());
+        assert!(!install.join("WEB_GITHUB_REPO").exists());
         assert_eq!(
             fs::read_to_string(install.join("web-dist/index.html")).unwrap(),
             "old-web"

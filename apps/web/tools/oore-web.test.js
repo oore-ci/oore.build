@@ -15,6 +15,7 @@ import {
   parseBackendUrl,
   parseListen,
   parseServeArgs,
+  readInstalledMetadata,
   spaCacheControl,
   spaResponseHeaders,
 } from './oore-web.js'
@@ -266,6 +267,93 @@ describe('oore-web launcher security policy', () => {
       ])
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('updates frontend metadata without advancing backend and runner metadata', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oore-web-test-'))
+    const installRoot = path.join(tempDir, 'install')
+    const extractRoot = path.join(tempDir, 'extract')
+    const extractedBinary = path.join(extractRoot, 'bin', 'oore-web')
+    const extractedDist = path.join(extractRoot, 'web-dist')
+    const extractedVersion = path.join(extractRoot, 'VERSION')
+    try {
+      fs.mkdirSync(path.dirname(extractedBinary), { recursive: true })
+      fs.mkdirSync(extractedDist, { recursive: true })
+      fs.mkdirSync(installRoot, { recursive: true })
+      fs.writeFileSync(path.join(installRoot, 'VERSION'), '1.0.0\n')
+      fs.writeFileSync(path.join(installRoot, 'CHANNEL'), 'stable\n')
+      fs.writeFileSync(
+        path.join(installRoot, 'GITHUB_REPO'),
+        'backend/repository\n',
+      )
+      fs.writeFileSync(extractedBinary, '#!/bin/sh\nexit 0\n', {
+        mode: 0o755,
+      })
+      fs.writeFileSync(path.join(extractedDist, 'index.html'), 'candidate')
+      fs.writeFileSync(extractedVersion, '2.0.0\n')
+
+      installUpdateCandidate({
+        installRoot,
+        extractedBinary,
+        extractedDist,
+        extractedVersion,
+        extractedLicense: path.join(extractRoot, 'LICENSE'),
+        channel: 'alpha',
+        repo: 'oore-ci/oore.build',
+      })
+
+      expect(fs.readFileSync(path.join(installRoot, 'VERSION'), 'utf8')).toBe(
+        '1.0.0\n',
+      )
+      expect(fs.readFileSync(path.join(installRoot, 'CHANNEL'), 'utf8')).toBe(
+        'stable\n',
+      )
+      expect(
+        fs.readFileSync(path.join(installRoot, 'GITHUB_REPO'), 'utf8'),
+      ).toBe('backend/repository\n')
+      expect(
+        fs.readFileSync(path.join(installRoot, 'WEB_VERSION'), 'utf8'),
+      ).toBe('2.0.0\n')
+      expect(
+        fs.readFileSync(path.join(installRoot, 'WEB_CHANNEL'), 'utf8'),
+      ).toBe('alpha\n')
+      expect(
+        fs.readFileSync(path.join(installRoot, 'WEB_GITHUB_REPO'), 'utf8'),
+      ).toBe('oore-ci/oore.build\n')
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('prefers frontend metadata while retaining legacy install compatibility', () => {
+    const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oore-web-test-'))
+    try {
+      fs.writeFileSync(path.join(installRoot, 'VERSION'), '1.0.0\n')
+      fs.writeFileSync(path.join(installRoot, 'CHANNEL'), 'stable\n')
+      fs.writeFileSync(
+        path.join(installRoot, 'GITHUB_REPO'),
+        'legacy/repository\n',
+      )
+      expect(readInstalledMetadata(installRoot)).toEqual({
+        version: '1.0.0',
+        channel: 'stable',
+        github_repo: 'legacy/repository',
+      })
+
+      fs.writeFileSync(path.join(installRoot, 'WEB_VERSION'), '2.0.0\n')
+      fs.writeFileSync(path.join(installRoot, 'WEB_CHANNEL'), 'alpha\n')
+      fs.writeFileSync(
+        path.join(installRoot, 'WEB_GITHUB_REPO'),
+        'frontend/repository\n',
+      )
+      expect(readInstalledMetadata(installRoot)).toEqual({
+        version: '2.0.0',
+        channel: 'alpha',
+        github_repo: 'frontend/repository',
+      })
+    } finally {
+      fs.rmSync(installRoot, { recursive: true, force: true })
     }
   })
 })
