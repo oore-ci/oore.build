@@ -1549,7 +1549,7 @@ async fn setup_oidc_verify(
         // Convention: code format is "test-code" and we use known test values
         (
             "admin@example.com".to_string(),
-            format!("test-subject-{}", &req.code),
+            format!("test-subject-{}", req.code),
         )
     } else {
         // Real OIDC token exchange
