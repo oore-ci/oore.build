@@ -10,6 +10,7 @@ WEB_PID_FILE="$OORE_INSTALL_ROOT/oore-web.pid"
 DATA_DIR="$HOME/Library/Application Support/oore"
 DAEMON_LAUNCH_AGENT_LABEL="build.oore.oored"
 DAEMON_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$DAEMON_LAUNCH_AGENT_LABEL.plist"
+DAEMON_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$DAEMON_LAUNCH_AGENT_LABEL.plist"
 WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
 WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
 WEB_SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -239,10 +240,13 @@ remove_daemon_launch_agent() {
   local install_mode=""
   [[ -f "$OORE_INSTALL_ROOT/INSTALL_MODE" ]] && install_mode="$(cat "$OORE_INSTALL_ROOT/INSTALL_MODE")"
 
+  if [[ "$install_mode" == "backend" ]]; then
+    sudo /bin/launchctl bootout "system/$DAEMON_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    sudo /bin/launchctl remove "$DAEMON_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    sudo /bin/rm -f "$DAEMON_LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+  fi
+
   if [[ -x "$BIN_DIR/oored" ]]; then
-    if [[ "$install_mode" == "backend" ]]; then
-      sudo "$BIN_DIR/oored" uninstall-service --system >/dev/null 2>&1 || true
-    fi
     "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
   fi
 
