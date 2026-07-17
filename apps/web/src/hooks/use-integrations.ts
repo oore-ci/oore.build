@@ -9,6 +9,7 @@ import {
   listAllIntegrations,
   listInstallations,
   listIntegrationRepos,
+  rotateGitLabRepositoryWebhookSecret,
   syncInstallations,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
@@ -141,6 +142,23 @@ export function useGitLabStart() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'integrations'],
       })
+    },
+  })
+}
+
+export function useRotateGitLabRepositoryWebhookSecret() {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+
+  return useMutation({
+    mutationFn: (repositoryId: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return rotateGitLabRepositoryWebhookSecret(
+        baseUrl,
+        token,
+        repositoryId,
+      )
     },
   })
 }

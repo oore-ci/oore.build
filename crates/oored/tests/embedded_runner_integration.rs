@@ -45,11 +45,11 @@ async fn create_queued_build(
 }
 
 #[tokio::test]
-async fn embedded_runner_claims_queued_build_without_external_runner_process() {
+async fn default_runner_mode_does_not_execute_repository_code_in_process() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("embedded_runner_flow.db");
 
-    let app = create_test_app(&db_path).await;
+    let _app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
 
     let user_id = seed_test_user(&pool).await;
@@ -58,64 +58,28 @@ async fn embedded_runner_claims_queued_build_without_external_runner_process() {
         seed_project_chain(&pool, &integration_id, &user_id, "embedded/test-repo").await;
     let build_id = create_queued_build(&pool, &project_id, &pipeline_id).await;
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test listener");
-    let addr = listener.local_addr().expect("listener addr");
-    let server_handle = tokio::spawn(async move {
-        axum::serve(listener, app)
+    let embedded =
+        oored::embedded_runner::start_if_enabled(pool.clone(), "http://127.0.0.1:0".to_string())
             .await
-            .expect("test server should run");
-    });
+            .expect("default runner mode is safe");
 
-    let embedded = oored::embedded_runner::start_if_enabled(
-        pool.clone(),
-        format!("http://127.0.0.1:{}", addr.port()),
-    )
-    .await
-    .expect("embedded runner starts")
-    .expect("embedded mode should be enabled by default");
-
-    let mut runner_status = "offline".to_string();
-    for _ in 0..8 {
-        runner_status = sqlx::query_scalar::<_, String>(
-            "SELECT status FROM runners WHERE registered_by IS NULL LIMIT 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("query embedded runner status");
-
-        if runner_status == "online" {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    assert_eq!(
-        runner_status, "online",
-        "embedded runner should report online shortly after startup"
+    assert!(
+        embedded.is_none(),
+        "default mode must not start an in-process runner"
     );
-
-    let mut final_status = "queued".to_string();
-    for _ in 0..25 {
-        final_status = sqlx::query_scalar::<_, String>("SELECT status FROM builds WHERE id = ?1")
-            .bind(&build_id)
+    let embedded_runner_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM runners WHERE registered_by IS NULL")
             .fetch_one(&pool)
             .await
-            .expect("query build status");
-
-        if final_status != "queued" {
-            break;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    assert_ne!(
-        final_status, "queued",
-        "embedded runner should claim queued builds"
+            .expect("query embedded runner count");
+    assert_eq!(embedded_runner_count, 0);
+    let status: String = sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query build status");
+    assert_eq!(
+        status, "queued",
+        "repository job must remain for an external runner"
     );
-
-    embedded.abort();
-    server_handle.abort();
 }

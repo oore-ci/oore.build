@@ -8,6 +8,18 @@ use axum::body::Body;
 use hyper::Request;
 use tower::ServiceExt;
 
+fn query_value(url: &str, key: &str) -> String {
+    url.split_once('?')
+        .and_then(|(_, query)| {
+            query.split('&').find_map(|pair| {
+                pair.strip_prefix(key)
+                    .and_then(|value| value.strip_prefix('='))
+            })
+        })
+        .unwrap_or_else(|| panic!("missing {key} in {url}"))
+        .to_string()
+}
+
 // ── GitHub webhook tests ──────────────────────────────────────
 
 #[tokio::test]
@@ -308,8 +320,20 @@ async fn test_gitlab_webhook_happy_path() {
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "test-group/test-project")
             .await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "test-group/test-project",
+        secret,
+    )
+    .await;
 
-    let payload = common::gitlab_push_payload("test-group/test-project", "main", "gl-sha-1");
+    let payload = common::gitlab_push_payload_for_project(
+        "test-group/test-project",
+        &external_id,
+        "main",
+        "gl-sha-1",
+    );
     let body_bytes = serde_json::to_vec(&payload).unwrap();
 
     let req = Request::post("/v1/webhooks/gitlab")
@@ -337,6 +361,85 @@ async fn test_gitlab_webhook_happy_path() {
 }
 
 #[tokio::test]
+async fn test_gitlab_repository_token_cannot_authorize_sibling_repository() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, "unused").await;
+    let (project_a, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "group/repo-a").await;
+    let (project_b, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "group/repo-b").await;
+    let external_a = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/repo-a",
+        "repo-a-token",
+    )
+    .await;
+    let external_b = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/repo-b",
+        "repo-b-token",
+    )
+    .await;
+
+    let sibling = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", "repo-a-token")
+        .header("x-gitlab-event-uuid", "gl-sibling-rejected")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(
+            serde_json::to_vec(&common::gitlab_push_payload_for_project(
+                "group/repo-b",
+                &external_b,
+                "main",
+                "sibling-sha",
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(sibling).await.unwrap().status(), 401);
+
+    // The payload path is untrusted routing data. A valid repository A token
+    // and immutable A project ID must route to A even when the path claims B.
+    let spoofed_path = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", "repo-a-token")
+        .header("x-gitlab-event-uuid", "gl-sibling-path-spoof")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(
+            serde_json::to_vec(&common::gitlab_push_payload_for_project(
+                "group/repo-b",
+                &external_a,
+                "main",
+                "trusted-a-sha",
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(spoofed_path).await.unwrap().status(),
+        200
+    );
+
+    let builds_a = common::wait_for_builds(&pool, &project_a, 1, 2_000).await;
+    assert_eq!(builds_a.len(), 1);
+    assert_eq!(builds_a[0]["commit_sha"], "trusted-a-sha");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let builds_b = common::wait_for_builds(&pool, &project_b, 0, 200).await;
+    assert!(
+        builds_b.is_empty(),
+        "sibling repository must not receive a build"
+    );
+}
+
+#[tokio::test]
 async fn test_gitlab_webhook_idempotency() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
@@ -349,8 +452,20 @@ async fn test_gitlab_webhook_idempotency() {
     let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "group/idemp-proj").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/idemp-proj",
+        secret,
+    )
+    .await;
 
-    let payload = common::gitlab_push_payload("group/idemp-proj", "dev", "gl-sha-idemp");
+    let payload = common::gitlab_push_payload_for_project(
+        "group/idemp-proj",
+        &external_id,
+        "dev",
+        "gl-sha-idemp",
+    );
     let body_bytes = serde_json::to_vec(&payload).unwrap();
 
     // First delivery
@@ -405,8 +520,16 @@ async fn test_gitlab_webhook_idempotency_without_event_uuid() {
     let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "group/fallback-proj").await;
-    let body = serde_json::to_vec(&common::gitlab_push_payload(
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
         "group/fallback-proj",
+        secret,
+    )
+    .await;
+    let body = serde_json::to_vec(&common::gitlab_push_payload_for_project(
+        "group/fallback-proj",
+        &external_id,
         "main",
         "gl-sha-fallback",
     ))
@@ -446,13 +569,24 @@ async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
 
     let user_id = common::seed_test_user(&pool).await;
     let old_secret = "gl-rotate-old-secret";
-    let new_secret = "gl-rotate-new-secret";
     let integration_id = common::seed_gitlab_integration(&pool, &user_id, old_secret).await;
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "group/rotate-proj").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/rotate-proj",
+        old_secret,
+    )
+    .await;
 
     // First webhook uses old secret and warms the in-process cache.
-    let payload1 = common::gitlab_push_payload("group/rotate-proj", "main", "gl-sha-old");
+    let payload1 = common::gitlab_push_payload_for_project(
+        "group/rotate-proj",
+        &external_id,
+        "main",
+        "gl-sha-old",
+    );
     let body1 = serde_json::to_vec(&payload1).unwrap();
     let req1 = Request::post("/v1/webhooks/gitlab")
         .header("content-type", "application/json")
@@ -466,24 +600,52 @@ async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
     let builds1 = common::wait_for_builds(&pool, &project_id, 1, 2000).await;
     assert_eq!(builds1.len(), 1);
 
-    // Rotate stored webhook secret in DB.
-    let encrypted_new = oored::crypto::encrypt(new_secret, &common::TEST_ENCRYPTION_KEY)
-        .expect("failed to encrypt rotated secret");
-    sqlx::query(
-        "UPDATE integration_credentials \
-         SET encrypted_value = ?1, updated_at = ?2 \
-         WHERE integration_id = ?3 AND credential_type = 'webhook_secret'",
+    let repository_id: String = sqlx::query_scalar(
+        "SELECT r.id FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         WHERE inst.integration_id = ?1 AND r.full_name = 'group/rotate-proj'",
     )
-    .bind(&encrypted_new)
-    .bind(common::now_unix())
     .bind(&integration_id)
-    .execute(&pool)
+    .fetch_one(&pool)
     .await
-    .expect("failed to rotate webhook secret");
+    .unwrap();
+    let session = common::create_session_token(&pool, &user_id).await;
+    let rotate = Request::post(format!(
+        "/v1/integration-repositories/{repository_id}/gitlab-webhook-secret"
+    ))
+    .header("authorization", format!("Bearer {session}"))
+    .body(Body::empty())
+    .unwrap();
+    let rotate_response = app.clone().oneshot(rotate).await.unwrap();
+    assert_eq!(rotate_response.status(), 200);
+    let rotate_json = common::body_json(rotate_response.into_body()).await;
+    let new_secret = rotate_json["webhook_secret"].as_str().unwrap();
+
+    let old_replay = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", old_secret)
+        .header("x-gitlab-event-uuid", "gl-delivery-rotate-old-replay")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(
+            serde_json::to_vec(&common::gitlab_push_payload_for_project(
+                "group/rotate-proj",
+                &external_id,
+                "main",
+                "gl-sha-old-replay",
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(old_replay).await.unwrap().status(), 401);
 
     // Second webhook uses new secret. It should still succeed without restart
     // by forcing a cache refresh after the initial cached-token miss.
-    let payload2 = common::gitlab_push_payload("group/rotate-proj", "main", "gl-sha-new");
+    let payload2 = common::gitlab_push_payload_for_project(
+        "group/rotate-proj",
+        &external_id,
+        "main",
+        "gl-sha-new",
+    );
     let body2 = serde_json::to_vec(&payload2).unwrap();
     let req2 = Request::post("/v1/webhooks/gitlab")
         .header("content-type", "application/json")
@@ -513,9 +675,18 @@ async fn test_gitlab_webhook_wrong_token() {
     common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
-    let _integration_id = common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
+    common::seed_project_chain(&pool, &integration_id, &user_id, "group/repo").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/repo",
+        "correct-token",
+    )
+    .await;
 
-    let payload = common::gitlab_push_payload("group/repo", "main", "sha1");
+    let payload =
+        common::gitlab_push_payload_for_project("group/repo", &external_id, "main", "sha1");
     let body_bytes = serde_json::to_vec(&payload).unwrap();
 
     let req = Request::post("/v1/webhooks/gitlab")
@@ -566,7 +737,15 @@ async fn test_gitlab_webhook_stale_event() {
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gl-stale-secret";
-    let _integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    common::seed_project_chain(&pool, &integration_id, &user_id, "group/stale-repo").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/stale-repo",
+        secret,
+    )
+    .await;
 
     // Create a payload with a timestamp 6 minutes in the past
     let stale_time = chrono::Utc::now() - chrono::Duration::seconds(360);
@@ -574,6 +753,7 @@ async fn test_gitlab_webhook_stale_event() {
         "ref": "refs/heads/main",
         "checkout_sha": "stale-sha",
         "project": {
+            "id": external_id,
             "path_with_namespace": "group/stale-repo",
             "web_url": "https://gitlab.com/group/stale-repo"
         },
@@ -705,10 +885,98 @@ async fn test_webhook_unknown_repo_no_builds() {
     assert_eq!(builds.len(), 0, "unknown repo should produce no builds");
 }
 
-// ── GitLab OAuth callback tests ───────────────────────────────
+// ── SCM callback tests ────────────────────────────────────────
 
 #[tokio::test]
-async fn test_gitlab_callback_rejects_bad_redirect_origin() {
+async fn test_github_callback_revalidates_initiator_and_rejects_replay() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let session = common::create_session_token(&pool, &user_id).await;
+    let start = Request::post("/v1/integrations/github/start")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {session}"))
+        .body(Body::from(
+            serde_json::json!({
+                "webhook_url": "https://oore.example.com/v1/webhooks/github",
+                "redirect_url": "http://localhost:3000/settings/integrations"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let start_response = app.clone().oneshot(start).await.unwrap();
+    assert_eq!(start_response.status(), 200);
+    let start_json = common::body_json(start_response.into_body()).await;
+    let state = query_value(start_json["create_url"].as_str().unwrap(), "state");
+
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = ?1")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let callback_url = format!("/v1/integrations/github/callback?code=test-code&state={state}");
+    let first = app
+        .clone()
+        .oneshot(Request::get(&callback_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let first_body = common::body_string(first.into_body()).await;
+    assert!(
+        first_body.contains("no longer authorized"),
+        "unexpected first callback response: {first_body}"
+    );
+
+    let replay = app
+        .oneshot(Request::get(&callback_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let replay_body = common::body_string(replay.into_body()).await;
+    assert!(replay_body.contains("setup link has expired"));
+}
+
+#[tokio::test]
+async fn test_github_installed_rejects_bare_known_installation_id() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let integration_id = common::seed_github_integration(&pool, &user_id, "github-secret").await;
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO integration_installations \
+         (id, integration_id, external_id, account_name, account_type, created_at, updated_at) \
+         VALUES ('known-installation', ?1, '12345', 'test-org', 'Organization', ?2, ?2)",
+    )
+    .bind(&integration_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::get("/v1/integrations/github/installed?installation_id=12345")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = common::body_string(response.into_body()).await;
+    assert!(body.contains("github=success"));
+    assert!(!body.contains(&integration_id));
+}
+
+#[tokio::test]
+async fn test_gitlab_callback_rejects_unissued_state() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
@@ -725,8 +993,10 @@ async fn test_gitlab_callback_rejects_bad_redirect_origin() {
     )
     .await;
 
-    // Seal a state token with an evil redirect URL
-    let state = common::seal_gitlab_oauth_state(&integration_id, "https://evil.com/steal");
+    let state = common::seal_gitlab_oauth_state(
+        &integration_id,
+        "http://localhost:3000/settings/integrations",
+    );
 
     let req = Request::get(format!(
         "/v1/integrations/gitlab/callback?code=test-code&state={}",
@@ -736,18 +1006,13 @@ async fn test_gitlab_callback_rejects_bad_redirect_origin() {
     .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
-    // Should return 200 with an HTML error page (not a redirect)
     assert_eq!(resp.status(), 200);
-
     let body = common::body_string(resp.into_body()).await;
-    assert!(
-        body.contains("does not match the configured frontend origin"),
-        "expected redirect-origin rejection message, got: {body}"
-    );
+    assert!(body.contains("authorization link has expired"));
 }
 
 #[tokio::test]
-async fn test_gitlab_oauth_failure_keeps_integration_inactive() {
+async fn test_gitlab_callback_revalidates_initiator_and_rejects_replay() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
@@ -755,6 +1020,7 @@ async fn test_gitlab_oauth_failure_keeps_integration_inactive() {
     common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
+    let session = common::create_session_token(&pool, &user_id).await;
     let integration_id = common::seed_gitlab_oauth_integration(
         &pool,
         &user_id,
@@ -763,40 +1029,89 @@ async fn test_gitlab_oauth_failure_keeps_integration_inactive() {
         "test-client-secret",
     )
     .await;
+    let authorize = Request::post("/v1/integrations/gitlab/authorize")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {session}"))
+        .body(Body::from(
+            serde_json::json!({
+                "integration_id": integration_id,
+                "redirect_url": "http://localhost:3000/settings/integrations"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let authorize_response = app.clone().oneshot(authorize).await.unwrap();
+    assert_eq!(authorize_response.status(), 200);
+    let authorize_json = common::body_json(authorize_response.into_body()).await;
+    let state = query_value(authorize_json["authorize_url"].as_str().unwrap(), "state");
 
-    // Use a redirect URL that matches the default OORE_CORS_ORIGIN (http://localhost:3000)
-    let redirect_url = format!(
-        "http://localhost:3000/settings/integrations/{}",
-        integration_id
-    );
-    let state = common::seal_gitlab_oauth_state(&integration_id, &redirect_url);
-
-    let req = Request::get(format!(
-        "/v1/integrations/gitlab/callback?code=fake-code&state={}",
-        state
-    ))
-    .body(Body::empty())
-    .unwrap();
-
-    let resp = app.oneshot(req).await.unwrap();
-    // exchange_gitlab_code will fail because there's no real GitLab server to POST to.
-    // The handler should return an HTML error page.
-    assert_eq!(resp.status(), 200);
-
-    let body = common::body_string(resp.into_body()).await;
-    assert!(
-        body.contains("Authorization failed") || body.contains("Failed to complete"),
-        "expected exchange failure error page, got: {body}"
-    );
-
-    // Verify the integration is still inactive — user can retry authorization
-    let row: (String,) = sqlx::query_as("SELECT status FROM integrations WHERE id = ?1")
-        .bind(&integration_id)
-        .fetch_one(&pool)
+    sqlx::query("UPDATE users SET role = 'qa_viewer' WHERE id = ?1")
+        .bind(&user_id)
+        .execute(&pool)
         .await
-        .expect("failed to query integration status");
-    assert_eq!(
-        row.0, "inactive",
-        "integration should remain inactive after failed OAuth exchange"
+        .unwrap();
+
+    let callback_url = format!("/v1/integrations/gitlab/callback?code=test-code&state={state}");
+    let first = app
+        .clone()
+        .oneshot(Request::get(&callback_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let first_body = common::body_string(first.into_body()).await;
+    assert!(
+        first_body.contains("no longer authorized"),
+        "unexpected first callback response: {first_body}"
     );
+
+    let replay = app
+        .oneshot(Request::get(&callback_url).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let replay_body = common::body_string(replay.into_body()).await;
+    assert!(replay_body.contains("authorization link has expired"));
+}
+
+#[tokio::test]
+async fn test_gitlab_authorize_rejects_persisted_cleartext_origin() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let session = common::create_session_token(&pool, &user_id).await;
+    let integration_id = common::seed_gitlab_oauth_integration(
+        &pool,
+        &user_id,
+        "webhook-secret",
+        "test-client-id",
+        "test-client-secret",
+    )
+    .await;
+    sqlx::query("UPDATE integrations SET host_url = 'http://gitlab.internal' WHERE id = ?1")
+        .bind(&integration_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/integrations/gitlab/authorize")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session}"))
+                .body(Body::from(
+                    serde_json::json!({
+                        "integration_id": integration_id,
+                        "redirect_url": "http://localhost:3000/settings/integrations"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let json = common::body_json(response.into_body()).await;
+    assert_eq!(json["code"], "invalid_input");
 }

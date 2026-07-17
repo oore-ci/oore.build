@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -12,11 +13,13 @@ use chrono::{Local, TimeZone};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use oore_contract::{
     ApiError, BootstrapTokenRecord, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse,
-    ListBuildsResponse, ListRunnersResponse, LocalLoginRequest, LocalLoginResponse,
-    OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode,
-    RuntimeMode, SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse,
-    SetupOidcVerifyRequest, SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
-    UserProfileResponse, parse_repository_pipeline_yaml,
+    LOCAL_RECOVERY_MAX_TTL_SECS, LOCAL_RECOVERY_MIN_TTL_SECS, LOCAL_RECOVERY_SOCKET_DIR,
+    LOCAL_RECOVERY_SOCKET_FILE, ListBuildsResponse, ListRunnersResponse, LocalLoginRequest,
+    LocalLoginResponse, LocalRecoveryMintRequest, LocalRecoveryMintResponse, OidcConfigureRequest,
+    OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode, RuntimeMode,
+    SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest,
+    SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus, UserProfileResponse,
+    parse_repository_pipeline_yaml,
 };
 use rand::RngCore;
 use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
@@ -25,7 +28,7 @@ use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, UnixStream};
 
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPGRlZnM+CiAgICA8Y2lyY2xlIGlkPSJjdXQiIGN4PSIxNiIgY3k9IjE2IiByPSI3IiAvPgogICAgPG1hc2sgaWQ9ImhvbGUiPgogICAgICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IndoaXRlIiAvPgogICAgICA8dXNlIGhyZWY9IiNjdXQiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogICAgPGNsaXBQYXRoIGlkPSJsZWZ0Ij4KICAgICAgPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICAgIDxjbGlwUGF0aCBpZD0icmlnaHQiPgogICAgICA8cmVjdCB4PSIxNyIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICA8L2RlZnM+CiAgPHJlY3QKICAgIHg9IjIiCiAgICB5PSIyIgogICAgd2lkdGg9IjI4IgogICAgaGVpZ2h0PSIyOCIKICAgIHJ4PSI2IgogICAgZmlsbD0iI2Y0OWYxZSIKICAgIGNsaXAtcGF0aD0idXJsKCNsZWZ0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBmaWxsPSIjZjQ5ZjFlIgogICAgY2xpcC1wYXRoPSJ1cmwoI3JpZ2h0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KPC9zdmc+Cg==";
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8787";
@@ -77,6 +80,8 @@ enum Commands {
     Setup(SetupArgs),
     Frontend(FrontendArgs),
     Login(LoginArgs),
+    /// Mint a single-use browser recovery link over the local management socket.
+    Recovery(RecoveryArgs),
     Status(StatusArgs),
     Runner(RunnerArgs),
     Config(ConfigArgs),
@@ -330,6 +335,29 @@ struct LoginArgs {
 }
 
 #[derive(Debug, Args)]
+struct RecoveryArgs {
+    /// Account to recover. Required when more than one active account exists.
+    #[arg(long)]
+    email: Option<String>,
+
+    /// Web UI base URL placed before the non-leaking recovery fragment.
+    #[arg(long, env = "OORE_WEB_URL", default_value = "http://127.0.0.1:4173")]
+    web_url: String,
+
+    /// How long the single-use capability remains valid (maximum 5m).
+    #[arg(long, default_value = "5m")]
+    ttl: String,
+
+    /// Path to the setup database file used to locate the management socket.
+    #[arg(long, env = "OORE_SETUP_STATE_FILE")]
+    state_file: Option<String>,
+
+    /// Print machine-readable output.
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 struct RunnerArgs {
     #[command(subcommand)]
     command: RunnerSubcommand,
@@ -465,6 +493,55 @@ fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
     }
 
     Ok(resolve_data_dir()?.join("oore.db"))
+}
+
+fn recovery_socket_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
+    let database_path = resolve_db_path(override_path)?;
+    let parent = database_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(parent
+        .join(LOCAL_RECOVERY_SOCKET_DIR)
+        .join(LOCAL_RECOVERY_SOCKET_FILE))
+}
+
+fn validate_recovery_socket(path: &Path) -> anyhow::Result<()> {
+    // SAFETY: geteuid has no preconditions and does not dereference memory.
+    let expected_uid = unsafe { libc::geteuid() };
+    let parent = path
+        .parent()
+        .context("management socket path has no parent directory")?;
+    let parent_metadata = fs::symlink_metadata(parent).with_context(|| {
+        format!(
+            "failed to inspect management socket directory {}",
+            parent.display()
+        )
+    })?;
+    if parent_metadata.file_type().is_symlink()
+        || !parent_metadata.is_dir()
+        || parent_metadata.uid() != expected_uid
+        || parent_metadata.mode() & 0o7777 != 0o700
+    {
+        anyhow::bail!(
+            "management socket directory {} must be owned by the current user with mode 0700",
+            parent.display()
+        );
+    }
+
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect management socket {}", path.display()))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.file_type().is_socket()
+        || metadata.uid() != expected_uid
+        || metadata.mode() & 0o7777 != 0o600
+    {
+        anyhow::bail!(
+            "management socket {} must be owned by the current user with mode 0600",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn read_env_trimmed(key: &str) -> Option<String> {
@@ -2289,7 +2366,10 @@ async fn handle_login(args: LoginArgs) -> anyhow::Result<()> {
     let login_url = format!("{}/v1/auth/local/login", daemon_url.trim_end_matches('/'));
     let response = client
         .post(&login_url)
-        .json(&LocalLoginRequest { email: args.email })
+        .json(&LocalLoginRequest {
+            email: args.email,
+            recovery_capability: None,
+        })
         .send()
         .await
         .with_context(|| format!("failed to reach daemon at {daemon_url}"))?;
@@ -2331,6 +2411,95 @@ async fn handle_login(args: LoginArgs) -> anyhow::Result<()> {
     println!("User:    {}", login_body.user.email);
     println!("Expires: {}", format_epoch_local(login_body.expires_at));
     println!("Config:  {}", config_path.display());
+    Ok(())
+}
+
+async fn handle_recovery(args: RecoveryArgs) -> anyhow::Result<()> {
+    let ttl = parse_ttl(&args.ttl)?;
+    let ttl_seconds = ttl.as_secs();
+    if !(LOCAL_RECOVERY_MIN_TTL_SECS..=LOCAL_RECOVERY_MAX_TTL_SECS).contains(&ttl_seconds) {
+        anyhow::bail!(
+            "recovery TTL must be between {}s and {}s",
+            LOCAL_RECOVERY_MIN_TTL_SECS,
+            LOCAL_RECOVERY_MAX_TTL_SECS
+        );
+    }
+
+    let socket_path = recovery_socket_path(args.state_file.as_deref())?;
+    validate_recovery_socket(&socket_path)?;
+    let mut stream = UnixStream::connect(&socket_path).await.with_context(|| {
+        format!(
+            "failed to connect to local recovery socket {}",
+            socket_path.display()
+        )
+    })?;
+    let request = LocalRecoveryMintRequest {
+        email: args.email,
+        ttl_seconds,
+    };
+    let mut encoded = serde_json::to_vec(&request).context("failed to encode recovery request")?;
+    encoded.push(b'\n');
+    stream
+        .write_all(&encoded)
+        .await
+        .context("failed to write recovery request")?;
+    stream
+        .shutdown()
+        .await
+        .context("failed to finish recovery request")?;
+
+    let mut response_bytes = Vec::new();
+    stream
+        .take(4097)
+        .read_to_end(&mut response_bytes)
+        .await
+        .context("failed to read recovery response")?;
+    if response_bytes.len() > 4096 {
+        anyhow::bail!("local recovery response exceeded 4096 bytes");
+    }
+    let response: LocalRecoveryMintResponse =
+        serde_json::from_slice(&response_bytes).context("invalid local recovery response")?;
+    let (capability, expires_at, user_email) = match response {
+        LocalRecoveryMintResponse::Success {
+            capability,
+            expires_at,
+            user_email,
+        } => (capability, expires_at, user_email),
+        LocalRecoveryMintResponse::Error { error } => {
+            anyhow::bail!("local recovery failed ({}): {}", error.code, error.error)
+        }
+    };
+
+    let mut recovery_url =
+        url::Url::parse(&args.web_url).context("web URL must be an absolute URL")?;
+    if !matches!(recovery_url.scheme(), "http" | "https")
+        || !recovery_url.username().is_empty()
+        || recovery_url.password().is_some()
+        || recovery_url.host_str().is_none()
+    {
+        anyhow::bail!("web URL must be an HTTP(S) URL without embedded credentials");
+    }
+    recovery_url.set_path("/login");
+    recovery_url.set_query(None);
+    recovery_url.set_fragment(Some(&format!("recovery={capability}")));
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": true,
+                "recovery_url": recovery_url.as_str(),
+                "expires_at": expires_at,
+                "user_email": user_email,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!("Recovery link created for {user_email}.");
+    println!("Expires: {}", format_epoch_local(expires_at));
+    println!("Open this single-use URL:");
+    println!("{}", recovery_url.as_str());
     Ok(())
 }
 
@@ -2475,6 +2644,7 @@ fn get_hostname() -> String {
 }
 
 async fn handle_runner_register(args: RunnerRegisterArgs) -> anyhow::Result<()> {
+    oore_runner::require_safe_daemon_url(&args.daemon_url)?;
     let name = args.name.unwrap_or_else(get_hostname);
 
     let capabilities = detect_capabilities().await;
@@ -3280,6 +3450,17 @@ fn set_private_permissions(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn create_private_file(path: &Path) -> anyhow::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("failed to create private file {}", path.display()))
+}
+
 fn snapshot_sqlite_path(source: &Path, destination: &Path) -> anyhow::Result<()> {
     use std::str::FromStr;
 
@@ -3351,6 +3532,9 @@ fn unpack_backup(input: &Path, destination: &Path) -> anyhow::Result<BackupManif
         }
         if found.insert(name.clone(), ()).is_some() {
             anyhow::bail!("backup contains duplicate path: {name}");
+        }
+        if !entry.header().entry_type().is_file() {
+            anyhow::bail!("backup entry {name} must be a regular file");
         }
         entry
             .unpack(destination.join(&name))
@@ -3448,7 +3632,7 @@ fn backup_create(args: BackupCreateArgs) -> anyhow::Result<()> {
             .unwrap_or_default()
             .to_string_lossy()
     ));
-    let file = fs::File::create(&temp_output)
+    let file = create_private_file(&temp_output)
         .with_context(|| format!("failed to create backup {}", temp_output.display()))?;
     let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
     let mut archive = tar::Builder::new(encoder);
@@ -4429,6 +4613,11 @@ fn main() -> anyhow::Result<()> {
                 tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
             runtime.block_on(handle_login(args))?;
         }
+        Commands::Recovery(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(handle_recovery(args))?;
+        }
         Commands::Status(args) => {
             let runtime =
                 tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
@@ -4502,6 +4691,51 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_output_is_private_before_first_write() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("backup.tmp");
+        let mut file = create_private_file(&path).unwrap();
+
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        file.write_all(b"backup").unwrap();
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn backup_rejects_link_members() {
+        for entry_type in [tar::EntryType::Symlink, tar::EntryType::Link] {
+            let temp = tempfile::tempdir().unwrap();
+            let input = temp.path().join("backup.tar.gz");
+            let file = fs::File::create(&input).unwrap();
+            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut archive = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(entry_type);
+            header.set_mode(0o600);
+            header.set_size(0);
+            header.set_path(BACKUP_DATABASE_FILE).unwrap();
+            header.set_link_name("/outside-backup").unwrap();
+            header.set_cksum();
+            archive.append(&header, std::io::empty()).unwrap();
+            archive.finish().unwrap();
+            archive.into_inner().unwrap().finish().unwrap();
+
+            let destination = temp.path().join("unpack");
+            fs::create_dir(&destination).unwrap();
+            let error = unpack_backup(&input, &destination).unwrap_err();
+            assert!(
+                error.to_string().contains("must be a regular file"),
+                "unexpected error: {error:#}"
+            );
+        }
+    }
 
     #[test]
     fn runner_service_is_scoped_to_the_aqua_login_session() {

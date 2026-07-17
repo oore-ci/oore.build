@@ -6,9 +6,8 @@ import { toast } from '@/lib/toast'
 
 import { GitLabAuthStep } from './-gitlab-auth-step'
 import { GitLabHostStep } from './-gitlab-host-step'
-import { generateWebhookSecret, gitLabSetupSchema } from './-gitlab-setup'
+import { gitLabSetupSchema } from './-gitlab-setup'
 import { GitLabVerificationStep } from './-gitlab-verification-step'
-import { GitLabWebhookSecretField } from './-gitlab-webhook-secret-field'
 import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -47,7 +46,6 @@ function GitLabSetupPage() {
     useInstancePreferences()
   const { data: networkSettings } = useExternalAccessNetworkSettings()
   const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
-  const [webhookSecret] = useState(generateWebhookSecret)
   const [hostKind, setSelectedHostKind] = useState<GitLabHostKind>('gitlab_com')
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
@@ -55,7 +53,6 @@ function GitLabSetupPage() {
     defaultValues: {
       host_url: 'https://gitlab.com',
       auth_mode: 'personal_token',
-      webhook_secret: webhookSecret,
       access_token: '',
       client_id: '',
       client_secret: '',
@@ -65,7 +62,7 @@ function GitLabSetupPage() {
   const hostUrl = form.watch('host_url')
   const normalizedHostUrl =
     normalizeGitLabHostUrl(hostUrl) ?? 'https://gitlab.com'
-  const { callbackUrl, webhookUrl } = gitLabPublicEndpoints(
+  const { callbackUrl } = gitLabPublicEndpoints(
     networkSettings?.settings.public_url,
     window.location.origin,
   )
@@ -79,7 +76,6 @@ function GitLabSetupPage() {
       {
         host_url: submittedHostUrl,
         auth_mode: data.auth_mode,
-        webhook_secret: data.webhook_secret.trim(),
         access_token:
           data.auth_mode === 'personal_token'
             ? data.access_token?.trim() || undefined
@@ -131,21 +127,6 @@ function GitLabSetupPage() {
     }
   }
 
-  function replaceWebhookSecret() {
-    form.setValue('webhook_secret', generateWebhookSecret(), {
-      shouldDirty: true,
-      shouldTouch: true,
-      shouldValidate: true,
-    })
-  }
-
-  function copyWebhookSecret() {
-    void navigator.clipboard.writeText(form.getValues('webhook_secret')).then(
-      () => toast.success('Webhook secret copied'),
-      () => toast.error('Could not copy webhook secret'),
-    )
-  }
-
   return (
     <PageLayout width="wide">
       <PageMeta title="Connect GitLab Source" noindex />
@@ -189,19 +170,13 @@ function GitLabSetupPage() {
               <section className="space-y-4 border-t border-border/60 pt-6">
                 <div>
                   <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                    4. Set up webhooks
+                    4. Finish repository setup
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Save the source first, then add this endpoint and secret in
-                    each GitLab project.
+                    Save and sync the source, then generate a separate webhook
+                    token for each GitLab project from the source details page.
                   </p>
                 </div>
-                <GitLabWebhookSecretField
-                  form={form}
-                  webhookUrl={webhookUrl}
-                  onCopy={copyWebhookSecret}
-                  onRegenerate={replaceWebhookSecret}
-                />
               </section>
               <Button
                 type="submit"

@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use oored::build_test_router;
+use oored::local_recovery::RecoveryCapabilityStore;
 use oored::store::SetupStore;
 use ring::hmac;
 use sqlx::SqlitePool;
@@ -31,6 +32,26 @@ pub async fn create_test_app(db_path: &Path) -> Router {
         .await
         .expect("failed to init database");
     build_test_router(store, TEST_ENCRYPTION_KEY.to_vec()).await
+}
+
+/// Create a test app with a caller-owned local recovery capability store.
+pub async fn create_test_app_with_recovery(
+    db_path: &Path,
+    recovery_capabilities: RecoveryCapabilityStore,
+) -> Router {
+    let store = SetupStore::connect(db_path.to_path_buf())
+        .await
+        .expect("failed to connect to test database");
+    store
+        .init_if_missing()
+        .await
+        .expect("failed to init database");
+    oored::build_test_router_with_recovery(
+        store,
+        TEST_ENCRYPTION_KEY.to_vec(),
+        recovery_capabilities,
+    )
+    .await
 }
 
 /// Create a test app with an externally reachable public URL loaded into runtime state.
@@ -113,6 +134,23 @@ pub async fn seed_test_user(pool: &SqlitePool) -> String {
     user_id
 }
 
+/// Create a session token for an existing test user.
+pub async fn create_session_token(pool: &SqlitePool, user_id: &str) -> String {
+    let token = oored::token::generate_session_token();
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(oored::token::hash_token(&token))
+    .bind(user_id)
+    .bind(now)
+    .bind(now + 86_400)
+    .execute(pool)
+    .await
+    .expect("failed to create test session");
+    token
+}
+
 /// Seed a GitHub integration with a known webhook secret and return the integration_id.
 pub async fn seed_github_integration(
     pool: &SqlitePool,
@@ -156,7 +194,7 @@ pub async fn seed_github_integration(
 pub async fn seed_gitlab_integration(
     pool: &SqlitePool,
     user_id: &str,
-    webhook_secret: &str,
+    _webhook_secret: &str,
 ) -> String {
     let integration_id = Uuid::new_v4().to_string();
     let now = now_unix();
@@ -172,22 +210,47 @@ pub async fn seed_gitlab_integration(
     .await
     .expect("failed to seed GitLab integration");
 
-    let encrypted = oored::crypto::encrypt(webhook_secret, &TEST_ENCRYPTION_KEY)
-        .expect("failed to encrypt webhook secret");
+    integration_id
+}
 
-    sqlx::query(
-        "INSERT INTO integration_credentials (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
-         VALUES (?1, ?2, 'webhook_secret', ?3, ?4, ?4)",
+/// Bind a known GitLab webhook token to one repository and return its stable
+/// GitLab project ID.
+pub async fn seed_gitlab_repository_webhook_secret(
+    pool: &SqlitePool,
+    integration_id: &str,
+    repo_full_name: &str,
+    webhook_secret: &str,
+) -> String {
+    let row = sqlx::query(
+        "SELECT r.id, r.external_id \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         WHERE inst.integration_id = ?1 AND r.full_name = ?2",
     )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&integration_id)
-    .bind(&encrypted)
+    .bind(integration_id)
+    .bind(repo_full_name)
+    .fetch_one(pool)
+    .await
+    .expect("failed to find GitLab test repository");
+    let repository_id: String = sqlx::Row::get(&row, "id");
+    let external_id: String = sqlx::Row::get(&row, "external_id");
+    let encrypted = oored::crypto::encrypt(webhook_secret, &TEST_ENCRYPTION_KEY)
+        .expect("failed to encrypt repository webhook secret");
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO integration_repository_webhook_secrets \
+         (repository_id, encrypted_secret, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?3) \
+         ON CONFLICT(repository_id) DO UPDATE SET \
+         encrypted_secret = excluded.encrypted_secret, updated_at = excluded.updated_at",
+    )
+    .bind(repository_id)
+    .bind(encrypted)
     .bind(now)
     .execute(pool)
     .await
-    .expect("failed to seed GitLab webhook secret");
-
-    integration_id
+    .expect("failed to seed repository webhook secret");
+    external_id
 }
 
 /// Seed a full chain: installation → repository → project → pipeline.
@@ -295,7 +358,7 @@ pub async fn body_string(body: axum::body::Body) -> String {
 pub async fn seed_gitlab_oauth_integration(
     pool: &SqlitePool,
     user_id: &str,
-    webhook_secret: &str,
+    _webhook_secret: &str,
     client_id: &str,
     client_secret: &str,
 ) -> String {
@@ -313,9 +376,8 @@ pub async fn seed_gitlab_oauth_integration(
     .await
     .expect("failed to seed GitLab OAuth integration");
 
-    // Store webhook secret, client_id, client_secret
+    // Store OAuth client credentials.
     for (cred_type, value) in [
-        ("webhook_secret", webhook_secret),
         ("oauth_client_id", client_id),
         ("oauth_client_secret", client_secret),
     ] {
@@ -376,10 +438,20 @@ pub fn github_push_payload(repo: &str, branch: &str, sha: &str) -> serde_json::V
 
 /// Minimal valid GitLab push webhook payload.
 pub fn gitlab_push_payload(repo: &str, branch: &str, sha: &str) -> serde_json::Value {
+    gitlab_push_payload_for_project(repo, repo, branch, sha)
+}
+
+pub fn gitlab_push_payload_for_project(
+    repo: &str,
+    project_external_id: &str,
+    branch: &str,
+    sha: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "ref": format!("refs/heads/{branch}"),
         "checkout_sha": sha,
         "project": {
+            "id": project_external_id,
             "path_with_namespace": repo,
             "web_url": format!("https://gitlab.com/{repo}")
         },

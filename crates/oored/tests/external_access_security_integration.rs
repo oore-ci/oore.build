@@ -3,8 +3,6 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::OnceLock;
 
 use axum::body::Body;
@@ -62,23 +60,6 @@ impl Drop for EnvVarGuard {
             }
         }
     }
-}
-
-fn init_test_git_repo(root: &std::path::Path) -> PathBuf {
-    let repo_path = root.join("repo");
-    std::fs::create_dir_all(&repo_path).expect("create repo dir");
-
-    let output = Command::new("git")
-        .args(["-C", repo_path.to_str().unwrap(), "init"])
-        .output()
-        .expect("git init");
-    assert!(
-        output.status.success(),
-        "git init failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    repo_path
 }
 
 async fn create_session_token(pool: &sqlx::SqlitePool, user_id: &str) -> String {
@@ -366,6 +347,57 @@ async fn owner_can_store_warpgate_install_ticket_without_disclosing_it() {
     .await
     .expect("trusted proxy audit entry");
     assert!(!audit_details.contains("database-ticket"));
+}
+
+#[tokio::test]
+async fn owner_cannot_clear_active_trusted_proxy_shared_secret() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    mark_setup_ready(&pool).await;
+    set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings_with_secret(
+        &pool,
+        "x-warpgate-username",
+        "[]",
+        Some("proxy-secret"),
+    )
+    .await;
+    let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+
+    let request = Request::builder()
+        .uri("/v1/settings/external-access/trusted-proxy")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43121))))
+        .body(Body::from(
+            serde_json::json!({
+                "user_email_header": "x-warpgate-username",
+                "trusted_proxy_cidrs": [],
+                "shared_secret": ""
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.oneshot(request).await.expect("settings response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(response.into_body()).await;
+    assert_eq!(body["code"], "trusted_proxy_shared_secret_required");
+
+    let encrypted: Option<String> = sqlx::query_scalar(
+        "SELECT encrypted_shared_secret FROM trusted_proxy_settings WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("stored shared secret");
+    assert!(encrypted.is_some());
 }
 
 async fn seed_user_with_role_and_status(
@@ -1021,11 +1053,21 @@ async fn trusted_proxy_login_rejects_missing_identity_header() {
 
     mark_setup_ready(&pool).await;
     set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
-    upsert_trusted_proxy_settings(&pool, "x-warpgate-username", "[]").await;
+    upsert_trusted_proxy_settings_with_secret(
+        &pool,
+        "x-warpgate-username",
+        "[]",
+        Some("proxy-secret"),
+    )
+    .await;
 
     let req = Request::builder()
         .uri("/v1/auth/trusted-proxy/login")
         .method("POST")
+        .header(
+            oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+            "proxy-secret",
+        )
         .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43102))))
         .body(Body::empty())
         .unwrap();
@@ -1049,7 +1091,13 @@ async fn trusted_proxy_login_activates_invited_user() {
 
     mark_setup_ready(&pool).await;
     set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
-    upsert_trusted_proxy_settings(&pool, "x-warpgate-username", "[]").await;
+    upsert_trusted_proxy_settings_with_secret(
+        &pool,
+        "x-warpgate-username",
+        "[]",
+        Some("proxy-secret"),
+    )
+    .await;
 
     let invited_user_id =
         seed_user_with_role_and_status(&pool, "invitee@example.com", "developer", "invited").await;
@@ -1058,6 +1106,10 @@ async fn trusted_proxy_login_activates_invited_user() {
         .uri("/v1/auth/trusted-proxy/login")
         .method("POST")
         .header("x-warpgate-username", "invitee@example.com")
+        .header(
+            oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+            "proxy-secret",
+        )
         .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43103))))
         .body(Body::empty())
         .unwrap();
@@ -1083,6 +1135,34 @@ async fn trusted_proxy_login_activates_invited_user() {
 
     assert_eq!(status, "active");
     assert_eq!(oidc_subject, "trusted-proxy::invitee@example.com");
+}
+
+#[tokio::test]
+async fn trusted_proxy_login_rejects_unconfigured_shared_secret() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+
+    mark_setup_ready(&pool).await;
+    set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings(&pool, "x-warpgate-username", "[]").await;
+    seed_user_with_role(&pool, "owner@example.com", "owner").await;
+
+    let request = Request::builder()
+        .uri("/v1/auth/trusted-proxy/login")
+        .method("POST")
+        .header("x-warpgate-username", "owner@example.com")
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43107))))
+        .body(Body::empty())
+        .unwrap();
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("unconfigured secret response");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body_json(response.into_body()).await;
+    assert_eq!(body["code"], "trusted_proxy_config_invalid");
 }
 
 #[tokio::test]
@@ -1177,6 +1257,7 @@ async fn external_access_preflight_uses_trusted_proxy_check_when_selected() {
 
     mark_setup_ready(&pool).await;
     set_runtime_and_remote_auth_mode(&pool, "remote", "trusted_proxy").await;
+    upsert_trusted_proxy_settings(&pool, "x-warpgate-username", "[]").await;
 
     let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
     let owner_session = create_session_token(&pool, &owner_id).await;
@@ -1245,7 +1326,7 @@ async fn complete_setup_blocks_remote_trusted_proxy_if_not_configured() {
 }
 
 #[tokio::test]
-async fn test_create_project_local_repo_allowed_in_remote_mode() {
+async fn test_create_project_local_repo_rejected_in_remote_mode_before_path_access() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -1253,41 +1334,50 @@ async fn test_create_project_local_repo_allowed_in_remote_mode() {
 
     let owner_id = seed_user_with_role(&pool, "owner@example.com", "owner").await;
     let owner_session = create_session_token(&pool, &owner_id).await;
+    let developer_id = seed_user_with_role(&pool, "developer@example.com", "developer").await;
+    let developer_session = create_session_token(&pool, &developer_id).await;
 
-    let now = now_unix();
-    sqlx::query(
-        "UPDATE instance_preferences SET runtime_mode = 'remote', updated_at = ?1 WHERE id = 1",
-    )
-    .bind(now)
-    .execute(&pool)
-    .await
-    .expect("failed to set runtime mode");
+    set_runtime_and_remote_auth_mode(&pool, "remote", "oidc").await;
 
-    let repo_path = init_test_git_repo(tmp.path());
+    let repo_path = tmp.path().join("does-not-exist");
     let body = serde_json::json!({
         "name": "Local Repo Project",
         "local_repository_path": repo_path.to_string_lossy(),
     });
 
-    let req = Request::builder()
-        .uri("/v1/projects")
-        .method("POST")
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .header(
-            http::header::AUTHORIZATION,
-            format!("Bearer {owner_session}"),
-        )
-        .body(Body::from(
-            serde_json::to_string(&body).expect("serialize body"),
-        ))
-        .unwrap();
+    for (session, expected_code) in [
+        (owner_session, "mode_restricted"),
+        (developer_session, "permission_denied"),
+    ] {
+        let req = Request::builder()
+            .uri("/v1/projects")
+            .method("POST")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .header(http::header::AUTHORIZATION, format!("Bearer {session}"))
+            .body(Body::from(
+                serde_json::to_string(&body).expect("serialize body"),
+            ))
+            .unwrap();
 
-    let resp = app
-        .clone()
-        .oneshot(req)
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("create project response");
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let json = body_json(resp.into_body()).await;
+        assert_eq!(json["code"], expected_code);
+    }
+
+    let project_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects")
+        .fetch_one(&pool)
         .await
-        .expect("create project response");
-    assert_eq!(resp.status(), StatusCode::OK);
-    let json = body_json(resp.into_body()).await;
-    assert_eq!(json["project"]["name"], "Local Repo Project");
+        .unwrap();
+    let local_integration_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM integrations WHERE provider = 'local_git'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(project_count, 0);
+    assert_eq!(local_integration_count, 0);
 }

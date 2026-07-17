@@ -55,6 +55,8 @@ WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist
 WEB_SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 WEB_SYSTEMD_SERVICE_NAME="oore-web.service"
 WEB_SYSTEMD_SERVICE_FILE="$WEB_SYSTEMD_USER_DIR/$WEB_SYSTEMD_SERVICE_NAME"
+DAEMON_SERVICE_LABEL="build.oore.oored"
+DAEMON_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$DAEMON_SERVICE_LABEL.plist"
 DAEMON_URL="$OORE_DAEMON_URL"
 WEB_BACKEND_URL="$OORE_WEB_BACKEND_URL"
 LOCAL_WEB_URL=""
@@ -311,17 +313,30 @@ systemd_env_quote() {
   printf '"%s"' "$value"
 }
 
-write_secret_file() {
+write_secret_file() (
   local path="$1"
   local value="$2"
-  local previous_umask
+  local dir tmp mode
 
-  mkdir -p "$(dirname "$path")"
-  previous_umask="$(umask)"
+  dir="$(dirname "$path")"
+  mkdir -p "$dir"
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -f "$path" && ! -L "$path" && -O "$path" ]] \
+      || die "Secret destination must be an installer-owned regular file: $path"
+  fi
   umask 077
-  printf '%s\n' "$value" > "$path"
-  umask "$previous_umask"
-}
+  tmp="$(mktemp "$dir/.oore-secret.XXXXXX")"
+  trap 'rm -f "$tmp"' EXIT HUP INT TERM
+  printf '%s\n' "$value" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$path"
+  trap - EXIT HUP INT TERM
+
+  mode="$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null)" \
+    || die "Failed to inspect secret destination: $path"
+  [[ -f "$path" && ! -L "$path" && -O "$path" && "$mode" == "600" ]] \
+    || die "Secret destination has unsafe ownership or permissions: $path"
+)
 
 trusted_proxy_secret_file_path() {
   printf '%s' "${OORE_TRUSTED_PROXY_SHARED_SECRET_FILE:-$OORE_INSTALL_ROOT/trusted-proxy-shared-secret}"
@@ -1433,6 +1448,102 @@ start_daemon() {
   return 1
 }
 
+daemon_launchd_environment_dict() {
+  local entries=""
+  entries="$(
+    launchd_env_entry HOME "$HOME"
+    launchd_env_entry OORE_PUBLIC_URL "$OORE_PUBLIC_URL"
+    launchd_env_entry OORE_WARPGATE_TICKET "$OORE_WARPGATE_TICKET"
+    launchd_env_entry OORE_ARTIFACT_DELIVERY_URL "$OORE_ARTIFACT_DELIVERY_URL"
+    launchd_env_entry OORE_CORS_ORIGINS "$OORE_CORS_ORIGINS"
+    launchd_env_entry PATH "$PATH"
+    launchd_env_entry RUST_LOG "${RUST_LOG:-info}"
+  )"
+  printf '    <key>EnvironmentVariables</key>\n    <dict>\n%s\n    </dict>\n' "$entries"
+}
+
+render_system_daemon_plist() {
+  local service_user="$1"
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$DAEMON_SERVICE_LABEL</string>
+    <key>UserName</key>
+    <string>$(xml_escape "$service_user")</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>$(xml_escape "$BIN_DIR/oored")</string>
+      <string>run</string>
+      <string>--listen</string>
+      <string>$(xml_escape "$OORE_DAEMON_LISTEN")</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$(xml_escape "$OORE_INSTALL_ROOT")</string>
+$(daemon_launchd_environment_dict)
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$(xml_escape "$DAEMON_LOG")</string>
+    <key>StandardErrorPath</key>
+    <string>$(xml_escape "$DAEMON_LOG")</string>
+  </dict>
+</plist>
+EOF
+}
+
+install_system_daemon_service() {
+  local service_user="$1"
+  local plist_tmp="$DAEMON_LAUNCH_DAEMON_PLIST.install.$$"
+  local installed_user=""
+  local installed_program=""
+  local metadata=""
+
+  mkdir -p "$LOG_DIR" || return 1
+  sudo /bin/rm -f "$plist_tmp" || return 1
+  sudo /usr/bin/install -o root -g wheel -m 0600 /dev/null "$plist_tmp" || return 1
+  if ! render_system_daemon_plist "$service_user" \
+    | sudo /usr/bin/tee "$plist_tmp" >/dev/null; then
+    sudo /bin/rm -f "$plist_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! sudo /bin/chmod 0600 "$plist_tmp" \
+    || ! sudo /usr/bin/plutil -lint "$plist_tmp" >/dev/null; then
+    sudo /bin/rm -f "$plist_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  if ! metadata="$(sudo /usr/bin/stat -f '%Su:%Sg:%Lp' "$plist_tmp")" \
+    || ! installed_user="$(sudo /usr/libexec/PlistBuddy -c 'Print :UserName' "$plist_tmp")" \
+    || ! installed_program="$(sudo /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist_tmp")"; then
+    sudo /bin/rm -f "$plist_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if [[ "$metadata" != "root:wheel:600" \
+    || "$installed_user" != "$service_user" \
+    || "$installed_program" != "$BIN_DIR/oored" ]]; then
+    sudo /bin/rm -f "$plist_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  sudo /bin/launchctl bootout "system/$DAEMON_SERVICE_LABEL" >/dev/null 2>&1 || true
+  sudo /bin/launchctl remove "$DAEMON_SERVICE_LABEL" >/dev/null 2>&1 || true
+  sudo /bin/mv -f "$plist_tmp" "$DAEMON_LAUNCH_DAEMON_PLIST" || return 1
+  if ! sudo /bin/launchctl bootstrap system "$DAEMON_LAUNCH_DAEMON_PLIST" >/dev/null 2>&1; then
+    sleep 1
+    sudo /bin/launchctl bootstrap system "$DAEMON_LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 \
+      || return 1
+  fi
+  sudo /bin/launchctl kickstart -k "system/$DAEMON_SERVICE_LABEL" >/dev/null 2>&1 \
+    || return 1
+  sudo /bin/launchctl print "system/$DAEMON_SERVICE_LABEL" >/dev/null 2>&1 \
+    || return 1
+}
+
 install_daemon_service() {
   local cmd=("$BIN_DIR/oored" "install-service" "--listen" "$OORE_DAEMON_LISTEN")
   local retry_cmd="$BIN_DIR/oored install-service --listen $OORE_DAEMON_LISTEN"
@@ -1442,32 +1553,38 @@ install_daemon_service() {
     local service_user
     service_user="$(id -un)"
     "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
-    cmd=(sudo "$BIN_DIR/oored" "install-service" "--system" "--user" "$service_user" "--listen" "$OORE_DAEMON_LISTEN")
-    cmd+=("--env" "HOME=$HOME")
-    retry_cmd="sudo $BIN_DIR/oored install-service --system --user $service_user --listen $OORE_DAEMON_LISTEN --env HOME=$HOME"
-  fi
+    retry_cmd="sudo /bin/launchctl kickstart -k system/$DAEMON_SERVICE_LABEL"
+    if ! install_system_daemon_service "$service_user"; then
+      report_component_failure \
+        "oored launchd service" \
+        "$DAEMON_LOG" \
+        "$retry_cmd" \
+        "$DAEMON_URL/healthz"
+      return 1
+    fi
+  else
+    if [[ -n "$OORE_PUBLIC_URL" ]]; then
+      cmd+=("--env" "OORE_PUBLIC_URL=$OORE_PUBLIC_URL")
+    fi
+    if [[ -n "$OORE_WARPGATE_TICKET" ]]; then
+      cmd+=("--env" "OORE_WARPGATE_TICKET=$OORE_WARPGATE_TICKET")
+    fi
+    if [[ -n "$OORE_ARTIFACT_DELIVERY_URL" ]]; then
+      cmd+=("--env" "OORE_ARTIFACT_DELIVERY_URL=$OORE_ARTIFACT_DELIVERY_URL")
+    fi
+    if [[ -n "$OORE_CORS_ORIGINS" ]]; then
+      cmd+=("--env" "OORE_CORS_ORIGINS=$OORE_CORS_ORIGINS")
+    fi
+    cmd+=("--env" "RUST_LOG=${RUST_LOG:-info}")
 
-  if [[ -n "$OORE_PUBLIC_URL" ]]; then
-    cmd+=("--env" "OORE_PUBLIC_URL=$OORE_PUBLIC_URL")
-  fi
-  if [[ -n "$OORE_WARPGATE_TICKET" ]]; then
-    cmd+=("--env" "OORE_WARPGATE_TICKET=$OORE_WARPGATE_TICKET")
-  fi
-  if [[ -n "$OORE_ARTIFACT_DELIVERY_URL" ]]; then
-    cmd+=("--env" "OORE_ARTIFACT_DELIVERY_URL=$OORE_ARTIFACT_DELIVERY_URL")
-  fi
-  if [[ -n "$OORE_CORS_ORIGINS" ]]; then
-    cmd+=("--env" "OORE_CORS_ORIGINS=$OORE_CORS_ORIGINS")
-  fi
-  cmd+=("--env" "RUST_LOG=${RUST_LOG:-info}")
-
-  if ! "${cmd[@]}"; then
-    report_component_failure \
-      "oored launchd service" \
-      "$DAEMON_LOG" \
-      "$retry_cmd" \
-      "$DAEMON_URL/healthz"
-    return 1
+    if ! "${cmd[@]}"; then
+      report_component_failure \
+        "oored launchd service" \
+        "$DAEMON_LOG" \
+        "$retry_cmd" \
+        "$DAEMON_URL/healthz"
+      return 1
+    fi
   fi
 
   local i

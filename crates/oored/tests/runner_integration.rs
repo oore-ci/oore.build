@@ -257,7 +257,7 @@ async fn test_runner_claim_empty_queue() {
             format!("Bearer {runner_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -287,6 +287,17 @@ async fn test_runner_claim_and_execute() {
 
     // Create a build
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let snapshot = serde_json::json!({
+        "ui_execution_config": {
+            "env": [{ "key": "DEPLOY_TOKEN", "value": "runner-secret-value" }]
+        }
+    });
+    sqlx::query("UPDATE builds SET config_snapshot = ?1 WHERE id = ?2")
+        .bind(snapshot.to_string())
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Register runner
     let (runner_id, runner_token) = register_runner(&app, &session_token, "exec-runner").await;
@@ -300,7 +311,7 @@ async fn test_runner_claim_and_execute() {
             format!("Bearer {runner_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -309,6 +320,26 @@ async fn test_runner_claim_and_execute() {
     let json = body_json(resp.into_body()).await;
     assert!(!json["job"].is_null(), "should have claimed a job");
     assert_eq!(json["job"]["build_id"].as_str().unwrap(), build_id);
+    let signing_token = json["job"]["signing_token"]
+        .as_str()
+        .expect("claim returns an ephemeral signing grant");
+    assert_eq!(signing_token.len(), 64);
+    let persisted_signing_hash: Option<String> =
+        sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        persisted_signing_hash.as_deref(),
+        Some(oored::token::hash_token(signing_token).as_str()),
+        "only the hash of the job-scoped signing grant may be persisted"
+    );
+    assert_eq!(
+        json["job"]["config_snapshot"]["ui_execution_config"]["env"][0]["value"],
+        "runner-secret-value",
+        "runner execution must retain raw environment values"
+    );
 
     // Update status to running
     let body = serde_json::json!({
@@ -363,10 +394,93 @@ async fn test_runner_claim_and_execute() {
 
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["build"]["status"].as_str().unwrap(), "succeeded");
+    let retained_runner: Option<String> =
+        sqlx::query_scalar("SELECT runner_id FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        retained_runner.is_none(),
+        "terminal transition must atomically revoke the runner assignment"
+    );
+    let retained_signing_hash: Option<String> =
+        sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        retained_signing_hash.is_none(),
+        "terminal transition must atomically revoke the signing grant"
+    );
+}
+
+#[tokio::test]
+async fn test_requeue_atomically_revokes_runner_assignment() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let _app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &user_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "test/requeue").await;
+    let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let runner_id = Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
+         VALUES (?1, 'requeue-runner', 'unused', 'busy', '{}', ?2, ?3, ?3)",
+    )
+    .bind(&runner_id)
+    .bind(&user_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "UPDATE builds SET status = 'assigned', runner_id = ?1, signing_token_hash = 'stale' WHERE id = ?2",
+    )
+        .bind(&runner_id)
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    oored::builds::transition_build(
+        &pool,
+        &build_id,
+        oore_contract::BuildStatus::Queued,
+        None,
+        Some("test lease expiry"),
+    )
+    .await
+    .expect("requeue build");
+
+    let retained_runner: Option<String> =
+        sqlx::query_scalar("SELECT runner_id FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(retained_runner.is_none());
+    let retained_signing_hash: Option<String> =
+        sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(retained_signing_hash.is_none());
 }
 
 #[tokio::test]
 async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
+    use base64::Engine as _;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -374,6 +488,57 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
     let user_id = seed_test_user(&pool).await;
     let session_token = create_session_token(&pool, &user_id).await;
     let integration_id = seed_gitlab_integration(&pool, &user_id, "webhook-secret").await;
+    let upstream_hits = Arc::new(AtomicUsize::new(0));
+    let hits = upstream_hits.clone();
+    let upstream = axum::Router::new().route(
+        "/internal/mobile/app.git/info/refs",
+        axum::routing::get(move |headers: axum::http::HeaderMap| {
+            let hits = hits.clone();
+            async move {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let expected =
+                    base64::engine::general_purpose::STANDARD.encode("oauth2:gitlab-access-token");
+                let expected = format!("Basic {expected}");
+                assert_eq!(
+                    headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok()),
+                    Some(expected.as_str())
+                );
+                (
+                    [(
+                        "content-type",
+                        "application/x-git-upload-pack-advertisement",
+                    )],
+                    "git-upload-pack",
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let host_url = format!("http://{}", listener.local_addr().unwrap());
+    let upstream_server =
+        tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    sqlx::query("UPDATE integrations SET host_url = ?1 WHERE id = ?2")
+        .bind(&host_url)
+        .bind(&integration_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let encrypted_access_token =
+        oored::crypto::encrypt("gitlab-access-token", &common::TEST_ENCRYPTION_KEY).unwrap();
+    sqlx::query(
+        "INSERT INTO integration_credentials \
+         (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
+         VALUES (?1, ?2, 'access_token', ?3, ?4, ?4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&integration_id)
+    .bind(encrypted_access_token)
+    .bind(common::now_unix())
+    .execute(&pool)
+    .await
+    .unwrap();
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "internal/mobile/app").await;
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
@@ -385,9 +550,9 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
             format!("Bearer {runner_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
-    let response = app.oneshot(request).await.unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let json = body_json(response.into_body()).await;
     let snapshot = &json["job"]["config_snapshot"];
@@ -401,6 +566,64 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
         !json.to_string().contains(&runner_token),
         "runner token must not be embedded in the claimed job"
     );
+
+    let running = Request::post(format!("/v1/runners/{runner_id}/jobs/{build_id}/status"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"status":"running","steps":[]}"#))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(running).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    let checkout_path = format!(
+        "/v1/runners/{runner_id}/jobs/{build_id}/gitlab/internal/mobile/app.git/info/refs?service=git-upload-pack"
+    );
+    let live_checkout = Request::get(&checkout_path)
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(live_checkout).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(upstream_hits.load(Ordering::SeqCst), 1);
+
+    let succeeded = Request::post(format!("/v1/runners/{runner_id}/jobs/{build_id}/status"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"status":"succeeded","exit_code":0,"steps":[]}"#,
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(succeeded).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    let replay = Request::get(&checkout_path)
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.oneshot(replay).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(upstream_hits.load(Ordering::SeqCst), 1);
+    upstream_server.abort();
 }
 
 #[tokio::test]
@@ -432,7 +655,7 @@ async fn test_no_double_claim() {
             format!("Bearer {runner1_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp1 = app.clone().oneshot(req1).await.unwrap();
@@ -448,7 +671,7 @@ async fn test_no_double_claim() {
             format!("Bearer {runner2_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp2 = app.clone().oneshot(req2).await.unwrap();

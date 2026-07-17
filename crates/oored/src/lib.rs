@@ -13,6 +13,7 @@ pub mod extractors;
 pub mod frontend_pairing;
 pub mod instance_settings;
 pub mod integrations;
+pub mod local_recovery;
 pub mod logs;
 pub mod notification_channels;
 pub mod notification_dispatch;
@@ -37,7 +38,6 @@ pub mod token;
 pub mod users;
 pub mod util;
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -71,7 +71,7 @@ use openidconnect::{
 };
 use tracing::{error, info, warn};
 
-use crate::auth::{PendingAuth, build_http_client, load_oidc_config_for_setup};
+use crate::auth::{PendingAuth, PendingAuthStore, build_http_client, load_oidc_config_for_setup};
 use crate::session::SessionStore;
 use crate::store::{SetupStore, write_audit_log};
 use crate::token::{generate_session_token, hash_token};
@@ -82,7 +82,7 @@ use crate::util::{api_err, extract_bearer, now_unix};
 pub struct AppState {
     pub store: Mutex<SetupStore>,
     pub sessions: SessionStore,
-    pub pending_auth: Mutex<HashMap<String, PendingAuth>>,
+    pub pending_auth: Mutex<PendingAuthStore>,
     /// AES-256 encryption key used to encrypt secrets at rest.
     /// Wrapped in Zeroizing so the key is zeroed on drop.
     pub encryption_key: Zeroizing<Vec<u8>>,
@@ -93,8 +93,8 @@ pub struct AppState {
     /// endpoint URLs. Only available with test-support feature or in tests.
     #[cfg(any(test, feature = "test-support"))]
     pub skip_oidc_discovery: bool,
-    /// Failed bootstrap token verification attempts (keyed by token hash).
-    pub bootstrap_failures: Mutex<HashMap<String, u32>>,
+    /// Fixed-size failure budget for the active bootstrap token.
+    pub bootstrap_failures: Mutex<BootstrapFailureBudget>,
     /// In-process job scheduler for runner dispatch.
     pub scheduler: Arc<scheduler::Scheduler>,
     /// Runtime-configurable artifact storage backend.
@@ -107,6 +107,8 @@ pub struct AppState {
     pub public_url: Arc<RwLock<Option<String>>>,
     /// Owner-triggered backend update state.
     pub runtime_update: runtime_updates::RuntimeUpdateState,
+    /// Short-lived, single-use local recovery capabilities minted over UDS.
+    pub recovery_capabilities: local_recovery::RecoveryCapabilityStore,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -146,11 +148,30 @@ fn normalize_optional_setup_owner_email(
         })
 }
 
-/// Maximum number of concurrent pending OIDC auth requests.
-const MAX_PENDING_AUTH: usize = 1000;
-
 /// Maximum allowed failed bootstrap token attempts before lockout.
 const MAX_BOOTSTRAP_FAILURES: u32 = 5;
+
+#[derive(Default)]
+pub struct BootstrapFailureBudget {
+    active_token_hash: Option<String>,
+    failures: u32,
+}
+
+impl BootstrapFailureBudget {
+    fn record_failure(&mut self, active_token_hash: &str) -> u32 {
+        if self.active_token_hash.as_deref() != Some(active_token_hash) {
+            self.active_token_hash = Some(active_token_hash.to_string());
+            self.failures = 0;
+        }
+        self.failures = self.failures.saturating_add(1);
+        self.failures
+    }
+
+    fn clear(&mut self) {
+        self.active_token_hash = None;
+        self.failures = 0;
+    }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -567,20 +588,6 @@ async fn verify_bootstrap_token(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BootstrapTokenVerifyRequest>,
 ) -> ApiResult<BootstrapTokenVerifyResponse> {
-    // H6: Check failed attempt counter
-    let token_hash_for_tracking = hash_token(&req.token);
-    {
-        let failures = state.bootstrap_failures.lock().await;
-        let count = failures.get(&token_hash_for_tracking).copied().unwrap_or(0);
-        if count >= MAX_BOOTSTRAP_FAILURES {
-            return Err(api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_attempts",
-                "Too many failed verification attempts. Generate a new bootstrap token.",
-            ));
-        }
-    }
-
     let store = state.store.lock().await;
     let mut sf = store.load().await.map_err(|e| {
         error!(error = %e, "failed to load setup state");
@@ -630,17 +637,24 @@ async fn verify_bootstrap_token(
     // Hash must match
     let request_hash = hash_token(&req.token);
     if request_hash != bt.hash {
-        // H6: Increment failed attempt counter
         let mut failures = state.bootstrap_failures.lock().await;
-        let count = failures.entry(token_hash_for_tracking).or_insert(0);
-        *count += 1;
-        warn!(attempts = *count, "invalid bootstrap token attempt");
+        let attempts = failures.record_failure(&bt.hash);
+        warn!(attempts, "invalid bootstrap token attempt");
+        if attempts > MAX_BOOTSTRAP_FAILURES {
+            return Err(api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+                "Too many failed verification attempts. Generate a new bootstrap token.",
+            ));
+        }
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
             "invalid_token",
             "Bootstrap token is invalid",
         ));
     }
+
+    state.bootstrap_failures.lock().await.clear();
 
     // Mark token as consumed
     let now = now_unix();
@@ -1309,27 +1323,25 @@ async fn setup_oidc_start(
         {
             let mut pending = state.pending_auth.lock().await;
             let now = now_unix();
-            pending.retain(|_, pa| now - pa.created_at < 600);
-
-            // H3: Reject if too many pending auth requests
-            if pending.len() >= MAX_PENDING_AUTH {
-                return Err(api_err(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "too_many_pending",
-                    "Too many pending authentication requests",
-                ));
-            }
-
-            pending.insert(
-                state_value.clone(),
-                PendingAuth {
-                    pkce_verifier,
-                    nonce,
-                    redirect_uri: req.redirect_uri,
-                    created_at: now,
-                    setup_session_hash: Some(setup_session_hash.clone()),
-                },
-            );
+            pending
+                .insert_setup(
+                    state_value.clone(),
+                    PendingAuth {
+                        pkce_verifier,
+                        nonce,
+                        redirect_uri: req.redirect_uri,
+                        created_at: now,
+                        setup_session_hash: Some(setup_session_hash.clone()),
+                    },
+                    now,
+                )
+                .map_err(|_| {
+                    api_err(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "too_many_pending",
+                        "Too many pending authentication requests",
+                    )
+                })?;
         }
 
         return Ok(Json(SetupOidcStartResponse {
@@ -1396,27 +1408,25 @@ async fn setup_oidc_start(
     {
         let mut pending = state.pending_auth.lock().await;
         let now = now_unix();
-        pending.retain(|_, pa| now - pa.created_at < 600);
-
-        // H3: Reject if too many pending auth requests
-        if pending.len() >= MAX_PENDING_AUTH {
-            return Err(api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_pending",
-                "Too many pending authentication requests",
-            ));
-        }
-
-        pending.insert(
-            state_value.clone(),
-            PendingAuth {
-                pkce_verifier,
-                nonce,
-                redirect_uri: req.redirect_uri,
-                created_at: now,
-                setup_session_hash: Some(setup_session_hash),
-            },
-        );
+        pending
+            .insert_setup(
+                state_value.clone(),
+                PendingAuth {
+                    pkce_verifier,
+                    nonce,
+                    redirect_uri: req.redirect_uri,
+                    created_at: now,
+                    setup_session_hash: Some(setup_session_hash),
+                },
+                now,
+            )
+            .map_err(|_| {
+                api_err(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too_many_pending",
+                    "Too many pending authentication requests",
+                )
+            })?;
     }
 
     Ok(Json(SetupOidcStartResponse {
@@ -2022,7 +2032,29 @@ pub async fn build_router(
     encryption_key: Vec<u8>,
     metrics_handle: PrometheusHandle,
 ) -> Router {
-    build_router_inner(store, encryption_key, false, metrics_handle).await
+    build_router_with_recovery(
+        store,
+        encryption_key,
+        metrics_handle,
+        local_recovery::RecoveryCapabilityStore::default(),
+    )
+    .await
+}
+
+pub async fn build_router_with_recovery(
+    store: SetupStore,
+    encryption_key: Vec<u8>,
+    metrics_handle: PrometheusHandle,
+    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
+) -> Router {
+    build_router_inner(
+        store,
+        encryption_key,
+        false,
+        metrics_handle,
+        recovery_capabilities,
+    )
+    .await
 }
 
 /// Build a test router that skips real OIDC discovery in `configure_oidc`.
@@ -2031,6 +2063,20 @@ pub async fn build_router(
 /// making any network calls.
 #[cfg(any(test, feature = "test-support"))]
 pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Router {
+    build_test_router_with_recovery(
+        store,
+        encryption_key,
+        local_recovery::RecoveryCapabilityStore::default(),
+    )
+    .await
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub async fn build_test_router_with_recovery(
+    store: SetupStore,
+    encryption_key: Vec<u8>,
+    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
+) -> Router {
     use std::sync::OnceLock;
     static TEST_METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
     let metrics_handle = TEST_METRICS
@@ -2040,7 +2086,14 @@ pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Ro
                 .expect("failed to install test metrics recorder")
         })
         .clone();
-    build_router_inner(store, encryption_key, true, metrics_handle).await
+    build_router_inner(
+        store,
+        encryption_key,
+        true,
+        metrics_handle,
+        recovery_capabilities,
+    )
+    .await
 }
 
 async fn build_router_inner(
@@ -2048,6 +2101,7 @@ async fn build_router_inner(
     encryption_key: Vec<u8>,
     _skip_oidc_discovery: bool,
     metrics_handle: PrometheusHandle,
+    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
 ) -> Router {
     let session_store = SessionStore::new(store.pool().clone());
     let enforcer = rbac::init_enforcer()
@@ -2106,18 +2160,19 @@ async fn build_router_inner(
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
         sessions: session_store,
-        pending_auth: Mutex::new(HashMap::new()),
+        pending_auth: Mutex::new(PendingAuthStore::default()),
         encryption_key: Zeroizing::new(encryption_key),
         enforcer,
         #[cfg(any(test, feature = "test-support"))]
         skip_oidc_discovery: _skip_oidc_discovery,
-        bootstrap_failures: Mutex::new(HashMap::new()),
+        bootstrap_failures: Mutex::new(BootstrapFailureBudget::default()),
         scheduler: sched.clone(),
         storage: Arc::new(RwLock::new(storage_backend)),
         stream_tokens: logs::StreamTokenStore::new(),
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
+        recovery_capabilities,
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2319,6 +2374,10 @@ async fn build_router_inner(
         .route(
             "/v1/integration-repositories/{id}/avatar",
             get(integrations::repository_avatar),
+        )
+        .route(
+            "/v1/integration-repositories/{id}/gitlab-webhook-secret",
+            post(integrations::gitlab::rotate_repository_webhook_secret),
         )
         .route(
             "/v1/integrations/github/start",

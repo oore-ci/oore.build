@@ -1,9 +1,34 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import type { Instance } from '@/lib/types'
 import { queryClient } from '@/lib/query-client'
 import { clearAuthStorageForInstance, useAuthStore } from '@/stores/auth-store'
 import { useSetupStore } from '@/stores/setup-store'
+
+function backendOrigin(url: string): string | null {
+  const baseUrl = resolveInstanceApiBaseUrl({ url })
+  if (!baseUrl) return null
+
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    return baseUrl
+  }
+}
+
+function clearInstanceScopedState(id: string): void {
+  try {
+    sessionStorage.removeItem(`oore_setup_session_${id}`)
+    sessionStorage.removeItem(`oore_setup_session_expires_${id}`)
+    sessionStorage.removeItem(`oore_setup_trusted_proxy_prefill_${id}`)
+  } catch {
+    // sessionStorage unavailable
+  }
+
+  clearAuthStorageForInstance(id)
+  queryClient.removeQueries({ queryKey: [id] })
+}
 
 function generateInstanceId(): string {
   // crypto can be missing in some test environments / older runtimes
@@ -68,20 +93,7 @@ export const useInstanceStore = create<InstanceStoreState>()(
       removeInstance: (id) => {
         const state = get()
         const { [id]: _, ...rest } = state.instances
-        // Clear namespaced sessionStorage keys for this instance
-        try {
-          sessionStorage.removeItem(`oore_setup_session_${id}`)
-          sessionStorage.removeItem(`oore_setup_session_expires_${id}`)
-          sessionStorage.removeItem(`oore_setup_trusted_proxy_prefill_${id}`)
-        } catch {
-          // sessionStorage unavailable
-        }
-
-        // Clear auth (localStorage) keys for this instance
-        clearAuthStorageForInstance(id)
-
-        // Evict query cache entries scoped to this instance
-        queryClient.removeQueries({ queryKey: [id] })
+        clearInstanceScopedState(id)
 
         // Auto-select next instance or null
         let nextActiveId: string | null = state.activeInstanceId
@@ -110,10 +122,26 @@ export const useInstanceStore = create<InstanceStoreState>()(
         const instance = state.instances[id]
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
         if (instance) {
+          const next = { ...instance, ...fields }
+          const authorityChanged =
+            fields.url !== undefined &&
+            backendOrigin(instance.url) !== backendOrigin(fields.url)
+
+          if (authorityChanged) {
+            clearInstanceScopedState(id)
+
+            if (useSetupStore.getState().instanceId === id) {
+              useSetupStore.getState().setInstanceContext(id)
+            }
+            if (useAuthStore.getState().instanceId === id) {
+              useAuthStore.getState().setInstanceContext(id)
+            }
+          }
+
           set({
             instances: {
               ...state.instances,
-              [id]: { ...instance, ...fields },
+              [id]: next,
             },
           })
         }

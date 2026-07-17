@@ -17,7 +17,7 @@ use utoipa::OpenApi;
     info(
         title = "Oore CI API",
         version = "1.0.0",
-        description = "REST API for Oore CI — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support local-mode login and OIDC login/logout flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince Oore CI is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
+        description = "REST API for Oore CI — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support Local Only login, single-use local recovery in Ready External Access mode, and configured OIDC or trusted-proxy flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince Oore CI is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
         license(name = "MIT", url = "https://github.com/oore-ci/oore.build/blob/master/LICENSE"),
         contact(name = "Oore CI", url = "https://oore.build"),
     ),
@@ -89,6 +89,7 @@ use utoipa::OpenApi;
         paths::github_complete,
         paths::gitlab_start,
         paths::gitlab_authorize,
+        paths::rotate_gitlab_repository_webhook_secret,
         paths::browse_local_git_directories,
         paths::create_local_git_integration,
         paths::list_local_git_integrations,
@@ -240,6 +241,7 @@ use utoipa::OpenApi;
         oore_contract::GitLabCompleteResponse,
         oore_contract::GitLabAuthorizeRequest,
         oore_contract::GitLabAuthorizeResponse,
+        oore_contract::GitLabRepositoryWebhookSecretResponse,
         oore_contract::LocalGitDirectoryEntry,
         oore_contract::LocalGitPathSuggestion,
         oore_contract::BrowseLocalGitDirectoriesResponse,
@@ -690,18 +692,19 @@ mod paths {
         pub state: String,
     }
 
-    /// Local login
+    /// Local login and recovery
     ///
-    /// Creates a loopback-only local session without OIDC.
-    /// If setup is still pending in Local Only mode, first login auto-finalizes
-    /// local owner bootstrap. When setup is already complete, loopback local
-    /// login remains available even if External Access is enabled.
+    /// In Local Only mode, creates a loopback local session and may auto-finalize
+    /// first-run owner bootstrap. In Ready External Access mode, every request
+    /// requires a short-lived, single-use recovery capability minted by the
+    /// local `oore recovery` command over the daemon's Unix management socket.
+    /// TCP loopback and forwarding headers do not grant recovery authority.
     #[utoipa::path(post, path = "/v1/auth/local/login", tag = "Auth",
         request_body = LocalLoginRequest,
         responses(
             (status = 200, description = "Session created", body = LocalLoginResponse),
             (status = 400, description = "Email required or invalid input", body = ApiError),
-            (status = 403, description = "Blocked by mode policy or non-loopback source", body = ApiError),
+            (status = 403, description = "Blocked by mode policy, source policy, or missing/invalid recovery capability", body = ApiError),
         )
     )]
     pub(super) async fn local_login() {}
@@ -1198,6 +1201,18 @@ mod paths {
         )
     )]
     pub(super) async fn gitlab_authorize() {}
+
+    /// Generate or rotate a repository-scoped GitLab webhook token
+    #[utoipa::path(post, path = "/v1/integration-repositories/{id}/gitlab-webhook-secret", tag = "Integrations",
+        params(("id" = String, Path, description = "Integration repository ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "One-time webhook token", body = GitLabRepositoryWebhookSecretResponse),
+            (status = 403, description = "Integration write permission or Remote mode required", body = ApiError),
+            (status = 404, description = "Active GitLab repository not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn rotate_gitlab_repository_webhook_secret() {}
 
     /// Create local git integration
     #[utoipa::path(post, path = "/v1/integrations/local-git", tag = "Integrations",

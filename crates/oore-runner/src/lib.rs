@@ -1,6 +1,12 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Read, Write};
+use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -17,6 +23,7 @@ use oore_contract::{
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncBufReadExt;
+use zeroize::Zeroize;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -25,9 +32,25 @@ const OORE_ANDROID_KEYSTORE_PASSWORD_ENV: &str = "OORE_ANDROID_KEYSTORE_PASSWORD
 const OORE_ANDROID_KEY_ALIAS_ENV: &str = "OORE_ANDROID_KEY_ALIAS";
 const OORE_ANDROID_KEY_PASSWORD_ENV: &str = "OORE_ANDROID_KEY_PASSWORD";
 const OORE_ANDROID_KEY_PROPERTIES_PATH_ENV: &str = "OORE_ANDROID_KEY_PROPERTIES_PATH";
+const MANAGED_ANDROID_SIGNING_ENV_KEYS: [&str; 6] = [
+    OORE_ANDROID_KEYSTORE_PATH_ENV,
+    OORE_ANDROID_KEYSTORE_B64_ENV,
+    OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
+    OORE_ANDROID_KEY_ALIAS_ENV,
+    OORE_ANDROID_KEY_PASSWORD_ENV,
+    OORE_ANDROID_KEY_PROPERTIES_PATH_ENV,
+];
+const ANDROID_SIGNER_STORE_PASSWORD_ENV: &str = "OORE_SIGNER_STORE_PASSWORD";
+const ANDROID_SIGNER_KEY_PASSWORD_ENV: &str = "OORE_SIGNER_KEY_PASSWORD";
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
-const BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
+const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
+const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
+const RUNNER_WORKSPACE_ROOT_NAME: &str = "oore-runner-workspaces";
+const LEGACY_RECONCILIATION_MARKER: &str = ".legacy-workspaces-reconciled-v1";
+const LEGACY_BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
 const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
+// ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
+const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -35,6 +58,35 @@ pub struct RunnerConfig {
     pub runner_token: String,
     pub daemon_url: String,
     pub name: String,
+}
+
+/// Reject runner control-plane URLs that could expose the bearer token or job
+/// traffic over a cleartext network connection. HTTP remains available only
+/// for a daemon addressed by a literal loopback IP.
+pub fn require_safe_daemon_url(raw_url: &str) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(raw_url).context("invalid daemon URL")?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let host = url.host_str().context("daemon URL must include a host")?;
+            let ip = host
+                .trim_matches(['[', ']'])
+                .parse::<IpAddr>()
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "cleartext daemon URLs require a literal loopback IP; use HTTPS for {host}"
+                    )
+                })?;
+            if ip.is_loopback() {
+                Ok(())
+            } else {
+                anyhow::bail!("cleartext daemon URLs are allowed only for literal loopback IPs")
+            }
+        }
+        scheme => anyhow::bail!(
+            "daemon URL must use HTTPS (or HTTP for a literal loopback IP), not {scheme}"
+        ),
+    }
 }
 
 fn now_unix() -> i64 {
@@ -56,6 +108,165 @@ fn try_mark_no_spotlight_index(path: &Path) {
             err
         );
     }
+}
+
+fn runner_workspace_prefix(runner_id: &str) -> String {
+    let digest = Sha256::digest(runner_id.as_bytes());
+    format!("{BUILD_WORKSPACE_PREFIX}-{}-", hex::encode(&digest[..8]))
+}
+
+fn is_runner_workspace_name(file_name: &str) -> bool {
+    let Some(suffix) = file_name.strip_prefix(&format!("{BUILD_WORKSPACE_PREFIX}-")) else {
+        return false;
+    };
+    let Some((runner_hash, random_suffix)) = suffix.split_once('-') else {
+        return false;
+    };
+    runner_hash.len() == 16
+        && runner_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && random_suffix.len() == 32
+        && random_suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn create_private_workspace_in(parent: &Path, runner_id: &str) -> std::io::Result<PathBuf> {
+    let prefix = runner_workspace_prefix(runner_id);
+    for _ in 0..16 {
+        let mut random = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut random);
+        let path = parent.join(format!("{prefix}{}", hex::encode(random)));
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        ErrorKind::AlreadyExists,
+        "failed to allocate a unique runner workspace",
+    ))
+}
+
+fn prepare_runner_workspace_root() -> anyhow::Result<PathBuf> {
+    let path = std::env::temp_dir().join(RUNNER_WORKSPACE_ROOT_NAME);
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let metadata = fs::symlink_metadata(&path)?;
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "runner workspace root {} is not a trusted directory",
+        path.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        anyhow::ensure!(
+            metadata.uid() == current_uid()? && metadata.permissions().mode() & 0o077 == 0,
+            "runner workspace root {} is not a private owned directory",
+            path.display()
+        );
+    }
+    fs::canonicalize(&path).context("failed to resolve runner workspace root")
+}
+
+fn repository_shell_command(
+    script: &str,
+    workspace: &Path,
+    runner_workspace_root: &Path,
+) -> anyhow::Result<tokio::process::Command> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let runner_workspace_root = fs::canonicalize(runner_workspace_root)
+            .context("failed to resolve runner workspace root")?;
+        let workspace = fs::canonicalize(workspace).context("failed to resolve build workspace")?;
+        anyhow::ensure!(
+            workspace.parent() == Some(runner_workspace_root.as_path()),
+            "build workspace is outside the runner workspace root"
+        );
+        let runner_workspace_root = runner_workspace_root
+            .to_str()
+            .context("runner workspace root path is not valid UTF-8")?;
+        let workspace = workspace
+            .to_str()
+            .context("build workspace path is not valid UTF-8")?;
+        anyhow::ensure!(
+            !runner_workspace_root.chars().any(char::is_control)
+                && !workspace.chars().any(char::is_control),
+            "runner workspace path contains control characters"
+        );
+        let runner_workspace_root = runner_workspace_root
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let workspace = workspace.replace('\\', "\\\\").replace('"', "\\\"");
+        // Seatbelt restrictions survive fork, exec, and setsid. Keep the current repository
+        // generation usable while denying every sibling generation and brokered escape route.
+        let profile = format!(
+            r#"(version 1)
+(allow default)
+(deny file* (subpath "{runner_workspace_root}"))
+(allow file* (subpath "{workspace}"))
+(deny process-info*)
+(deny mach-task-name)
+(deny signal)
+(allow signal (target same-sandbox))
+(deny job-creation)
+(deny appleevent-send)
+(deny mach-lookup
+  (global-name "com.apple.securityd")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.securityd.general")
+  (global-name "com.apple.securityd.systemkeychain")
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.coreservices.appleevents")
+  (global-name "com.apple.lsd.open")
+  (global-name "com.apple.lsd.xpc"))"#
+        );
+        let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
+        command.args(["-p", &profile, "/bin/sh"]);
+        command
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = tokio::process::Command::new("sh");
+
+    command.arg("-c").arg(script).current_dir(workspace);
+    Ok(command)
+}
+
+fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    if let Err(error) = file.write_all(content).and_then(|()| file.sync_all()) {
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub async fn detect_capabilities() -> serde_json::Value {
@@ -102,15 +313,6 @@ pub fn get_hostname() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct AndroidSigningEnv {
-    keystore_path: Option<String>,
-    keystore_b64: Option<String>,
-    keystore_password: Option<String>,
-    key_alias: Option<String>,
-    key_password: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AndroidSigningInputs {
     keystore_bytes: Vec<u8>,
@@ -119,38 +321,12 @@ struct AndroidSigningInputs {
     key_password: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AndroidSigningMaterialization {
-    keystore_path: PathBuf,
-    key_properties_path: PathBuf,
-    keystore_overwrote_existing: bool,
-    key_properties_overwrote_existing: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AndroidSigningPreparation {
-    inputs: AndroidSigningInputs,
-    materialization: AndroidSigningMaterialization,
-}
-
-fn trim_to_opt(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
-fn collect_android_signing_env(read_env: impl Fn(&str) -> Option<String>) -> AndroidSigningEnv {
-    AndroidSigningEnv {
-        keystore_path: trim_to_opt(read_env(OORE_ANDROID_KEYSTORE_PATH_ENV)),
-        keystore_b64: trim_to_opt(read_env(OORE_ANDROID_KEYSTORE_B64_ENV)),
-        keystore_password: trim_to_opt(read_env(OORE_ANDROID_KEYSTORE_PASSWORD_ENV)),
-        key_alias: trim_to_opt(read_env(OORE_ANDROID_KEY_ALIAS_ENV)),
-        key_password: trim_to_opt(read_env(OORE_ANDROID_KEY_PASSWORD_ENV)),
+impl Drop for AndroidSigningInputs {
+    fn drop(&mut self) {
+        self.keystore_bytes.zeroize();
+        self.keystore_password.zeroize();
+        self.key_alias.zeroize();
+        self.key_password.zeroize();
     }
 }
 
@@ -163,73 +339,17 @@ fn decode_base64_keystore(value: &str) -> anyhow::Result<Vec<u8>> {
         })
 }
 
-fn require_signing_field(value: Option<String>, env_key: &str) -> anyhow::Result<String> {
-    value.ok_or_else(|| anyhow::anyhow!("missing required environment variable {env_key}"))
-}
-
-fn resolve_android_signing_inputs(
-    env: &AndroidSigningEnv,
-) -> anyhow::Result<Option<AndroidSigningInputs>> {
-    let any_present = env.keystore_path.is_some()
-        || env.keystore_b64.is_some()
-        || env.keystore_password.is_some()
-        || env.key_alias.is_some()
-        || env.key_password.is_some();
-
-    if !any_present {
-        return Ok(None);
-    }
-
-    let keystore_bytes = if let Some(path_raw) = &env.keystore_path {
-        let path = PathBuf::from(path_raw);
-        fs::read(&path).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to read keystore from {} ({}): {e}",
-                OORE_ANDROID_KEYSTORE_PATH_ENV,
-                path.display()
-            )
-        })?
-    } else {
-        let b64 = require_signing_field(env.keystore_b64.clone(), OORE_ANDROID_KEYSTORE_B64_ENV)?;
-        decode_base64_keystore(&b64)?
-    };
-
-    if keystore_bytes.is_empty() {
-        anyhow::bail!("resolved keystore file is empty");
-    }
-
-    Ok(Some(AndroidSigningInputs {
-        keystore_bytes,
-        keystore_password: require_signing_field(
-            env.keystore_password.clone(),
-            OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
-        )?,
-        key_alias: require_signing_field(env.key_alias.clone(), OORE_ANDROID_KEY_ALIAS_ENV)?,
-        key_password: require_signing_field(
-            env.key_password.clone(),
-            OORE_ANDROID_KEY_PASSWORD_ENV,
-        )?,
-    }))
-}
-
-fn android_signing_prepared_marker(
-    source: &str,
-    variant: AndroidSigningBuildType,
-    prep: &AndroidSigningPreparation,
-) -> String {
+fn android_signing_prepared_marker(source: &str, variant: AndroidSigningBuildType) -> String {
     format!(
         "[oore-signing] {}",
         serde_json::json!({
-            "event": "android_signing_prepared",
+            "event": "android_signing_reserved",
             "source": source,
             "variant": match variant {
                 AndroidSigningBuildType::Debug => "debug",
                 AndroidSigningBuildType::Release => "release",
             },
-            "key_properties_path": prep.materialization.key_properties_path,
-            "keystore_path": prep.materialization.keystore_path,
-            "key_properties_overwrote_existing": prep.materialization.key_properties_overwrote_existing,
-            "keystore_overwrote_existing": prep.materialization.keystore_overwrote_existing,
+            "delivery": "runner_owned_post_build_signer",
         })
     )
 }
@@ -240,103 +360,6 @@ fn is_android_flutter_build_command(command: &str) -> bool {
         || trimmed.starts_with("fvm flutter build apk")
         || trimmed.starts_with("flutter build appbundle")
         || trimmed.starts_with("fvm flutter build appbundle")
-}
-
-fn requires_android_signing(build_commands: &[String]) -> bool {
-    build_commands
-        .iter()
-        .any(|command| is_android_flutter_build_command(command))
-}
-
-fn materialize_android_signing_files(
-    workspace: &Path,
-    inputs: &AndroidSigningInputs,
-) -> anyhow::Result<AndroidSigningMaterialization> {
-    let android_dir = workspace.join("android");
-    if !android_dir.is_dir() {
-        anyhow::bail!(
-            "Android signing configuration was provided, but no android/ directory exists in repository"
-        );
-    }
-
-    let app_dir = android_dir.join("app");
-    fs::create_dir_all(&app_dir).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to prepare Android app directory {}: {e}",
-            app_dir.display()
-        )
-    })?;
-
-    let keystore_file_name = "oore-upload-keystore.jks";
-    let keystore_path = app_dir.join(keystore_file_name);
-    let keystore_overwrote_existing = keystore_path.exists();
-    fs::write(&keystore_path, &inputs.keystore_bytes).map_err(|e| {
-        anyhow::anyhow!("failed to write keystore {}: {e}", keystore_path.display())
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&keystore_path, perms).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to secure Android keystore {}: {e}",
-                keystore_path.display()
-            )
-        })?;
-    }
-
-    let key_properties_path = android_dir.join("key.properties");
-    let key_properties_overwrote_existing = key_properties_path.exists();
-    let key_properties = format!(
-        "storePassword={}\nkeyPassword={}\nkeyAlias={}\nstoreFile={}\n",
-        inputs.keystore_password, inputs.key_password, inputs.key_alias, keystore_file_name
-    );
-    fs::write(&key_properties_path, key_properties).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to write Android key.properties {}: {e}",
-            key_properties_path.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&key_properties_path, perms).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to secure Android key.properties {}: {e}",
-                key_properties_path.display()
-            )
-        })?;
-    }
-
-    Ok(AndroidSigningMaterialization {
-        keystore_path,
-        key_properties_path,
-        keystore_overwrote_existing,
-        key_properties_overwrote_existing,
-    })
-}
-
-fn prepare_android_signing_if_configured(
-    workspace: &Path,
-    build_commands: &[String],
-) -> anyhow::Result<Option<AndroidSigningPreparation>> {
-    if !requires_android_signing(build_commands) {
-        return Ok(None);
-    }
-
-    let env = collect_android_signing_env(|key| std::env::var(key).ok());
-    let Some(inputs) = resolve_android_signing_inputs(&env)? else {
-        return Ok(None);
-    };
-
-    let materialization = materialize_android_signing_files(workspace, &inputs)?;
-    Ok(Some(AndroidSigningPreparation {
-        inputs,
-        materialization,
-    }))
 }
 
 fn android_signing_variant_for_command(command: &str) -> Option<AndroidSigningBuildType> {
@@ -386,11 +409,20 @@ fn signing_inputs_from_runner_profile(
     })
 }
 
+fn zeroize_ios_signing_bundle(bundle: &mut RunnerIosSigningBundle) {
+    bundle.p12_base64.zeroize();
+    bundle.p12_password.zeroize();
+    for profile in &mut bundle.provisioning_profiles {
+        profile.profile_base64.zeroize();
+    }
+}
+
 async fn fetch_job_android_signing(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    signing_token: &str,
 ) -> anyhow::Result<Option<RunnerAndroidSigningResponse>> {
     let resp = client
         .get(format!(
@@ -398,12 +430,10 @@ async fn fetch_job_android_signing(
             daemon_url, config.runner_id, build_id
         ))
         .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
         .send()
         .await?;
 
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
     if !resp.status().is_success() {
         anyhow::bail!("Android signing lookup failed: {}", resp.status());
     }
@@ -422,9 +452,201 @@ fn select_runner_signing_profile(
     }
 }
 
+struct PrivateSigningDirectory {
+    path: PathBuf,
+}
+
+impl Drop for PrivateSigningDirectory {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn android_artifact_extension(command: &str) -> Option<&'static str> {
+    if !is_android_flutter_build_command(command) {
+        None
+    } else if command.split_whitespace().any(|part| part == "appbundle") {
+        Some("aab")
+    } else {
+        Some("apk")
+    }
+}
+
+fn find_apksigner() -> PathBuf {
+    for root in ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .into_iter()
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
+    {
+        let build_tools = root.join("build-tools");
+        let mut candidates = fs::read_dir(build_tools)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("apksigner"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        candidates.sort();
+        if let Some(path) = candidates.pop() {
+            return path;
+        }
+    }
+    PathBuf::from("apksigner")
+}
+
+fn run_android_signer_command(
+    program: &Path,
+    args: &[String],
+    inputs: &AndroidSigningInputs,
+    action: &str,
+) -> anyhow::Result<()> {
+    let output = Command::new(program)
+        .args(args)
+        .env(ANDROID_SIGNER_STORE_PASSWORD_ENV, &inputs.keystore_password)
+        .env(ANDROID_SIGNER_KEY_PASSWORD_ENV, &inputs.key_password)
+        .output()
+        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("failed to {action}: {stderr}");
+    }
+    Ok(())
+}
+
+fn scrub_managed_android_signing_env(command: &mut tokio::process::Command) {
+    for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
+        command.env_remove(key);
+    }
+}
+
+fn android_artifacts_for_signing(
+    workspace: &Path,
+    extension: &str,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let outputs = workspace.join("build").join("app").join("outputs");
+    let mut artifacts = walk_artifact_candidates(&outputs)
+        .into_iter()
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some(extension))
+        .collect::<Vec<_>>();
+    artifacts.sort();
+    if artifacts.is_empty() {
+        anyhow::bail!(
+            "no .{extension} artifact was produced under {}",
+            outputs.display()
+        );
+    }
+    Ok(artifacts)
+}
+
+fn sign_android_artifacts(
+    workspace: &Path,
+    signing_workspace: &Path,
+    command: &str,
+    inputs: &AndroidSigningInputs,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let extension = android_artifact_extension(command)
+        .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
+    let artifacts = android_artifacts_for_signing(workspace, extension)?;
+    let signing_dir = create_private_workspace_in(signing_workspace, "android-signer")?;
+    let _cleanup = PrivateSigningDirectory {
+        path: signing_dir.clone(),
+    };
+    let keystore_path = signing_dir.join("managed-keystore.jks");
+    write_private_file(&keystore_path, &inputs.keystore_bytes)?;
+    for (index, artifact) in artifacts.iter().enumerate() {
+        let signed_artifact = signing_dir.join(format!("signed-{index}.{extension}"));
+        if extension == "apk" {
+            let apksigner = find_apksigner();
+            run_android_signer_command(
+                &apksigner,
+                &[
+                    "sign".to_string(),
+                    "--ks".to_string(),
+                    keystore_path.display().to_string(),
+                    "--ks-key-alias".to_string(),
+                    inputs.key_alias.clone(),
+                    "--ks-pass".to_string(),
+                    format!("env:{ANDROID_SIGNER_STORE_PASSWORD_ENV}"),
+                    "--key-pass".to_string(),
+                    format!("env:{ANDROID_SIGNER_KEY_PASSWORD_ENV}"),
+                    "--out".to_string(),
+                    signed_artifact.display().to_string(),
+                    artifact.display().to_string(),
+                ],
+                inputs,
+                "sign Android APK",
+            )?;
+            run_android_signer_command(
+                &apksigner,
+                &[
+                    "verify".to_string(),
+                    "--verbose".to_string(),
+                    "--print-certs".to_string(),
+                    signed_artifact.display().to_string(),
+                ],
+                inputs,
+                "verify Android APK signature",
+            )?;
+        } else {
+            fs::copy(artifact, &signed_artifact)?;
+            let strip = Command::new("zip")
+                .args([
+                    "-d",
+                    signed_artifact.to_str().unwrap_or_default(),
+                    "META-INF/*.SF",
+                    "META-INF/*.RSA",
+                    "META-INF/*.DSA",
+                    "META-INF/*.EC",
+                    "META-INF/MANIFEST.MF",
+                ])
+                .output()
+                .context("failed to strip existing AAB signatures")?;
+            if !strip.status.success() && strip.status.code() != Some(12) {
+                anyhow::bail!(
+                    "failed to strip existing AAB signatures: {}",
+                    String::from_utf8_lossy(&strip.stderr).trim()
+                );
+            }
+            run_android_signer_command(
+                Path::new("jarsigner"),
+                &[
+                    "-keystore".to_string(),
+                    keystore_path.display().to_string(),
+                    "-storepass:env".to_string(),
+                    ANDROID_SIGNER_STORE_PASSWORD_ENV.to_string(),
+                    "-keypass:env".to_string(),
+                    ANDROID_SIGNER_KEY_PASSWORD_ENV.to_string(),
+                    signed_artifact.display().to_string(),
+                    inputs.key_alias.clone(),
+                ],
+                inputs,
+                "sign Android App Bundle",
+            )?;
+            run_android_signer_command(
+                Path::new("jarsigner"),
+                &[
+                    "-verify".to_string(),
+                    "-strict".to_string(),
+                    signed_artifact.display().to_string(),
+                ],
+                inputs,
+                "verify Android App Bundle signature",
+            )?;
+        }
+
+        fs::copy(&signed_artifact, artifact).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to replace Android artifact {}: {error}",
+                artifact.display()
+            )
+        })?;
+    }
+    Ok(artifacts)
+}
+
 #[derive(Debug, Clone)]
 struct IosSigningMaterialization {
-    p12_path: PathBuf,
     keychain_path: PathBuf,
     export_options_plist_path: PathBuf,
     bundle_profile_mapping: Vec<(String, String)>,
@@ -448,21 +670,48 @@ struct SignedIosArchive {
     app: IosAppMetadata,
 }
 
-struct IosSigningCleanup {
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct IosCleanupJournal {
     keychain_path: PathBuf,
     original_default_keychain: String,
     original_keychains: Vec<String>,
     installed_profiles: Vec<PathBuf>,
 }
 
+struct IosSigningCleanup {
+    journal_path: Option<PathBuf>,
+    journal: IosCleanupJournal,
+}
+
+impl IosSigningCleanup {
+    fn cleanup(&mut self) -> anyhow::Result<()> {
+        if self.journal_path.is_none() {
+            return Ok(());
+        }
+        cleanup_ios_signing_state(&self.journal)?;
+        let journal_path = self
+            .journal_path
+            .take()
+            .expect("journal path checked before cleanup");
+        match fs::remove_file(&journal_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                self.journal_path = Some(journal_path.clone());
+                Err(anyhow::anyhow!(
+                    "failed to remove iOS cleanup journal {}: {error}",
+                    journal_path.display()
+                ))
+            }
+        }
+    }
+}
+
 impl Drop for IosSigningCleanup {
     fn drop(&mut self) {
-        cleanup_ios_signing_state(
-            Some(&self.keychain_path),
-            Some(&self.original_default_keychain),
-            &self.original_keychains,
-            &self.installed_profiles,
-        );
+        if let Err(error) = self.cleanup() {
+            eprintln!("Warning: failed to clean up iOS signing state: {error:#}");
+        }
     }
 }
 
@@ -490,47 +739,108 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn cleanup_ios_signing_state(
-    keychain_path: Option<&Path>,
-    original_default_keychain: Option<&str>,
-    original_keychains: &[String],
-    installed_profiles: &[PathBuf],
-) {
-    for profile in installed_profiles {
-        let _ = fs::remove_file(profile);
-    }
-
-    if let Some(path) = keychain_path {
-        if let Some(default_keychain) = original_default_keychain {
-            let _ = run_security_command_with_strings(&[
+fn cleanup_ios_signing_state(journal: &IosCleanupJournal) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    let keychain_path = journal.keychain_path.display().to_string();
+    match run_security_command(&["default-keychain", "-d", "user"]) {
+        Ok(output)
+            if parse_keychain_list(&output).into_iter().next().as_deref()
+                == Some(keychain_path.as_str()) =>
+        {
+            if let Err(error) = run_security_command_with_strings(&[
                 "default-keychain".to_string(),
                 "-d".to_string(),
                 "user".to_string(),
                 "-s".to_string(),
-                default_keychain.to_string(),
-            ]);
+                journal.original_default_keychain.clone(),
+            ]) {
+                errors.push(format!("failed to restore default keychain: {error:#}"));
+            }
         }
-        if !original_keychains.is_empty() {
-            let _ = run_security_command_with_strings(
-                &[
-                    "list-keychains".to_string(),
-                    "-d".to_string(),
-                    "user".to_string(),
-                    "-s".to_string(),
-                ]
-                .into_iter()
-                .chain(original_keychains.iter().cloned())
-                .collect::<Vec<_>>(),
-            );
-        }
-
-        let keychain_str = path.display().to_string();
-        let _ = run_security_command_with_strings(&[
-            "delete-keychain".to_string(),
-            keychain_str.clone(),
-        ]);
-        let _ = fs::remove_file(path);
+        Ok(_) => {}
+        Err(error) => errors.push(format!("failed to inspect default keychain: {error:#}")),
     }
+
+    match run_security_command(&["list-keychains", "-d", "user"]) {
+        Ok(output) => {
+            let current_keychains = parse_keychain_list(&output);
+            if current_keychains.iter().any(|path| path == &keychain_path)
+                && let Err(error) = run_security_command_with_strings(
+                    &[
+                        "list-keychains".to_string(),
+                        "-d".to_string(),
+                        "user".to_string(),
+                        "-s".to_string(),
+                    ]
+                    .into_iter()
+                    .chain(
+                        current_keychains
+                            .into_iter()
+                            .filter(|path| path != &keychain_path),
+                    )
+                    .collect::<Vec<_>>(),
+                )
+            {
+                errors.push(format!("failed to restore keychain search list: {error:#}"));
+            }
+        }
+        Err(error) => errors.push(format!("failed to inspect keychain search list: {error:#}")),
+    }
+
+    if journal.keychain_path.exists() {
+        if let Err(error) = run_security_command_with_strings(&[
+            "delete-keychain".to_string(),
+            keychain_path.clone(),
+        ]) {
+            errors.push(format!("failed to delete build keychain: {error:#}"));
+        }
+        match fs::remove_file(&journal.keychain_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!(
+                "failed to remove iOS signing keychain {}: {error}",
+                journal.keychain_path.display()
+            )),
+        }
+    }
+
+    for profile in &journal.installed_profiles {
+        match fs::remove_file(profile) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!(
+                "failed to remove installed provisioning profile {}: {error}",
+                profile.display()
+            )),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(errors.join("; "))
+    }
+}
+
+fn write_ios_cleanup_journal(path: &Path, journal: &IosCleanupJournal) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec(journal)?;
+    let temporary_path = path.with_extension("tmp");
+    write_private_file(&temporary_path, &bytes).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to write iOS cleanup journal {}: {error}",
+            temporary_path.display()
+        )
+    })?;
+    fs::rename(&temporary_path, path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to publish iOS cleanup journal {}: {error}",
+            path.display()
+        )
+    })?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
 }
 
 fn parse_keychain_list(raw: &str) -> Vec<String> {
@@ -670,7 +980,7 @@ fn write_export_options_plist(
 }
 
 fn install_ios_signing_bundle(
-    workspace: &Path,
+    signing_workspace: &Path,
     bundle: &RunnerIosSigningBundle,
 ) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
     if bundle.team_id.trim().is_empty() {
@@ -686,7 +996,7 @@ fn install_ios_signing_bundle(
         anyhow::bail!("iOS signing bundle has no provisioning profiles");
     }
 
-    let signing_dir = workspace.join(IOS_SIGNING_DIR);
+    let signing_dir = signing_workspace.join(IOS_SIGNING_DIR);
     fs::create_dir_all(&signing_dir).map_err(|e| {
         anyhow::anyhow!(
             "failed to create iOS signing working directory {}: {e}",
@@ -730,60 +1040,83 @@ fn install_ios_signing_bundle(
         )
     })?;
 
-    let mut installed_profiles = Vec::new();
     let keychain_password = random_password_hex();
     let keychain_path = signing_dir.join("oore-ci-build.keychain-db");
     let keychain_path_str = keychain_path.display().to_string();
-    let mut keychain_created = false;
-    let mut original_default_keychain = None;
-    let mut original_keychains = Vec::new();
+    let mut prepared_profiles = Vec::new();
+    for profile in &bundle.provisioning_profiles {
+        if profile.bundle_id.trim().is_empty() {
+            anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
+        }
+        let profile_bytes = decode_runner_b64(
+            &profile.profile_base64,
+            &format!("provisioning profile '{}'", profile.bundle_id),
+        )?;
+        if profile_bytes.is_empty() {
+            anyhow::bail!(
+                "decoded provisioning profile '{}' is empty",
+                profile.bundle_id
+            );
+        }
+
+        let fallback_profile_name = format!("{}.mobileprovision", profile.bundle_id);
+        let work_file_name = safe_ios_signing_filename(
+            &profile.profile_filename,
+            &fallback_profile_name,
+            "profile_filename",
+        )?;
+        let work_path = profile_work_dir.join(work_file_name);
+        write_private_file(&work_path, &profile_bytes).map_err(|error| {
+            anyhow::anyhow!("failed to write profile {}: {error}", work_path.display())
+        })?;
+
+        let profile_ref = profile
+            .profile_uuid
+            .clone()
+            .or_else(|| profile.profile_name.clone())
+            .unwrap_or_else(|| hex::encode(Sha256::digest(&profile_bytes)));
+        let installed_path = installed_profiles_dir.join(format!("{profile_ref}.mobileprovision"));
+        prepared_profiles.push((
+            profile.bundle_id.clone(),
+            profile_ref,
+            work_path,
+            installed_path,
+            profile_bytes,
+        ));
+    }
+
+    let original_keychains =
+        parse_keychain_list(&run_security_command(&["list-keychains", "-d", "user"])?);
+    let original_default_keychain =
+        parse_keychain_list(&run_security_command(&["default-keychain", "-d", "user"])?)
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no default user keychain is configured"))?;
+    let journal = IosCleanupJournal {
+        keychain_path: keychain_path.clone(),
+        original_default_keychain,
+        original_keychains,
+        installed_profiles: prepared_profiles
+            .iter()
+            .map(|(_, _, _, installed_path, _)| installed_path.clone())
+            .collect(),
+    };
+    let journal_path = signing_workspace.join(IOS_CLEANUP_JOURNAL);
+    write_ios_cleanup_journal(&journal_path, &journal)?;
 
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
         let mut bundle_profile_mapping = Vec::new();
         let mut bundle_profile_paths = Vec::new();
-        for profile in &bundle.provisioning_profiles {
-            if profile.bundle_id.trim().is_empty() {
-                anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
-            }
-            let profile_bytes = decode_runner_b64(
-                &profile.profile_base64,
-                &format!("provisioning profile '{}'", profile.bundle_id),
-            )?;
-            if profile_bytes.is_empty() {
-                anyhow::bail!(
-                    "decoded provisioning profile '{}' is empty",
-                    profile.bundle_id
-                );
-            }
-
-            let fallback_profile_name = format!("{}.mobileprovision", profile.bundle_id);
-            let work_file_name = safe_ios_signing_filename(
-                &profile.profile_filename,
-                &fallback_profile_name,
-                "profile_filename",
-            )?;
-            let work_path = profile_work_dir.join(work_file_name);
-            fs::write(&work_path, &profile_bytes).map_err(|e| {
-                anyhow::anyhow!("failed to write profile {}: {e}", work_path.display())
-            })?;
-
-            let profile_ref = profile
-                .profile_uuid
-                .clone()
-                .or_else(|| profile.profile_name.clone())
-                .unwrap_or_else(|| hex::encode(Sha256::digest(&profile_bytes)));
-
-            let installed_name = format!("{profile_ref}.mobileprovision");
-            let installed_path = installed_profiles_dir.join(installed_name);
-            fs::write(&installed_path, &profile_bytes).map_err(|e| {
+        for (bundle_id, profile_ref, work_path, installed_path, profile_bytes) in &prepared_profiles
+        {
+            write_private_file(installed_path, profile_bytes).map_err(|e| {
                 anyhow::anyhow!(
                     "failed to install provisioning profile {}: {e}",
                     installed_path.display()
                 )
             })?;
-            installed_profiles.push(installed_path);
-            bundle_profile_mapping.push((profile.bundle_id.clone(), profile_ref));
-            bundle_profile_paths.push((profile.bundle_id.clone(), work_path));
+            bundle_profile_mapping.push((bundle_id.clone(), profile_ref.clone()));
+            bundle_profile_paths.push((bundle_id.clone(), work_path.clone()));
         }
 
         run_security_command_with_strings(&[
@@ -792,7 +1125,6 @@ fn install_ios_signing_bundle(
             keychain_password.clone(),
             keychain_path_str.clone(),
         ])?;
-        keychain_created = true;
 
         run_security_command_with_strings(&[
             "set-keychain-settings".to_string(),
@@ -813,17 +1145,6 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
         ])?;
 
-        let original_keychain_output = run_security_command(&["list-keychains", "-d", "user"])?;
-        original_keychains = parse_keychain_list(&original_keychain_output);
-        let original_default_output = run_security_command(&["default-keychain", "-d", "user"])?;
-        original_default_keychain = parse_keychain_list(&original_default_output)
-            .into_iter()
-            .next();
-        anyhow::ensure!(
-            original_default_keychain.is_some(),
-            "no default user keychain is configured"
-        );
-
         // Match Codemagic's proven keychain layout: keep the user's normal
         // keychains available for Apple's public trust chain and append the
         // isolated build keychain that owns the private signing identity.
@@ -833,7 +1154,7 @@ fn install_ios_signing_bundle(
             "user".to_string(),
             "-s".to_string(),
         ];
-        build_keychain_search_list.extend(original_keychains.iter().cloned());
+        build_keychain_search_list.extend(journal.original_keychains.iter().cloned());
         build_keychain_search_list.push(keychain_path_str.clone());
         run_security_command_with_strings(&build_keychain_search_list)?;
         run_security_command_with_strings(&[
@@ -920,7 +1241,6 @@ fn install_ios_signing_bundle(
         )?;
 
         Ok(IosSigningMaterialization {
-            p12_path: p12_path.clone(),
             keychain_path: keychain_path.clone(),
             export_options_plist_path,
             bundle_profile_mapping,
@@ -935,25 +1255,19 @@ fn install_ios_signing_bundle(
         Ok(materialization) => Ok((
             materialization,
             IosSigningCleanup {
-                keychain_path,
-                original_default_keychain: original_default_keychain
-                    .expect("default keychain verified before signing setup"),
-                original_keychains,
-                installed_profiles,
+                journal_path: Some(journal_path),
+                journal,
             },
         )),
         Err(err) => {
-            cleanup_ios_signing_state(
-                if keychain_created {
-                    Some(&keychain_path)
-                } else {
-                    None
-                },
-                original_default_keychain.as_deref(),
-                &original_keychains,
-                &installed_profiles,
-            );
-            Err(err)
+            match cleanup_ios_signing_state(&journal)
+                .and_then(|()| fs::remove_file(&journal_path).map_err(anyhow::Error::from))
+            {
+                Ok(()) => Err(err),
+                Err(cleanup_error) => Err(err.context(format!(
+                    "iOS signing cleanup was deferred for startup reconciliation: {cleanup_error:#}"
+                ))),
+            }
         }
     }
 }
@@ -1473,6 +1787,7 @@ async fn fetch_job_ios_signing(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    signing_token: &str,
 ) -> anyhow::Result<Option<RunnerIosSigningResponse>> {
     let resp = client
         .get(format!(
@@ -1480,12 +1795,10 @@ async fn fetch_job_ios_signing(
             daemon_url, config.runner_id, build_id
         ))
         .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
         .send()
         .await?;
 
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -1499,12 +1812,349 @@ async fn fetch_job_ios_signing(
     Ok(Some(payload))
 }
 
+fn validate_ios_cleanup_journal(
+    workspace: &Path,
+    journal: &IosCleanupJournal,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        journal.keychain_path
+            == workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+        "iOS cleanup journal keychain path is outside its workspace"
+    );
+    let profile_root = PathBuf::from(
+        std::env::var("HOME")
+            .map_err(|_| anyhow::anyhow!("HOME environment variable is not set"))?,
+    )
+    .join("Library/MobileDevice/Provisioning Profiles");
+    anyhow::ensure!(
+        journal.installed_profiles.iter().all(|path| {
+            path.parent() == Some(profile_root.as_path())
+                && path.extension().and_then(|extension| extension.to_str())
+                    == Some("mobileprovision")
+        }),
+        "iOS cleanup journal contains an invalid provisioning profile path"
+    );
+    anyhow::ensure!(
+        journal
+            .original_keychains
+            .contains(&journal.original_default_keychain),
+        "iOS cleanup journal has no original default keychain"
+    );
+    Ok(())
+}
+
+fn ensure_legacy_workspace_has_no_residue(path: &Path) -> anyhow::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "legacy runner workspace {} is not a trusted directory; remove it before starting the runner",
+        path.display()
+    );
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_name() != SPOTLIGHT_NO_INDEX_SENTINEL {
+            anyhow::bail!(
+                "legacy runner workspace {} contains unreconciled build state; clean it before starting the runner",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn current_uid() -> anyhow::Result<u32> {
+    let output = Command::new("/usr/bin/id").arg("-u").output()?;
+    anyhow::ensure!(output.status.success(), "failed to determine runner uid");
+    String::from_utf8(output.stdout)?
+        .trim()
+        .parse()
+        .context("invalid uid returned by /usr/bin/id")
+}
+
+#[cfg(unix)]
+fn legacy_reconciliation_complete(root: &Path) -> anyhow::Result<bool> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut root_options = OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let root = root_options.open(root)?;
+    let mut marker = match openat_no_follow(&root, LEGACY_RECONCILIATION_MARKER, false) {
+        Ok(marker) => marker,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("failed to open legacy reconciliation marker"),
+    };
+    let metadata = marker.metadata()?;
+    anyhow::ensure!(
+        metadata.uid() == current_uid()?
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o077 == 0,
+        "legacy reconciliation marker is not a private owned file"
+    );
+    let mut content = Vec::new();
+    marker.read_to_end(&mut content)?;
+    anyhow::ensure!(
+        content == b"complete\n",
+        "legacy reconciliation marker has invalid content"
+    );
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn legacy_reconciliation_complete(root: &Path) -> anyhow::Result<bool> {
+    let marker = root.join(LEGACY_RECONCILIATION_MARKER);
+    let metadata = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "legacy reconciliation marker is not a regular file"
+    );
+    anyhow::ensure!(
+        fs::read(&marker)? == b"complete\n",
+        "legacy reconciliation marker has invalid content"
+    );
+    Ok(true)
+}
+
+struct OpenIosCleanupJournal {
+    journal: IosCleanupJournal,
+    #[cfg(unix)]
+    directory: fs::File,
+    #[cfg(not(unix))]
+    path: PathBuf,
+}
+
+impl OpenIosCleanupJournal {
+    fn remove(self) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::ffi::CString;
+            use std::os::fd::AsRawFd;
+
+            let name = CString::new("cleanup-journal.json").expect("static filename");
+            let result = unsafe { libc::unlinkat(self.directory.as_raw_fd(), name.as_ptr(), 0) };
+            if result == 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() == ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(error.into())
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            match fs::remove_file(self.path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.into()),
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn openat_no_follow(parent: &fs::File, name: &str, directory: bool) -> std::io::Result<fs::File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let name = CString::new(name).expect("static path component");
+    let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+    if directory {
+        flags |= libc::O_DIRECTORY;
+    }
+    let descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+    if descriptor < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(unsafe { fs::File::from_raw_fd(descriptor) })
+    }
+}
+
+#[cfg(unix)]
+fn open_ios_cleanup_journal(workspace: &Path) -> anyhow::Result<Option<OpenIosCleanupJournal>> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut root_options = OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let root = root_options.open(workspace).with_context(|| {
+        format!(
+            "failed to open runner workspace without following links: {}",
+            workspace.display()
+        )
+    })?;
+    let root_metadata = root.metadata()?;
+    anyhow::ensure!(
+        root_metadata.uid() == current_uid()?
+            && root_metadata.is_dir()
+            && root_metadata.permissions().mode() & 0o077 == 0,
+        "runner workspace {} is not a private owned directory",
+        workspace.display()
+    );
+
+    let oore_dir = match openat_no_follow(&root, ".oore", true) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to open runner metadata directory"),
+    };
+    let signing_dir = match openat_no_follow(&oore_dir, "ios-signing", true) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to open iOS signing journal directory"),
+    };
+    let mut journal_file = match openat_no_follow(&signing_dir, "cleanup-journal.json", false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to open iOS cleanup journal"),
+    };
+    let metadata = journal_file.metadata()?;
+    anyhow::ensure!(
+        metadata.uid() == current_uid()?
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o077 == 0,
+        "iOS cleanup journal is not a private owned file"
+    );
+    let mut bytes = Vec::new();
+    journal_file.read_to_end(&mut bytes)?;
+    let journal = serde_json::from_slice(&bytes).context("failed to parse iOS cleanup journal")?;
+    Ok(Some(OpenIosCleanupJournal {
+        journal,
+        directory: signing_dir,
+    }))
+}
+
+#[cfg(not(unix))]
+fn open_ios_cleanup_journal(workspace: &Path) -> anyhow::Result<Option<OpenIosCleanupJournal>> {
+    let metadata_dir = workspace.join(".oore");
+    let signing_dir = metadata_dir.join("ios-signing");
+    for directory in [&metadata_dir, &signing_dir] {
+        let metadata = match fs::symlink_metadata(directory) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "iOS signing journal path contains a link"
+        );
+    }
+    let path = signing_dir.join("cleanup-journal.json");
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "iOS cleanup journal is not a regular file"
+    );
+    let journal = serde_json::from_slice(&fs::read(&path)?)?;
+    Ok(Some(OpenIosCleanupJournal { journal, path }))
+}
+
+fn reconcile_stale_workspaces_with(
+    parent: &Path,
+    mut reconcile_journal: impl FnMut(&Path, &IosCleanupJournal) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    #[cfg(unix)]
+    let uid = current_uid()?;
+
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        if !is_runner_workspace_name(file_name) {
+            continue;
+        }
+
+        let workspace = entry.path();
+        let metadata = fs::symlink_metadata(&workspace)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            if metadata.uid() != uid {
+                continue;
+            }
+            anyhow::ensure!(
+                metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
+                "runner workspace {} is not a private directory",
+                workspace.display()
+            );
+        }
+        #[cfg(not(unix))]
+        anyhow::ensure!(
+            metadata.is_dir(),
+            "runner workspace {} is not a directory",
+            workspace.display()
+        );
+
+        if let Some(journal) = open_ios_cleanup_journal(&workspace)? {
+            reconcile_journal(&workspace, &journal.journal)?;
+            journal.remove()?;
+        }
+        fs::remove_dir_all(&workspace).with_context(|| {
+            format!(
+                "failed to remove stale runner workspace {}",
+                workspace.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn reconcile_stale_runner_mutations() -> anyhow::Result<()> {
+    // ponytail: one process per runner account; add a process lease if replicas become supported.
+    ensure_legacy_workspace_has_no_residue(Path::new(LEGACY_BUILD_WORKSPACE_ROOT))?;
+    let runner_root = prepare_runner_workspace_root()?;
+    reconcile_stale_workspaces_with(&runner_root, |workspace, journal| {
+        validate_ios_cleanup_journal(workspace, journal)?;
+        cleanup_ios_signing_state(journal)
+    })?;
+    if !legacy_reconciliation_complete(&runner_root)? {
+        // One-time migration for generations created before the private runner root existed.
+        reconcile_stale_workspaces_with(&std::env::temp_dir(), |workspace, journal| {
+            validate_ios_cleanup_journal(workspace, journal)?;
+            cleanup_ios_signing_state(journal)
+        })?;
+        write_private_file(
+            &runner_root.join(LEGACY_RECONCILIATION_MARKER),
+            b"complete\n",
+        )?;
+    }
+    Ok(())
+}
+
 pub async fn run_runner_forever(
     config: RunnerConfig,
     daemon_url_override: Option<String>,
 ) -> anyhow::Result<()> {
     let daemon_url = daemon_url_override.unwrap_or(config.daemon_url.clone());
+    require_safe_daemon_url(&daemon_url)?;
     let client = reqwest::Client::new();
+
+    reconcile_stale_runner_mutations()
+        .context("failed to reconcile stale runner state before startup")?;
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
     println!("Connecting to: {}", daemon_url);
@@ -1542,6 +2192,11 @@ pub async fn run_runner_forever(
 
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
+        if let Err(error) = reconcile_stale_runner_mutations() {
+            eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            continue;
+        }
         match claim_and_execute(&client, &daemon_url, &config).await {
             Ok(_executed) => {}
             Err(e) => {
@@ -1651,6 +2306,13 @@ struct WorkspaceCleanup {
 
 impl Drop for WorkspaceCleanup {
     fn drop(&mut self) {
+        if self.path.join(IOS_CLEANUP_JOURNAL).exists() {
+            eprintln!(
+                "Warning: retaining workspace {} for iOS signing reconciliation",
+                self.path.display()
+            );
+            return;
+        }
         if self.path.exists()
             && let Err(e) = fs::remove_dir_all(&self.path)
         {
@@ -2124,11 +2786,58 @@ fn resolve_execution_plan(
     })
 }
 
+#[derive(Default)]
+struct BuildAuthorityState {
+    consecutive_failures: AtomicU8,
+}
+
+impl BuildAuthorityState {
+    fn confirmed_active(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
+
+    fn transient_failure(&self) -> anyhow::Result<()> {
+        let failures = self
+            .consecutive_failures
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                Some(value.saturating_add(1))
+            })
+            .unwrap_or(u8::MAX)
+            .saturating_add(1);
+        if failures >= MAX_CONSECUTIVE_AUTHORITY_FAILURES {
+            return Err(BuildTerminated {
+                status: "controller_unavailable".to_string(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+}
+
+fn authority_loss(status: reqwest::StatusCode) -> anyhow::Error {
+    let status = match status {
+        reqwest::StatusCode::UNAUTHORIZED => "runner_unauthorized".to_string(),
+        reqwest::StatusCode::FORBIDDEN => "assignment_lost".to_string(),
+        reqwest::StatusCode::NOT_FOUND => "build_missing".to_string(),
+        status => format!("protocol_rejected_{status}"),
+    };
+    BuildTerminated { status }.into()
+}
+
+fn is_transient_authority_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || matches!(
+            status,
+            reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+        )
+}
+
 async fn check_build_active(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    authority: &BuildAuthorityState,
 ) -> anyhow::Result<()> {
     let resp = client
         .get(format!(
@@ -2156,9 +2865,14 @@ async fn check_build_active(
                 }
                 .into());
             }
+            authority.confirmed_active();
             Ok(())
         }
-        Ok(_) | Err(_) => Ok(()),
+        Ok(response) if is_transient_authority_status(response.status()) => {
+            authority.transient_failure()
+        }
+        Ok(response) => Err(authority_loss(response.status())),
+        Err(_) => authority.transient_failure(),
     }
 }
 
@@ -2167,10 +2881,11 @@ async fn poll_cancellation(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    authority: Arc<BuildAuthorityState>,
 ) {
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        if check_build_active(client, daemon_url, config, build_id)
+        if check_build_active(client, daemon_url, config, build_id, &authority)
             .await
             .is_err()
         {
@@ -2274,26 +2989,36 @@ async fn execute_build(
     daemon_url: &str,
     config: &RunnerConfig,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
-    let workspace_root = PathBuf::from(BUILD_WORKSPACE_ROOT);
-    if let Err(e) = fs::create_dir_all(&workspace_root) {
-        return (vec![], Err(e.into()));
-    }
-    try_mark_no_spotlight_index(&workspace_root);
-
-    let workspace = workspace_root.join(&job.build_id);
-    if let Err(e) = fs::create_dir_all(&workspace) {
-        return (vec![], Err(e.into()));
-    }
+    let runner_workspace_root = match prepare_runner_workspace_root() {
+        Ok(root) => root,
+        Err(error) => return (vec![], Err(error)),
+    };
+    let workspace = match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
+        Ok(workspace) => workspace,
+        Err(error) => return (vec![], Err(error.into())),
+    };
+    try_mark_no_spotlight_index(&workspace);
 
     let _cleanup = WorkspaceCleanup {
         path: workspace.clone(),
     };
+    let signing_workspace =
+        match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
+            Ok(workspace) => workspace,
+            Err(error) => return (vec![], Err(error.into())),
+        };
+    try_mark_no_spotlight_index(&signing_workspace);
+    let _signing_cleanup = WorkspaceCleanup {
+        path: signing_workspace.clone(),
+    };
+    let authority = Arc::new(BuildAuthorityState::default());
 
     let snapshot = &job.config_snapshot;
     let mut steps = Vec::new();
     let mut log_seq: i64 = 0;
 
-    if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id).await {
+    if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id, &authority).await
+    {
         return (steps, Err(e));
     }
 
@@ -2350,11 +3075,15 @@ async fn execute_build(
     )
     .await;
 
-    let mut checkout_child = tokio::process::Command::new("sh");
+    let mut checkout_child = match repository_shell_command(
+        &checkout.shell_script,
+        &workspace,
+        &runner_workspace_root,
+    ) {
+        Ok(command) => command,
+        Err(error) => return (steps, Err(error)),
+    };
     checkout_child
-        .arg("-c")
-        .arg(&checkout.shell_script)
-        .current_dir(&workspace)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
@@ -2375,7 +3104,7 @@ async fn execute_build(
         config,
         &job.build_id,
         &mut log_seq,
-        poll_cancellation(client, daemon_url, config, &job.build_id),
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
     )
     .await;
 
@@ -2446,35 +3175,31 @@ async fn execute_build(
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
-    let mut signing_preparation: Option<AndroidSigningPreparation> = None;
+    let mut signing_inputs: Option<AndroidSigningInputs> = None;
     let mut ios_signing_source: Option<&str> = None;
     let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
-    let mut ios_signing_materialization: Option<IosSigningMaterialization> = None;
-    let mut ios_signing_cleanup: Option<IosSigningCleanup> = None;
     let build_commands = execution_plan.stage_commands.build.as_slice();
     match determine_android_signing_variant(build_commands) {
         Ok(Some(variant)) => {
             signing_variant = Some(variant);
-            match fetch_job_android_signing(client, daemon_url, config, &job.build_id).await {
+            match fetch_job_android_signing(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                &job.signing_token,
+            )
+            .await
+            {
                 Ok(Some(server_profiles)) => {
                     if let Some(profile) = select_runner_signing_profile(&server_profiles, variant)
                     {
                         match signing_inputs_from_runner_profile(profile) {
                             Ok(inputs) => {
-                                let materialization = match materialize_android_signing_files(
-                                    workspace.as_path(),
-                                    &inputs,
-                                ) {
-                                    Ok(materialization) => materialization,
-                                    Err(e) => return (steps, Err(e)),
-                                };
-                                signing_preparation = Some(AndroidSigningPreparation {
-                                    inputs,
-                                    materialization,
-                                });
+                                signing_inputs = Some(inputs);
                                 signing_source = Some("pipeline_profile");
                                 println!(
-                                    "Prepared Android signing files from pipeline profile ({variant:?})"
+                                    "Reserved Android signing profile for runner-owned post-build signing ({variant:?})"
                                 );
                             }
                             Err(e) => return (steps, Err(e)),
@@ -2483,21 +3208,12 @@ async fn execute_build(
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("Warning: failed to fetch pipeline Android signing profile: {e}");
-                }
-            }
-
-            if signing_preparation.is_none() {
-                match prepare_android_signing_if_configured(workspace.as_path(), build_commands) {
-                    Ok(Some(prep)) => {
-                        signing_preparation = Some(prep);
-                        signing_source = Some("environment");
-                        println!(
-                            "Prepared Android signing files from environment fallback (OORE_ANDROID_* vars)"
-                        );
-                    }
-                    Ok(None) => {}
-                    Err(e) => return (steps, Err(e)),
+                    return (
+                        steps,
+                        Err(anyhow::anyhow!(
+                            "Failed to load Android signing profile for this build: {e}"
+                        )),
+                    );
                 }
             }
         }
@@ -2509,26 +3225,25 @@ async fn execute_build(
         .iter()
         .any(|command| is_ios_flutter_build_command(command))
     {
-        match fetch_job_ios_signing(client, daemon_url, config, &job.build_id).await {
+        match fetch_job_ios_signing(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+        )
+        .await
+        {
             Ok(Some(server_payload)) => {
                 if let Some(bundle) = server_payload.bundle {
-                    match install_ios_signing_bundle(workspace.as_path(), &bundle) {
-                        Ok((materialization, cleanup)) => {
-                            let signing_source = match bundle.mode {
-                                oore_contract::IosSigningMode::Manual => "manual",
-                                oore_contract::IosSigningMode::Api => "api",
-                                oore_contract::IosSigningMode::Hybrid => "hybrid",
-                            };
-                            ios_signing_bundle = Some(bundle);
-                            ios_signing_materialization = Some(materialization);
-                            ios_signing_cleanup = Some(cleanup);
-                            ios_signing_source = Some(signing_source);
-                            println!(
-                                "Prepared iOS signing keychain/profiles from pipeline profile"
-                            );
-                        }
-                        Err(e) => return (steps, Err(e)),
-                    }
+                    let signing_source = match bundle.mode {
+                        oore_contract::IosSigningMode::Manual => "manual",
+                        oore_contract::IosSigningMode::Api => "api",
+                        oore_contract::IosSigningMode::Hybrid => "hybrid",
+                    };
+                    ios_signing_bundle = Some(bundle);
+                    ios_signing_source = Some(signing_source);
+                    println!("Reserved iOS signing bundle for runner-owned post-build signing");
                 }
             }
             Ok(None) => {}
@@ -2568,34 +3283,8 @@ async fn execute_build(
         step_env.push(("CI".to_string(), "true".to_string()));
     }
 
-    if let Some(prep) = &signing_preparation {
-        step_env.push((
-            OORE_ANDROID_KEYSTORE_PATH_ENV.to_string(),
-            prep.materialization.keystore_path.display().to_string(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEY_PROPERTIES_PATH_ENV.to_string(),
-            prep.materialization
-                .key_properties_path
-                .display()
-                .to_string(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEYSTORE_PASSWORD_ENV.to_string(),
-            prep.inputs.keystore_password.clone(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEY_ALIAS_ENV.to_string(),
-            prep.inputs.key_alias.clone(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEY_PASSWORD_ENV.to_string(),
-            prep.inputs.key_password.clone(),
-        ));
-    }
-
-    if let (Some(source), Some(variant), Some(prep)) =
-        (signing_source, signing_variant, &signing_preparation)
+    if let (Some(source), Some(variant), Some(_)) =
+        (signing_source, signing_variant, &signing_inputs)
     {
         let _ = append_runner_log_line(
             client,
@@ -2604,24 +3293,7 @@ async fn execute_build(
             &job.build_id,
             &mut log_seq,
             "stdout",
-            &android_signing_prepared_marker(source, variant, prep),
-        )
-        .await;
-    }
-
-    if let (Some(source), Some(bundle), Some(materialization)) = (
-        ios_signing_source,
-        ios_signing_bundle.as_ref(),
-        ios_signing_materialization.as_ref(),
-    ) {
-        let _ = append_runner_log_line(
-            client,
-            daemon_url,
-            config,
-            &job.build_id,
-            &mut log_seq,
-            "stdout",
-            &ios_signing_prepared_marker(source, bundle, materialization),
+            &android_signing_prepared_marker(source, variant),
         )
         .await;
     }
@@ -2639,7 +3311,7 @@ async fn execute_build(
             content.push('\n');
         }
         let define_file_path = workspace.join(".env");
-        if let Err(e) = fs::write(&define_file_path, content) {
+        if let Err(e) = write_private_file(&define_file_path, content.as_bytes()) {
             return (
                 steps,
                 Err(anyhow::anyhow!(
@@ -2652,7 +3324,8 @@ async fn execute_build(
     };
 
     let mut ios_signing_command_applied = false;
-    let mut signed_ios_app_metadata: Option<IosAppMetadata> = None;
+    let ios_signing_expected = ios_signing_bundle.is_some();
+    let mut ios_artifact_metadata: Option<serde_json::Value> = None;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -2665,7 +3338,9 @@ async fn execute_build(
         ),
     ] {
         for (index, command) in commands.iter().enumerate() {
-            if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id).await {
+            if let Err(e) =
+                check_build_active(client, daemon_url, config, &job.build_id, &authority).await
+            {
                 return (steps, Err(e));
             }
 
@@ -2675,9 +3350,7 @@ async fn execute_build(
                 stage_name,
                 command,
                 dart_define_file.as_deref(),
-                ios_signing_materialization
-                    .as_ref()
-                    .map(|materialization| materialization.export_options_plist_path.as_path()),
+                ios_signing_bundle.as_ref().map(|_| Path::new("")),
             ) {
                 Ok(value) => value,
                 Err(e) => return (steps, Err(e)),
@@ -2716,17 +3389,22 @@ async fn execute_build(
             )
             .await;
 
-            let mut step_cmd = tokio::process::Command::new("sh");
+            let mut step_cmd = match repository_shell_command(
+                &normalized_command,
+                &workspace,
+                &runner_workspace_root,
+            ) {
+                Ok(command) => command,
+                Err(error) => return (steps, Err(error)),
+            };
             step_cmd
-                .arg("-c")
-                .arg(&normalized_command)
-                .current_dir(&workspace)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true);
             for (key, value) in &step_env {
                 step_cmd.env(key, value);
             }
+            scrub_managed_android_signing_env(&mut step_cmd);
             let child = match step_cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => return (steps, Err(e.into())),
@@ -2739,7 +3417,7 @@ async fn execute_build(
                 config,
                 &job.build_id,
                 &mut log_seq,
-                poll_cancellation(client, daemon_url, config, &job.build_id),
+                poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
             )
             .await;
 
@@ -2818,15 +3496,111 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                         };
                         return (steps, Err(err));
                     }
+                    if stage_name == "build"
+                        && android_artifact_extension(command).is_some()
+                        && let Some(inputs) = signing_inputs.as_ref()
+                    {
+                        let signing_step_name = "android-sign";
+                        let signing_started = now_unix();
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_start_marker(
+                                signing_step_name,
+                                "Sign Android artifact with managed credentials",
+                            ),
+                        )
+                        .await;
+                        let signing_result =
+                            sign_android_artifacts(&workspace, &signing_workspace, command, inputs);
+                        let signing_finished = now_unix();
+                        let signing_succeeded = signing_result.is_ok();
+                        steps.push(StepResult {
+                            name: signing_step_name.to_string(),
+                            status: if signing_succeeded {
+                                "succeeded"
+                            } else {
+                                "failed"
+                            }
+                            .to_string(),
+                            exit_code: if signing_succeeded { Some(0) } else { Some(1) },
+                            started_at: signing_started,
+                            finished_at: signing_finished,
+                            duration_ms: (signing_finished - signing_started) * 1000,
+                        });
+                        match signing_result {
+                            Ok(artifacts) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stdout",
+                                    &format!(
+                                        "[oore-signing] Signed and verified {} Android artifact(s)",
+                                        artifacts.len()
+                                    ),
+                                )
+                                .await;
+                            }
+                            Err(error) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stderr",
+                                    &format!("[oore-signing] {error:#}"),
+                                )
+                                .await;
+                                return (steps, Err(error));
+                            }
+                        }
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_end_marker(signing_step_name, "succeeded", Some(0)),
+                        )
+                        .await;
+                    }
                     if command_applied {
-                        let Some(materialization) = ios_signing_materialization.as_ref() else {
+                        let Some(bundle) = ios_signing_bundle.as_ref() else {
                             return (
                                 steps,
                                 Err(anyhow::anyhow!(
-                                    "iOS signing command ran without prepared signing material"
+                                    "iOS signing command ran without a managed signing bundle"
                                 )),
                             );
                         };
+                        let (materialization, mut cleanup) =
+                            match install_ios_signing_bundle(&signing_workspace, bundle) {
+                                Ok(prepared) => prepared,
+                                Err(error) => return (steps, Err(error)),
+                            };
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &ios_signing_prepared_marker(
+                                ios_signing_source.unwrap_or("pipeline_profile"),
+                                bundle,
+                                &materialization,
+                            ),
+                        )
+                        .await;
                         let signing_step_name = "ios-sign";
                         let signing_started = now_unix();
                         let _ = append_runner_log_line(
@@ -2842,7 +3616,8 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             ),
                         )
                         .await;
-                        let signing_result = manually_sign_ios_archive(&workspace, materialization);
+                        let signing_result =
+                            manually_sign_ios_archive(&workspace, &materialization);
                         let signing_finished = now_unix();
                         let signing_succeeded = signing_result.is_ok();
                         steps.push(StepResult {
@@ -2873,7 +3648,43 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     ),
                                 )
                                 .await;
-                                signed_ios_app_metadata = Some(signed_archive.app);
+                                let mut p12_bytes =
+                                    match decode_runner_b64(&bundle.p12_base64, "p12") {
+                                        Ok(bytes) => bytes,
+                                        Err(error) => return (steps, Err(error)),
+                                    };
+                                let certificate_fingerprint =
+                                    hex::encode(Sha256::digest(&p12_bytes));
+                                p12_bytes.zeroize();
+                                ios_artifact_metadata = Some(serde_json::json!({
+                                    "ios_app": {
+                                        "bundle_identifier": signed_archive.app.bundle_identifier,
+                                        "display_name": signed_archive.app.display_name,
+                                        "version": signed_archive.app.version,
+                                        "build_number": signed_archive.app.build_number,
+                                    },
+                                    "ios_signing": {
+                                        "source": ios_signing_source.unwrap_or("pipeline_profile"),
+                                        "mode": match bundle.mode {
+                                            oore_contract::IosSigningMode::Manual => "manual",
+                                            oore_contract::IosSigningMode::Api => "api",
+                                            oore_contract::IosSigningMode::Hybrid => "hybrid",
+                                        },
+                                        "team_id": bundle.team_id,
+                                        "bundle_ids": bundle
+                                            .provisioning_profiles
+                                            .iter()
+                                            .map(|profile| profile.bundle_id.clone())
+                                            .collect::<Vec<_>>(),
+                                        "profile_uuid_map": bundle
+                                            .provisioning_profiles
+                                            .iter()
+                                            .filter_map(|profile| profile.profile_uuid.as_ref().map(|uuid| (profile.bundle_id.clone(), uuid.clone())))
+                                            .collect::<Vec<_>>(),
+                                        "certificate_fingerprint": certificate_fingerprint,
+                                        "effective_export_method": materialization.effective_export_method,
+                                    }
+                                }));
                             }
                             Err(error) => {
                                 let _ = append_runner_log_line(
@@ -2899,6 +3710,9 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                 return (steps, Err(error));
                             }
                         }
+                        if let Err(error) = cleanup.cleanup() {
+                            return (steps, Err(error));
+                        }
                         let _ = append_runner_log_line(
                             client,
                             daemon_url,
@@ -2913,9 +3727,15 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                 }
             }
         }
+        if stage_name == "build" {
+            signing_inputs.take();
+            if let Some(mut bundle) = ios_signing_bundle.take() {
+                zeroize_ios_signing_bundle(&mut bundle);
+            }
+        }
     }
 
-    if ios_signing_materialization.is_some() && !ios_signing_command_applied {
+    if ios_signing_expected && !ios_signing_command_applied {
         return (
             steps,
             Err(anyhow::anyhow!(
@@ -2923,48 +3743,6 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
             )),
         );
     }
-
-    let ios_artifact_metadata = ios_signing_bundle
-        .as_ref()
-        .zip(ios_signing_materialization.as_ref())
-        .map(|(bundle, materialization)| {
-            serde_json::json!({
-                "ios_app": signed_ios_app_metadata.as_ref().map(|app| serde_json::json!({
-                    "bundle_identifier": app.bundle_identifier,
-                    "display_name": app.display_name,
-                    "version": app.version,
-                    "build_number": app.build_number,
-                })),
-                "ios_signing": {
-                    "source": ios_signing_source.unwrap_or("pipeline_profile"),
-                    "mode": match bundle.mode {
-                        oore_contract::IosSigningMode::Manual => "manual",
-                        oore_contract::IosSigningMode::Api => "api",
-                        oore_contract::IosSigningMode::Hybrid => "hybrid",
-                    },
-                    "team_id": bundle.team_id,
-                    "bundle_ids": bundle
-                        .provisioning_profiles
-                        .iter()
-                        .map(|profile| profile.bundle_id.clone())
-                        .collect::<Vec<_>>(),
-                    "profile_uuid_map": bundle
-                        .provisioning_profiles
-                        .iter()
-                        .filter_map(|profile| {
-                            profile
-                                .profile_uuid
-                                .as_ref()
-                                .map(|uuid| (profile.bundle_id.clone(), uuid.clone()))
-                        })
-                        .collect::<Vec<_>>(),
-                    "certificate_fingerprint": hex::encode(Sha256::digest(
-                        fs::read(&materialization.p12_path).unwrap_or_default()
-                    )),
-                    "effective_export_method": materialization.effective_export_method,
-                }
-            })
-        });
 
     let artifacts_started = now_unix();
     let artifact_result = scan_and_upload_artifacts(
@@ -2994,8 +3772,6 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
     if let Err(error) = artifact_result {
         return (steps, Err(error));
     }
-
-    drop(ios_signing_cleanup);
 
     (steps, Ok(()))
 }
@@ -3699,6 +4475,292 @@ mod tests {
     }
 
     #[test]
+    fn daemon_url_requires_https_except_literal_loopback() {
+        for allowed in [
+            "https://ci.example.com",
+            "https://127.0.0.1:8787",
+            "http://127.0.0.1:8787",
+            "http://[::1]:8787",
+        ] {
+            require_safe_daemon_url(allowed).expect(allowed);
+        }
+
+        for rejected in [
+            "http://localhost:8787",
+            "http://192.0.2.10:8787",
+            "http://[2001:db8::10]:8787",
+            "ftp://127.0.0.1:8787",
+            "not-a-url",
+        ] {
+            assert!(
+                require_safe_daemon_url(rejected).is_err(),
+                "unexpectedly allowed {rejected}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn runner_runtime_rejects_cleartext_remote_override_before_connecting() {
+        let config = RunnerConfig {
+            runner_id: "runner-test".to_string(),
+            runner_token: "secret".to_string(),
+            daemon_url: "https://daemon.example".to_string(),
+            name: "test".to_string(),
+        };
+        let error = run_runner_forever(config, Some("http://192.0.2.10:8787".to_string()))
+            .await
+            .expect_err("remote cleartext override must fail");
+        assert!(error.to_string().contains("cleartext daemon URLs"));
+    }
+
+    #[test]
+    fn authority_loss_stops_definitive_revocations_and_bounds_outages() {
+        for (status, expected) in [
+            (reqwest::StatusCode::UNAUTHORIZED, "runner_unauthorized"),
+            (reqwest::StatusCode::FORBIDDEN, "assignment_lost"),
+            (reqwest::StatusCode::NOT_FOUND, "build_missing"),
+        ] {
+            let error = authority_loss(status);
+            assert_eq!(
+                error
+                    .downcast_ref::<BuildTerminated>()
+                    .expect("authority loss must terminate the build")
+                    .status,
+                expected
+            );
+        }
+
+        let authority = BuildAuthorityState::default();
+        assert!(authority.transient_failure().is_ok());
+        assert!(authority.transient_failure().is_ok());
+        authority.confirmed_active();
+        assert!(authority.transient_failure().is_ok());
+        assert!(authority.transient_failure().is_ok());
+        let error = authority
+            .transient_failure()
+            .expect_err("the transient grace budget must be finite");
+        assert_eq!(
+            error
+                .downcast_ref::<BuildTerminated>()
+                .expect("grace exhaustion must terminate the build")
+                .status,
+            "controller_unavailable"
+        );
+        assert!(is_transient_authority_status(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ));
+        assert!(!is_transient_authority_status(
+            reqwest::StatusCode::BAD_REQUEST
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_workspace_ignores_legacy_symlink_and_excludes_other_users() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let parent = temp_workspace();
+        let attacker_target = parent.join("attacker-target");
+        fs::create_dir(&attacker_target).expect("create synthetic symlink target");
+        symlink(&attacker_target, parent.join("oore-builds.noindex"))
+            .expect("create legacy workspace symlink");
+
+        let first = create_private_workspace_in(&parent, "runner-security-test")
+            .expect("create first private workspace");
+        let second = create_private_workspace_in(&parent, "runner-security-test")
+            .expect("create second private workspace");
+        fs::write(first.join("marker"), b"runner-owned").expect("write workspace marker");
+
+        assert_ne!(first, second);
+        assert_eq!(
+            fs::metadata(&first)
+                .expect("stat private workspace")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert!(!attacker_target.join("marker").exists());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_and_journal_paths_fail_closed_before_cleanup() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace();
+        let legacy = parent.join("oore-builds.noindex");
+        fs::create_dir(&legacy).expect("create clean legacy root");
+        fs::write(legacy.join(SPOTLIGHT_NO_INDEX_SENTINEL), b"").expect("write legacy sentinel");
+        ensure_legacy_workspace_has_no_residue(&legacy).expect("clean legacy root remains valid");
+        fs::create_dir(legacy.join("stale-build")).expect("create stale legacy build");
+        assert!(ensure_legacy_workspace_has_no_residue(&legacy).is_err());
+        fs::remove_dir_all(&legacy).expect("remove legacy fixture");
+        let target = parent.join("legacy-target");
+        fs::create_dir(&target).expect("create legacy symlink target");
+        symlink(&target, &legacy).expect("create legacy symlink");
+        assert!(ensure_legacy_workspace_has_no_residue(&legacy).is_err());
+
+        let workspace = parent.join("workspace");
+        let profile_root = PathBuf::from(std::env::var("HOME").expect("HOME is set"))
+            .join("Library/MobileDevice/Provisioning Profiles");
+        let valid = IosCleanupJournal {
+            keychain_path: workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+            original_default_keychain: "/placeholder/login.keychain-db".to_string(),
+            original_keychains: vec!["/placeholder/login.keychain-db".to_string()],
+            installed_profiles: vec![profile_root.join("placeholder.mobileprovision")],
+        };
+        validate_ios_cleanup_journal(&workspace, &valid).expect("valid journal paths");
+        let mut escaped = valid;
+        escaped.installed_profiles = vec![profile_root.join("../escaped.mobileprovision")];
+        assert!(validate_ios_cleanup_journal(&workspace, &escaped).is_err());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_replaces_public_files_and_symlinks_at_mode_0600() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+        let workspace = temp_workspace();
+        let env_path = workspace.join(".env");
+        fs::write(&env_path, b"PUBLIC_PLACEHOLDER=1\n").expect("write public placeholder");
+        fs::set_permissions(&env_path, fs::Permissions::from_mode(0o644))
+            .expect("set permissive fixture mode");
+        let original_inode = fs::metadata(&env_path).expect("stat public fixture").ino();
+
+        write_private_file(&env_path, b"PIPELINE_PLACEHOLDER=2\n")
+            .expect("replace with private environment file");
+        let metadata = fs::metadata(&env_path).expect("stat private environment file");
+        assert_ne!(metadata.ino(), original_inode);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::read_to_string(&env_path).expect("read private environment file"),
+            "PIPELINE_PLACEHOLDER=2\n"
+        );
+
+        let symlink_target = workspace.join("unrelated");
+        fs::write(&symlink_target, b"UNCHANGED").expect("write symlink target");
+        fs::remove_file(&env_path).expect("remove first private file");
+        symlink(&symlink_target, &env_path).expect("replace env with symlink fixture");
+        write_private_file(&env_path, b"PIPELINE_PLACEHOLDER=3\n")
+            .expect("replace symlink without following it");
+        assert_eq!(
+            fs::read_to_string(&symlink_target).expect("read untouched target"),
+            "UNCHANGED"
+        );
+        assert!(
+            !fs::symlink_metadata(&env_path)
+                .expect("stat replaced symlink")
+                .file_type()
+                .is_symlink()
+        );
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_signing_journal_reconciles_across_runner_registration() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = temp_workspace();
+        let runner_a = "runner-registration-a";
+        let runner_b = "runner-registration-b";
+        assert_ne!(
+            runner_workspace_prefix(runner_a),
+            runner_workspace_prefix(runner_b)
+        );
+        let workspace = create_private_workspace_in(&parent, runner_a)
+            .expect("create stale runner A workspace");
+        fs::create_dir_all(workspace.join(IOS_SIGNING_DIR)).expect("create signing directory");
+        let owned_profile = parent.join("generation-a.mobileprovision");
+        let unrelated = parent.join("generation-b.mobileprovision");
+        let malformed_workspace = parent.join("oore-build-not-a-runner-generation");
+        let unrelated_directory = parent.join("unrelated-cache");
+        fs::write(&owned_profile, b"GENERATION_A").expect("write owned placeholder");
+        fs::write(&unrelated, b"GENERATION_B").expect("write unrelated placeholder");
+        fs::create_dir(&malformed_workspace).expect("create malformed safe sibling");
+        fs::create_dir(&unrelated_directory).expect("create unrelated safe sibling");
+        let journal = IosCleanupJournal {
+            keychain_path: workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+            original_default_keychain: "/placeholder/login.keychain-db".to_string(),
+            original_keychains: vec!["/placeholder/login.keychain-db".to_string()],
+            installed_profiles: vec![owned_profile.clone()],
+        };
+        let journal_path = workspace.join(IOS_CLEANUP_JOURNAL);
+        write_ios_cleanup_journal(&journal_path, &journal).expect("write durable journal");
+        assert_eq!(
+            fs::metadata(&journal_path)
+                .expect("stat cleanup journal")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        drop(WorkspaceCleanup {
+            path: workspace.clone(),
+        });
+        assert!(workspace.exists(), "journal must preserve cleanup evidence");
+
+        let blocked = reconcile_stale_workspaces_with(&parent, |_, _| {
+            anyhow::bail!("synthetic cleanup failure")
+        });
+        assert!(blocked.is_err());
+        assert!(workspace.exists());
+        assert!(journal_path.exists());
+
+        reconcile_stale_workspaces_with(&parent, |seen_workspace, seen_journal| {
+            assert_eq!(seen_workspace, workspace);
+            assert_eq!(seen_journal.installed_profiles, vec![owned_profile.clone()]);
+            fs::remove_file(&owned_profile)?;
+            Ok(())
+        })
+        .expect("reconcile stale generation");
+        assert!(!workspace.exists());
+        assert!(!owned_profile.exists());
+        assert_eq!(
+            fs::read_to_string(&unrelated).expect("read newer generation placeholder"),
+            "GENERATION_B"
+        );
+        assert!(malformed_workspace.exists());
+        assert!(unrelated_directory.exists());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_workspace_reconciliation_does_not_follow_journal_links() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace();
+        let workspace = create_private_workspace_in(&parent, "runner-linked-journal")
+            .expect("create stale workspace");
+        let protected = parent.join("protected-sibling");
+        fs::create_dir(&protected).expect("create protected sibling");
+        let canary = protected.join("cleanup-journal.json");
+        fs::write(&canary, b"PROTECTED").expect("write protected canary");
+        fs::create_dir(workspace.join(".oore")).expect("create metadata directory");
+        symlink(&protected, workspace.join(IOS_SIGNING_DIR))
+            .expect("link attacker-controlled signing directory");
+
+        let result = reconcile_stale_workspaces_with(&parent, |_, _| {
+            panic!("linked journal must not be parsed")
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(&canary).expect("read protected canary"),
+            b"PROTECTED"
+        );
+        cleanup_workspace(&parent);
+    }
+
+    #[test]
     fn local_artifact_uploads_use_the_runner_daemon_url() {
         assert_eq!(
             runner_artifact_upload_url(
@@ -4022,83 +5084,220 @@ mod tests {
         cleanup_workspace(&fixture_root);
     }
 
-    fn signing_env_from_pairs(pairs: &[(&str, &str)]) -> AndroidSigningEnv {
-        use std::collections::HashMap;
-        let mut values = HashMap::new();
-        for (key, value) in pairs {
-            values.insert((*key).to_string(), (*value).to_string());
+    #[test]
+    fn repository_stages_scrub_all_managed_android_signing_environment() {
+        assert_eq!(MANAGED_ANDROID_SIGNING_ENV_KEYS.len(), 6);
+        for required in [
+            OORE_ANDROID_KEYSTORE_PATH_ENV,
+            OORE_ANDROID_KEYSTORE_B64_ENV,
+            OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
+            OORE_ANDROID_KEY_ALIAS_ENV,
+            OORE_ANDROID_KEY_PASSWORD_ENV,
+            OORE_ANDROID_KEY_PROPERTIES_PATH_ENV,
+        ] {
+            assert!(MANAGED_ANDROID_SIGNING_ENV_KEYS.contains(&required));
         }
-        collect_android_signing_env(|key| values.get(key).cloned())
     }
 
-    #[test]
-    fn android_signing_env_empty_is_noop() {
-        let env = signing_env_from_pairs(&[]);
-        let inputs = resolve_android_signing_inputs(&env).expect("resolve");
-        assert!(inputs.is_none());
-    }
-
-    #[test]
-    fn android_signing_requires_all_required_fields() {
-        let env = signing_env_from_pairs(&[
-            (OORE_ANDROID_KEYSTORE_B64_ENV, "ZmFrZS1rZXlzdG9yZQ=="),
-            (OORE_ANDROID_KEYSTORE_PASSWORD_ENV, "store-pass"),
-        ]);
-        let err = resolve_android_signing_inputs(&env).expect_err("missing env must fail");
-        assert!(err.to_string().contains(OORE_ANDROID_KEY_ALIAS_ENV));
-    }
-
-    #[test]
-    fn android_signing_materializes_keystore_and_key_properties() {
-        let workspace = temp_workspace();
-        fs::create_dir_all(workspace.join("android/app")).expect("mkdir android/app");
-        let env = signing_env_from_pairs(&[
-            (
-                OORE_ANDROID_KEYSTORE_B64_ENV,
-                "ZmFrZS1rZXlzdG9yZS1ieXRlcw==",
-            ),
-            (OORE_ANDROID_KEYSTORE_PASSWORD_ENV, "store-pass"),
-            (OORE_ANDROID_KEY_ALIAS_ENV, "upload"),
-            (OORE_ANDROID_KEY_PASSWORD_ENV, "key-pass"),
-        ]);
-
-        let inputs = resolve_android_signing_inputs(&env)
-            .expect("resolve")
-            .expect("inputs");
-        materialize_android_signing_files(&workspace, &inputs).expect("materialize");
-
-        let keystore_path = workspace.join("android/app/oore-upload-keystore.jks");
-        let key_properties_path = workspace.join("android/key.properties");
-        let key_properties = fs::read_to_string(&key_properties_path).expect("read key.properties");
-
-        assert!(keystore_path.exists());
-        assert!(key_properties.contains("storePassword=store-pass"));
-        assert!(key_properties.contains("keyPassword=key-pass"));
-        assert!(key_properties.contains("keyAlias=upload"));
-        assert!(key_properties.contains("storeFile=oore-upload-keystore.jks"));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&keystore_path)
-                    .expect("keystore metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-            assert_eq!(
-                fs::metadata(&key_properties_path)
-                    .expect("key.properties metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
+    #[tokio::test]
+    async fn repository_child_process_cannot_inherit_managed_signing_values() {
+        let mut command = tokio::process::Command::new("sh");
+        command.arg("-c").arg("env");
+        for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
+            command.env(key, "managed-secret");
         }
+        scrub_managed_android_signing_env(&mut command);
+        let output = command.output().await.expect("run scrubbed child");
+        assert!(output.status.success());
+        let environment = String::from_utf8_lossy(&output.stdout);
+        for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
+            assert!(!environment.contains(&format!("{key}=")));
+        }
+    }
 
-        cleanup_workspace(&workspace);
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn repository_descendant_escape_helper() {
+        let Ok(ready_path) = std::env::var("OORE_ESCAPE_READY") else {
+            return;
+        };
+        let signer_path = std::env::var("OORE_ESCAPE_SIGNER").expect("signer marker path");
+        let result_path = std::env::var("OORE_ESCAPE_RESULT").expect("result path");
+        let canary_path = std::env::var("OORE_ESCAPE_CANARY").expect("canary path");
+        let protected_root =
+            std::env::var("OORE_ESCAPE_PROTECTED_ROOT").expect("protected runner root path");
+        let signing_workspace =
+            std::env::var("OORE_ESCAPE_SIGNING_WORKSPACE").expect("signing workspace path");
+        let signing_link =
+            std::env::var("OORE_ESCAPE_SIGNING_LINK").expect("signing workspace link path");
+
+        unsafe extern "C" {
+            fn setsid() -> libc::pid_t;
+        }
+        let detached = unsafe { setsid() } >= 0;
+        fs::write(&ready_path, std::process::id().to_string()).expect("publish detached child");
+
+        let signer_pid = (0..250)
+            .find_map(|_| {
+                fs::read_to_string(&signer_path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+                    .or_else(|| {
+                        std::thread::sleep(Duration::from_millis(20));
+                        None
+                    })
+            })
+            .expect("signer marker must appear");
+        let can_read_canary = fs::read(&canary_path).is_ok();
+        let can_list_protected_root = fs::read_dir(&protected_root).is_ok();
+        let can_list_signing_workspace = fs::read_dir(&signing_workspace).is_ok();
+        let can_follow_signing_link =
+            fs::read(Path::new(&signing_link).join("signing-canary")).is_ok();
+        let can_inspect_signer = Command::new("/bin/ps")
+            .args(["eww", "-p", &signer_pid.to_string(), "-o", "command="])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        let can_signal_signer = Command::new("/bin/kill")
+            .args(["-0", &signer_pid.to_string()])
+            .status()
+            .is_ok_and(|status| status.success());
+        let can_access_keychain = Command::new("/usr/bin/security")
+            .args(["default-keychain", "-d", "user"])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        fs::write(
+            result_path,
+            serde_json::to_vec(&serde_json::json!({
+                "detached": detached,
+                "can_read_canary": can_read_canary,
+                "can_list_protected_root": can_list_protected_root,
+                "can_list_signing_workspace": can_list_signing_workspace,
+                "can_follow_signing_link": can_follow_signing_link,
+                "can_inspect_signer": can_inspect_signer,
+                "can_signal_signer": can_signal_signer,
+                "can_access_keychain": can_access_keychain,
+            }))
+            .expect("encode escape result"),
+        )
+        .expect("publish escape result");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn detached_repository_descendant_cannot_reach_later_signer() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace();
+        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
+            .expect("create protected runner root");
+        let repository_workspace =
+            create_private_workspace_in(&runner_workspace_root, "repository")
+                .expect("create repository workspace");
+        let signing_workspace = runner_workspace_root.join("later-signer");
+        let ready_path = repository_workspace.join("detached-ready");
+        let signer_path = repository_workspace.join("signer-pid");
+        let result_path = repository_workspace.join("escape-result.json");
+        let signing_link = repository_workspace.join("signing-link");
+        let canary_path = signing_workspace.join("signing-canary");
+        let test_binary = std::env::current_exe().expect("resolve test binary");
+        symlink(&signing_workspace, &signing_link).expect("link future signing workspace");
+
+        let mut repository_command = repository_shell_command(
+            "\"$OORE_ESCAPE_HELPER\" --exact tests::repository_descendant_escape_helper >/dev/null 2>&1 &",
+            &repository_workspace,
+            &runner_workspace_root,
+        )
+        .expect("build contained repository command");
+        repository_command
+            .env("OORE_ESCAPE_HELPER", test_binary)
+            .env("OORE_ESCAPE_READY", &ready_path)
+            .env("OORE_ESCAPE_SIGNER", &signer_path)
+            .env("OORE_ESCAPE_RESULT", &result_path)
+            .env("OORE_ESCAPE_CANARY", &canary_path)
+            .env("OORE_ESCAPE_PROTECTED_ROOT", &runner_workspace_root)
+            .env("OORE_ESCAPE_SIGNING_WORKSPACE", &signing_workspace)
+            .env("OORE_ESCAPE_SIGNING_LINK", &signing_link);
+        let stage_status = repository_command
+            .status()
+            .await
+            .expect("run contained repository stage");
+        assert!(stage_status.success());
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !ready_path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("detached child must survive its stage shell");
+
+        fs::create_dir(&signing_workspace).expect("create later signing workspace");
+        write_private_file(&canary_path, b"RUNNER_SIGNING_AUTHORITY")
+            .expect("write protected signer canary");
+        let mut signer = tokio::process::Command::new("/bin/sleep")
+            .arg("5")
+            .env("OORE_SIGNER_SECRET", "RUNNER_SIGNING_AUTHORITY")
+            .spawn()
+            .expect("start simulated signer");
+        fs::write(&signer_path, signer.id().expect("signer pid").to_string())
+            .expect("publish signer pid");
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !result_path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("detached child must publish its denied escape attempts");
+        let result: serde_json::Value =
+            serde_json::from_slice(&fs::read(&result_path).expect("read escape result"))
+                .expect("parse escape result");
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "detached": true,
+                "can_read_canary": false,
+                "can_list_protected_root": false,
+                "can_list_signing_workspace": false,
+                "can_follow_signing_link": false,
+                "can_inspect_signer": false,
+                "can_signal_signer": false,
+                "can_access_keychain": false,
+            })
+        );
+        assert_eq!(
+            fs::read(&canary_path).expect("read intact signer canary"),
+            b"RUNNER_SIGNING_AUTHORITY"
+        );
+        signer.kill().await.ok();
+        signer.wait().await.ok();
+        cleanup_workspace(&parent);
+    }
+
+    #[test]
+    fn android_signing_marker_exposes_no_reusable_authority() {
+        let marker =
+            android_signing_prepared_marker("pipeline_profile", AndroidSigningBuildType::Release);
+        assert!(marker.contains("runner_owned_post_build_signer"));
+        assert!(!marker.contains("password"));
+        assert!(!marker.contains("keystore"));
+        assert!(!marker.contains("key.properties"));
+    }
+
+    #[test]
+    fn runner_profile_decodes_only_into_runner_owned_inputs() {
+        let profile = RunnerAndroidSigningProfile {
+            build_type: AndroidSigningBuildType::Release,
+            enabled: true,
+            keystore_filename: "release.jks".to_string(),
+            keystore_base64: "ZmFrZS1rZXlzdG9yZS1ieXRlcw==".to_string(),
+            store_password: "store-pass".to_string(),
+            key_alias: "upload".to_string(),
+            key_password: "key-pass".to_string(),
+        };
+        let inputs = signing_inputs_from_runner_profile(&profile).expect("runner inputs");
+        assert_eq!(inputs.keystore_bytes, b"fake-keystore-bytes");
+        assert_eq!(inputs.keystore_password, "store-pass");
     }
 
     #[test]
@@ -4112,6 +5311,27 @@ mod tests {
         assert!(!is_android_flutter_build_command(
             "flutter build ios --release"
         ));
+    }
+
+    #[test]
+    fn android_signer_covers_every_split_artifact() {
+        let workspace = temp_workspace();
+        let outputs = workspace.join("build/app/outputs/flutter-apk");
+        fs::create_dir_all(&outputs).expect("create Android outputs");
+        for filename in ["app-arm64-v8a-release.apk", "app-x86_64-release.apk"] {
+            fs::write(outputs.join(filename), b"unsigned").expect("write split APK");
+        }
+        fs::write(outputs.join("ignored.aab"), b"unsigned").expect("write other artifact");
+
+        let artifacts =
+            android_artifacts_for_signing(&workspace, "apk").expect("discover every split APK");
+        assert_eq!(artifacts.len(), 2);
+        assert!(
+            artifacts
+                .iter()
+                .all(|path| path.extension().and_then(|value| value.to_str()) == Some("apk"))
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]

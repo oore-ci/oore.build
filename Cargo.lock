@@ -2598,6 +2598,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hex",
+ "libc",
  "oore-contract",
  "rand 0.8.7",
  "reqwest",
@@ -2606,6 +2607,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.10.9",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
@@ -2627,6 +2629,7 @@ dependencies = [
  "ipnet",
  "jsonwebtoken",
  "lettre",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "oore-contract",

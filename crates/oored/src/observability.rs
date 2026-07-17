@@ -329,7 +329,7 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
         .extensions()
         .get::<MatchedPath>()
         .map(|m| m.as_str().to_string())
-        .unwrap_or_else(|| request.uri().path().to_string());
+        .unwrap_or_else(|| "__unmatched__".to_string());
 
     let start = Instant::now();
     let response = next.run(request).await;

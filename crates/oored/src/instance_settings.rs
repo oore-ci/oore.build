@@ -553,7 +553,11 @@ pub fn verify_trusted_proxy_shared_secret(
     encryption_key: &[u8],
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let Some(encrypted_shared_secret) = settings.encrypted_shared_secret.as_deref() else {
-        return Ok(());
+        return Err(api_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "trusted_proxy_config_invalid",
+            "Trusted proxy shared secret is not configured",
+        ));
     };
 
     let expected = crypto::decrypt(encrypted_shared_secret, encryption_key).map_err(|e| {
@@ -734,6 +738,7 @@ async fn evaluate_external_access_preflight(
                     })?;
 
             let configured = proxy_settings.configured
+                && proxy_settings.has_shared_secret
                 && normalize_header_name(&proxy_settings.user_email_header).is_some();
             checks.push(build_external_access_check(
                 "trusted_proxy_configured",
@@ -1320,6 +1325,24 @@ pub async fn update_external_access_trusted_proxy_settings(
         }),
     };
 
+    if runtime_mode == RuntimeMode::Remote
+        && load_remote_auth_mode(&pool).await.map_err(|e| {
+            error!(error = %e, "failed to load remote auth mode for trusted proxy update");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to determine remote auth mode",
+            )
+        })? == RemoteAuthMode::TrustedProxy
+        && encrypted_shared_secret.is_none()
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "trusted_proxy_shared_secret_required",
+            "A shared secret is required while Trusted Proxy authentication is active",
+        ));
+    }
+
     let encrypted_warpgate_ticket = match req.warpgate_ticket {
         Some(value) => {
             let trimmed = value.trim();
@@ -1412,6 +1435,7 @@ pub async fn update_external_access_trusted_proxy_settings(
                 "Failed to load updated trusted proxy settings",
             )
         })?;
+    state.recovery_capabilities.clear().await;
 
     Ok(Json(trusted_proxy_settings_response(settings)))
 }
@@ -1560,6 +1584,7 @@ pub async fn update_external_access_network_settings(
         let mut runtime_allowed_origins = state.allowed_origins.write().await;
         *runtime_allowed_origins = allowed_origins.clone();
     }
+    state.recovery_capabilities.clear().await;
     // Hot-reload storage backend because local artifact links depend on public_base_url.
     let backend = storage::load_backend(&pool, &state.encryption_key, public_url.clone()).await;
     {
@@ -1896,6 +1921,17 @@ pub async fn configure_external_access_oidc(
             ));
         }
 
+        let credential_identity_changed = sf.oidc_config.as_ref().is_some_and(|current| {
+            current.issuer_url != discovered.issuer || current.client_id != client_id
+        });
+        if credential_identity_changed && client_secret.is_none() && sf.oidc_secret.is_some() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "oidc_secret_reentry_required",
+                "Re-enter the OIDC client secret when changing issuer or client ID",
+            ));
+        }
+
         // Update secret: if provided, encrypt and store; if omitted, preserve existing
         if let Some(secret) = client_secret {
             let encrypted = crypto::encrypt(&secret, &state.encryption_key).map_err(|e| {
@@ -1944,6 +1980,7 @@ pub async fn configure_external_access_oidc(
         let mut pending = state.pending_auth.lock().await;
         pending.clear();
     }
+    state.recovery_capabilities.clear().await;
 
     let details = serde_json::json!({
         "issuer_url": discovered.issuer.clone(),
@@ -2121,6 +2158,7 @@ pub async fn update_instance_preferences(
     .await;
 
     if auth_policy_changed {
+        state.recovery_capabilities.clear().await;
         let revoked_sessions = state.sessions.revoke_all_sessions().await.map_err(|e| {
             error!(error = %e, "failed to revoke sessions after auth policy change");
             api_err(

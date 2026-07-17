@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::Json;
@@ -12,7 +12,6 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
-use tokio::sync::Mutex;
 use tokio_stream::Stream;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -23,7 +22,7 @@ use crate::project_rbac::{
     ProjectPermission, require_project_permission, resolve_effective_project_role,
 };
 use crate::runners::RunnerAuth;
-use crate::session::SessionInfo;
+use crate::session::{AuthSource, SessionInfo};
 use crate::token::{generate_token, hash_token};
 use crate::util::{api_err, now_unix};
 
@@ -57,17 +56,36 @@ const SSE_STATUS_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 /// Streaming token TTL: 5 minutes.
 const STREAM_TOKEN_TTL_SECS: i64 = 300;
 
+const MAX_OUTSTANDING_STREAM_TOKENS: usize = 256;
+const MAX_OUTSTANDING_STREAM_TOKENS_PER_USER: usize = 16;
+const MAX_OUTSTANDING_STREAM_TOKENS_PER_BUILD: usize = 32;
+const MAX_ACTIVE_STREAMS_PER_USER: usize = 4;
+const MAX_ACTIVE_STREAMS_PER_BUILD: usize = 16;
+const MAX_ACTIVE_STREAMS_GLOBAL: usize = 128;
+
 // ── Stream token store ─────────────────────────────────────────
 
 /// Entry for a short-lived streaming token.
 #[derive(Clone)]
-struct StreamTokenEntry {
-    /// The validated user session at the time the token was issued.
-    session: SessionInfo,
-    /// The build this token was minted for.
-    build_id: String,
-    /// Unix timestamp when this token expires.
+struct StreamAuthorization {
+    user_id: String,
+    credential_hash: String,
+    auth_source: AuthSource,
     expires_at: i64,
+}
+
+#[derive(Clone)]
+struct StreamTokenEntry {
+    authorization: StreamAuthorization,
+    build_id: String,
+}
+
+#[derive(Default)]
+struct StreamState {
+    tokens: HashMap<String, StreamTokenEntry>,
+    active_by_user: HashMap<String, usize>,
+    active_by_build: HashMap<String, usize>,
+    active_total: usize,
 }
 
 /// In-memory store for short-lived SSE streaming tokens.
@@ -76,46 +94,139 @@ struct StreamTokenEntry {
 /// EventSource connection, so the long-lived session token never appears
 /// in URL query strings.
 pub struct StreamTokenStore {
-    tokens: Mutex<HashMap<String, StreamTokenEntry>>,
+    state: Arc<Mutex<StreamState>>,
 }
 
 impl StreamTokenStore {
     pub fn new() -> Self {
         Self {
-            tokens: Mutex::new(HashMap::new()),
+            state: Arc::new(Mutex::new(StreamState::default())),
         }
     }
 
     /// Create a short-lived streaming token derived from a validated session.
-    /// Returns the plaintext token (the store keeps the hash).
-    pub async fn create(&self, session: &SessionInfo, build_id: &str) -> String {
-        let token = generate_token();
-        let hashed = hash_token(&token);
+    /// Returns the plaintext token and deadline (the store keeps the hash).
+    pub fn create(
+        &self,
+        session: &SessionInfo,
+        credential_hash: String,
+        build_id: &str,
+    ) -> Option<(String, i64)> {
         let now = now_unix();
+        let expires_at = (now + STREAM_TOKEN_TTL_SECS).min(session.expires_at);
+        let mut state = self.lock();
+        state
+            .tokens
+            .retain(|_, entry| entry.authorization.expires_at > now);
 
-        let entry = StreamTokenEntry {
-            session: session.clone(),
-            build_id: build_id.to_string(),
-            expires_at: now + STREAM_TOKEN_TTL_SECS,
-        };
+        let replace = state.tokens.iter().find_map(|(hash, entry)| {
+            (entry.authorization.user_id == session.user_id && entry.build_id == build_id)
+                .then(|| hash.clone())
+        });
+        if replace.is_none() {
+            let user_tokens = state
+                .tokens
+                .values()
+                .filter(|entry| entry.authorization.user_id == session.user_id)
+                .count();
+            let build_tokens = state
+                .tokens
+                .values()
+                .filter(|entry| entry.build_id == build_id)
+                .count();
+            if state.tokens.len() >= MAX_OUTSTANDING_STREAM_TOKENS
+                || user_tokens >= MAX_OUTSTANDING_STREAM_TOKENS_PER_USER
+                || build_tokens >= MAX_OUTSTANDING_STREAM_TOKENS_PER_BUILD
+            {
+                return None;
+            }
+        }
+        if let Some(hash) = replace {
+            state.tokens.remove(&hash);
+        }
 
-        let mut map = self.tokens.lock().await;
-
-        // Lazy cleanup: remove expired tokens while we hold the lock
-        let now_ts = now;
-        map.retain(|_, v| v.expires_at > now_ts);
-
-        map.insert(hashed, entry);
-        token
+        let token = generate_token();
+        state.tokens.insert(
+            hash_token(&token),
+            StreamTokenEntry {
+                authorization: StreamAuthorization {
+                    user_id: session.user_id.clone(),
+                    credential_hash,
+                    auth_source: session.auth_source.clone(),
+                    expires_at,
+                },
+                build_id: build_id.to_string(),
+            },
+        );
+        Some((token, expires_at))
     }
 
-    /// Validate a streaming token. Returns the associated session/build if valid.
-    async fn validate(&self, token: &str) -> Option<StreamTokenEntry> {
+    /// Consume a streaming token. Each capability admits at most one stream.
+    fn consume(&self, token: &str) -> Option<StreamTokenEntry> {
         let hashed = hash_token(token);
         let now = now_unix();
+        let mut state = self.lock();
+        state
+            .tokens
+            .remove(&hashed)
+            .filter(|entry| entry.authorization.expires_at > now)
+    }
 
-        let map = self.tokens.lock().await;
-        map.get(&hashed).filter(|e| e.expires_at > now).cloned()
+    fn acquire(&self, user_id: &str, build_id: &str) -> Result<StreamAdmission, ()> {
+        let mut state = self.lock();
+        if state.active_total >= MAX_ACTIVE_STREAMS_GLOBAL
+            || state.active_by_user.get(user_id).copied().unwrap_or(0)
+                >= MAX_ACTIVE_STREAMS_PER_USER
+            || state.active_by_build.get(build_id).copied().unwrap_or(0)
+                >= MAX_ACTIVE_STREAMS_PER_BUILD
+        {
+            return Err(());
+        }
+
+        state.active_total += 1;
+        *state.active_by_user.entry(user_id.to_string()).or_default() += 1;
+        *state
+            .active_by_build
+            .entry(build_id.to_string())
+            .or_default() += 1;
+        Ok(StreamAdmission {
+            state: self.state.clone(),
+            user_id: user_id.to_string(),
+            build_id: build_id.to_string(),
+        })
+    }
+
+    fn lock(&self) -> MutexGuard<'_, StreamState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+struct StreamAdmission {
+    state: Arc<Mutex<StreamState>>,
+    user_id: String,
+    build_id: String,
+}
+
+impl Drop for StreamAdmission {
+    fn drop(&mut self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.active_total -= 1;
+        decrement_count(&mut state.active_by_user, &self.user_id);
+        decrement_count(&mut state.active_by_build, &self.build_id);
+    }
+}
+
+fn decrement_count(counts: &mut HashMap<String, usize>, key: &str) {
+    let remove = counts.get(key).is_some_and(|count| *count == 1);
+    if remove {
+        counts.remove(key);
+    } else if let Some(count) = counts.get_mut(key) {
+        *count -= 1;
     }
 }
 
@@ -172,6 +283,72 @@ async fn require_build_log_read(
     )
     .await?;
     require_project_permission(&effective, ProjectPermission::Read)
+}
+
+async fn load_current_stream_session(
+    pool: &sqlx::SqlitePool,
+    authorization: &StreamAuthorization,
+) -> Result<Option<SessionInfo>, sqlx::Error> {
+    match authorization.auth_source {
+        AuthSource::Session => {
+            let row = sqlx::query(
+                "SELECT u.id, u.email, u.oidc_subject, u.role, s.expires_at \
+                 FROM sessions s JOIN users u ON u.id = s.user_id \
+                 WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND u.status = 'active'",
+            )
+            .bind(&authorization.credential_hash)
+            .bind(now_unix())
+            .fetch_optional(pool)
+            .await?;
+            Ok(row.map(|row| SessionInfo {
+                user_id: row.get("id"),
+                email: row.get("email"),
+                oidc_subject: row.get("oidc_subject"),
+                role: row.get("role"),
+                expires_at: row.get("expires_at"),
+                auth_source: AuthSource::Session,
+            }))
+        }
+        AuthSource::ApiToken => {
+            crate::api_tokens::validate_api_token_hash(pool, &authorization.credential_hash).await
+        }
+    }
+}
+
+async fn require_current_stream_authorization(
+    pool: &sqlx::SqlitePool,
+    authorization: &StreamAuthorization,
+    build_id: &str,
+) -> Result<SessionInfo, (StatusCode, Json<ApiError>)> {
+    if authorization.expires_at <= now_unix() {
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "stream_authorization_ended",
+            "Stream authorization expired",
+        ));
+    }
+
+    let session = load_current_stream_session(pool, authorization)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to revalidate stream authorization");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to validate stream authorization",
+            )
+        })?
+        .filter(|session| session.user_id == authorization.user_id)
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::UNAUTHORIZED,
+                "stream_authorization_ended",
+                "Stream authorization is no longer active",
+            )
+        })?;
+
+    require_build_log_read(pool, &session, build_id).await?;
+    Ok(session)
 }
 
 // ── Handlers ────────────────────────────────────────────────────
@@ -353,6 +530,7 @@ pub async fn create_stream_token(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(build_id): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> ApiResult<serde_json::Value> {
     // Verify build exists
     let pool = {
@@ -361,8 +539,23 @@ pub async fn create_stream_token(
     };
     require_build_log_read(&pool, &auth.0, &build_id).await?;
 
-    let token = state.stream_tokens.create(&auth.0, &build_id).await;
-    let expires_at = now_unix() + STREAM_TOKEN_TTL_SECS;
+    let credential_hash = hash_token(crate::util::extract_bearer(&headers).ok_or_else(|| {
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "missing_auth",
+            "Authentication required",
+        )
+    })?);
+    let (token, expires_at) = state
+        .stream_tokens
+        .create(&auth.0, credential_hash, &build_id)
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "stream_token_limit",
+                "Too many outstanding stream tokens",
+            )
+        })?;
 
     info!(
         build_id = %build_id,
@@ -389,9 +582,9 @@ pub async fn stream_build_logs(
     let query_token = sse_query.token.as_deref();
     let header_token = crate::util::extract_bearer(&headers);
 
-    let session = if let Some(qt) = query_token {
-        // Query param: must be a valid stream token — reject if not
-        let entry = state.stream_tokens.validate(qt).await.ok_or_else(|| {
+    let authorization = if let Some(qt) = query_token {
+        // Query param: must be a valid one-use stream token — reject if not
+        let entry = state.stream_tokens.consume(qt).ok_or_else(|| {
             api_err(
                 StatusCode::UNAUTHORIZED,
                 "invalid_stream_token",
@@ -405,10 +598,10 @@ pub async fn stream_build_logs(
                 "Stream token is not valid for this build",
             ));
         }
-        entry.session
+        entry.authorization
     } else if let Some(ht) = header_token {
         // Authorization header: accept full session token (non-browser clients)
-        state
+        let session = state
             .sessions
             .validate_session(ht)
             .await
@@ -426,7 +619,13 @@ pub async fn stream_build_logs(
                     "invalid_session",
                     "Invalid or expired session token",
                 )
-            })?
+            })?;
+        StreamAuthorization {
+            user_id: session.user_id,
+            credential_hash: hash_token(ht),
+            auth_source: AuthSource::Session,
+            expires_at: (now_unix() + STREAM_TOKEN_TTL_SECS).min(session.expires_at),
+        }
     } else {
         return Err(api_err(
             StatusCode::UNAUTHORIZED,
@@ -439,7 +638,17 @@ pub async fn stream_build_logs(
         let store = state.store.lock().await;
         store.pool().clone()
     };
-    require_build_log_read(&pool, &session, &build_id).await?;
+    let session = require_current_stream_authorization(&pool, &authorization, &build_id).await?;
+    let admission = state
+        .stream_tokens
+        .acquire(&session.user_id, &build_id)
+        .map_err(|_| {
+            api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "stream_limit",
+                "Too many active log streams",
+            )
+        })?;
 
     // Check for Last-Event-ID header for reconnection support
     let last_event_id: i64 = headers
@@ -448,7 +657,7 @@ pub async fn stream_build_logs(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(-1);
 
-    let stream = build_log_sse_stream(pool, build_id, last_event_id);
+    let stream = build_log_sse_stream(pool, build_id, last_event_id, authorization, admission);
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
@@ -458,8 +667,11 @@ fn build_log_sse_stream(
     pool: sqlx::SqlitePool,
     build_id: String,
     initial_last_seq: i64,
+    authorization: StreamAuthorization,
+    admission: StreamAdmission,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
+        let _admission = admission;
         let mut last_seq = initial_last_seq;
         let mut interval = tokio::time::interval(SSE_POLL_INTERVAL);
         let mut last_status_check_at = Instant::now();
@@ -467,6 +679,14 @@ fn build_log_sse_stream(
 
         loop {
             interval.tick().await;
+
+            if require_current_stream_authorization(&pool, &authorization, &build_id)
+                .await
+                .is_err()
+            {
+                yield Ok(Event::default().event("done").data("authorization_ended"));
+                break;
+            }
 
             // Fetch new log entries
             let rows = sqlx::query(
@@ -539,5 +759,126 @@ fn build_log_sse_stream(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(user_id: impl Into<String>) -> SessionInfo {
+        SessionInfo {
+            user_id: user_id.into(),
+            email: "stream@example.com".to_string(),
+            oidc_subject: "stream-subject".to_string(),
+            role: "developer".to_string(),
+            expires_at: i64::MAX,
+            auth_source: AuthSource::Session,
+        }
+    }
+
+    #[test]
+    fn stream_token_store_replaces_same_user_build_capability() {
+        let store = StreamTokenStore::new();
+        let session = session("user-1");
+        let (first, _) = store
+            .create(&session, "credential-1".to_string(), "build-1")
+            .unwrap();
+        let (second, _) = store
+            .create(&session, "credential-1".to_string(), "build-1")
+            .unwrap();
+
+        assert!(store.consume(&first).is_none());
+        assert!(store.consume(&second).is_some());
+    }
+
+    #[test]
+    fn stream_token_store_caps_outstanding_capabilities() {
+        let store = StreamTokenStore::new();
+        for index in 0..MAX_OUTSTANDING_STREAM_TOKENS {
+            store
+                .create(
+                    &session(format!("user-{index}")),
+                    format!("credential-{index}"),
+                    &format!("build-{index}"),
+                )
+                .unwrap();
+        }
+
+        assert!(
+            store
+                .create(
+                    &session("excess-user"),
+                    "excess-credential".to_string(),
+                    "excess-build",
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stream_token_store_caps_user_and_build_capabilities() {
+        let user_store = StreamTokenStore::new();
+        let user = session("bounded-user");
+        for index in 0..MAX_OUTSTANDING_STREAM_TOKENS_PER_USER {
+            user_store
+                .create(
+                    &user,
+                    "bounded-credential".to_string(),
+                    &format!("build-{index}"),
+                )
+                .unwrap();
+        }
+        assert!(
+            user_store
+                .create(&user, "bounded-credential".to_string(), "excess-build")
+                .is_none()
+        );
+
+        let build_store = StreamTokenStore::new();
+        for index in 0..MAX_OUTSTANDING_STREAM_TOKENS_PER_BUILD {
+            build_store
+                .create(
+                    &session(format!("user-{index}")),
+                    format!("credential-{index}"),
+                    "bounded-build",
+                )
+                .unwrap();
+        }
+        assert!(
+            build_store
+                .create(
+                    &session("excess-user"),
+                    "excess-credential".to_string(),
+                    "bounded-build",
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stream_admission_enforces_all_budgets() {
+        let user_store = StreamTokenStore::new();
+        let mut user_admissions = (0..MAX_ACTIVE_STREAMS_PER_USER)
+            .map(|index| user_store.acquire("user", &format!("build-{index}")))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(user_store.acquire("user", "excess-build").is_err());
+        user_admissions.pop();
+        assert!(user_store.acquire("user", "replacement-build").is_ok());
+
+        let build_store = StreamTokenStore::new();
+        let _build_admissions = (0..MAX_ACTIVE_STREAMS_PER_BUILD)
+            .map(|index| build_store.acquire(&format!("user-{index}"), "build"))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(build_store.acquire("excess-user", "build").is_err());
+
+        let global_store = StreamTokenStore::new();
+        let _global_admissions = (0..MAX_ACTIVE_STREAMS_GLOBAL)
+            .map(|index| global_store.acquire(&format!("user-{index}"), &format!("build-{index}")))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(global_store.acquire("excess-user", "excess-build").is_err());
     }
 }

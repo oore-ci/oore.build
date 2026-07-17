@@ -26,7 +26,7 @@ describe('resolveLoginFlow', () => {
     expect(flow).toBe('oidc')
   })
 
-  it('keeps trusted proxy flow even when the frontend is local', () => {
+  it('uses recovery before the configured remote auth flow', () => {
     const flow = resolveLoginFlow(
       {
         runtime_mode: 'remote',
@@ -35,7 +35,7 @@ describe('resolveLoginFlow', () => {
       true,
     )
 
-    expect(flow).toBe('trusted_proxy')
+    expect(flow).toBe('recovery')
   })
 
   it('uses local flow for local mode', () => {
@@ -50,7 +50,7 @@ describe('resolveLoginFlow', () => {
     expect(flow).toBe('local')
   })
 
-  it('uses local flow as a loopback fallback for remote oidc mode', () => {
+  it('uses recovery before remote oidc', () => {
     const flow = resolveLoginFlow(
       {
         runtime_mode: 'remote',
@@ -59,6 +59,6 @@ describe('resolveLoginFlow', () => {
       true,
     )
 
-    expect(flow).toBe('local')
+    expect(flow).toBe('recovery')
   })
 })

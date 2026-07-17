@@ -126,15 +126,6 @@ async fn lease_timeout_monitor(pool: SqlitePool) {
             .await
             {
                 Ok(_build) => {
-                    // Clear stale runner_id so the old runner can no longer mutate this build
-                    if let Err(e) = sqlx::query("UPDATE builds SET runner_id = NULL WHERE id = ?1")
-                        .bind(&build_id)
-                        .execute(&pool)
-                        .await
-                    {
-                        warn!(build_id = %build_id, error = %e, "lease_timeout_monitor: failed to clear runner_id");
-                    }
-
                     info!(build_id = %build_id, "lease_timeout_monitor: requeued build after lease timeout");
                 }
                 Err(e) => {

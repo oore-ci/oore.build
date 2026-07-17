@@ -50,6 +50,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 import type { Integration } from '@/lib/types'
 import { IntegrationInventory } from './-integration-inventory'
+import { GitLabWebhookTokens } from './-gitlab-webhook-tokens'
 
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: {
@@ -433,15 +434,17 @@ function IntegrationDetailPage() {
         lastWebhookAt={detail.last_webhook_at}
       />
 
+      {integration.provider === 'gitlab' && canWrite ? (
+        <GitLabWebhookTokens repositories={repositories} />
+      ) : null}
+
       {integration.provider === 'gitlab' && !detail.last_webhook_at ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Webhook readiness is pending. In GitLab, add the copied URL and
-            secret to each project, enable Push events, then send a test
-            delivery. If it fails, confirm the backend URL is reachable from
-            GitLab and that the secret still matches before refreshing this
-            page. Reconnect the source if the saved secret has changed.
+            Webhook readiness is pending. Generate a token for each project,
+            then add the copied URL and that project&apos;s token in GitLab,
+            enable Push events, and send a test delivery.
           </AlertDescription>
         </Alert>
       ) : null}

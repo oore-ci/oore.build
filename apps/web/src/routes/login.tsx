@@ -55,11 +55,25 @@ function formatLastAuthTime(epochSeconds: number): string {
 }
 
 function formatAuthMethodLabel(
-  method: 'oidc' | 'local' | 'trusted_proxy',
+  method: 'oidc' | 'local' | 'recovery' | 'trusted_proxy',
 ): string {
   if (method === 'local') return 'Local Only'
+  if (method === 'recovery') return 'Local recovery'
   if (method === 'trusted_proxy') return 'Trusted Proxy'
   return 'OIDC'
+}
+
+export function recoveryCapabilityFromHash(hash: string): string | null {
+  const value = new URLSearchParams(hash.replace(/^#/, '')).get('recovery')
+  return value && /^oore_recovery_[0-9a-f]{64}$/.test(value) ? value : null
+}
+
+export function buildLoginBackendCommands(backendUrl: string) {
+  const backendUrlArgument = `'${backendUrl.replaceAll("'", `'"'"'`)}'`
+  return {
+    cloudflared: `cloudflared tunnel --url ${backendUrlArgument}`,
+    ooreWeb: `oore-web --backend-url ${backendUrlArgument}`,
+  }
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -97,6 +111,9 @@ function useLoginPageState() {
   const [loading, setLoading] = useState(false)
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? null
   const [localEmail, setLocalEmail] = useState('')
+  const [recoveryCapability, setRecoveryCapability] = useState(() =>
+    recoveryCapabilityFromHash(window.location.hash),
+  )
   const [error, setError] = useState<string | null>(null)
   const [connectivityIssue, setConnectivityIssue] =
     useState<ConnectivityIssue | null>(null)
@@ -118,11 +135,25 @@ function useLoginPageState() {
     : false
   const loopbackLocalPath = uiIsLoopback && backendIsLoopback
   const loginFlow = setupStatusQuery.data
-    ? resolveLoginFlow(setupStatusQuery.data, loopbackLocalPath)
+    ? resolveLoginFlow(setupStatusQuery.data, Boolean(recoveryCapability))
     : null
   const localLoginAvailable = loginFlow === 'local' && loopbackLocalPath
   const trustedProxyLoginAvailable = loginFlow === 'trusted_proxy'
   const localModeNetworkBlocked = runtimeMode === 'local' && !loopbackLocalPath
+
+  useMountEffect(() => {
+    if (
+      new URLSearchParams(window.location.hash.replace(/^#/, '')).has(
+        'recovery',
+      )
+    ) {
+      window.history.replaceState(
+        null,
+        '',
+        window.location.pathname + window.location.search,
+      )
+    }
+  })
 
   useMountEffect(() => {
     if (hasValidToken) {
@@ -183,12 +214,19 @@ function useLoginPageState() {
 
       const resolvedLoginFlow = resolveLoginFlow(
         status,
-        canUseLoopbackLocalLogin,
+        Boolean(recoveryCapability),
       )
 
-      if (resolvedLoginFlow === 'local') {
+      if (resolvedLoginFlow === 'local' || resolvedLoginFlow === 'recovery') {
+        const capability =
+          resolvedLoginFlow === 'recovery' ? recoveryCapability : null
+        setRecoveryCapability(null)
         const response = await localLogin(baseUrl, {
-          email: localEmail.trim() || undefined,
+          email:
+            resolvedLoginFlow === 'local'
+              ? localEmail.trim() || undefined
+              : undefined,
+          recovery_capability: capability ?? undefined,
         })
         if (!response.user.user_id || !response.user.role) {
           throw new Error('Incomplete user profile received from server')
@@ -203,7 +241,7 @@ function useLoginPageState() {
             role: response.user.role,
             avatar_url: response.user.avatar_url,
           },
-          'local',
+          resolvedLoginFlow,
         )
         setLoading(false)
         void navigate({ to: '/' })
@@ -263,7 +301,15 @@ function useLoginPageState() {
         getConnectivityIssue(baseUrl, e, window.location.origin),
       )
       if (e instanceof ApiClientError) {
-        if (e.code === 'local_login_loopback_required') {
+        if (
+          e.code === 'local_recovery_capability_required' ||
+          e.code === 'local_recovery_capability_invalid' ||
+          e.code === 'local_recovery_account_mismatch'
+        ) {
+          setError(
+            'This recovery link is missing, expired, already used, or for a different account. Run oore recovery on the daemon host to create a new link.',
+          )
+        } else if (e.code === 'local_login_loopback_required') {
           setError(
             'Local Only sign-in is restricted to loopback access. Finish setup from the daemon host, or switch this instance to Remote with your chosen auth method.',
           )
@@ -305,7 +351,7 @@ function useLoginPageState() {
       }
       setLoading(false)
     }
-  }, [instance, localEmail, navigate, setAuth])
+  }, [instance, localEmail, navigate, recoveryCapability, setAuth])
 
   useTrustedProxyAutoLogin({
     enabled:
@@ -365,6 +411,7 @@ function LoginPage() {
     showAddInstance,
     trustedProxyLoginAvailable,
   } = useLoginPageState()
+  const backendCommands = buildLoginBackendCommands(instance?.url ?? '')
 
   if (isDemoMode) {
     return (
@@ -425,11 +472,13 @@ function LoginPage() {
                   ? runtimeMode === 'local'
                     ? 'Local Only'
                     : 'Local (loopback)'
-                  : loginFlow === 'trusted_proxy'
-                    ? 'Trusted Proxy'
-                    : loginFlow === 'oidc'
-                      ? 'OIDC'
-                      : 'Checking...'}
+                  : loginFlow === 'recovery'
+                    ? 'Local recovery'
+                    : loginFlow === 'trusted_proxy'
+                      ? 'Trusted Proxy'
+                      : loginFlow === 'oidc'
+                        ? 'OIDC'
+                        : 'Checking...'}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {lastAuthMeta
@@ -454,6 +503,16 @@ function LoginPage() {
                   Your upstream proxy has already authenticated this request.
                   Continue to create an Oore session from the forwarded
                   identity.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {loginFlow === 'recovery' ? (
+              <Alert>
+                <AlertDescription>
+                  Continue with the single-use recovery link minted on the
+                  daemon host. Its capability has already been removed from the
+                  address bar and will be sent only in this sign-in request.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -504,14 +563,14 @@ function LoginPage() {
                     Expose backend with tunnel
                   </p>
                   <code className="block bg-muted px-2 py-1 text-xs">
-                    cloudflared tunnel --url {instance.url}
+                    {backendCommands.cloudflared}
                   </code>
                 </div>
 
                 {hostedUi ? (
                   <p className="text-xs text-muted-foreground">
                     For local-only backends, run the bundled local web launcher:{' '}
-                    <code>oore-web --backend-url {instance.url}</code>.
+                    <code>{backendCommands.ooreWeb}</code>.
                   </p>
                 ) : null}
               </div>
@@ -538,6 +597,8 @@ function LoginPage() {
                 ) : (
                   'Sign in locally'
                 )
+              ) : loginFlow === 'recovery' ? (
+                'Recover local access'
               ) : trustedProxyLoginAvailable ? (
                 'Continue with trusted proxy'
               ) : setupStatusQuery.isLoading ? (

@@ -22,6 +22,23 @@ fn run_with_env(args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
     command.output().expect("failed to run oore binary")
 }
 
+#[test]
+fn runner_registration_rejects_remote_cleartext_before_network_io() {
+    let output = run(&[
+        "runner",
+        "register",
+        "--daemon-url",
+        "http://192.0.2.10:8787",
+        "--token",
+        "session-token",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("cleartext daemon URLs are allowed only for literal loopback IPs")
+    );
+}
+
 fn temp_config_path(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

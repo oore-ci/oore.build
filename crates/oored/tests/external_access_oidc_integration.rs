@@ -325,3 +325,93 @@ async fn test_developer_cannot_configure_oidc() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn oidc_secret_is_preserved_only_for_the_same_issuer_and_client() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+    seed_ready_with_oidc(&pool, true).await;
+
+    let unchanged = Request::builder()
+        .uri("/v1/settings/external-access/oidc")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::from(
+            serde_json::json!({
+                "issuer_url": "https://accounts.google.com",
+                "client_id": "test-client-id"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(unchanged).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response.into_body()).await;
+    assert_eq!(body["has_client_secret"], true);
+
+    let changed_without_secret = Request::builder()
+        .uri("/v1/settings/external-access/oidc")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::from(
+            serde_json::json!({
+                "issuer_url": "https://replacement.example.com",
+                "client_id": "replacement-client"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(changed_without_secret).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(response.into_body()).await;
+    assert_eq!(body["code"], "oidc_secret_reentry_required");
+
+    let stored_client_id: String =
+        sqlx::query_scalar("SELECT oidc_client_id FROM setup_state WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .expect("stored client id");
+    assert_eq!(stored_client_id, "test-client-id");
+
+    let changed_with_secret = Request::builder()
+        .uri("/v1/settings/external-access/oidc")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::from(
+            serde_json::json!({
+                "issuer_url": "https://replacement.example.com",
+                "client_id": "replacement-client",
+                "client_secret": "replacement-secret"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.oneshot(changed_with_secret).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let encrypted: String =
+        sqlx::query_scalar("SELECT oidc_encrypted_client_secret FROM setup_state WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .expect("replacement secret");
+    assert_eq!(
+        oored::crypto::decrypt(&encrypted, &common::TEST_ENCRYPTION_KEY).unwrap(),
+        "replacement-secret"
+    );
+}

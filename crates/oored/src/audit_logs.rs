@@ -71,7 +71,22 @@ pub async fn list_audit_logs(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    let limit = params.limit.unwrap_or(50).min(200);
+    let requested_limit = params.limit.unwrap_or(50);
+    if requested_limit <= 0 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "limit must be greater than zero",
+        ));
+    }
+    if params.offset.is_some_and(|offset| offset < 0) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "offset must not be negative",
+        ));
+    }
+    let limit = requested_limit.min(200);
     let offset = params.offset.unwrap_or(0);
     let order_by = audit_log_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 

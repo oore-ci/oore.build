@@ -107,7 +107,7 @@ async fn test_local_login_rejected_when_runtime_mode_remote() {
 }
 
 #[tokio::test]
-async fn test_local_login_allowed_on_loopback_when_runtime_mode_remote_and_setup_ready() {
+async fn test_local_login_requires_recovery_capability_on_loopback_when_remote_and_ready() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
@@ -136,9 +136,9 @@ async fn test_local_login_allowed_on_loopback_when_runtime_mode_remote_and_setup
         )
         .await
         .expect("local login");
-    assert_eq!(login_resp.status(), 200);
+    assert_eq!(login_resp.status(), 403);
     let body = common::body_json(login_resp.into_body()).await;
-    assert!(body["session_token"].as_str().is_some());
+    assert_eq!(body["code"], "local_recovery_capability_required");
 }
 
 #[tokio::test]
@@ -146,6 +146,7 @@ async fn test_local_login_rejected_when_client_is_not_loopback() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
 
     let login_resp = app
         .clone()
@@ -165,6 +166,13 @@ async fn test_local_login_rejected_when_client_is_not_loopback() {
     assert_eq!(login_resp.status(), 403);
     let body = common::body_json(login_resp.into_body()).await;
     assert_eq!(body["code"], "local_login_loopback_required");
+    let durable_rejections: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_logs WHERE action = 'local_login_blocked_non_loopback'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count durable local-login rejections");
+    assert_eq!(durable_rejections, 0);
 
     let status_after = app
         .oneshot(

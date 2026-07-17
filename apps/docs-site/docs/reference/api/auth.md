@@ -119,9 +119,12 @@ Users must be invited before they can sign in. If a user authenticates successfu
 
 ---
 
-## Local Login {#local-login}
+## Local Login and Recovery {#local-login}
 
-Create a loopback-only local session without OIDC.
+Create a passwordless local session without OIDC. The authority depends on the runtime mode:
+
+- `local`: the effective client must be loopback. The first login may complete Local Only setup.
+- `remote` with setup `ready`: the request must atomically consume a short-lived, single-use capability minted for one active account by [`oore recovery`](/reference/cli/oore-recovery) over the daemon's Unix management socket. TCP loopback and forwarding headers do not grant recovery authority.
 
 ```
 POST /v1/auth/local/login
@@ -133,11 +136,11 @@ POST /v1/auth/local/login
 
 ```json
 {
-  "email": "owner@example.com"
+  "recovery_capability": "<single-use capability from the URL fragment>"
 }
 ```
 
-`email` is optional when exactly one active user exists.
+`email` is optional in Local Only mode when exactly one active user exists. In Ready Remote mode, account selection happens when the capability is minted. If an API client also supplies `email`, it must match that bound account. The web client removes the capability from the URL fragment before submitting it in this POST body.
 
 ### Response `200 OK`
 
@@ -145,16 +148,18 @@ Returns `LocalLoginResponse`.
 
 ### Error responses
 
-| Status | Code                            | Description                                        |
-| ------ | ------------------------------- | -------------------------------------------------- |
-| 400    | `email_required`                | Multiple active users exist and email was omitted  |
-| 403    | `mode_restricted`               | Setup is incomplete while runtime mode is `remote` |
-| 403    | `local_login_loopback_required` | Local login attempted from non-loopback source     |
-| 403    | `user_not_found`                | No active user matched the provided email          |
+| Status | Code                                 | Description                                                       |
+| ------ | ------------------------------------ | ----------------------------------------------------------------- |
+| 400    | `email_required`                     | Multiple Local Only users exist and email was omitted             |
+| 403    | `mode_restricted`                    | Setup is incomplete while runtime mode is `remote`                |
+| 403    | `local_login_loopback_required`      | Local Only login attempted from a non-loopback source             |
+| 403    | `local_recovery_capability_required` | Ready Remote recovery omitted its capability                      |
+| 403    | `local_recovery_capability_invalid`  | Capability is malformed, expired, unknown, or already consumed    |
+| 403    | `local_recovery_account_mismatch`    | Request email differs from the account bound when the link minted |
+| 403    | `user_not_found`                     | No active user matched the authorized account                     |
 
 ::: warning
-Local login is always loopback-only. Any non-loopback access path must use
-External Access (`runtime_mode=remote`) with either OIDC or Trusted Proxy.
+Normal Remote-mode sign-in still uses the configured OIDC or Trusted Proxy flow. Local recovery is an operator-only exception initiated on the daemon host; it does not make TCP loopback a trusted authentication boundary.
 :::
 
 ---

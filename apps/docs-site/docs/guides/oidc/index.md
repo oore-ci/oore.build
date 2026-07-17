@@ -7,7 +7,7 @@ description: 'Configure OpenID Connect authentication for Oore CI with any OIDC-
 
 Oore CI supports OpenID Connect (OIDC) authentication and does not support local passwords.
 
-In Remote mode, OIDC is the default (`remote_auth_mode=oidc`). For local-first onboarding and operator access, the daemon also supports loopback-only local login (no OIDC). If you run behind an identity-aware proxy, you can opt into `remote_auth_mode=trusted_proxy` instead of OIDC.
+In Remote mode, OIDC is the default (`remote_auth_mode=oidc`). Loopback-only passwordless login is reserved for Local Only mode. A Ready Remote operator who loses browser access can mint a short-lived, single-use recovery link locally with [`oore recovery`](/reference/cli/oore-recovery); ordinary Remote sign-in still uses OIDC. If you run behind an identity-aware proxy, you can opt into `remote_auth_mode=trusted_proxy` instead of OIDC.
 
 ## What you need
 

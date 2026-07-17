@@ -358,6 +358,7 @@ export default defineConfig({
             { text: 'oore setup', link: '/reference/cli/oore-setup' },
             { text: 'oore doctor', link: '/reference/cli/oore-doctor' },
             { text: 'oore login', link: '/reference/cli/oore-login' },
+            { text: 'oore recovery', link: '/reference/cli/oore-recovery' },
             { text: 'oore status', link: '/reference/cli/oore-status' },
             { text: 'oore config', link: '/reference/cli/oore-config' },
           ],

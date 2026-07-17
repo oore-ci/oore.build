@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: 'CLI reference for oore login in alpha mode (token import + local login).'
+description: 'CLI reference for oore login in alpha mode (token import + Local Only login).'
 ---
 
 # oore login
@@ -10,7 +10,7 @@ Authenticate the CLI and persist credentials for later commands such as `oore st
 ## Synopsis
 
 ```bash
-# Local-mode login (loopback-only endpoint rules are enforced by daemon)
+# Local Only login (loopback-only endpoint rules are enforced by daemon)
 oore login [--daemon-url <url>] [--email <email>]
 
 # Import and validate an existing session token
@@ -32,7 +32,7 @@ oore login --json ...
 ## Behavior
 
 - If `--token` is provided, `oore` validates the token against `/v1/users/me`.
-- If `--token` is not provided, `oore` uses local login (`POST /v1/auth/local/login`).
+- If `--token` is not provided, `oore` uses Local Only login (`POST /v1/auth/local/login`). Ready Remote instances reject this path without a capability; use [`oore recovery`](/reference/cli/oore-recovery) for host-authorized browser recovery.
 - On success, `oore` stores:
   - `daemon_url`
   - `session_token`
@@ -49,4 +49,4 @@ oore login --json
 ## Notes
 
 - Full terminal OIDC browser flow is intentionally deferred in this alpha tranche.
-- Local login succeeds/fails based on daemon loopback/auth mode policy.
+- Local login succeeds only in Local Only mode from an effective loopback source.

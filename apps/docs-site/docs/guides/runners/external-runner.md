@@ -20,7 +20,7 @@ On the runner machine:
 
 ```bash
 oore runner register \
-  --daemon-url http://<daemon-host>:8787 \
+  --daemon-url https://<daemon-host> \
   --token <session_token> \
   --name "mac-mini-builder"
 ```
@@ -32,6 +32,11 @@ oore runner register \
 | `--name`       | —                       | —                    | Display name for the runner           |
 
 This creates a runner record on the daemon and writes a config file at `~/.oore/runner.json` with the runner's token.
+
+Runner registration and runtime traffic require HTTPS whenever the daemon is
+not addressed by a literal loopback IP. Cleartext HTTP remains available only
+for `127.0.0.1` or `::1`; hostnames such as `localhost` are intentionally not
+treated as proof of loopback.
 
 ## 2. Start the runner
 

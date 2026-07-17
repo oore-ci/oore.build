@@ -15,6 +15,9 @@ use tracing::error;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
+use crate::project_rbac::{
+    ProjectPermission, require_project_permission, resolve_effective_project_role,
+};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -37,6 +40,74 @@ fn default_policy() -> RetentionPolicy {
         artifact_ttl_days: None,
         updated_at: None,
     }
+}
+
+fn validate_retention_limits(
+    max_age_days: Option<i64>,
+    max_builds_per_project: Option<i64>,
+    max_artifact_size_bytes: Option<i64>,
+    artifact_ttl_days: Option<i64>,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    for (field, value) in [
+        ("max_age_days", max_age_days),
+        ("max_builds_per_project", max_builds_per_project),
+        ("max_artifact_size_bytes", max_artifact_size_bytes),
+        ("artifact_ttl_days", artifact_ttl_days),
+    ] {
+        if value.is_some_and(|value| value < 1) {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "validation_error",
+                format!("{field} must be at least 1"),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+async fn project_pool_with_permission(
+    state: &AppState,
+    auth: &AuthUser,
+    project_id: &str,
+    permission: ProjectPermission,
+) -> Result<sqlx::SqlitePool, (StatusCode, Json<ApiError>)> {
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, permission)?;
+
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1)")
+        .bind(project_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to verify project for retention policy");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to verify project",
+            )
+        })?;
+    if !exists {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
+    }
+
+    Ok(pool)
 }
 
 pub async fn load_global_policy(pool: &sqlx::SqlitePool) -> Result<RetentionPolicy, sqlx::Error> {
@@ -172,42 +243,12 @@ pub async fn update_retention_policy(
             "cleanup_interval_secs must be at least 60",
         ));
     }
-    if let Some(v) = req.max_age_days
-        && v < 1
-    {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "max_age_days must be at least 1",
-        ));
-    }
-    if let Some(v) = req.max_builds_per_project
-        && v < 1
-    {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "max_builds_per_project must be at least 1",
-        ));
-    }
-    if let Some(v) = req.max_artifact_size_bytes
-        && v < 1
-    {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "max_artifact_size_bytes must be at least 1",
-        ));
-    }
-    if let Some(v) = req.artifact_ttl_days
-        && v < 1
-    {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "artifact_ttl_days must be at least 1",
-        ));
-    }
+    validate_retention_limits(
+        req.max_age_days,
+        req.max_builds_per_project,
+        req.max_artifact_size_bytes,
+        req.artifact_ttl_days,
+    )?;
 
     let now = now_unix();
     let keep_statuses_json =
@@ -288,12 +329,10 @@ pub async fn get_project_retention(
     auth: AuthUser,
     Path(project_id): Path<String>,
 ) -> ApiResult<EffectiveProjectRetentionResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "read").await?;
+    let pool =
+        project_pool_with_permission(&state, &auth, &project_id, ProjectPermission::Read).await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
-
-    let global = load_global_policy(pool).await.map_err(|e| {
+    let global = load_global_policy(&pool).await.map_err(|e| {
         error!(error = %e, "failed to load global retention policy");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -304,7 +343,7 @@ pub async fn get_project_retention(
 
     let row = sqlx::query("SELECT * FROM project_retention_overrides WHERE project_id = ?1")
         .bind(&project_id)
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to load project retention override");
@@ -353,7 +392,14 @@ pub async fn update_project_retention(
     Path(project_id): Path<String>,
     Json(req): Json<UpdateProjectRetentionOverrideRequest>,
 ) -> ApiResult<EffectiveProjectRetentionResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
+    let pool =
+        project_pool_with_permission(&state, &auth, &project_id, ProjectPermission::Write).await?;
+    validate_retention_limits(
+        req.max_age_days,
+        req.max_builds_per_project,
+        req.max_artifact_size_bytes,
+        req.artifact_ttl_days,
+    )?;
 
     let now = now_unix();
     let keep_statuses_json = req
@@ -361,9 +407,6 @@ pub async fn update_project_retention(
         .as_ref()
         .and_then(|v| serde_json::to_string(v).ok());
     let cleanup_target_str = req.cleanup_target.map(|t| t.to_string());
-
-    let store = state.store.lock().await;
-    let pool = store.pool();
 
     sqlx::query(
         "INSERT INTO project_retention_overrides \
@@ -385,7 +428,7 @@ pub async fn update_project_retention(
     .bind(req.artifact_ttl_days)
     .bind(&auth.0.user_id)
     .bind(now)
-    .execute(pool)
+    .execute(&pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to update project retention override");
@@ -397,7 +440,7 @@ pub async fn update_project_retention(
     })?;
 
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "update_project_retention",
         "project_retention",
@@ -405,8 +448,6 @@ pub async fn update_project_retention(
         None,
     )
     .await;
-
-    drop(store);
 
     // Re-fetch to return the effective policy
     get_project_retention(State(state), auth, Path(project_id)).await
@@ -417,14 +458,12 @@ pub async fn delete_project_retention(
     auth: AuthUser,
     Path(project_id): Path<String>,
 ) -> ApiResult<EffectiveProjectRetentionResponse> {
-    check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
-
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool =
+        project_pool_with_permission(&state, &auth, &project_id, ProjectPermission::Write).await?;
 
     sqlx::query("DELETE FROM project_retention_overrides WHERE project_id = ?1")
         .bind(&project_id)
-        .execute(pool)
+        .execute(&pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to delete project retention override");
@@ -436,7 +475,7 @@ pub async fn delete_project_retention(
         })?;
 
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "delete_project_retention",
         "project_retention",
@@ -444,8 +483,6 @@ pub async fn delete_project_retention(
         None,
     )
     .await;
-
-    drop(store);
 
     get_project_retention(State(state), auth, Path(project_id)).await
 }

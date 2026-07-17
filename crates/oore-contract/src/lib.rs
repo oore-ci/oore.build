@@ -336,8 +336,38 @@ pub struct OidcCallbackResponse {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct LocalLoginRequest {
+    /// Optional account selector for Local Only login. In Ready Remote recovery,
+    /// it may only confirm the account already bound to the capability.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// Short-lived, single-use capability required for Ready Remote recovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_capability: Option<String>,
+}
+
+pub const LOCAL_RECOVERY_MIN_TTL_SECS: u64 = 1;
+pub const LOCAL_RECOVERY_MAX_TTL_SECS: u64 = 5 * 60;
+pub const LOCAL_RECOVERY_SOCKET_DIR: &str = "run";
+pub const LOCAL_RECOVERY_SOCKET_FILE: &str = "oored-management.sock";
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LocalRecoveryMintRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub ttl_seconds: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum LocalRecoveryMintResponse {
+    Success {
+        capability: String,
+        expires_at: i64,
+        user_email: String,
+    },
+    Error {
+        error: ApiError,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -662,13 +692,19 @@ pub struct SyncInstallationsResponse {
 pub struct GitLabStartRequest {
     pub host_url: String,
     pub auth_mode: String,
-    pub webhook_secret: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct GitLabRepositoryWebhookSecretResponse {
+    pub repository_id: String,
+    pub webhook_secret: String,
+    pub rotated_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1156,7 +1192,7 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
 }
 
-pub const RUNNER_PROTOCOL_VERSION: u32 = 2;
+pub const RUNNER_PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
@@ -1193,6 +1229,9 @@ pub struct ClaimedJob {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     pub lease_expires_at: i64,
+    /// Ephemeral capability required for runner-owned signing material fetches.
+    /// It is scoped to this job and revoked when the job leaves active execution.
+    pub signing_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
