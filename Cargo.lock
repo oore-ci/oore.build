@@ -2598,6 +2598,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hex",
+ "libc",
  "oore-contract",
  "rand 0.8.7",
  "reqwest",

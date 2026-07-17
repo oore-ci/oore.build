@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 hex.workspace = true
+libc = "0.2"
 oore-contract = { path = "../oore-contract" }
 reqwest.workspace = true
 rand.workspace = true

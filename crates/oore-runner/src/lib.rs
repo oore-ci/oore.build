@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -45,6 +45,8 @@ const ANDROID_SIGNER_KEY_PASSWORD_ENV: &str = "OORE_SIGNER_KEY_PASSWORD";
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
 const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
 const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
+const RUNNER_WORKSPACE_ROOT_NAME: &str = "oore-runner-workspaces";
+const LEGACY_RECONCILIATION_MARKER: &str = ".legacy-workspaces-reconciled-v1";
 const LEGACY_BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
 const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
 // ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
@@ -113,6 +115,19 @@ fn runner_workspace_prefix(runner_id: &str) -> String {
     format!("{BUILD_WORKSPACE_PREFIX}-{}-", hex::encode(&digest[..8]))
 }
 
+fn is_runner_workspace_name(file_name: &str) -> bool {
+    let Some(suffix) = file_name.strip_prefix(&format!("{BUILD_WORKSPACE_PREFIX}-")) else {
+        return false;
+    };
+    let Some((runner_hash, random_suffix)) = suffix.split_once('-') else {
+        return false;
+    };
+    runner_hash.len() == 16
+        && runner_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && random_suffix.len() == 32
+        && random_suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn create_private_workspace_in(parent: &Path, runner_id: &str) -> std::io::Result<PathBuf> {
     let prefix = runner_workspace_prefix(runner_id);
     for _ in 0..16 {
@@ -135,6 +150,101 @@ fn create_private_workspace_in(parent: &Path, runner_id: &str) -> std::io::Resul
         ErrorKind::AlreadyExists,
         "failed to allocate a unique runner workspace",
     ))
+}
+
+fn prepare_runner_workspace_root() -> anyhow::Result<PathBuf> {
+    let path = std::env::temp_dir().join(RUNNER_WORKSPACE_ROOT_NAME);
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let metadata = fs::symlink_metadata(&path)?;
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "runner workspace root {} is not a trusted directory",
+        path.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        anyhow::ensure!(
+            metadata.uid() == current_uid()? && metadata.permissions().mode() & 0o077 == 0,
+            "runner workspace root {} is not a private owned directory",
+            path.display()
+        );
+    }
+    fs::canonicalize(&path).context("failed to resolve runner workspace root")
+}
+
+fn repository_shell_command(
+    script: &str,
+    workspace: &Path,
+    runner_workspace_root: &Path,
+) -> anyhow::Result<tokio::process::Command> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let runner_workspace_root = fs::canonicalize(runner_workspace_root)
+            .context("failed to resolve runner workspace root")?;
+        let workspace = fs::canonicalize(workspace).context("failed to resolve build workspace")?;
+        anyhow::ensure!(
+            workspace.parent() == Some(runner_workspace_root.as_path()),
+            "build workspace is outside the runner workspace root"
+        );
+        let runner_workspace_root = runner_workspace_root
+            .to_str()
+            .context("runner workspace root path is not valid UTF-8")?;
+        let workspace = workspace
+            .to_str()
+            .context("build workspace path is not valid UTF-8")?;
+        anyhow::ensure!(
+            !runner_workspace_root.chars().any(char::is_control)
+                && !workspace.chars().any(char::is_control),
+            "runner workspace path contains control characters"
+        );
+        let runner_workspace_root = runner_workspace_root
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let workspace = workspace.replace('\\', "\\\\").replace('"', "\\\"");
+        // Seatbelt restrictions survive fork, exec, and setsid. Keep the current repository
+        // generation usable while denying every sibling generation and brokered escape route.
+        let profile = format!(
+            r#"(version 1)
+(allow default)
+(deny file* (subpath "{runner_workspace_root}"))
+(allow file* (subpath "{workspace}"))
+(deny process-info*)
+(deny mach-task-name)
+(deny signal)
+(allow signal (target same-sandbox))
+(deny job-creation)
+(deny appleevent-send)
+(deny mach-lookup
+  (global-name "com.apple.securityd")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.securityd.general")
+  (global-name "com.apple.securityd.systemkeychain")
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.coreservices.appleevents")
+  (global-name "com.apple.lsd.open")
+  (global-name "com.apple.lsd.xpc"))"#
+        );
+        let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
+        command.args(["-p", &profile, "/bin/sh"]);
+        command
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = tokio::process::Command::new("sh");
+
+    command.arg("-c").arg(script).current_dir(workspace);
+    Ok(command)
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -431,13 +541,14 @@ fn android_artifacts_for_signing(
 
 fn sign_android_artifacts(
     workspace: &Path,
+    signing_workspace: &Path,
     command: &str,
     inputs: &AndroidSigningInputs,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let extension = android_artifact_extension(command)
         .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
     let artifacts = android_artifacts_for_signing(workspace, extension)?;
-    let signing_dir = create_private_workspace_in(&std::env::temp_dir(), "android-signer")?;
+    let signing_dir = create_private_workspace_in(signing_workspace, "android-signer")?;
     let _cleanup = PrivateSigningDirectory {
         path: signing_dir.clone(),
     };
@@ -869,7 +980,7 @@ fn write_export_options_plist(
 }
 
 fn install_ios_signing_bundle(
-    workspace: &Path,
+    signing_workspace: &Path,
     bundle: &RunnerIosSigningBundle,
 ) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
     if bundle.team_id.trim().is_empty() {
@@ -885,7 +996,7 @@ fn install_ios_signing_bundle(
         anyhow::bail!("iOS signing bundle has no provisioning profiles");
     }
 
-    let signing_dir = workspace.join(IOS_SIGNING_DIR);
+    let signing_dir = signing_workspace.join(IOS_SIGNING_DIR);
     fs::create_dir_all(&signing_dir).map_err(|e| {
         anyhow::anyhow!(
             "failed to create iOS signing working directory {}: {e}",
@@ -990,7 +1101,7 @@ fn install_ios_signing_bundle(
             .map(|(_, _, _, installed_path, _)| installed_path.clone())
             .collect(),
     };
-    let journal_path = workspace.join(IOS_CLEANUP_JOURNAL);
+    let journal_path = signing_workspace.join(IOS_CLEANUP_JOURNAL);
     write_ios_cleanup_journal(&journal_path, &journal)?;
 
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
@@ -1767,12 +1878,198 @@ fn current_uid() -> anyhow::Result<u32> {
         .context("invalid uid returned by /usr/bin/id")
 }
 
+#[cfg(unix)]
+fn legacy_reconciliation_complete(root: &Path) -> anyhow::Result<bool> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut root_options = OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let root = root_options.open(root)?;
+    let mut marker = match openat_no_follow(&root, LEGACY_RECONCILIATION_MARKER, false) {
+        Ok(marker) => marker,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).context("failed to open legacy reconciliation marker"),
+    };
+    let metadata = marker.metadata()?;
+    anyhow::ensure!(
+        metadata.uid() == current_uid()?
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o077 == 0,
+        "legacy reconciliation marker is not a private owned file"
+    );
+    let mut content = Vec::new();
+    marker.read_to_end(&mut content)?;
+    anyhow::ensure!(
+        content == b"complete\n",
+        "legacy reconciliation marker has invalid content"
+    );
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn legacy_reconciliation_complete(root: &Path) -> anyhow::Result<bool> {
+    let marker = root.join(LEGACY_RECONCILIATION_MARKER);
+    let metadata = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "legacy reconciliation marker is not a regular file"
+    );
+    anyhow::ensure!(
+        fs::read(&marker)? == b"complete\n",
+        "legacy reconciliation marker has invalid content"
+    );
+    Ok(true)
+}
+
+struct OpenIosCleanupJournal {
+    journal: IosCleanupJournal,
+    #[cfg(unix)]
+    directory: fs::File,
+    #[cfg(not(unix))]
+    path: PathBuf,
+}
+
+impl OpenIosCleanupJournal {
+    fn remove(self) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::ffi::CString;
+            use std::os::fd::AsRawFd;
+
+            let name = CString::new("cleanup-journal.json").expect("static filename");
+            let result = unsafe { libc::unlinkat(self.directory.as_raw_fd(), name.as_ptr(), 0) };
+            if result == 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() == ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(error.into())
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            match fs::remove_file(self.path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.into()),
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn openat_no_follow(parent: &fs::File, name: &str, directory: bool) -> std::io::Result<fs::File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let name = CString::new(name).expect("static path component");
+    let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+    if directory {
+        flags |= libc::O_DIRECTORY;
+    }
+    let descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+    if descriptor < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(unsafe { fs::File::from_raw_fd(descriptor) })
+    }
+}
+
+#[cfg(unix)]
+fn open_ios_cleanup_journal(workspace: &Path) -> anyhow::Result<Option<OpenIosCleanupJournal>> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut root_options = OpenOptions::new();
+    root_options
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    let root = root_options.open(workspace).with_context(|| {
+        format!(
+            "failed to open runner workspace without following links: {}",
+            workspace.display()
+        )
+    })?;
+    let root_metadata = root.metadata()?;
+    anyhow::ensure!(
+        root_metadata.uid() == current_uid()?
+            && root_metadata.is_dir()
+            && root_metadata.permissions().mode() & 0o077 == 0,
+        "runner workspace {} is not a private owned directory",
+        workspace.display()
+    );
+
+    let oore_dir = match openat_no_follow(&root, ".oore", true) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to open runner metadata directory"),
+    };
+    let signing_dir = match openat_no_follow(&oore_dir, "ios-signing", true) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to open iOS signing journal directory"),
+    };
+    let mut journal_file = match openat_no_follow(&signing_dir, "cleanup-journal.json", false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to open iOS cleanup journal"),
+    };
+    let metadata = journal_file.metadata()?;
+    anyhow::ensure!(
+        metadata.uid() == current_uid()?
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o077 == 0,
+        "iOS cleanup journal is not a private owned file"
+    );
+    let mut bytes = Vec::new();
+    journal_file.read_to_end(&mut bytes)?;
+    let journal = serde_json::from_slice(&bytes).context("failed to parse iOS cleanup journal")?;
+    Ok(Some(OpenIosCleanupJournal {
+        journal,
+        directory: signing_dir,
+    }))
+}
+
+#[cfg(not(unix))]
+fn open_ios_cleanup_journal(workspace: &Path) -> anyhow::Result<Option<OpenIosCleanupJournal>> {
+    let metadata_dir = workspace.join(".oore");
+    let signing_dir = metadata_dir.join("ios-signing");
+    for directory in [&metadata_dir, &signing_dir] {
+        let metadata = match fs::symlink_metadata(directory) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "iOS signing journal path contains a link"
+        );
+    }
+    let path = signing_dir.join("cleanup-journal.json");
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "iOS cleanup journal is not a regular file"
+    );
+    let journal = serde_json::from_slice(&fs::read(&path)?)?;
+    Ok(Some(OpenIosCleanupJournal { journal, path }))
+}
+
 fn reconcile_stale_workspaces_with(
     parent: &Path,
-    runner_id: &str,
     mut reconcile_journal: impl FnMut(&Path, &IosCleanupJournal) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let prefix = runner_workspace_prefix(runner_id);
     let entries = match fs::read_dir(parent) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -1787,11 +2084,7 @@ fn reconcile_stale_workspaces_with(
         let Some(file_name) = file_name.to_str() else {
             continue;
         };
-        let Some(random_suffix) = file_name.strip_prefix(&prefix) else {
-            continue;
-        };
-        if random_suffix.len() != 32 || !random_suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
+        if !is_runner_workspace_name(file_name) {
             continue;
         }
 
@@ -1816,23 +2109,9 @@ fn reconcile_stale_workspaces_with(
             workspace.display()
         );
 
-        let journal_path = workspace.join(IOS_CLEANUP_JOURNAL);
-        if journal_path.exists() {
-            let journal: IosCleanupJournal =
-                serde_json::from_slice(&fs::read(&journal_path).with_context(|| {
-                    format!(
-                        "failed to read iOS cleanup journal {}",
-                        journal_path.display()
-                    )
-                })?)
-                .with_context(|| {
-                    format!(
-                        "failed to parse iOS cleanup journal {}",
-                        journal_path.display()
-                    )
-                })?;
-            reconcile_journal(&workspace, &journal)?;
-            fs::remove_file(&journal_path)?;
+        if let Some(journal) = open_ios_cleanup_journal(&workspace)? {
+            reconcile_journal(&workspace, &journal.journal)?;
+            journal.remove()?;
         }
         fs::remove_dir_all(&workspace).with_context(|| {
             format!(
@@ -1844,13 +2123,26 @@ fn reconcile_stale_workspaces_with(
     Ok(())
 }
 
-fn reconcile_stale_runner_mutations(runner_id: &str) -> anyhow::Result<()> {
-    // ponytail: one process per runner ID; add a process lease if replicas become supported.
+fn reconcile_stale_runner_mutations() -> anyhow::Result<()> {
+    // ponytail: one process per runner account; add a process lease if replicas become supported.
     ensure_legacy_workspace_has_no_residue(Path::new(LEGACY_BUILD_WORKSPACE_ROOT))?;
-    reconcile_stale_workspaces_with(&std::env::temp_dir(), runner_id, |workspace, journal| {
+    let runner_root = prepare_runner_workspace_root()?;
+    reconcile_stale_workspaces_with(&runner_root, |workspace, journal| {
         validate_ios_cleanup_journal(workspace, journal)?;
         cleanup_ios_signing_state(journal)
-    })
+    })?;
+    if !legacy_reconciliation_complete(&runner_root)? {
+        // One-time migration for generations created before the private runner root existed.
+        reconcile_stale_workspaces_with(&std::env::temp_dir(), |workspace, journal| {
+            validate_ios_cleanup_journal(workspace, journal)?;
+            cleanup_ios_signing_state(journal)
+        })?;
+        write_private_file(
+            &runner_root.join(LEGACY_RECONCILIATION_MARKER),
+            b"complete\n",
+        )?;
+    }
+    Ok(())
 }
 
 pub async fn run_runner_forever(
@@ -1861,7 +2153,7 @@ pub async fn run_runner_forever(
     require_safe_daemon_url(&daemon_url)?;
     let client = reqwest::Client::new();
 
-    reconcile_stale_runner_mutations(&config.runner_id)
+    reconcile_stale_runner_mutations()
         .context("failed to reconcile stale runner state before startup")?;
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
@@ -1900,7 +2192,7 @@ pub async fn run_runner_forever(
 
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        if let Err(error) = reconcile_stale_runner_mutations(&config.runner_id) {
+        if let Err(error) = reconcile_stale_runner_mutations() {
             eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
@@ -2697,7 +2989,11 @@ async fn execute_build(
     daemon_url: &str,
     config: &RunnerConfig,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
-    let workspace = match create_private_workspace_in(&std::env::temp_dir(), &config.runner_id) {
+    let runner_workspace_root = match prepare_runner_workspace_root() {
+        Ok(root) => root,
+        Err(error) => return (vec![], Err(error)),
+    };
+    let workspace = match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
         Ok(workspace) => workspace,
         Err(error) => return (vec![], Err(error.into())),
     };
@@ -2705,6 +3001,15 @@ async fn execute_build(
 
     let _cleanup = WorkspaceCleanup {
         path: workspace.clone(),
+    };
+    let signing_workspace =
+        match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
+            Ok(workspace) => workspace,
+            Err(error) => return (vec![], Err(error.into())),
+        };
+    try_mark_no_spotlight_index(&signing_workspace);
+    let _signing_cleanup = WorkspaceCleanup {
+        path: signing_workspace.clone(),
     };
     let authority = Arc::new(BuildAuthorityState::default());
 
@@ -2770,11 +3075,15 @@ async fn execute_build(
     )
     .await;
 
-    let mut checkout_child = tokio::process::Command::new("sh");
+    let mut checkout_child = match repository_shell_command(
+        &checkout.shell_script,
+        &workspace,
+        &runner_workspace_root,
+    ) {
+        Ok(command) => command,
+        Err(error) => return (steps, Err(error)),
+    };
     checkout_child
-        .arg("-c")
-        .arg(&checkout.shell_script)
-        .current_dir(&workspace)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
@@ -3080,11 +3389,15 @@ async fn execute_build(
             )
             .await;
 
-            let mut step_cmd = tokio::process::Command::new("sh");
+            let mut step_cmd = match repository_shell_command(
+                &normalized_command,
+                &workspace,
+                &runner_workspace_root,
+            ) {
+                Ok(command) => command,
+                Err(error) => return (steps, Err(error)),
+            };
             step_cmd
-                .arg("-c")
-                .arg(&normalized_command)
-                .current_dir(&workspace)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true);
@@ -3202,7 +3515,8 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             ),
                         )
                         .await;
-                        let signing_result = sign_android_artifacts(&workspace, command, inputs);
+                        let signing_result =
+                            sign_android_artifacts(&workspace, &signing_workspace, command, inputs);
                         let signing_finished = now_unix();
                         let signing_succeeded = signing_result.is_ok();
                         steps.push(StepResult {
@@ -3269,7 +3583,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             );
                         };
                         let (materialization, mut cleanup) =
-                            match install_ios_signing_bundle(workspace.as_path(), bundle) {
+                            match install_ios_signing_bundle(&signing_workspace, bundle) {
                                 Ok(prepared) => prepared,
                                 Err(error) => return (steps, Err(error)),
                             };
@@ -4349,18 +4663,27 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn stale_signing_journal_blocks_then_reconciles_before_later_work() {
+    fn stale_signing_journal_reconciles_across_runner_registration() {
         use std::os::unix::fs::PermissionsExt;
 
         let parent = temp_workspace();
-        let runner_id = "runner-reconciliation-test";
-        let workspace =
-            create_private_workspace_in(&parent, runner_id).expect("create stale workspace");
+        let runner_a = "runner-registration-a";
+        let runner_b = "runner-registration-b";
+        assert_ne!(
+            runner_workspace_prefix(runner_a),
+            runner_workspace_prefix(runner_b)
+        );
+        let workspace = create_private_workspace_in(&parent, runner_a)
+            .expect("create stale runner A workspace");
         fs::create_dir_all(workspace.join(IOS_SIGNING_DIR)).expect("create signing directory");
         let owned_profile = parent.join("generation-a.mobileprovision");
         let unrelated = parent.join("generation-b.mobileprovision");
+        let malformed_workspace = parent.join("oore-build-not-a-runner-generation");
+        let unrelated_directory = parent.join("unrelated-cache");
         fs::write(&owned_profile, b"GENERATION_A").expect("write owned placeholder");
         fs::write(&unrelated, b"GENERATION_B").expect("write unrelated placeholder");
+        fs::create_dir(&malformed_workspace).expect("create malformed safe sibling");
+        fs::create_dir(&unrelated_directory).expect("create unrelated safe sibling");
         let journal = IosCleanupJournal {
             keychain_path: workspace
                 .join(IOS_SIGNING_DIR)
@@ -4385,14 +4708,14 @@ mod tests {
         });
         assert!(workspace.exists(), "journal must preserve cleanup evidence");
 
-        let blocked = reconcile_stale_workspaces_with(&parent, runner_id, |_, _| {
+        let blocked = reconcile_stale_workspaces_with(&parent, |_, _| {
             anyhow::bail!("synthetic cleanup failure")
         });
         assert!(blocked.is_err());
         assert!(workspace.exists());
         assert!(journal_path.exists());
 
-        reconcile_stale_workspaces_with(&parent, runner_id, |seen_workspace, seen_journal| {
+        reconcile_stale_workspaces_with(&parent, |seen_workspace, seen_journal| {
             assert_eq!(seen_workspace, workspace);
             assert_eq!(seen_journal.installed_profiles, vec![owned_profile.clone()]);
             fs::remove_file(&owned_profile)?;
@@ -4404,6 +4727,35 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&unrelated).expect("read newer generation placeholder"),
             "GENERATION_B"
+        );
+        assert!(malformed_workspace.exists());
+        assert!(unrelated_directory.exists());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_workspace_reconciliation_does_not_follow_journal_links() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace();
+        let workspace = create_private_workspace_in(&parent, "runner-linked-journal")
+            .expect("create stale workspace");
+        let protected = parent.join("protected-sibling");
+        fs::create_dir(&protected).expect("create protected sibling");
+        let canary = protected.join("cleanup-journal.json");
+        fs::write(&canary, b"PROTECTED").expect("write protected canary");
+        fs::create_dir(workspace.join(".oore")).expect("create metadata directory");
+        symlink(&protected, workspace.join(IOS_SIGNING_DIR))
+            .expect("link attacker-controlled signing directory");
+
+        let result = reconcile_stale_workspaces_with(&parent, |_, _| {
+            panic!("linked journal must not be parsed")
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(&canary).expect("read protected canary"),
+            b"PROTECTED"
         );
         cleanup_workspace(&parent);
     }
@@ -4761,6 +5113,165 @@ mod tests {
         for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
             assert!(!environment.contains(&format!("{key}=")));
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn repository_descendant_escape_helper() {
+        let Ok(ready_path) = std::env::var("OORE_ESCAPE_READY") else {
+            return;
+        };
+        let signer_path = std::env::var("OORE_ESCAPE_SIGNER").expect("signer marker path");
+        let result_path = std::env::var("OORE_ESCAPE_RESULT").expect("result path");
+        let canary_path = std::env::var("OORE_ESCAPE_CANARY").expect("canary path");
+        let protected_root =
+            std::env::var("OORE_ESCAPE_PROTECTED_ROOT").expect("protected runner root path");
+        let signing_workspace =
+            std::env::var("OORE_ESCAPE_SIGNING_WORKSPACE").expect("signing workspace path");
+        let signing_link =
+            std::env::var("OORE_ESCAPE_SIGNING_LINK").expect("signing workspace link path");
+
+        unsafe extern "C" {
+            fn setsid() -> libc::pid_t;
+        }
+        let detached = unsafe { setsid() } >= 0;
+        fs::write(&ready_path, std::process::id().to_string()).expect("publish detached child");
+
+        let signer_pid = (0..250)
+            .find_map(|_| {
+                fs::read_to_string(&signer_path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+                    .or_else(|| {
+                        std::thread::sleep(Duration::from_millis(20));
+                        None
+                    })
+            })
+            .expect("signer marker must appear");
+        let can_read_canary = fs::read(&canary_path).is_ok();
+        let can_list_protected_root = fs::read_dir(&protected_root).is_ok();
+        let can_list_signing_workspace = fs::read_dir(&signing_workspace).is_ok();
+        let can_follow_signing_link =
+            fs::read(Path::new(&signing_link).join("signing-canary")).is_ok();
+        let can_inspect_signer = Command::new("/bin/ps")
+            .args(["eww", "-p", &signer_pid.to_string(), "-o", "command="])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        let can_signal_signer = Command::new("/bin/kill")
+            .args(["-0", &signer_pid.to_string()])
+            .status()
+            .is_ok_and(|status| status.success());
+        let can_access_keychain = Command::new("/usr/bin/security")
+            .args(["default-keychain", "-d", "user"])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        fs::write(
+            result_path,
+            serde_json::to_vec(&serde_json::json!({
+                "detached": detached,
+                "can_read_canary": can_read_canary,
+                "can_list_protected_root": can_list_protected_root,
+                "can_list_signing_workspace": can_list_signing_workspace,
+                "can_follow_signing_link": can_follow_signing_link,
+                "can_inspect_signer": can_inspect_signer,
+                "can_signal_signer": can_signal_signer,
+                "can_access_keychain": can_access_keychain,
+            }))
+            .expect("encode escape result"),
+        )
+        .expect("publish escape result");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn detached_repository_descendant_cannot_reach_later_signer() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace();
+        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
+            .expect("create protected runner root");
+        let repository_workspace =
+            create_private_workspace_in(&runner_workspace_root, "repository")
+                .expect("create repository workspace");
+        let signing_workspace = runner_workspace_root.join("later-signer");
+        let ready_path = repository_workspace.join("detached-ready");
+        let signer_path = repository_workspace.join("signer-pid");
+        let result_path = repository_workspace.join("escape-result.json");
+        let signing_link = repository_workspace.join("signing-link");
+        let canary_path = signing_workspace.join("signing-canary");
+        let test_binary = std::env::current_exe().expect("resolve test binary");
+        symlink(&signing_workspace, &signing_link).expect("link future signing workspace");
+
+        let mut repository_command = repository_shell_command(
+            "\"$OORE_ESCAPE_HELPER\" --exact tests::repository_descendant_escape_helper >/dev/null 2>&1 &",
+            &repository_workspace,
+            &runner_workspace_root,
+        )
+        .expect("build contained repository command");
+        repository_command
+            .env("OORE_ESCAPE_HELPER", test_binary)
+            .env("OORE_ESCAPE_READY", &ready_path)
+            .env("OORE_ESCAPE_SIGNER", &signer_path)
+            .env("OORE_ESCAPE_RESULT", &result_path)
+            .env("OORE_ESCAPE_CANARY", &canary_path)
+            .env("OORE_ESCAPE_PROTECTED_ROOT", &runner_workspace_root)
+            .env("OORE_ESCAPE_SIGNING_WORKSPACE", &signing_workspace)
+            .env("OORE_ESCAPE_SIGNING_LINK", &signing_link);
+        let stage_status = repository_command
+            .status()
+            .await
+            .expect("run contained repository stage");
+        assert!(stage_status.success());
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !ready_path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("detached child must survive its stage shell");
+
+        fs::create_dir(&signing_workspace).expect("create later signing workspace");
+        write_private_file(&canary_path, b"RUNNER_SIGNING_AUTHORITY")
+            .expect("write protected signer canary");
+        let mut signer = tokio::process::Command::new("/bin/sleep")
+            .arg("5")
+            .env("OORE_SIGNER_SECRET", "RUNNER_SIGNING_AUTHORITY")
+            .spawn()
+            .expect("start simulated signer");
+        fs::write(&signer_path, signer.id().expect("signer pid").to_string())
+            .expect("publish signer pid");
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !result_path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("detached child must publish its denied escape attempts");
+        let result: serde_json::Value =
+            serde_json::from_slice(&fs::read(&result_path).expect("read escape result"))
+                .expect("parse escape result");
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "detached": true,
+                "can_read_canary": false,
+                "can_list_protected_root": false,
+                "can_list_signing_workspace": false,
+                "can_follow_signing_link": false,
+                "can_inspect_signer": false,
+                "can_signal_signer": false,
+                "can_access_keychain": false,
+            })
+        );
+        assert_eq!(
+            fs::read(&canary_path).expect("read intact signer canary"),
+            b"RUNNER_SIGNING_AUTHORITY"
+        );
+        signer.kill().await.ok();
+        signer.wait().await.ok();
+        cleanup_workspace(&parent);
     }
 
     #[test]
