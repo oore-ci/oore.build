@@ -353,10 +353,18 @@ pub async fn delete_user(
     }
 
     let now = now_unix();
+    let mut transaction = pool.begin().await.map_err(|e| {
+        error!(error = %e, "failed to begin user disable transaction");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to disable user",
+        )
+    })?;
     sqlx::query("UPDATE users SET status = 'disabled', updated_at = ?1 WHERE id = ?2")
         .bind(now)
         .bind(&user_id)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to disable user");
@@ -367,26 +375,54 @@ pub async fn delete_user(
             )
         })?;
 
-    // Cascade: revoke all sessions for this user
-    state
-        .sessions
-        .revoke_user_sessions(&user_id)
+    let revoked_tokens = sqlx::query(
+        "UPDATE api_tokens SET revoked_at = ?1 WHERE created_by = ?2 AND revoked_at IS NULL",
+    )
+    .bind(now)
+    .bind(&user_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to revoke user API tokens");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to disable user",
+        )
+    })?
+    .rows_affected();
+
+    let revoked_sessions = sqlx::query("DELETE FROM sessions WHERE user_id = ?1")
+        .bind(&user_id)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to revoke user sessions");
             api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "session_error",
-                "Failed to revoke sessions",
+                "store_error",
+                "Failed to disable user",
             )
-        })?;
+        })?
+        .rows_affected();
+
+    transaction.commit().await.map_err(|e| {
+        error!(error = %e, "failed to commit user disable transaction");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to disable user",
+        )
+    })?;
 
     let details = serde_json::json!({
         "disabled_by": auth.0.email,
+        "revoked_api_tokens": revoked_tokens,
+        "revoked_sessions": revoked_sessions,
     })
     .to_string();
     let _ = write_audit_log(
-        pool,
+        &pool,
         Some(&auth.0.user_id),
         "user_disabled",
         "user",

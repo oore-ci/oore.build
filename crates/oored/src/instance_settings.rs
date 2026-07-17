@@ -553,7 +553,11 @@ pub fn verify_trusted_proxy_shared_secret(
     encryption_key: &[u8],
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let Some(encrypted_shared_secret) = settings.encrypted_shared_secret.as_deref() else {
-        return Ok(());
+        return Err(api_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "trusted_proxy_config_invalid",
+            "Trusted proxy shared secret is not configured",
+        ));
     };
 
     let expected = crypto::decrypt(encrypted_shared_secret, encryption_key).map_err(|e| {
@@ -734,6 +738,7 @@ async fn evaluate_external_access_preflight(
                     })?;
 
             let configured = proxy_settings.configured
+                && proxy_settings.has_shared_secret
                 && normalize_header_name(&proxy_settings.user_email_header).is_some();
             checks.push(build_external_access_check(
                 "trusted_proxy_configured",
@@ -1320,6 +1325,24 @@ pub async fn update_external_access_trusted_proxy_settings(
         }),
     };
 
+    if runtime_mode == RuntimeMode::Remote
+        && load_remote_auth_mode(&pool).await.map_err(|e| {
+            error!(error = %e, "failed to load remote auth mode for trusted proxy update");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to determine remote auth mode",
+            )
+        })? == RemoteAuthMode::TrustedProxy
+        && encrypted_shared_secret.is_none()
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "trusted_proxy_shared_secret_required",
+            "A shared secret is required while Trusted Proxy authentication is active",
+        ));
+    }
+
     let encrypted_warpgate_ticket = match req.warpgate_ticket {
         Some(value) => {
             let trimmed = value.trim();
@@ -1893,6 +1916,17 @@ pub async fn configure_external_access_oidc(
                 StatusCode::CONFLICT,
                 "invalid_state",
                 "External Access OIDC can only be configured after setup is ready",
+            ));
+        }
+
+        let credential_identity_changed = sf.oidc_config.as_ref().is_some_and(|current| {
+            current.issuer_url != discovered.issuer || current.client_id != client_id
+        });
+        if credential_identity_changed && client_secret.is_none() && sf.oidc_secret.is_some() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "oidc_secret_reentry_required",
+                "Re-enter the OIDC client secret when changing issuer or client ID",
             ));
         }
 

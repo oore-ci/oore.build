@@ -36,6 +36,20 @@ fn trusted_proxy_subject_for_email(email: &str) -> String {
     format!("trusted-proxy::{}", email.trim().to_lowercase())
 }
 
+fn require_verified_invitation_email(
+    email_verified: Option<bool>,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    if email_verified == Some(true) {
+        Ok(())
+    } else {
+        Err(api_err(
+            StatusCode::FORBIDDEN,
+            "unverified_email",
+            "Identity provider did not verify the invited email address",
+        ))
+    }
+}
+
 /// Pending OIDC authorization request stored in memory while the user is
 /// redirected to the identity provider.
 pub struct PendingAuth {
@@ -592,6 +606,11 @@ pub async fn oidc_callback(
         let final_avatar = picture_url.or(uavatar);
         (uid, uemail, urole, final_avatar)
     } else {
+        if claims.email_verified() != Some(true) {
+            warn!(subject = %subject, "OIDC invitation activation rejected: email is unverified");
+        }
+        require_verified_invitation_email(claims.email_verified())?;
+
         // Check for invited user by email
         let invited = sqlx::query(
             "SELECT id, email, role FROM users WHERE email = ?1 AND status = 'invited'",
@@ -751,35 +770,9 @@ pub async fn local_login(
 ) -> Result<Json<LocalLoginResponse>, (StatusCode, Json<ApiError>)> {
     let effective_ip = crate::effective_client_ip(peer_addr, &headers);
     if !effective_ip.is_loopback() {
-        let peer_ip = peer_addr.ip().to_string();
-        let source_ip = effective_ip.to_string();
-        let details = serde_json::json!({
-            "peer_ip": peer_ip,
-            "source_ip": source_ip,
-            "cf_connecting_ip": headers.get("cf-connecting-ip").and_then(|v| v.to_str().ok()),
-            "x_forwarded_for": headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
-            "forwarded": headers.get("forwarded").and_then(|v| v.to_str().ok()),
-            "x_real_ip": headers.get("x-real-ip").and_then(|v| v.to_str().ok()),
-        })
-        .to_string();
-
-        let pool = {
-            let store = state.store.lock().await;
-            store.pool().clone()
-        };
-        let _ = write_audit_log(
-            &pool,
-            None,
-            "local_login_blocked_non_loopback",
-            "auth",
-            None,
-            Some(&details),
-        )
-        .await;
-
         warn!(
             peer_ip = %peer_addr.ip(),
-            source_ip = %source_ip,
+            source_ip = %effective_ip,
             "blocked local login attempt from non-loopback client"
         );
         return Err(api_err(
@@ -938,6 +931,18 @@ pub async fn local_login(
             avatar_url,
         },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_verified_invitation_email;
+
+    #[test]
+    fn invitation_activation_requires_positive_email_verification() {
+        assert!(require_verified_invitation_email(Some(true)).is_ok());
+        assert!(require_verified_invitation_email(Some(false)).is_err());
+        assert!(require_verified_invitation_email(None).is_err());
+    }
 }
 
 /// `POST /v1/auth/trusted-proxy/login`

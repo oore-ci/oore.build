@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{ffi::OsStr, fs};
@@ -388,6 +391,53 @@ fn render_launchd_plist(
     out
 }
 
+fn verify_private_regular_file(path: &Path, expected_uid: u32) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "plist is not a regular file"
+    );
+    anyhow::ensure!(metadata.uid() == expected_uid, "plist has unexpected owner");
+    anyhow::ensure!(
+        metadata.permissions().mode() & 0o777 == 0o600,
+        "plist permissions are not 0600"
+    );
+    Ok(())
+}
+
+fn write_system_plist(path: &Path, contents: &str, expected_uid: u32) -> anyhow::Result<()> {
+    let file_name = path.file_name().context("plist path has no file name")?;
+    let temporary = path.with_file_name(format!(
+        ".{}.{}.tmp",
+        file_name.to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .with_context(|| format!("failed to create {}", temporary.display()))?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        verify_private_regular_file(&temporary, expected_uid)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+
+        fs::rename(&temporary, path)
+            .with_context(|| format!("failed to replace {}", path.display()))?;
+        verify_private_regular_file(path, expected_uid)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 fn current_uid() -> anyhow::Result<String> {
     let output = Command::new("id")
         .arg("-u")
@@ -482,8 +532,12 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
         &install_root,
         service_user,
     );
-    fs::write(&plist_path, plist)
-        .with_context(|| format!("failed to write {}", plist_path.display()))?;
+    if args.system {
+        write_system_plist(&plist_path, &plist, 0)?;
+    } else {
+        fs::write(&plist_path, plist)
+            .with_context(|| format!("failed to write {}", plist_path.display()))?;
+    }
 
     let (service, domain) = if args.system {
         (format!("system/{}", args.label), "system".to_string())
@@ -655,6 +709,26 @@ mod tests {
         );
         assert!(parse_env_assignment("1BAD=value").is_err());
         assert!(parse_env_assignment("MISSING_VALUE").is_err());
+    }
+
+    #[test]
+    fn system_plist_replaces_broad_file_with_private_regular_file() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let path = tmp.path().join("build.oore.oored.plist");
+        fs::write(&path, "old").expect("seed plist");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("broaden plist");
+        let expected_uid = fs::metadata(&path).expect("seed metadata").uid();
+
+        write_system_plist(&path, "secret-bearing plist", expected_uid)
+            .expect("secure plist write");
+
+        let metadata = fs::symlink_metadata(&path).expect("final metadata");
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.uid(), expected_uid);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "secret-bearing plist");
     }
 
     #[test]

@@ -1240,6 +1240,7 @@ async fn test_setup_trusted_proxy_configures_expected_owner_email() {
                         "user_email_header": "X-Oore-User-Email",
                         "setup_owner_email": "Owner@Example.COM ",
                         "trusted_proxy_cidrs": [],
+                        "shared_secret": "proxy-secret",
                     }))
                     .unwrap(),
                 ))
@@ -1260,6 +1261,10 @@ async fn test_setup_trusted_proxy_configures_expected_owner_email() {
                 .uri("/v1/setup/owner/claim-trusted-proxy")
                 .header("Authorization", format!("Bearer {}", session_token))
                 .header("x-oore-user-email", "owner@example.com")
+                .header(
+                    oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+                    "proxy-secret",
+                )
                 .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41238))))
                 .body(Body::empty())
                 .unwrap(),
@@ -1282,7 +1287,12 @@ async fn test_setup_owner_claim_trusted_proxy_rejects_owner_email_mismatch() {
 
     set_state(&db_path, SetupState::IdpConfigured).await;
     set_runtime_and_remote_auth_mode(&db_path, "remote", "trusted_proxy").await;
-    upsert_trusted_proxy_settings_with_owner(&db_path, None, Some("owner@example.com")).await;
+    upsert_trusted_proxy_settings_with_owner(
+        &db_path,
+        Some("proxy-secret"),
+        Some("owner@example.com"),
+    )
+    .await;
 
     let resp = app
         .oneshot(
@@ -1291,6 +1301,10 @@ async fn test_setup_owner_claim_trusted_proxy_rejects_owner_email_mismatch() {
                 .uri("/v1/setup/owner/claim-trusted-proxy")
                 .header("Authorization", format!("Bearer {}", session_token))
                 .header("x-oore-user-email", "admin@example.com")
+                .header(
+                    oored::instance_settings::TRUSTED_PROXY_SHARED_SECRET_HEADER,
+                    "proxy-secret",
+                )
                 .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41239))))
                 .body(Body::empty())
                 .unwrap(),
