@@ -14,6 +14,14 @@ Rules:
 
 ## 2026-07-18
 
+- **Source trust controls at repository scale**:
+  - Source details now open on one searchable, runner-state-filtered repository inventory with 20/50/100 pagination. Accounts and connection metadata live in separate tabs, while sync and provider actions stay in the page header.
+  - Direct runner access uses neutral Allowed/Blocked controls and states that leaving repositories blocked is expected. The global trust notice is acknowledged once per user and instance; it no longer treats approval of every discovered repository as setup completion.
+  - GitLab webhook tokens are created only from a selected project action. Rotation requires confirmation, the one-time reveal names the project and includes the webhook URL, and closing the dialog clears the secret from the page.
+  - Repository and account query failures now render explicit retry states instead of appearing as empty inventories.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 - **Direct macOS runner trust policy**:
   - The supported V1 runner now executes checkout and repository commands directly as the runner's macOS account. The unsupported Seatbelt profile and temporary Swift sandbox workaround are removed; private workspaces, cleanup, checkout credential scoping, environment scrubbing, late one-time signing grants, fixed signer selection, artifact verification, cancellation, logging, and managed service updates remain.
   - Runner protocol v4 prevents older sandboxed runners from silently claiming new jobs. Direct runner execution and every repository approval default off, only Owners and Admins may change them, and the claim query skips policy-blocked jobs while already-running builds drain normally. Queued build responses and the UI report the exact policy block reason.

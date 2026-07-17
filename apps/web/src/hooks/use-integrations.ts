@@ -113,9 +113,6 @@ export function useUpdateRepositoryRunnerPolicy(integrationId: string) {
         queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
       })
       void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'all-repos-for-runner-policy'],
-      })
-      void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'builds'],
       })
     },
@@ -147,9 +144,6 @@ export function useSyncInstallations() {
           'integration-repos',
           integrationId,
         ],
-      })
-      void queryClient.invalidateQueries({
-        queryKey: [instance?.id ?? '__none__', 'all-repos-for-runner-policy'],
       })
     },
   })

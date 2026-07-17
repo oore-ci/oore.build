@@ -45,31 +45,6 @@ export async function discoverSourceRepositories(
   )
 }
 
-export async function discoverSourceRepositoriesStrict(
-  integrations: Array<Integration>,
-  listRepositories: (
-    integration: Integration,
-  ) => Promise<ListRepositoriesResponse>,
-  signal?: AbortSignal,
-): Promise<Array<SourceRepository>> {
-  signal?.throwIfAborted()
-  const results = await Promise.all(
-    integrations.map(async (integration) => {
-      signal?.throwIfAborted()
-      const response = await listRepositories(integration)
-      signal?.throwIfAborted()
-      return response.repositories.map((repository) => ({
-        ...repository,
-        integration_id: integration.id,
-        provider: integration.provider,
-        host_url: integration.host_url,
-      }))
-    }),
-  )
-  signal?.throwIfAborted()
-  return results.flat()
-}
-
 export function useSourceRepositories(enabled: boolean) {
   const instance = useActiveInstance()
   const token = useAuthStore((state) => state.token)
@@ -89,33 +64,6 @@ export function useSourceRepositories(enabled: boolean) {
         },
       )
       return discoverSourceRepositories(
-        integrations,
-        (integration) =>
-          listIntegrationRepos(baseUrl, token, integration.id, { signal }),
-        signal,
-      )
-    },
-    enabled: enabled && !!baseUrl && !!token,
-  })
-}
-
-export function useRunnerPolicyRepositories(enabled: boolean) {
-  const instance = useActiveInstance()
-  const token = useAuthStore((state) => state.token)
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
-
-  return useQuery({
-    queryKey: [instance?.id ?? '__none__', 'all-repos-for-runner-policy'],
-    queryFn: async ({ signal }) => {
-      signal.throwIfAborted()
-      if (!baseUrl || !token) return []
-      const { integrations } = await listAllIntegrations(
-        baseUrl,
-        token,
-        undefined,
-        { signal },
-      )
-      return discoverSourceRepositoriesStrict(
         integrations,
         (integration) =>
           listIntegrationRepos(baseUrl, token, integration.id, { signal }),
