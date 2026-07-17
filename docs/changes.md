@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-17
 
+- **Rust 1.97 release-gate compatibility**:
+  - Removed two redundant formatting borrows newly rejected by Rust 1.97 Clippy so strict alpha validation remains green without changing runtime behavior.
+  - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+
 - **Host-authorized local recovery for Ready Remote instances (R086-001)**:
   - Ready Remote local recovery no longer treats a TCP loopback peer or forwarding headers as authentication authority. The public local-login route requires and atomically consumes a short-lived, single-use capability bound to one active account.
   - `oored` exposes capability minting only through an effective-user-owned Unix management socket under a `0700` directory with a `0600` socket. Ownership, exact modes, symlinks, active paths, and stale sockets fail closed; raw capabilities are held only in a URL fragment and submitted once in a POST body.

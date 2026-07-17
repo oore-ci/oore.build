@@ -234,7 +234,7 @@ pub async fn create_scoped_token_handler(
     // Build the download URL
     let public_url = state.public_url.read().await.clone();
     let base = public_url.as_deref().unwrap_or("http://127.0.0.1:8787");
-    let download_url = format!("{}/install/artifact/{}", base.trim_end_matches('/'), &token);
+    let download_url = format!("{}/install/artifact/{}", base.trim_end_matches('/'), token);
 
     // Audit log
     let details = serde_json::json!({
