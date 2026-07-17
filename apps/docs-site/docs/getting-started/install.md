@@ -22,8 +22,13 @@ Installation puts the daemon, CLI, and/or frontend launcher on disk. First-run s
 curl -fsSL https://oore.build/install | bash
 ```
 
-On macOS, this is the local-first path: it installs the daemon, CLI, embedded runner, and local web UI; keeps both services on loopback; enables launch-at-login; starts them; and opens `http://127.0.0.1:4173`.
+On macOS, this is the local-first path: it installs the daemon, CLI, runner binary, and local web UI; keeps the daemon and web services on loopback; enables launch-at-login; starts them; and opens `http://127.0.0.1:4173`.
 It uses loopback local login, so it does not generate a bootstrap token or send you to `/setup`.
+
+After signing in, register the Direct macOS runner once and install its separate
+login-session service. Then enable Direct runner execution in **Settings >
+Preferences** and approve each repository in **Settings > Sources**. These trust
+controls default off after both fresh installs and upgrades.
 
 Use `--no-open` to suppress the browser. Non-interactive installs do not open a browser unless you explicitly set `OORE_OPEN_BROWSER=true`.
 
@@ -59,11 +64,11 @@ curl -fsSL https://oore.build/install | bash -s -- --advanced
 The advanced installer is role-based:
 
 - `auto`: macOS prompts for a role in interactive shells; Linux defaults to frontend-only mode.
-- `all`: installs the daemon, CLI, embedded runner, `oore-web`, and local web assets on one macOS host.
-- `backend`: installs only the daemon, CLI, and embedded runner on a macOS backend host.
+- `all`: installs the daemon, CLI (including runner commands), `oore-web`, and local web assets on one macOS host.
+- `backend`: installs only the daemon and CLI (including runner commands) on a macOS backend host.
 - `frontend`: installs only `oore-web` and static frontend assets on a Linux or macOS frontend host.
 
-`full` is still accepted as a compatibility alias for `all`, but new docs and scripts should use role names. A future runner-only mode will be added separately when external runner packaging is ready.
+`full` is still accepted as a compatibility alias for `all`, but new docs and scripts should use role names. The Direct macOS runner is registered and managed through `oore runner`; there is no embedded execution mode.
 
 ## Deployment shapes and setup modes
 
@@ -176,7 +181,7 @@ Frontend-only mode:
 
 - Downloads `oore-web` and the prebuilt `web-dist` assets only.
 - Supports Linux and macOS release assets.
-- Does not install or start `oored`, `oore`, or the embedded runner.
+- Does not install or start `oored`, `oore`, or a Direct macOS runner.
 - Proxies `/v1/*` and `/healthz` from the frontend host to `OORE_WEB_BACKEND_URL`.
 - Uses a systemd user service on Linux when `OORE_LOCAL_WEB_MODE=login`.
 - Refuses non-interactive frontend-only installs unless `OORE_WEB_BACKEND_URL` or `OORE_DAEMON_URL` was explicitly provided.

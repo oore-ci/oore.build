@@ -1,9 +1,5 @@
 import { Suspense, lazy } from 'react'
-import {
-  Outlet,
-  createRootRoute,
-  useMatches,
-} from '@tanstack/react-router'
+import { Outlet, createRootRoute, useMatches } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -11,6 +7,7 @@ import { Search01Icon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
+import DirectRunnerPolicyBanner from '@/components/direct-runner-policy-banner'
 import DeferredToaster from '@/components/deferred-toaster'
 import PageBreadcrumb from '@/components/page-breadcrumb'
 import QaAppHeader from '@/components/qa-app-header'
@@ -176,6 +173,7 @@ function RootLayout() {
                 </div>
               </header>
               <ConnectivityBanner />
+              <DirectRunnerPolicyBanner />
               <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />
               </div>

@@ -37,7 +37,7 @@ The daemon is the central process. It:
 - Manages all persistent state in SQLite
 - Handles OIDC authentication flows
 - Schedules and tracks builds
-- Runs an embedded build runner (default mode)
+- Applies repository trust policy before a separate Direct macOS runner may claim a build
 - Receives webhooks from GitHub and GitLab
 - Manages artifact storage (local filesystem, S3, or R2)
 
@@ -73,12 +73,13 @@ The hosted UI at `ci.oore.build` is UI-only — it connects to the customer's se
 
 1. **Trigger** — User clicks "Build" in UI, pushes code (webhook), or calls the API
 2. **Queue** — Daemon creates a build record in SQLite with status `queued`
-3. **Claim** — Runner polls for available jobs and claims the build
-4. **Execute** — Runner clones the repository, installs Flutter via FVM, runs build commands
-5. **Stream** — Runner sends log lines to the daemon in real-time
-6. **Complete** — Runner reports success/failure, uploads artifacts
-7. **Store** — Daemon stores artifacts in configured storage (local, S3, or R2)
-8. **Download** — Users download artifacts via signed, time-limited URLs
+3. **Policy** — Daemon requires instance enablement and approval of the build's source repository
+4. **Claim** — The separate Direct macOS runner polls for and claims an eligible build
+5. **Execute** — Runner clones the repository, installs Flutter via FVM, runs build commands directly as the runner's macOS account
+6. **Stream** — Runner sends log lines to the daemon in real-time
+7. **Complete** — Runner reports success/failure, uploads artifacts
+8. **Store** — Daemon stores artifacts in configured storage (local, S3, or R2)
+9. **Download** — Users download artifacts via signed, time-limited URLs
 
 ### Authentication flow
 

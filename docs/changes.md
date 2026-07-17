@@ -12,6 +12,20 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-18
+
+- **Direct macOS runner trust policy**:
+  - The supported V1 runner now executes checkout and repository commands directly as the runner's macOS account. The unsupported Seatbelt profile and temporary Swift sandbox workaround are removed; private workspaces, cleanup, checkout credential scoping, environment scrubbing, late one-time signing grants, fixed signer selection, artifact verification, cancellation, logging, and managed service updates remain.
+  - Runner protocol v4 prevents older sandboxed runners from silently claiming new jobs. Direct runner execution and every repository approval default off, only Owners and Admins may change them, and the claim query skips policy-blocked jobs while already-running builds drain normally. Queued build responses and the UI report the exact policy block reason.
+  - Repository approval applies to every project linked to that source. The post-upgrade banner points operators to the instance and source controls and states that build code receives the runner account's authority. A dedicated non-admin macOS account is recommended hardening, not hostile-code isolation.
+  - GitHub source sync now reads every installation and repository page before cleanup. Ordinary rediscovery preserves approval, while a real source removal transactionally unlinks affected projects and deleting then rediscovering the repository creates a fresh, unapproved record; generic and local-path source deletion use the same fail-closed lifecycle.
+  - GitHub and GitLab pushes remain unchanged. Only immutable, verified same-repository pull/merge request revisions auto-queue; external forks, ambiguous sources, and non-revision events are ignored until a future isolated execution path exists.
+  - Historical security findings and Seatbelt ledger entries remain as history; ADR-0014's containment guarantee is deliberately superseded by the approved trusted-code threat model.
+  - `make direct-runner-upgrade-smoke` exercises the UI-managed update path against a live previous-alpha macOS install, first confirms that the daemon is managed, then requires the daemon and same managed runner to reach the explicitly expected candidate version with a newer heartbeat and protocol v4. Its default `api` trigger calls the UI's update endpoint; `OORE_UPGRADE_SMOKE_TRIGGER=observe` arms the verifier before an operator clicks Update in the browser, so the actual previous-alpha-to-candidate UI run can satisfy the release gate without SSH or `launchctl`.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
+  - Direct runner ADR: https://linear.app/oorebuild/document/adr-0015-direct-macos-runner-trusted-repository-boundary-c7ac2f316246
+
 ## 2026-07-17
 
 - **Managed runner updates and Android JDK discovery**:

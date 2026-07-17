@@ -567,6 +567,7 @@ function IntegrationDetailPage() {
       ) : null}
 
       <IntegrationInventory
+        canWrite={canWrite}
         installations={installations}
         installationsLabel={installationsLabel}
         integration={integration}

@@ -42,7 +42,7 @@ oored run [--listen <addr>] [--state-file <path>]
 
 The default database path is `~/Library/Application Support/oore/oore.db`. The encryption key is stored at `~/Library/Application Support/oore/encryption.key`.
 
-In default mode, `oored` starts an embedded local runner automatically. Set `OORED_RUNNER_MODE=external` to disable the embedded runner and require an external runner process.
+`oored` is the control plane only. Builds require a registered Direct macOS runner process; omitting `OORED_RUNNER_MODE` and setting it to `external` are equivalent. Legacy `embedded` and `hybrid` values fail closed.
 
 ### `oored install-service`
 
@@ -65,8 +65,9 @@ Installs `oored` as a macOS launchd user service. The default service label is
 | `--user`          | none               | none                    | Account that runs the LaunchDaemon; required with `--system`                                |
 
 The service uses the currently running `oored` executable, keeps the daemon alive
-with launchd, writes logs to `~/.oore/logs/oored.log`, and preserves the same
-embedded-runner default as `oored run`.
+with launchd, and writes logs to `~/.oore/logs/oored.log`. It does not execute
+repository commands; install the runner's separate login-session service after
+registering it.
 
 Examples:
 
@@ -132,8 +133,10 @@ The operator CLI handles setup, authentication, and administration.
 - State database path can be overridden with `--state-file` or `OORE_SETUP_STATE_FILE`
 - Default database location: `~/Library/Application Support/oore/oore.db`
 
-### Embedded runner note
+### Direct macOS runner note
 
-The single-host default flow does not require `oore runner start`. The daemon (`oored`) auto-starts an embedded local runner unless `OORED_RUNNER_MODE=external`.
-
-iOS signing is the exception: use `OORED_RUNNER_MODE=external` and `oore runner install-service` so code signing runs in the logged-in macOS user session required by Apple Keychain Services.
+All builds use the separate Direct macOS runner. Register it once with
+`oore runner register`, then install its managed login-session service with
+`oore runner install-service`. This keeps normal builds and Apple Keychain code
+signing in the runner user's macOS session. After an update, Oore's managed
+updater restarts that runner service automatically.

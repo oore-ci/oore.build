@@ -54,20 +54,21 @@ chmod 600 ~/Library/Application\ Support/oore/encryption.key 2>/dev/null || true
 
 ## Builds stuck in "queued"
 
-### Embedded runner not starting
+### Direct runner policy is blocking the build
 
-In default mode, oored starts an embedded runner automatically. If builds stay queued:
+The queued build page reports one of three policy reasons:
 
-1. Check daemon logs for runner-related errors
-2. Verify the daemon is running in default mode (not `OORED_RUNNER_MODE=external`)
+- **Instance disabled** — an Owner or Admin must enable Direct runner execution in **Settings > Preferences**.
+- **Repository not approved** — an Owner or Admin must approve the source in **Settings > Sources**. Approval applies to every project linked to that repository.
+- **Repository unavailable** — reconnect or rediscover the source repository before retrying.
 
-### External runner not connected
+Blocked jobs stay queued, but do not prevent the runner from claiming another eligible job.
 
-If using external mode:
+### Direct macOS runner not connected
 
-1. Check that `oore runner start` is running
-2. Verify the runner config points to the correct daemon URL
-3. Check **Settings > Runners** in the UI for runner status
+1. Check that the managed runner service is running, or use `oore runner start` for a foreground diagnostic.
+2. Verify the runner config points to the correct daemon URL.
+3. Check **Settings > Runners** in the UI for runner status.
 
 ### Runner claiming but builds failing immediately
 

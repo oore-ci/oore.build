@@ -8,6 +8,165 @@ use axum::body::Body;
 use hyper::Request;
 use tower::ServiceExt;
 
+async fn repository_external_id(
+    pool: &sqlx::SqlitePool,
+    integration_id: &str,
+    repository_full_name: &str,
+) -> String {
+    sqlx::query_scalar(
+        "SELECT r.external_id \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         WHERE inst.integration_id = ?1 AND r.full_name = ?2",
+    )
+    .bind(integration_id)
+    .bind(repository_full_name)
+    .fetch_one(pool)
+    .await
+    .expect("failed to resolve test repository external ID")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn github_pull_request_payload(
+    action: &str,
+    repository_full_name: &str,
+    repository_id: Option<&str>,
+    source_repository_id: Option<&str>,
+    target_repository_id: Option<&str>,
+    number: i64,
+    branch: &str,
+    sha: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "action": action,
+        "number": number,
+        "repository": {
+            "id": repository_id,
+            "full_name": repository_full_name,
+        },
+        "pull_request": {
+            "merged": false,
+            "head": {
+                "ref": branch,
+                "sha": sha,
+                "repo": { "id": source_repository_id },
+            },
+            "base": {
+                "ref": "main",
+                "repo": { "id": target_repository_id },
+            },
+        },
+        "sender": { "login": "test-user" },
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gitlab_merge_request_payload(
+    action: &str,
+    repository_full_name: &str,
+    repository_id: &str,
+    source_repository_id: Option<&str>,
+    target_repository_id: Option<&str>,
+    iid: i64,
+    branch: &str,
+    sha: &str,
+    oldrev: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "object_kind": "merge_request",
+        "event_type": "merge_request",
+        "project": {
+            "id": repository_id,
+            "path_with_namespace": repository_full_name,
+        },
+        "object_attributes": {
+            "action": action,
+            "iid": iid,
+            "source_project_id": source_repository_id,
+            "target_project_id": target_repository_id,
+            "source_branch": branch,
+            "target_branch": "main",
+            "last_commit": { "id": sha },
+            "oldrev": oldrev,
+        },
+        "user": { "username": "test-user" },
+        "created_at": chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+async fn post_github_webhook(
+    app: &axum::Router,
+    secret: &str,
+    delivery_id: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> hyper::StatusCode {
+    let body = serde_json::to_vec(&payload).unwrap();
+    let signature = common::github_hmac_signature(&body, secret);
+    app.clone()
+        .oneshot(
+            Request::post("/v1/webhooks/github")
+                .header("content-type", "application/json")
+                .header("x-hub-signature-256", signature)
+                .header("x-github-delivery", delivery_id)
+                .header("x-github-event", event_type)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn post_gitlab_webhook(
+    app: &axum::Router,
+    secret: &str,
+    delivery_id: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> hyper::StatusCode {
+    app.clone()
+        .oneshot(
+            Request::post("/v1/webhooks/gitlab")
+                .header("content-type", "application/json")
+                .header("x-gitlab-token", secret)
+                .header("x-gitlab-event-uuid", delivery_id)
+                .header("x-gitlab-event", event_type)
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn wait_for_webhook_status(pool: &sqlx::SqlitePool, delivery_id: &str) -> String {
+    for _ in 0..80 {
+        let status: Option<String> = sqlx::query_scalar(
+            "SELECT status FROM integration_webhooks WHERE provider_delivery_id = ?1",
+        )
+        .bind(delivery_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+        if let Some(status) = status
+            && status != "received"
+        {
+            return status;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("webhook {delivery_id} did not finish processing");
+}
+
+async fn project_build_count(pool: &sqlx::SqlitePool, project_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE project_id = ?1")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 fn query_value(url: &str, key: &str) -> String {
     url.split_once('?')
         .and_then(|(_, query)| {
@@ -64,6 +223,140 @@ async fn test_github_webhook_happy_path() {
     assert_eq!(builds[0]["trigger_event"], "push");
     assert_eq!(builds[0]["branch"], "main");
     assert_eq!(builds[0]["commit_sha"], "abc123");
+}
+
+#[tokio::test]
+async fn test_github_pull_request_revision_trust_policy() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let secret = "gh-pr-revision-trust-secret";
+    let integration_id = common::seed_github_integration(&pool, &user_id, secret).await;
+    let repository = "test-org/pr-revision-trust";
+    let (project_id, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, repository).await;
+    let target_id = repository_external_id(&pool, &integration_id, repository).await;
+
+    for (index, action) in ["opened", "reopened", "synchronize"]
+        .into_iter()
+        .enumerate()
+    {
+        let delivery_id = format!("gh-pr-allowed-{action}");
+        let sha = format!("gh-pr-sha-{index}");
+        let payload = github_pull_request_payload(
+            action,
+            repository,
+            Some(&target_id),
+            Some(&target_id),
+            Some(&target_id),
+            index as i64 + 1,
+            "feature/same-repository",
+            &sha,
+        );
+        assert_eq!(
+            post_github_webhook(&app, secret, &delivery_id, "pull_request", payload).await,
+            hyper::StatusCode::OK
+        );
+        let builds = common::wait_for_builds(&pool, &project_id, index + 1, 2_000).await;
+        assert_eq!(builds.len(), index + 1);
+        assert_eq!(builds[index]["branch"], "feature/same-repository");
+        assert_eq!(builds[index]["commit_sha"], sha);
+    }
+
+    let denied = [
+        (
+            "gh-pr-fork",
+            github_pull_request_payload(
+                "opened",
+                repository,
+                Some(&target_id),
+                Some("external-fork-repository"),
+                Some(&target_id),
+                10,
+                "feature/fork",
+                "gh-pr-fork-sha",
+            ),
+        ),
+        (
+            "gh-pr-ambiguous-source",
+            github_pull_request_payload(
+                "opened",
+                repository,
+                Some(&target_id),
+                None,
+                Some(&target_id),
+                11,
+                "feature/missing-source",
+                "gh-pr-missing-source-sha",
+            ),
+        ),
+        (
+            "gh-pr-target-mismatch",
+            github_pull_request_payload(
+                "opened",
+                repository,
+                Some("different-target-repository"),
+                Some("different-target-repository"),
+                Some("different-target-repository"),
+                12,
+                "feature/wrong-target",
+                "gh-pr-wrong-target-sha",
+            ),
+        ),
+        (
+            "gh-pr-missing-head",
+            github_pull_request_payload(
+                "opened",
+                repository,
+                Some(&target_id),
+                Some(&target_id),
+                Some(&target_id),
+                13,
+                "feature/missing-head",
+                "",
+            ),
+        ),
+        (
+            "gh-pr-label-only",
+            github_pull_request_payload(
+                "labeled",
+                repository,
+                Some(&target_id),
+                Some(&target_id),
+                Some(&target_id),
+                14,
+                "feature/label-only",
+                "gh-pr-label-sha",
+            ),
+        ),
+        ("gh-pr-merged", {
+            let mut payload = github_pull_request_payload(
+                "closed",
+                repository,
+                Some(&target_id),
+                Some(&target_id),
+                Some(&target_id),
+                15,
+                "feature/merged",
+                "gh-pr-merged-sha",
+            );
+            payload["pull_request"]["merged"] = serde_json::Value::Bool(true);
+            payload
+        }),
+    ];
+
+    for (delivery_id, payload) in denied {
+        assert_eq!(
+            post_github_webhook(&app, secret, delivery_id, "pull_request", payload).await,
+            hyper::StatusCode::OK
+        );
+        assert_eq!(wait_for_webhook_status(&pool, delivery_id).await, "ignored");
+        assert_eq!(project_build_count(&pool, &project_id).await, 3);
+    }
 }
 
 #[tokio::test]
@@ -358,6 +651,177 @@ async fn test_gitlab_webhook_happy_path() {
     assert_eq!(builds[0]["trigger_event"], "Push Hook");
     assert_eq!(builds[0]["branch"], "main");
     assert_eq!(builds[0]["commit_sha"], "gl-sha-1");
+}
+
+#[tokio::test]
+async fn test_gitlab_merge_request_revision_trust_policy() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let secret = "gl-mr-revision-trust-secret";
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    let repository = "test-group/mr-revision-trust";
+    let (project_id, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, repository).await;
+    let target_id =
+        common::seed_gitlab_repository_webhook_secret(&pool, &integration_id, repository, secret)
+            .await;
+
+    let allowed = [
+        ("open", "gl-mr-open-sha", None),
+        ("reopen", "gl-mr-reopen-sha", None),
+        ("update", "gl-mr-update-sha", Some("gl-mr-previous-sha")),
+    ];
+    for (index, (action, sha, oldrev)) in allowed.into_iter().enumerate() {
+        let delivery_id = format!("gl-mr-allowed-{action}");
+        let payload = gitlab_merge_request_payload(
+            action,
+            repository,
+            &target_id,
+            Some(&target_id),
+            Some(&target_id),
+            index as i64 + 1,
+            "feature/same-repository",
+            sha,
+            oldrev,
+        );
+        assert_eq!(
+            post_gitlab_webhook(&app, secret, &delivery_id, "Merge Request Hook", payload).await,
+            hyper::StatusCode::OK
+        );
+        let builds = common::wait_for_builds(&pool, &project_id, index + 1, 2_000).await;
+        assert_eq!(builds.len(), index + 1);
+        assert_eq!(builds[index]["branch"], "feature/same-repository");
+        assert_eq!(builds[index]["commit_sha"], sha);
+    }
+
+    let denied = [
+        (
+            "gl-mr-fork",
+            gitlab_merge_request_payload(
+                "open",
+                repository,
+                &target_id,
+                Some("external-fork-project"),
+                Some(&target_id),
+                10,
+                "feature/fork",
+                "gl-mr-fork-sha",
+                None,
+            ),
+        ),
+        (
+            "gl-mr-ambiguous-source",
+            gitlab_merge_request_payload(
+                "open",
+                repository,
+                &target_id,
+                None,
+                Some(&target_id),
+                11,
+                "feature/missing-source",
+                "gl-mr-missing-source-sha",
+                None,
+            ),
+        ),
+        (
+            "gl-mr-target-mismatch",
+            gitlab_merge_request_payload(
+                "open",
+                repository,
+                &target_id,
+                Some("different-target-project"),
+                Some("different-target-project"),
+                12,
+                "feature/wrong-target",
+                "gl-mr-wrong-target-sha",
+                None,
+            ),
+        ),
+        (
+            "gl-mr-missing-head",
+            gitlab_merge_request_payload(
+                "open",
+                repository,
+                &target_id,
+                Some(&target_id),
+                Some(&target_id),
+                13,
+                "feature/missing-head",
+                "",
+                None,
+            ),
+        ),
+        (
+            "gl-mr-update-without-oldrev",
+            gitlab_merge_request_payload(
+                "update",
+                repository,
+                &target_id,
+                Some(&target_id),
+                Some(&target_id),
+                14,
+                "feature/metadata-update",
+                "gl-mr-metadata-sha",
+                None,
+            ),
+        ),
+        (
+            "gl-mr-update-with-unchanged-head",
+            gitlab_merge_request_payload(
+                "update",
+                repository,
+                &target_id,
+                Some(&target_id),
+                Some(&target_id),
+                15,
+                "feature/unchanged-head",
+                "gl-mr-unchanged-sha",
+                Some("gl-mr-unchanged-sha"),
+            ),
+        ),
+        (
+            "gl-mr-close",
+            gitlab_merge_request_payload(
+                "close",
+                repository,
+                &target_id,
+                Some(&target_id),
+                Some(&target_id),
+                16,
+                "feature/closed",
+                "gl-mr-close-sha",
+                None,
+            ),
+        ),
+        (
+            "gl-mr-merge",
+            gitlab_merge_request_payload(
+                "merge",
+                repository,
+                &target_id,
+                Some(&target_id),
+                Some(&target_id),
+                17,
+                "feature/merged",
+                "gl-mr-merge-sha",
+                None,
+            ),
+        ),
+    ];
+
+    for (delivery_id, payload) in denied {
+        assert_eq!(
+            post_gitlab_webhook(&app, secret, delivery_id, "Merge Request Hook", payload,).await,
+            hyper::StatusCode::OK
+        );
+        assert_eq!(wait_for_webhook_status(&pool, delivery_id).await, "ignored");
+        assert_eq!(project_build_count(&pool, &project_id).await, 3);
+    }
 }
 
 #[tokio::test]

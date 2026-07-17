@@ -19,6 +19,7 @@ import {
   getRepositoryAvatar,
   getSetupStatus,
   listAllIntegrations,
+  listIntegrationRepos,
   listBuildArtifacts,
   listBuilds,
   listAuditLogs,
@@ -33,6 +34,7 @@ import {
   updateArtifactStorageSettings,
   updateInstancePreferences,
   updateProjectMember,
+  updateRepositoryRunnerPolicy,
   updatePipeline,
   updateRunner,
   validatePipeline,
@@ -307,6 +309,37 @@ describe('query cancellation', () => {
       expect.objectContaining({ signal: controller.signal }),
     )
   })
+
+  it('loads every repository page so each source can be approved', async () => {
+    const controller = new AbortController()
+    const firstPage = Array.from({ length: 500 }, (_, index) => ({
+      id: `repository-${index}`,
+    }))
+    mockFetch
+      .mockReturnValueOnce(mockJsonResponse(200, { repositories: firstPage }))
+      .mockReturnValueOnce(
+        mockJsonResponse(200, { repositories: [{ id: 'repository-500' }] }),
+      )
+
+    const result = await listIntegrationRepos(
+      'https://ci.example.com',
+      'token',
+      'integration-1',
+      { signal: controller.signal },
+    )
+
+    expect(result.repositories).toHaveLength(501)
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/integrations/integration-1/repositories?limit=500&offset=0',
+      expect.objectContaining({ signal: controller.signal }),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/integrations/integration-1/repositories?limit=500&offset=500',
+      expect.objectContaining({ signal: controller.signal }),
+    )
+  })
 })
 
 describe('removed API contracts', () => {
@@ -426,6 +459,38 @@ describe('repository avatars', () => {
       },
     )
     expect(result).toBe(avatar)
+  })
+})
+
+describe('repository runner policy', () => {
+  it('updates one repository through the narrow policy endpoint', async () => {
+    const payload = {
+      repository: {
+        id: 'repo-1',
+        allow_direct_macos_runner: true,
+      },
+    }
+    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
+
+    const result = await updateRepositoryRunnerPolicy(
+      'https://oore.example.com',
+      'session-token',
+      'repo-1',
+      { allow_direct_macos_runner: true },
+    )
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://oore.example.com/v1/integration-repositories/repo-1/runner-policy',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer session-token',
+        },
+        body: JSON.stringify({ allow_direct_macos_runner: true }),
+      },
+    )
+    expect(result).toEqual(payload)
   })
 })
 
@@ -721,6 +786,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'local',
+        direct_macos_runner_enabled: false,
         restart_required: false,
         updated_at: 123,
       },
@@ -748,6 +814,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'remote',
+        direct_macos_runner_enabled: true,
         restart_required: false,
       },
     }
@@ -756,7 +823,11 @@ describe('instance preferences api', () => {
     const result = await updateInstancePreferences(
       'https://ci.example.com',
       'session-token',
-      { key_storage_mode: 'file', runtime_mode: 'remote' },
+      {
+        key_storage_mode: 'file',
+        runtime_mode: 'remote',
+        direct_macos_runner_enabled: true,
+      },
     )
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -770,6 +841,7 @@ describe('instance preferences api', () => {
         body: JSON.stringify({
           key_storage_mode: 'file',
           runtime_mode: 'remote',
+          direct_macos_runner_enabled: true,
         }),
       },
     )

@@ -37,6 +37,8 @@ Open the source details page and choose **Sync GitLab projects**. Oore follows G
 
 Go to **Projects**, create a project, and confirm the repository picker identifies the GitLab host as well as the project path.
 
+Before running builds, approve the repository in the source details and enable Direct macOS runner under **Settings > Preferences**. Approval applies to every Oore project linked to that GitLab repository.
+
 ## Webhook configuration
 
 When you create a project from a GitLab repository, Oore CI needs webhooks for automatic build triggers. Configure the webhook in your GitLab project:
@@ -50,6 +52,8 @@ When you create a project from a GitLab repository, Oore CI needs webhooks for a
 4. Click **Add webhook**
 
 The URL must be reachable by GitLab. In a split deployment, the frontend proxy forwards this path to the private backend. A project token is accepted only when the payload's immutable GitLab project ID matches the repository that owns the token; a token from another project in the same integration is rejected. Rotating a token immediately invalidates the previous token. Oore derives a stable delivery identity when older/self-managed GitLab versions omit `X-Gitlab-Event-UUID`, so retries do not create duplicate builds.
+
+Automatic merge-request builds are limited to verified same-project open/reopen events and updates that prove the head commit changed. Forked, ambiguous, label-only, closed, and merged events are ignored. External contribution approval is not available in V1.
 
 ## Private repository checkout
 
@@ -69,13 +73,14 @@ Also revoke the OAuth application in GitLab if no longer needed.
 
 ## API endpoints
 
-| Method   | Path                                 | Description                  |
-| -------- | ------------------------------------ | ---------------------------- |
-| `POST`   | `/v1/integrations/gitlab/start`      | Begin GitLab OAuth flow      |
-| `POST`   | `/v1/integrations/gitlab/authorize`  | Complete authorization       |
-| `GET`    | `/v1/integrations/{id}/repositories` | List accessible repositories |
+| Method   | Path                                                      | Description                                |
+| -------- | --------------------------------------------------------- | ------------------------------------------ |
+| `POST`   | `/v1/integrations/gitlab/start`                           | Begin GitLab OAuth flow                    |
+| `POST`   | `/v1/integrations/gitlab/authorize`                       | Complete authorization                     |
+| `GET`    | `/v1/integrations/{id}/repositories`                      | List accessible repositories               |
 | `POST`   | `/v1/integration-repositories/{id}/gitlab-webhook-secret` | Generate or rotate a project webhook token |
-| `DELETE` | `/v1/integrations/{id}`              | Remove integration           |
+| `PUT`    | `/v1/integration-repositories/{id}/runner-policy`         | Approve or revoke Direct runner execution  |
+| `DELETE` | `/v1/integrations/{id}`                                   | Remove integration                         |
 
 ## Reference
 

@@ -71,6 +71,24 @@ GET /v1/integrations/{id}/repositories
 
 Returns an array of repository objects with name, URL, and visibility.
 
+Each repository also includes `allow_direct_macos_runner`. New and re-added repositories default to `false`.
+
+## Update Repository Runner Policy {#repository-runner-policy}
+
+```
+PUT /v1/integration-repositories/{id}/runner-policy
+```
+
+**Authentication**: owner or admin user session
+
+```json
+{
+  "allow_direct_macos_runner": true
+}
+```
+
+The response contains the updated repository. Approval affects every project linked to that repository. Revocation stops future claims but does not terminate a running build.
+
 ---
 
 ## GitHub Integration
@@ -181,7 +199,7 @@ POST /v1/webhooks/github
 
 **Authentication**: GitHub webhook signature verification
 
-Receives push and pull request events from GitHub. Triggers builds for matching pipelines.
+Receives push and pull request events from GitHub. Pushes and verified same-repository PR open/reopen/new-revision actions can trigger matching pipelines. Forked, ambiguous, mismatched-target, and non-revision events are ignored.
 
 ### GitLab Webhook {#gitlab-webhook}
 
@@ -191,4 +209,4 @@ POST /v1/webhooks/gitlab
 
 **Authentication**: repository-scoped GitLab webhook token plus matching payload `project.id`
 
-Receives push and merge request events from GitLab. Triggers builds for matching pipelines.
+Receives push and merge request events from GitLab. Pushes and verified same-project MR revisions can trigger matching pipelines. Forked, ambiguous, and non-revision events are ignored.

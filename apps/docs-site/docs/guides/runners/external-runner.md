@@ -1,16 +1,18 @@
 ---
 status: implemented
-description: 'Register and manage external build runners for Oore CI.'
+description: 'Register and manage the Direct macOS runner for trusted repositories.'
 ---
 
-# Register an External Runner
+# Run Builds with the Direct macOS Runner
 
-For builds on a separate machine or for isolating the build environment, register an external runner.
+Oore V1 executes builds through a separate `oore-runner` process on macOS. Repository commands run directly with the permissions of the runner's macOS account, so approve only repositories whose code and contributors you would run on that Mac yourself.
+
+The Direct runner is a compatibility-first execution mode, not a hostile-code sandbox. Oore does not automatically run external-fork pull or merge requests in this mode.
 
 ## What you need
 
 - **Role**: admin or owner (for registration)
-- The Oore CI daemon running with `OORED_RUNNER_MODE=external` (or in addition to the embedded runner)
+- A ready Oore CI daemon
 - A user session token for registration
 - The runner machine must have all [prerequisites](/getting-started/prerequisites) installed
 
@@ -66,11 +68,20 @@ The runner process:
 3. Polls for available jobs
 4. Executes claimed builds
 
+The separate service keeps runner lifecycle and updates independent from the daemon. It is not an OS security boundary between repository code and the runner account.
+
 ## 3. Verify
 
-1. Go to **Settings > Runners** in the web UI
-2. The external runner should appear as `online`
-3. Trigger a test build and verify it's picked up
+1. Go to **Settings > Preferences** and enable **Direct macOS runner**
+2. Go to **Settings > Sources**, open the source, and approve the repository
+3. Go to **Settings > Runners** and confirm the runner is `online`
+4. Trigger a test build and verify it is picked up
+
+Approval is repository-wide: every Oore project linked to that repository shares the same decision. New and newly re-added repositories start unapproved. Turning off the instance switch or revoking repository approval lets running builds finish while queued builds wait.
+
+## Recommended account setup
+
+Use a dedicated, non-admin macOS account for the runner when practical, and keep operator tokens and unrelated personal credentials out of that account. This reduces accidental exposure, but it does not turn Direct mode into isolation. Strong isolation for untrusted code requires a disposable VM and is not part of V1.
 
 ## Runner lifecycle
 

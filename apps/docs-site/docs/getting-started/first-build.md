@@ -12,7 +12,8 @@ This tutorial walks you through creating a project, configuring a pipeline, and 
 - A running Oore CI instance in `ready` state ([Set Up Your Instance](/getting-started/first-instance))
 - A [GitHub](/getting-started/connect-github) or GitLab integration connected
 - A Flutter project repository accessible through your integration
-- The embedded runner active (default) or an external runner started
+- A registered Direct macOS runner running as a separate login-session service
+- Direct runner execution enabled in **Settings > Preferences** and the repository approved in **Settings > Sources**
 
 ## 1. Create a project
 
@@ -82,7 +83,7 @@ The platform choice affects only that manual run. Automatic builds still run eve
 
 ### Webhook trigger (automatic)
 
-Push a commit or open a pull request. If your pipeline's trigger config matches the branch and event, a build starts automatically.
+Push a commit or update a same-repository pull request. If your pipeline's trigger config matches the branch and event, a build starts automatically. External-fork pull requests are ignored in Direct runner mode.
 
 ### API trigger
 
@@ -125,9 +126,9 @@ For the full state machine, see [Build States](/reference/build-states).
 
 ### Build stuck in "queued"
 
-- Check **Settings > Runners** for an active runner
-- If using `OORED_RUNNER_MODE=external`, start a runner: `oore runner start`
-- The default embedded runner should claim builds automatically
+- Read the waiting reason on the build page. Enable Direct runner execution in **Settings > Preferences** or approve the repository in **Settings > Sources** when prompted.
+- Check **Settings > Runners** for an active runner.
+- For a foreground diagnostic run, start it with `oore runner start`. Normal installations should use `oore runner install-service`.
 
 ### Flutter commands fail
 

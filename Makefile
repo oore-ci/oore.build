@@ -1,10 +1,12 @@
 .PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index web-performance-baseline test-web-performance-baseline test-web-runtime-performance build check \
 		       test-web test-web-ui test-demo lint-web fix-web \
+		       test-direct-runner-upgrade-smoke \
 		       test-docs lint-docs fix-docs test-rust test-install \
 		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 		       docs-check ui-init install-local validate validate-ci gen-openapi release-smoke \
+		       direct-runner-upgrade-smoke \
 		       release-local release-cut \
 		       portless-proxy portless-alias-api portless-list
 
@@ -120,6 +122,9 @@ deploy-release-index-only:
 
 test-release-index:
 	bun test tools/generate-release-index.test.ts
+
+test-direct-runner-upgrade-smoke:
+	bun test tools/direct-runner-upgrade-smoke.test.ts
 
 web-performance-baseline:
 	bun tools/web-performance-baseline.ts
@@ -244,7 +249,7 @@ check: lint-web cargo-check
 
 lint: lint-web lint-docs fmt-rust-check
 
-test: test-web test-demo test-docs test-release-index test-web-performance-baseline test-web-runtime-performance test-rust-workspace
+test: test-web test-demo test-docs test-release-index test-direct-runner-upgrade-smoke test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
 validate: docs-check lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
 
@@ -253,3 +258,8 @@ validate-ci:
 
 release-smoke:
 	bash tools/release-smoke.sh
+
+direct-runner-upgrade-smoke:
+	@test -n "$$OORE_UPGRADE_SMOKE_SESSION_TOKEN" || (echo "OORE_UPGRADE_SMOKE_SESSION_TOKEN is required"; exit 1)
+	@test -n "$$OORE_UPGRADE_SMOKE_EXPECTED_VERSION" || (echo "OORE_UPGRADE_SMOKE_EXPECTED_VERSION is required"; exit 1)
+	@bun tools/direct-runner-upgrade-smoke.ts

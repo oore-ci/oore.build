@@ -9,19 +9,19 @@ All environment variables recognized by Oore CI components.
 
 ## Daemon (oored)
 
-| Variable                     | Default                                                                                   | Description                                                                                                            |
-| ---------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `OORED_LISTEN_ADDR`          | `127.0.0.1:8787`                                                                          | Address and port for the daemon to listen on                                                                           |
-| `OORED_RUNNER_MODE`          | (embedded)                                                                                | Runner mode: omit for embedded, `external` for external-only                                                           |
-| `OORED_DATA_DIR`             | Platform default                                                                          | Override daemon data root directory (`oore.db`, `encryption.key`, local artifacts default path)                        |
-| `OORE_DATA_DIR`              | Platform default                                                                          | Shared fallback data root (used when `OORED_DATA_DIR` is unset)                                                        |
-| `OORE_SETUP_STATE_FILE`      | Platform default                                                                          | Override SQLite database path                                                                                          |
-| `OORE_PUBLIC_URL`            | —                                                                                         | External Access public base URL fallback (used when DB setting is unset)                                               |
-| `OORE_ARTIFACT_DELIVERY_URL` | `OORE_PUBLIC_URL`                                                                         | Optional alternate HTTPS origin for `/install/` delivery (used when the DB field is empty)                             |
-| `OORE_WARPGATE_TICKET`       | —                                                                                         | Optional Warpgate access ticket fallback for non-interactive iOS OTA installer requests                               |
-| `OORE_CORS_ORIGINS`          | `http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173` | Comma-separated allowed CORS origins fallback (used when DB settings are unset)                                        |
-| `OORE_CORS_ORIGIN`           | —                                                                                         | Single allowed CORS origin fallback (backward compatible)                                                              |
-| `RUST_LOG`                   | `info`                                                                                    | Log level filter (uses `tracing` subscriber)                                                                           |
+| Variable                     | Default                                                                                   | Description                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `OORED_LISTEN_ADDR`          | `127.0.0.1:8787`                                                                          | Address and port for the daemon to listen on                                                    |
+| `OORED_RUNNER_MODE`          | `external`                                                                                | Legacy compatibility switch: omit it or use `external`; `embedded` and `hybrid` are rejected    |
+| `OORED_DATA_DIR`             | Platform default                                                                          | Override daemon data root directory (`oore.db`, `encryption.key`, local artifacts default path) |
+| `OORE_DATA_DIR`              | Platform default                                                                          | Shared fallback data root (used when `OORED_DATA_DIR` is unset)                                 |
+| `OORE_SETUP_STATE_FILE`      | Platform default                                                                          | Override SQLite database path                                                                   |
+| `OORE_PUBLIC_URL`            | —                                                                                         | External Access public base URL fallback (used when DB setting is unset)                        |
+| `OORE_ARTIFACT_DELIVERY_URL` | `OORE_PUBLIC_URL`                                                                         | Optional alternate HTTPS origin for `/install/` delivery (used when the DB field is empty)      |
+| `OORE_WARPGATE_TICKET`       | —                                                                                         | Optional Warpgate access ticket fallback for non-interactive iOS OTA installer requests         |
+| `OORE_CORS_ORIGINS`          | `http://localhost:3000,http://127.0.0.1:3000,http://localhost:4173,http://127.0.0.1:4173` | Comma-separated allowed CORS origins fallback (used when DB settings are unset)                 |
+| `OORE_CORS_ORIGIN`           | —                                                                                         | Single allowed CORS origin fallback (backward compatible)                                       |
+| `RUST_LOG`                   | `info`                                                                                    | Log level filter (uses `tracing` subscriber)                                                    |
 
 Data root resolution order: `OORED_DATA_DIR` -> `OORE_DATA_DIR` -> `~/Library/Application Support/oore`
 

@@ -32,6 +32,10 @@ import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { ExternalAccessCard } from '@/components/settings/preferences-external-access-card'
 import { RuntimeOverview } from '@/components/settings/preferences-runtime-overview'
 import { ArtifactStorageSettings } from '@/components/settings/preferences-artifact-storage-settings'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Switch } from '@/components/ui/switch'
 
 const preloadExternalAccessNetworkDialog = () =>
   import('@/components/settings/preferences-external-access-network-dialog')
@@ -678,6 +682,27 @@ function usePreferencesPageState() {
     )
   }
 
+  function handleDirectRunnerToggle(enabled: boolean) {
+    if (!preferences || updatePreferencesMutation.isPending || !canWrite) return
+
+    updatePreferencesMutation.mutate(
+      {
+        key_storage_mode: preferences.key_storage_mode,
+        direct_macos_runner_enabled: enabled,
+      },
+      {
+        onSuccess: () =>
+          toast.success(
+            enabled
+              ? 'Direct macOS runner enabled.'
+              : 'Direct macOS runner paused. Running builds will finish.',
+          ),
+        onError: (error) =>
+          toast.error(`Failed to update runner policy: ${error.message}`),
+      },
+    )
+  }
+
   return {
     artifactBackendLabel,
     artifactDirPickerOpen,
@@ -693,6 +718,7 @@ function usePreferencesPageState() {
     externalAccessOidcForm,
     failedReadinessChecks,
     frontendUpdatePhase,
+    handleDirectRunnerToggle,
     handleExternalAccessToggle,
     identityReady,
     isOwner,
@@ -744,6 +770,57 @@ function usePreferencesPageState() {
 
 export type PreferencesPageState = ReturnType<typeof usePreferencesPageState>
 
+function DirectRunnerSettings({ state }: { state: PreferencesPageState }) {
+  const enabled = state.preferences?.direct_macos_runner_enabled ?? false
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+            Direct macOS runner
+          </CardTitle>
+          <Badge variant={enabled ? 'success' : 'outline'}>
+            {enabled ? 'Enabled' : 'Paused'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-6">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">
+              Allow approved repositories to run
+            </p>
+            <p className="text-sm text-muted-foreground">
+              When paused, running builds finish and queued builds wait.
+            </p>
+          </div>
+          <Switch
+            checked={enabled}
+            disabled={
+              !state.canWrite ||
+              !state.preferences ||
+              state.updatePreferencesMutation.isPending
+            }
+            onCheckedChange={(checked) =>
+              state.handleDirectRunnerToggle(checked)
+            }
+            aria-label="Enable Direct macOS runner"
+            className="after:-inset-y-3.5"
+          />
+        </div>
+        <Alert>
+          <AlertDescription>
+            Repository commands run with the macOS permissions of the runner
+            account. Enable only repositories you would run directly on this
+            Mac, then approve them under Sources.
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </Card>
+  )
+}
+
 function PreferencesPage() {
   const state = usePreferencesPageState()
   return (
@@ -751,9 +828,10 @@ function PreferencesPage() {
       <PageMeta title="Preferences" noindex />
       <PageHeader
         title="Preferences"
-        description="Manage artifact storage and External Access policy for this instance."
+        description="Manage runner, artifact storage, and External Access policy for this instance."
       />
       <RuntimeOverview state={state} />
+      <DirectRunnerSettings state={state} />
       <ExternalAccessCard state={state} />
       {state.networkEditorOpen ? (
         <Suspense fallback={null}>
