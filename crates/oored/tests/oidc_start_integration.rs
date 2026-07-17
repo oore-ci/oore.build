@@ -4,7 +4,10 @@
 
 mod common;
 
+use std::net::SocketAddr;
+
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use hyper::Request;
 use tower::ServiceExt;
 
@@ -29,6 +32,7 @@ async fn test_oidc_start_returns_conflict_when_oidc_missing() {
             Request::builder()
                 .method("GET")
                 .uri("/v1/auth/oidc/start")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 41008))))
                 .body(Body::empty())
                 .unwrap(),
         )

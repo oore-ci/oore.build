@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use base64::Engine as _;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use oore_contract::{
@@ -30,7 +30,7 @@ use crate::apple_api::{self, AppleApiCredentials};
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
-use crate::runners::RunnerAuth;
+use crate::runners::{RunnerAuth, require_active_job_signing_grant};
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -3211,6 +3211,7 @@ pub async fn get_job_ios_signing(
     State(state): State<Arc<AppState>>,
     Path((runner_id, job_id)): Path<(String, String)>,
     runner_auth: RunnerAuth,
+    headers: HeaderMap,
 ) -> ApiResult<RunnerIosSigningResponse> {
     if runner_auth.runner_id != runner_id {
         return Err(api_err(
@@ -3225,29 +3226,8 @@ pub async fn get_job_ios_signing(
         store.pool().clone()
     };
 
-    let build_row = sqlx::query("SELECT pipeline_id, runner_id FROM builds WHERE id = ?1")
-        .bind(&job_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to load build for iOS signing lookup");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to load build iOS signing settings",
-            )
-        })?
-        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
-
-    let assigned_runner: Option<String> = sqlx::Row::get(&build_row, "runner_id");
-    if assigned_runner.as_deref() != Some(&runner_id) {
-        return Err(api_err(
-            StatusCode::FORBIDDEN,
-            "runner_mismatch",
-            "This build is not assigned to your runner",
-        ));
-    }
-    let pipeline_id: String = sqlx::Row::get(&build_row, "pipeline_id");
+    let pipeline_id =
+        require_active_job_signing_grant(&pool, &job_id, &runner_id, &headers).await?;
 
     let settings = load_ios_settings(&pool, &pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to load iOS signing settings for runner");

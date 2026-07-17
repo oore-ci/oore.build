@@ -28,6 +28,9 @@ const WEBHOOK_SECRET_CACHE_TTL_SECS: i64 = 60;
 #[derive(Debug, Clone)]
 struct CachedWebhookSecret {
     integration_id: String,
+    repository_id: Option<String>,
+    repository_external_id: Option<String>,
+    repository_full_name: Option<String>,
     secret: Vec<u8>,
 }
 
@@ -69,7 +72,7 @@ impl WebhookSecretCache {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum WebhookProvider {
+pub(crate) enum WebhookProvider {
     Github,
     Gitlab,
 }
@@ -87,6 +90,11 @@ static WEBHOOK_SECRET_CACHE: OnceLock<tokio::sync::RwLock<WebhookSecretCache>> =
 
 fn webhook_secret_cache() -> &'static tokio::sync::RwLock<WebhookSecretCache> {
     WEBHOOK_SECRET_CACHE.get_or_init(|| tokio::sync::RwLock::new(WebhookSecretCache::default()))
+}
+
+pub(crate) async fn invalidate_webhook_secret_cache(provider: WebhookProvider) {
+    let mut cache = webhook_secret_cache().write().await;
+    *cache.provider_mut(provider) = ProviderSecretCache::default();
 }
 
 async fn get_webhook_secrets(
@@ -113,17 +121,29 @@ async fn get_webhook_secrets(
         }
     }
 
-    let rows = sqlx::query(
-        "SELECT i.id, c.encrypted_value \
-         FROM integrations i \
-         JOIN integration_credentials c ON c.integration_id = i.id \
-         WHERE i.provider = ?1 AND i.status = 'active' \
-         AND c.credential_type = 'webhook_secret'",
-    )
-    .bind(provider.as_str())
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
+    let query = match provider {
+        WebhookProvider::Github => {
+            "SELECT i.id AS integration_id, NULL AS repository_id, \
+                    NULL AS repository_external_id, NULL AS repository_full_name, \
+                    c.encrypted_value AS encrypted_secret \
+             FROM integrations i \
+             JOIN integration_credentials c ON c.integration_id = i.id \
+             WHERE i.provider = 'github' AND i.status = 'active' \
+             AND c.credential_type = 'webhook_secret'"
+        }
+        WebhookProvider::Gitlab => {
+            "SELECT i.id AS integration_id, r.id AS repository_id, \
+                    r.external_id AS repository_external_id, \
+                    r.full_name AS repository_full_name, \
+                    s.encrypted_secret \
+             FROM integration_repository_webhook_secrets s \
+             JOIN integration_repositories r ON r.id = s.repository_id \
+             JOIN integration_installations inst ON inst.id = r.installation_id \
+             JOIN integrations i ON i.id = inst.integration_id \
+             WHERE i.provider = 'gitlab' AND i.status = 'active'"
+        }
+    };
+    let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
         error!(error = %e, provider = provider.as_str(), "failed to fetch webhook integrations");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -134,8 +154,8 @@ async fn get_webhook_secrets(
 
     let mut decrypted = Vec::with_capacity(rows.len());
     for row in rows {
-        let integration_id: String = row.get("id");
-        let encrypted_secret: String = row.get("encrypted_value");
+        let integration_id: String = row.get("integration_id");
+        let encrypted_secret: String = row.get("encrypted_secret");
         let secret = match crypto::decrypt(&encrypted_secret, encryption_key) {
             Ok(s) => s.into_bytes(),
             Err(e) => {
@@ -150,6 +170,9 @@ async fn get_webhook_secrets(
         };
         decrypted.push(CachedWebhookSecret {
             integration_id,
+            repository_id: row.get("repository_id"),
+            repository_external_id: row.get("repository_external_id"),
+            repository_full_name: row.get("repository_full_name"),
             secret,
         });
     }
@@ -471,29 +494,69 @@ pub async fn gitlab_webhook(
     };
     require_remote_mode(&pool).await?;
 
+    let payload_repository_id = payload
+        .pointer("/project/id")
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| value.as_i64().map(|id| id.to_string()))
+                .or_else(|| value.as_u64().map(|id| id.to_string()))
+        })
+        .ok_or_else(|| {
+            warn!("GitLab webhook payload is missing project.id");
+            api_err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_token",
+                "Webhook token verification failed",
+            )
+        })?;
+
     let secrets =
         get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Gitlab, false).await?;
 
-    let mut matched_integration_id = secrets
+    let mut matched = secrets
         .iter()
-        .find(|candidate| constant_time_eq(gitlab_token.as_bytes(), &candidate.secret))
-        .map(|candidate| candidate.integration_id.clone());
+        .find(|candidate| {
+            candidate.repository_external_id.as_deref() == Some(payload_repository_id.as_str())
+                && constant_time_eq(gitlab_token.as_bytes(), &candidate.secret)
+        })
+        .cloned();
 
-    if matched_integration_id.is_none() {
+    if matched.is_none() {
         let refreshed =
             get_webhook_secrets(&pool, &state.encryption_key, WebhookProvider::Gitlab, true)
                 .await?;
 
         if !Arc::ptr_eq(&secrets, &refreshed) {
-            matched_integration_id = refreshed
+            matched = refreshed
                 .iter()
-                .find(|candidate| constant_time_eq(gitlab_token.as_bytes(), &candidate.secret))
-                .map(|candidate| candidate.integration_id.clone());
+                .find(|candidate| {
+                    candidate.repository_external_id.as_deref()
+                        == Some(payload_repository_id.as_str())
+                        && constant_time_eq(gitlab_token.as_bytes(), &candidate.secret)
+                })
+                .cloned();
         }
     }
 
-    let integration_id = matched_integration_id.ok_or_else(|| {
+    let matched = matched.ok_or_else(|| {
         warn!("GitLab webhook token verification failed for all integrations");
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_token",
+            "Webhook token verification failed",
+        )
+    })?;
+    let integration_id = matched.integration_id;
+    let repository_id = matched.repository_id.ok_or_else(|| {
+        api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_token",
+            "Webhook token verification failed",
+        )
+    })?;
+    let repository_full_name = matched.repository_full_name.ok_or_else(|| {
         api_err(
             StatusCode::UNAUTHORIZED,
             "invalid_token",
@@ -569,7 +632,13 @@ pub async fn gitlab_webhook(
     })?;
 
     // Normalize and process async
-    let normalized = normalize_gitlab_event(&event_type, &delivery_id, &integration_id, &payload);
+    let normalized = normalize_gitlab_event(
+        &event_type,
+        &delivery_id,
+        &integration_id,
+        &repository_full_name,
+        &payload,
+    );
 
     let pool_clone = pool.clone();
     let webhook_id_clone = webhook_id.clone();
@@ -583,6 +652,7 @@ pub async fn gitlab_webhook(
         event_uuid = %delivery_id,
         event_type = %event_type,
         integration_id = %integration_id,
+        repository_id = %repository_id,
         "GitLab webhook received"
     );
 
@@ -604,14 +674,9 @@ fn normalize_gitlab_event(
     event_type: &str,
     delivery_id: &str,
     integration_id: &str,
+    repository_full_name: &str,
     payload: &serde_json::Value,
 ) -> NormalizedWebhookEvent {
-    let repo_full_name = payload
-        .get("project")
-        .and_then(|p| p.get("path_with_namespace"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
     let (branch, commit_sha) = match event_type {
         "Push Hook" => {
             let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
@@ -651,7 +716,7 @@ fn normalize_gitlab_event(
         event_type: event_type.to_string(),
         delivery_id: delivery_id.to_string(),
         integration_id: integration_id.to_string(),
-        repository_full_name: repo_full_name,
+        repository_full_name: Some(repository_full_name.to_string()),
         branch,
         commit_sha,
         actor,

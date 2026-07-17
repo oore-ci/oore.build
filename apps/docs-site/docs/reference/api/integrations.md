@@ -151,6 +151,14 @@ POST /v1/integrations/gitlab/authorize
 
 Completes the GitLab OAuth authorization.
 
+### Rotate GitLab project webhook token {#gitlab-webhook-token}
+
+```
+POST /v1/integration-repositories/{id}/gitlab-webhook-secret
+```
+
+Generates or rotates the one-time-revealed webhook token for one synced GitLab project. The previous token for that project is invalid immediately.
+
 ### GitLab Callback (internal) {#gitlab-callback}
 
 ```
@@ -181,6 +189,6 @@ Receives push and pull request events from GitHub. Triggers builds for matching 
 POST /v1/webhooks/gitlab
 ```
 
-**Authentication**: GitLab webhook secret token
+**Authentication**: repository-scoped GitLab webhook token plus matching payload `project.id`
 
 Receives push and merge request events from GitLab. Triggers builds for matching pipelines.

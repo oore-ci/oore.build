@@ -37,7 +37,6 @@ pub mod token;
 pub mod users;
 pub mod util;
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -71,7 +70,7 @@ use openidconnect::{
 };
 use tracing::{error, info, warn};
 
-use crate::auth::{PendingAuth, build_http_client, load_oidc_config_for_setup};
+use crate::auth::{PendingAuth, PendingAuthStore, build_http_client, load_oidc_config_for_setup};
 use crate::session::SessionStore;
 use crate::store::{SetupStore, write_audit_log};
 use crate::token::{generate_session_token, hash_token};
@@ -82,7 +81,7 @@ use crate::util::{api_err, extract_bearer, now_unix};
 pub struct AppState {
     pub store: Mutex<SetupStore>,
     pub sessions: SessionStore,
-    pub pending_auth: Mutex<HashMap<String, PendingAuth>>,
+    pub pending_auth: Mutex<PendingAuthStore>,
     /// AES-256 encryption key used to encrypt secrets at rest.
     /// Wrapped in Zeroizing so the key is zeroed on drop.
     pub encryption_key: Zeroizing<Vec<u8>>,
@@ -145,9 +144,6 @@ fn normalize_optional_setup_owner_email(
             )
         })
 }
-
-/// Maximum number of concurrent pending OIDC auth requests.
-const MAX_PENDING_AUTH: usize = 1000;
 
 /// Maximum allowed failed bootstrap token attempts before lockout.
 const MAX_BOOTSTRAP_FAILURES: u32 = 5;
@@ -1324,27 +1320,25 @@ async fn setup_oidc_start(
         {
             let mut pending = state.pending_auth.lock().await;
             let now = now_unix();
-            pending.retain(|_, pa| now - pa.created_at < 600);
-
-            // H3: Reject if too many pending auth requests
-            if pending.len() >= MAX_PENDING_AUTH {
-                return Err(api_err(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "too_many_pending",
-                    "Too many pending authentication requests",
-                ));
-            }
-
-            pending.insert(
-                state_value.clone(),
-                PendingAuth {
-                    pkce_verifier,
-                    nonce,
-                    redirect_uri: req.redirect_uri,
-                    created_at: now,
-                    setup_session_hash: Some(setup_session_hash.clone()),
-                },
-            );
+            pending
+                .insert_setup(
+                    state_value.clone(),
+                    PendingAuth {
+                        pkce_verifier,
+                        nonce,
+                        redirect_uri: req.redirect_uri,
+                        created_at: now,
+                        setup_session_hash: Some(setup_session_hash.clone()),
+                    },
+                    now,
+                )
+                .map_err(|_| {
+                    api_err(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "too_many_pending",
+                        "Too many pending authentication requests",
+                    )
+                })?;
         }
 
         return Ok(Json(SetupOidcStartResponse {
@@ -1411,27 +1405,25 @@ async fn setup_oidc_start(
     {
         let mut pending = state.pending_auth.lock().await;
         let now = now_unix();
-        pending.retain(|_, pa| now - pa.created_at < 600);
-
-        // H3: Reject if too many pending auth requests
-        if pending.len() >= MAX_PENDING_AUTH {
-            return Err(api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_pending",
-                "Too many pending authentication requests",
-            ));
-        }
-
-        pending.insert(
-            state_value.clone(),
-            PendingAuth {
-                pkce_verifier,
-                nonce,
-                redirect_uri: req.redirect_uri,
-                created_at: now,
-                setup_session_hash: Some(setup_session_hash),
-            },
-        );
+        pending
+            .insert_setup(
+                state_value.clone(),
+                PendingAuth {
+                    pkce_verifier,
+                    nonce,
+                    redirect_uri: req.redirect_uri,
+                    created_at: now,
+                    setup_session_hash: Some(setup_session_hash),
+                },
+                now,
+            )
+            .map_err(|_| {
+                api_err(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too_many_pending",
+                    "Too many pending authentication requests",
+                )
+            })?;
     }
 
     Ok(Json(SetupOidcStartResponse {
@@ -2121,7 +2113,7 @@ async fn build_router_inner(
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
         sessions: session_store,
-        pending_auth: Mutex::new(HashMap::new()),
+        pending_auth: Mutex::new(PendingAuthStore::default()),
         encryption_key: Zeroizing::new(encryption_key),
         enforcer,
         #[cfg(any(test, feature = "test-support"))]
@@ -2334,6 +2326,10 @@ async fn build_router_inner(
         .route(
             "/v1/integration-repositories/{id}/avatar",
             get(integrations::repository_avatar),
+        )
+        .route(
+            "/v1/integration-repositories/{id}/gitlab-webhook-secret",
+            post(integrations::gitlab::rotate_repository_webhook_secret),
         )
         .route(
             "/v1/integrations/github/start",

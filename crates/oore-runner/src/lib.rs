@@ -1,5 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
+use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{
@@ -22,6 +23,7 @@ use oore_contract::{
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncBufReadExt;
+use zeroize::Zeroize;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -30,6 +32,16 @@ const OORE_ANDROID_KEYSTORE_PASSWORD_ENV: &str = "OORE_ANDROID_KEYSTORE_PASSWORD
 const OORE_ANDROID_KEY_ALIAS_ENV: &str = "OORE_ANDROID_KEY_ALIAS";
 const OORE_ANDROID_KEY_PASSWORD_ENV: &str = "OORE_ANDROID_KEY_PASSWORD";
 const OORE_ANDROID_KEY_PROPERTIES_PATH_ENV: &str = "OORE_ANDROID_KEY_PROPERTIES_PATH";
+const MANAGED_ANDROID_SIGNING_ENV_KEYS: [&str; 6] = [
+    OORE_ANDROID_KEYSTORE_PATH_ENV,
+    OORE_ANDROID_KEYSTORE_B64_ENV,
+    OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
+    OORE_ANDROID_KEY_ALIAS_ENV,
+    OORE_ANDROID_KEY_PASSWORD_ENV,
+    OORE_ANDROID_KEY_PROPERTIES_PATH_ENV,
+];
+const ANDROID_SIGNER_STORE_PASSWORD_ENV: &str = "OORE_SIGNER_STORE_PASSWORD";
+const ANDROID_SIGNER_KEY_PASSWORD_ENV: &str = "OORE_SIGNER_KEY_PASSWORD";
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
 const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
 const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
@@ -44,6 +56,35 @@ pub struct RunnerConfig {
     pub runner_token: String,
     pub daemon_url: String,
     pub name: String,
+}
+
+/// Reject runner control-plane URLs that could expose the bearer token or job
+/// traffic over a cleartext network connection. HTTP remains available only
+/// for a daemon addressed by a literal loopback IP.
+pub fn require_safe_daemon_url(raw_url: &str) -> anyhow::Result<()> {
+    let url = reqwest::Url::parse(raw_url).context("invalid daemon URL")?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let host = url.host_str().context("daemon URL must include a host")?;
+            let ip = host
+                .trim_matches(['[', ']'])
+                .parse::<IpAddr>()
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "cleartext daemon URLs require a literal loopback IP; use HTTPS for {host}"
+                    )
+                })?;
+            if ip.is_loopback() {
+                Ok(())
+            } else {
+                anyhow::bail!("cleartext daemon URLs are allowed only for literal loopback IPs")
+            }
+        }
+        scheme => anyhow::bail!(
+            "daemon URL must use HTTPS (or HTTP for a literal loopback IP), not {scheme}"
+        ),
+    }
 }
 
 fn now_unix() -> i64 {
@@ -162,15 +203,6 @@ pub fn get_hostname() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct AndroidSigningEnv {
-    keystore_path: Option<String>,
-    keystore_b64: Option<String>,
-    keystore_password: Option<String>,
-    key_alias: Option<String>,
-    key_password: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AndroidSigningInputs {
     keystore_bytes: Vec<u8>,
@@ -179,38 +211,12 @@ struct AndroidSigningInputs {
     key_password: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AndroidSigningMaterialization {
-    keystore_path: PathBuf,
-    key_properties_path: PathBuf,
-    keystore_overwrote_existing: bool,
-    key_properties_overwrote_existing: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AndroidSigningPreparation {
-    inputs: AndroidSigningInputs,
-    materialization: AndroidSigningMaterialization,
-}
-
-fn trim_to_opt(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
-fn collect_android_signing_env(read_env: impl Fn(&str) -> Option<String>) -> AndroidSigningEnv {
-    AndroidSigningEnv {
-        keystore_path: trim_to_opt(read_env(OORE_ANDROID_KEYSTORE_PATH_ENV)),
-        keystore_b64: trim_to_opt(read_env(OORE_ANDROID_KEYSTORE_B64_ENV)),
-        keystore_password: trim_to_opt(read_env(OORE_ANDROID_KEYSTORE_PASSWORD_ENV)),
-        key_alias: trim_to_opt(read_env(OORE_ANDROID_KEY_ALIAS_ENV)),
-        key_password: trim_to_opt(read_env(OORE_ANDROID_KEY_PASSWORD_ENV)),
+impl Drop for AndroidSigningInputs {
+    fn drop(&mut self) {
+        self.keystore_bytes.zeroize();
+        self.keystore_password.zeroize();
+        self.key_alias.zeroize();
+        self.key_password.zeroize();
     }
 }
 
@@ -223,73 +229,17 @@ fn decode_base64_keystore(value: &str) -> anyhow::Result<Vec<u8>> {
         })
 }
 
-fn require_signing_field(value: Option<String>, env_key: &str) -> anyhow::Result<String> {
-    value.ok_or_else(|| anyhow::anyhow!("missing required environment variable {env_key}"))
-}
-
-fn resolve_android_signing_inputs(
-    env: &AndroidSigningEnv,
-) -> anyhow::Result<Option<AndroidSigningInputs>> {
-    let any_present = env.keystore_path.is_some()
-        || env.keystore_b64.is_some()
-        || env.keystore_password.is_some()
-        || env.key_alias.is_some()
-        || env.key_password.is_some();
-
-    if !any_present {
-        return Ok(None);
-    }
-
-    let keystore_bytes = if let Some(path_raw) = &env.keystore_path {
-        let path = PathBuf::from(path_raw);
-        fs::read(&path).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to read keystore from {} ({}): {e}",
-                OORE_ANDROID_KEYSTORE_PATH_ENV,
-                path.display()
-            )
-        })?
-    } else {
-        let b64 = require_signing_field(env.keystore_b64.clone(), OORE_ANDROID_KEYSTORE_B64_ENV)?;
-        decode_base64_keystore(&b64)?
-    };
-
-    if keystore_bytes.is_empty() {
-        anyhow::bail!("resolved keystore file is empty");
-    }
-
-    Ok(Some(AndroidSigningInputs {
-        keystore_bytes,
-        keystore_password: require_signing_field(
-            env.keystore_password.clone(),
-            OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
-        )?,
-        key_alias: require_signing_field(env.key_alias.clone(), OORE_ANDROID_KEY_ALIAS_ENV)?,
-        key_password: require_signing_field(
-            env.key_password.clone(),
-            OORE_ANDROID_KEY_PASSWORD_ENV,
-        )?,
-    }))
-}
-
-fn android_signing_prepared_marker(
-    source: &str,
-    variant: AndroidSigningBuildType,
-    prep: &AndroidSigningPreparation,
-) -> String {
+fn android_signing_prepared_marker(source: &str, variant: AndroidSigningBuildType) -> String {
     format!(
         "[oore-signing] {}",
         serde_json::json!({
-            "event": "android_signing_prepared",
+            "event": "android_signing_reserved",
             "source": source,
             "variant": match variant {
                 AndroidSigningBuildType::Debug => "debug",
                 AndroidSigningBuildType::Release => "release",
             },
-            "key_properties_path": prep.materialization.key_properties_path,
-            "keystore_path": prep.materialization.keystore_path,
-            "key_properties_overwrote_existing": prep.materialization.key_properties_overwrote_existing,
-            "keystore_overwrote_existing": prep.materialization.keystore_overwrote_existing,
+            "delivery": "runner_owned_post_build_signer",
         })
     )
 }
@@ -300,103 +250,6 @@ fn is_android_flutter_build_command(command: &str) -> bool {
         || trimmed.starts_with("fvm flutter build apk")
         || trimmed.starts_with("flutter build appbundle")
         || trimmed.starts_with("fvm flutter build appbundle")
-}
-
-fn requires_android_signing(build_commands: &[String]) -> bool {
-    build_commands
-        .iter()
-        .any(|command| is_android_flutter_build_command(command))
-}
-
-fn materialize_android_signing_files(
-    workspace: &Path,
-    inputs: &AndroidSigningInputs,
-) -> anyhow::Result<AndroidSigningMaterialization> {
-    let android_dir = workspace.join("android");
-    if !android_dir.is_dir() {
-        anyhow::bail!(
-            "Android signing configuration was provided, but no android/ directory exists in repository"
-        );
-    }
-
-    let app_dir = android_dir.join("app");
-    fs::create_dir_all(&app_dir).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to prepare Android app directory {}: {e}",
-            app_dir.display()
-        )
-    })?;
-
-    let keystore_file_name = "oore-upload-keystore.jks";
-    let keystore_path = app_dir.join(keystore_file_name);
-    let keystore_overwrote_existing = keystore_path.exists();
-    fs::write(&keystore_path, &inputs.keystore_bytes).map_err(|e| {
-        anyhow::anyhow!("failed to write keystore {}: {e}", keystore_path.display())
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&keystore_path, perms).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to secure Android keystore {}: {e}",
-                keystore_path.display()
-            )
-        })?;
-    }
-
-    let key_properties_path = android_dir.join("key.properties");
-    let key_properties_overwrote_existing = key_properties_path.exists();
-    let key_properties = format!(
-        "storePassword={}\nkeyPassword={}\nkeyAlias={}\nstoreFile={}\n",
-        inputs.keystore_password, inputs.key_password, inputs.key_alias, keystore_file_name
-    );
-    fs::write(&key_properties_path, key_properties).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to write Android key.properties {}: {e}",
-            key_properties_path.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&key_properties_path, perms).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to secure Android key.properties {}: {e}",
-                key_properties_path.display()
-            )
-        })?;
-    }
-
-    Ok(AndroidSigningMaterialization {
-        keystore_path,
-        key_properties_path,
-        keystore_overwrote_existing,
-        key_properties_overwrote_existing,
-    })
-}
-
-fn prepare_android_signing_if_configured(
-    workspace: &Path,
-    build_commands: &[String],
-) -> anyhow::Result<Option<AndroidSigningPreparation>> {
-    if !requires_android_signing(build_commands) {
-        return Ok(None);
-    }
-
-    let env = collect_android_signing_env(|key| std::env::var(key).ok());
-    let Some(inputs) = resolve_android_signing_inputs(&env)? else {
-        return Ok(None);
-    };
-
-    let materialization = materialize_android_signing_files(workspace, &inputs)?;
-    Ok(Some(AndroidSigningPreparation {
-        inputs,
-        materialization,
-    }))
 }
 
 fn android_signing_variant_for_command(command: &str) -> Option<AndroidSigningBuildType> {
@@ -446,11 +299,20 @@ fn signing_inputs_from_runner_profile(
     })
 }
 
+fn zeroize_ios_signing_bundle(bundle: &mut RunnerIosSigningBundle) {
+    bundle.p12_base64.zeroize();
+    bundle.p12_password.zeroize();
+    for profile in &mut bundle.provisioning_profiles {
+        profile.profile_base64.zeroize();
+    }
+}
+
 async fn fetch_job_android_signing(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    signing_token: &str,
 ) -> anyhow::Result<Option<RunnerAndroidSigningResponse>> {
     let resp = client
         .get(format!(
@@ -458,12 +320,10 @@ async fn fetch_job_android_signing(
             daemon_url, config.runner_id, build_id
         ))
         .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
         .send()
         .await?;
 
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
     if !resp.status().is_success() {
         anyhow::bail!("Android signing lookup failed: {}", resp.status());
     }
@@ -482,9 +342,200 @@ fn select_runner_signing_profile(
     }
 }
 
+struct PrivateSigningDirectory {
+    path: PathBuf,
+}
+
+impl Drop for PrivateSigningDirectory {
+    fn drop(&mut self) {
+        if self.path.exists() {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn android_artifact_extension(command: &str) -> Option<&'static str> {
+    if !is_android_flutter_build_command(command) {
+        None
+    } else if command.split_whitespace().any(|part| part == "appbundle") {
+        Some("aab")
+    } else {
+        Some("apk")
+    }
+}
+
+fn find_apksigner() -> PathBuf {
+    for root in ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+        .into_iter()
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
+    {
+        let build_tools = root.join("build-tools");
+        let mut candidates = fs::read_dir(build_tools)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("apksigner"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        candidates.sort();
+        if let Some(path) = candidates.pop() {
+            return path;
+        }
+    }
+    PathBuf::from("apksigner")
+}
+
+fn run_android_signer_command(
+    program: &Path,
+    args: &[String],
+    inputs: &AndroidSigningInputs,
+    action: &str,
+) -> anyhow::Result<()> {
+    let output = Command::new(program)
+        .args(args)
+        .env(ANDROID_SIGNER_STORE_PASSWORD_ENV, &inputs.keystore_password)
+        .env(ANDROID_SIGNER_KEY_PASSWORD_ENV, &inputs.key_password)
+        .output()
+        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!("failed to {action}: {stderr}");
+    }
+    Ok(())
+}
+
+fn scrub_managed_android_signing_env(command: &mut tokio::process::Command) {
+    for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
+        command.env_remove(key);
+    }
+}
+
+fn android_artifacts_for_signing(
+    workspace: &Path,
+    extension: &str,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let outputs = workspace.join("build").join("app").join("outputs");
+    let mut artifacts = walk_artifact_candidates(&outputs)
+        .into_iter()
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some(extension))
+        .collect::<Vec<_>>();
+    artifacts.sort();
+    if artifacts.is_empty() {
+        anyhow::bail!(
+            "no .{extension} artifact was produced under {}",
+            outputs.display()
+        );
+    }
+    Ok(artifacts)
+}
+
+fn sign_android_artifacts(
+    workspace: &Path,
+    command: &str,
+    inputs: &AndroidSigningInputs,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let extension = android_artifact_extension(command)
+        .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
+    let artifacts = android_artifacts_for_signing(workspace, extension)?;
+    let signing_dir = create_private_workspace_in(&std::env::temp_dir(), "android-signer")?;
+    let _cleanup = PrivateSigningDirectory {
+        path: signing_dir.clone(),
+    };
+    let keystore_path = signing_dir.join("managed-keystore.jks");
+    write_private_file(&keystore_path, &inputs.keystore_bytes)?;
+    for (index, artifact) in artifacts.iter().enumerate() {
+        let signed_artifact = signing_dir.join(format!("signed-{index}.{extension}"));
+        if extension == "apk" {
+            let apksigner = find_apksigner();
+            run_android_signer_command(
+                &apksigner,
+                &[
+                    "sign".to_string(),
+                    "--ks".to_string(),
+                    keystore_path.display().to_string(),
+                    "--ks-key-alias".to_string(),
+                    inputs.key_alias.clone(),
+                    "--ks-pass".to_string(),
+                    format!("env:{ANDROID_SIGNER_STORE_PASSWORD_ENV}"),
+                    "--key-pass".to_string(),
+                    format!("env:{ANDROID_SIGNER_KEY_PASSWORD_ENV}"),
+                    "--out".to_string(),
+                    signed_artifact.display().to_string(),
+                    artifact.display().to_string(),
+                ],
+                inputs,
+                "sign Android APK",
+            )?;
+            run_android_signer_command(
+                &apksigner,
+                &[
+                    "verify".to_string(),
+                    "--verbose".to_string(),
+                    "--print-certs".to_string(),
+                    signed_artifact.display().to_string(),
+                ],
+                inputs,
+                "verify Android APK signature",
+            )?;
+        } else {
+            fs::copy(artifact, &signed_artifact)?;
+            let strip = Command::new("zip")
+                .args([
+                    "-d",
+                    signed_artifact.to_str().unwrap_or_default(),
+                    "META-INF/*.SF",
+                    "META-INF/*.RSA",
+                    "META-INF/*.DSA",
+                    "META-INF/*.EC",
+                    "META-INF/MANIFEST.MF",
+                ])
+                .output()
+                .context("failed to strip existing AAB signatures")?;
+            if !strip.status.success() && strip.status.code() != Some(12) {
+                anyhow::bail!(
+                    "failed to strip existing AAB signatures: {}",
+                    String::from_utf8_lossy(&strip.stderr).trim()
+                );
+            }
+            run_android_signer_command(
+                Path::new("jarsigner"),
+                &[
+                    "-keystore".to_string(),
+                    keystore_path.display().to_string(),
+                    "-storepass:env".to_string(),
+                    ANDROID_SIGNER_STORE_PASSWORD_ENV.to_string(),
+                    "-keypass:env".to_string(),
+                    ANDROID_SIGNER_KEY_PASSWORD_ENV.to_string(),
+                    signed_artifact.display().to_string(),
+                    inputs.key_alias.clone(),
+                ],
+                inputs,
+                "sign Android App Bundle",
+            )?;
+            run_android_signer_command(
+                Path::new("jarsigner"),
+                &[
+                    "-verify".to_string(),
+                    "-strict".to_string(),
+                    signed_artifact.display().to_string(),
+                ],
+                inputs,
+                "verify Android App Bundle signature",
+            )?;
+        }
+
+        fs::copy(&signed_artifact, artifact).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to replace Android artifact {}: {error}",
+                artifact.display()
+            )
+        })?;
+    }
+    Ok(artifacts)
+}
+
 #[derive(Debug, Clone)]
 struct IosSigningMaterialization {
-    p12_path: PathBuf,
     keychain_path: PathBuf,
     export_options_plist_path: PathBuf,
     bundle_profile_mapping: Vec<(String, String)>,
@@ -1079,7 +1130,6 @@ fn install_ios_signing_bundle(
         )?;
 
         Ok(IosSigningMaterialization {
-            p12_path: p12_path.clone(),
             keychain_path: keychain_path.clone(),
             export_options_plist_path,
             bundle_profile_mapping,
@@ -1626,6 +1676,7 @@ async fn fetch_job_ios_signing(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    signing_token: &str,
 ) -> anyhow::Result<Option<RunnerIosSigningResponse>> {
     let resp = client
         .get(format!(
@@ -1633,12 +1684,10 @@ async fn fetch_job_ios_signing(
             daemon_url, config.runner_id, build_id
         ))
         .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
         .send()
         .await?;
 
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -1809,6 +1858,7 @@ pub async fn run_runner_forever(
     daemon_url_override: Option<String>,
 ) -> anyhow::Result<()> {
     let daemon_url = daemon_url_override.unwrap_or(config.daemon_url.clone());
+    require_safe_daemon_url(&daemon_url)?;
     let client = reqwest::Client::new();
 
     reconcile_stale_runner_mutations(&config.runner_id)
@@ -2816,35 +2866,31 @@ async fn execute_build(
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
-    let mut signing_preparation: Option<AndroidSigningPreparation> = None;
+    let mut signing_inputs: Option<AndroidSigningInputs> = None;
     let mut ios_signing_source: Option<&str> = None;
     let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
-    let mut ios_signing_materialization: Option<IosSigningMaterialization> = None;
-    let mut ios_signing_cleanup: Option<IosSigningCleanup> = None;
     let build_commands = execution_plan.stage_commands.build.as_slice();
     match determine_android_signing_variant(build_commands) {
         Ok(Some(variant)) => {
             signing_variant = Some(variant);
-            match fetch_job_android_signing(client, daemon_url, config, &job.build_id).await {
+            match fetch_job_android_signing(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                &job.signing_token,
+            )
+            .await
+            {
                 Ok(Some(server_profiles)) => {
                     if let Some(profile) = select_runner_signing_profile(&server_profiles, variant)
                     {
                         match signing_inputs_from_runner_profile(profile) {
                             Ok(inputs) => {
-                                let materialization = match materialize_android_signing_files(
-                                    workspace.as_path(),
-                                    &inputs,
-                                ) {
-                                    Ok(materialization) => materialization,
-                                    Err(e) => return (steps, Err(e)),
-                                };
-                                signing_preparation = Some(AndroidSigningPreparation {
-                                    inputs,
-                                    materialization,
-                                });
+                                signing_inputs = Some(inputs);
                                 signing_source = Some("pipeline_profile");
                                 println!(
-                                    "Prepared Android signing files from pipeline profile ({variant:?})"
+                                    "Reserved Android signing profile for runner-owned post-build signing ({variant:?})"
                                 );
                             }
                             Err(e) => return (steps, Err(e)),
@@ -2853,21 +2899,12 @@ async fn execute_build(
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    eprintln!("Warning: failed to fetch pipeline Android signing profile: {e}");
-                }
-            }
-
-            if signing_preparation.is_none() {
-                match prepare_android_signing_if_configured(workspace.as_path(), build_commands) {
-                    Ok(Some(prep)) => {
-                        signing_preparation = Some(prep);
-                        signing_source = Some("environment");
-                        println!(
-                            "Prepared Android signing files from environment fallback (OORE_ANDROID_* vars)"
-                        );
-                    }
-                    Ok(None) => {}
-                    Err(e) => return (steps, Err(e)),
+                    return (
+                        steps,
+                        Err(anyhow::anyhow!(
+                            "Failed to load Android signing profile for this build: {e}"
+                        )),
+                    );
                 }
             }
         }
@@ -2879,26 +2916,25 @@ async fn execute_build(
         .iter()
         .any(|command| is_ios_flutter_build_command(command))
     {
-        match fetch_job_ios_signing(client, daemon_url, config, &job.build_id).await {
+        match fetch_job_ios_signing(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+        )
+        .await
+        {
             Ok(Some(server_payload)) => {
                 if let Some(bundle) = server_payload.bundle {
-                    match install_ios_signing_bundle(workspace.as_path(), &bundle) {
-                        Ok((materialization, cleanup)) => {
-                            let signing_source = match bundle.mode {
-                                oore_contract::IosSigningMode::Manual => "manual",
-                                oore_contract::IosSigningMode::Api => "api",
-                                oore_contract::IosSigningMode::Hybrid => "hybrid",
-                            };
-                            ios_signing_bundle = Some(bundle);
-                            ios_signing_materialization = Some(materialization);
-                            ios_signing_cleanup = Some(cleanup);
-                            ios_signing_source = Some(signing_source);
-                            println!(
-                                "Prepared iOS signing keychain/profiles from pipeline profile"
-                            );
-                        }
-                        Err(e) => return (steps, Err(e)),
-                    }
+                    let signing_source = match bundle.mode {
+                        oore_contract::IosSigningMode::Manual => "manual",
+                        oore_contract::IosSigningMode::Api => "api",
+                        oore_contract::IosSigningMode::Hybrid => "hybrid",
+                    };
+                    ios_signing_bundle = Some(bundle);
+                    ios_signing_source = Some(signing_source);
+                    println!("Reserved iOS signing bundle for runner-owned post-build signing");
                 }
             }
             Ok(None) => {}
@@ -2938,34 +2974,8 @@ async fn execute_build(
         step_env.push(("CI".to_string(), "true".to_string()));
     }
 
-    if let Some(prep) = &signing_preparation {
-        step_env.push((
-            OORE_ANDROID_KEYSTORE_PATH_ENV.to_string(),
-            prep.materialization.keystore_path.display().to_string(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEY_PROPERTIES_PATH_ENV.to_string(),
-            prep.materialization
-                .key_properties_path
-                .display()
-                .to_string(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEYSTORE_PASSWORD_ENV.to_string(),
-            prep.inputs.keystore_password.clone(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEY_ALIAS_ENV.to_string(),
-            prep.inputs.key_alias.clone(),
-        ));
-        step_env.push((
-            OORE_ANDROID_KEY_PASSWORD_ENV.to_string(),
-            prep.inputs.key_password.clone(),
-        ));
-    }
-
-    if let (Some(source), Some(variant), Some(prep)) =
-        (signing_source, signing_variant, &signing_preparation)
+    if let (Some(source), Some(variant), Some(_)) =
+        (signing_source, signing_variant, &signing_inputs)
     {
         let _ = append_runner_log_line(
             client,
@@ -2974,24 +2984,7 @@ async fn execute_build(
             &job.build_id,
             &mut log_seq,
             "stdout",
-            &android_signing_prepared_marker(source, variant, prep),
-        )
-        .await;
-    }
-
-    if let (Some(source), Some(bundle), Some(materialization)) = (
-        ios_signing_source,
-        ios_signing_bundle.as_ref(),
-        ios_signing_materialization.as_ref(),
-    ) {
-        let _ = append_runner_log_line(
-            client,
-            daemon_url,
-            config,
-            &job.build_id,
-            &mut log_seq,
-            "stdout",
-            &ios_signing_prepared_marker(source, bundle, materialization),
+            &android_signing_prepared_marker(source, variant),
         )
         .await;
     }
@@ -3022,7 +3015,8 @@ async fn execute_build(
     };
 
     let mut ios_signing_command_applied = false;
-    let mut signed_ios_app_metadata: Option<IosAppMetadata> = None;
+    let ios_signing_expected = ios_signing_bundle.is_some();
+    let mut ios_artifact_metadata: Option<serde_json::Value> = None;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -3047,9 +3041,7 @@ async fn execute_build(
                 stage_name,
                 command,
                 dart_define_file.as_deref(),
-                ios_signing_materialization
-                    .as_ref()
-                    .map(|materialization| materialization.export_options_plist_path.as_path()),
+                ios_signing_bundle.as_ref().map(|_| Path::new("")),
             ) {
                 Ok(value) => value,
                 Err(e) => return (steps, Err(e)),
@@ -3099,6 +3091,7 @@ async fn execute_build(
             for (key, value) in &step_env {
                 step_cmd.env(key, value);
             }
+            scrub_managed_android_signing_env(&mut step_cmd);
             let child = match step_cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => return (steps, Err(e.into())),
@@ -3190,15 +3183,110 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                         };
                         return (steps, Err(err));
                     }
+                    if stage_name == "build"
+                        && android_artifact_extension(command).is_some()
+                        && let Some(inputs) = signing_inputs.as_ref()
+                    {
+                        let signing_step_name = "android-sign";
+                        let signing_started = now_unix();
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_start_marker(
+                                signing_step_name,
+                                "Sign Android artifact with managed credentials",
+                            ),
+                        )
+                        .await;
+                        let signing_result = sign_android_artifacts(&workspace, command, inputs);
+                        let signing_finished = now_unix();
+                        let signing_succeeded = signing_result.is_ok();
+                        steps.push(StepResult {
+                            name: signing_step_name.to_string(),
+                            status: if signing_succeeded {
+                                "succeeded"
+                            } else {
+                                "failed"
+                            }
+                            .to_string(),
+                            exit_code: if signing_succeeded { Some(0) } else { Some(1) },
+                            started_at: signing_started,
+                            finished_at: signing_finished,
+                            duration_ms: (signing_finished - signing_started) * 1000,
+                        });
+                        match signing_result {
+                            Ok(artifacts) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stdout",
+                                    &format!(
+                                        "[oore-signing] Signed and verified {} Android artifact(s)",
+                                        artifacts.len()
+                                    ),
+                                )
+                                .await;
+                            }
+                            Err(error) => {
+                                let _ = append_runner_log_line(
+                                    client,
+                                    daemon_url,
+                                    config,
+                                    &job.build_id,
+                                    &mut log_seq,
+                                    "stderr",
+                                    &format!("[oore-signing] {error:#}"),
+                                )
+                                .await;
+                                return (steps, Err(error));
+                            }
+                        }
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &step_end_marker(signing_step_name, "succeeded", Some(0)),
+                        )
+                        .await;
+                    }
                     if command_applied {
-                        let Some(materialization) = ios_signing_materialization.as_ref() else {
+                        let Some(bundle) = ios_signing_bundle.as_ref() else {
                             return (
                                 steps,
                                 Err(anyhow::anyhow!(
-                                    "iOS signing command ran without prepared signing material"
+                                    "iOS signing command ran without a managed signing bundle"
                                 )),
                             );
                         };
+                        let (materialization, mut cleanup) =
+                            match install_ios_signing_bundle(workspace.as_path(), bundle) {
+                                Ok(prepared) => prepared,
+                                Err(error) => return (steps, Err(error)),
+                            };
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            &mut log_seq,
+                            "stdout",
+                            &ios_signing_prepared_marker(
+                                ios_signing_source.unwrap_or("pipeline_profile"),
+                                bundle,
+                                &materialization,
+                            ),
+                        )
+                        .await;
                         let signing_step_name = "ios-sign";
                         let signing_started = now_unix();
                         let _ = append_runner_log_line(
@@ -3214,7 +3302,8 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             ),
                         )
                         .await;
-                        let signing_result = manually_sign_ios_archive(&workspace, materialization);
+                        let signing_result =
+                            manually_sign_ios_archive(&workspace, &materialization);
                         let signing_finished = now_unix();
                         let signing_succeeded = signing_result.is_ok();
                         steps.push(StepResult {
@@ -3245,7 +3334,43 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     ),
                                 )
                                 .await;
-                                signed_ios_app_metadata = Some(signed_archive.app);
+                                let mut p12_bytes =
+                                    match decode_runner_b64(&bundle.p12_base64, "p12") {
+                                        Ok(bytes) => bytes,
+                                        Err(error) => return (steps, Err(error)),
+                                    };
+                                let certificate_fingerprint =
+                                    hex::encode(Sha256::digest(&p12_bytes));
+                                p12_bytes.zeroize();
+                                ios_artifact_metadata = Some(serde_json::json!({
+                                    "ios_app": {
+                                        "bundle_identifier": signed_archive.app.bundle_identifier,
+                                        "display_name": signed_archive.app.display_name,
+                                        "version": signed_archive.app.version,
+                                        "build_number": signed_archive.app.build_number,
+                                    },
+                                    "ios_signing": {
+                                        "source": ios_signing_source.unwrap_or("pipeline_profile"),
+                                        "mode": match bundle.mode {
+                                            oore_contract::IosSigningMode::Manual => "manual",
+                                            oore_contract::IosSigningMode::Api => "api",
+                                            oore_contract::IosSigningMode::Hybrid => "hybrid",
+                                        },
+                                        "team_id": bundle.team_id,
+                                        "bundle_ids": bundle
+                                            .provisioning_profiles
+                                            .iter()
+                                            .map(|profile| profile.bundle_id.clone())
+                                            .collect::<Vec<_>>(),
+                                        "profile_uuid_map": bundle
+                                            .provisioning_profiles
+                                            .iter()
+                                            .filter_map(|profile| profile.profile_uuid.as_ref().map(|uuid| (profile.bundle_id.clone(), uuid.clone())))
+                                            .collect::<Vec<_>>(),
+                                        "certificate_fingerprint": certificate_fingerprint,
+                                        "effective_export_method": materialization.effective_export_method,
+                                    }
+                                }));
                             }
                             Err(error) => {
                                 let _ = append_runner_log_line(
@@ -3271,6 +3396,9 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                 return (steps, Err(error));
                             }
                         }
+                        if let Err(error) = cleanup.cleanup() {
+                            return (steps, Err(error));
+                        }
                         let _ = append_runner_log_line(
                             client,
                             daemon_url,
@@ -3285,9 +3413,15 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                 }
             }
         }
+        if stage_name == "build" {
+            signing_inputs.take();
+            if let Some(mut bundle) = ios_signing_bundle.take() {
+                zeroize_ios_signing_bundle(&mut bundle);
+            }
+        }
     }
 
-    if ios_signing_materialization.is_some() && !ios_signing_command_applied {
+    if ios_signing_expected && !ios_signing_command_applied {
         return (
             steps,
             Err(anyhow::anyhow!(
@@ -3295,48 +3429,6 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
             )),
         );
     }
-
-    let ios_artifact_metadata = ios_signing_bundle
-        .as_ref()
-        .zip(ios_signing_materialization.as_ref())
-        .map(|(bundle, materialization)| {
-            serde_json::json!({
-                "ios_app": signed_ios_app_metadata.as_ref().map(|app| serde_json::json!({
-                    "bundle_identifier": app.bundle_identifier,
-                    "display_name": app.display_name,
-                    "version": app.version,
-                    "build_number": app.build_number,
-                })),
-                "ios_signing": {
-                    "source": ios_signing_source.unwrap_or("pipeline_profile"),
-                    "mode": match bundle.mode {
-                        oore_contract::IosSigningMode::Manual => "manual",
-                        oore_contract::IosSigningMode::Api => "api",
-                        oore_contract::IosSigningMode::Hybrid => "hybrid",
-                    },
-                    "team_id": bundle.team_id,
-                    "bundle_ids": bundle
-                        .provisioning_profiles
-                        .iter()
-                        .map(|profile| profile.bundle_id.clone())
-                        .collect::<Vec<_>>(),
-                    "profile_uuid_map": bundle
-                        .provisioning_profiles
-                        .iter()
-                        .filter_map(|profile| {
-                            profile
-                                .profile_uuid
-                                .as_ref()
-                                .map(|uuid| (profile.bundle_id.clone(), uuid.clone()))
-                        })
-                        .collect::<Vec<_>>(),
-                    "certificate_fingerprint": hex::encode(Sha256::digest(
-                        fs::read(&materialization.p12_path).unwrap_or_default()
-                    )),
-                    "effective_export_method": materialization.effective_export_method,
-                }
-            })
-        });
 
     let artifacts_started = now_unix();
     let artifact_result = scan_and_upload_artifacts(
@@ -3364,12 +3456,6 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         duration_ms: (artifacts_finished - artifacts_started) * 1000,
     });
     if let Err(error) = artifact_result {
-        return (steps, Err(error));
-    }
-
-    if let Some(mut cleanup) = ios_signing_cleanup.take()
-        && let Err(error) = cleanup.cleanup()
-    {
         return (steps, Err(error));
     }
 
@@ -4075,6 +4161,45 @@ mod tests {
     }
 
     #[test]
+    fn daemon_url_requires_https_except_literal_loopback() {
+        for allowed in [
+            "https://ci.example.com",
+            "https://127.0.0.1:8787",
+            "http://127.0.0.1:8787",
+            "http://[::1]:8787",
+        ] {
+            require_safe_daemon_url(allowed).expect(allowed);
+        }
+
+        for rejected in [
+            "http://localhost:8787",
+            "http://192.0.2.10:8787",
+            "http://[2001:db8::10]:8787",
+            "ftp://127.0.0.1:8787",
+            "not-a-url",
+        ] {
+            assert!(
+                require_safe_daemon_url(rejected).is_err(),
+                "unexpectedly allowed {rejected}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn runner_runtime_rejects_cleartext_remote_override_before_connecting() {
+        let config = RunnerConfig {
+            runner_id: "runner-test".to_string(),
+            runner_token: "secret".to_string(),
+            daemon_url: "https://daemon.example".to_string(),
+            name: "test".to_string(),
+        };
+        let error = run_runner_forever(config, Some("http://192.0.2.10:8787".to_string()))
+            .await
+            .expect_err("remote cleartext override must fail");
+        assert!(error.to_string().contains("cleartext daemon URLs"));
+    }
+
+    #[test]
     fn authority_loss_stops_definitive_revocations_and_bounds_outages() {
         for (status, expected) in [
             (reqwest::StatusCode::UNAUTHORIZED, "runner_unauthorized"),
@@ -4607,83 +4732,61 @@ mod tests {
         cleanup_workspace(&fixture_root);
     }
 
-    fn signing_env_from_pairs(pairs: &[(&str, &str)]) -> AndroidSigningEnv {
-        use std::collections::HashMap;
-        let mut values = HashMap::new();
-        for (key, value) in pairs {
-            values.insert((*key).to_string(), (*value).to_string());
+    #[test]
+    fn repository_stages_scrub_all_managed_android_signing_environment() {
+        assert_eq!(MANAGED_ANDROID_SIGNING_ENV_KEYS.len(), 6);
+        for required in [
+            OORE_ANDROID_KEYSTORE_PATH_ENV,
+            OORE_ANDROID_KEYSTORE_B64_ENV,
+            OORE_ANDROID_KEYSTORE_PASSWORD_ENV,
+            OORE_ANDROID_KEY_ALIAS_ENV,
+            OORE_ANDROID_KEY_PASSWORD_ENV,
+            OORE_ANDROID_KEY_PROPERTIES_PATH_ENV,
+        ] {
+            assert!(MANAGED_ANDROID_SIGNING_ENV_KEYS.contains(&required));
         }
-        collect_android_signing_env(|key| values.get(key).cloned())
     }
 
-    #[test]
-    fn android_signing_env_empty_is_noop() {
-        let env = signing_env_from_pairs(&[]);
-        let inputs = resolve_android_signing_inputs(&env).expect("resolve");
-        assert!(inputs.is_none());
-    }
-
-    #[test]
-    fn android_signing_requires_all_required_fields() {
-        let env = signing_env_from_pairs(&[
-            (OORE_ANDROID_KEYSTORE_B64_ENV, "ZmFrZS1rZXlzdG9yZQ=="),
-            (OORE_ANDROID_KEYSTORE_PASSWORD_ENV, "store-pass"),
-        ]);
-        let err = resolve_android_signing_inputs(&env).expect_err("missing env must fail");
-        assert!(err.to_string().contains(OORE_ANDROID_KEY_ALIAS_ENV));
-    }
-
-    #[test]
-    fn android_signing_materializes_keystore_and_key_properties() {
-        let workspace = temp_workspace();
-        fs::create_dir_all(workspace.join("android/app")).expect("mkdir android/app");
-        let env = signing_env_from_pairs(&[
-            (
-                OORE_ANDROID_KEYSTORE_B64_ENV,
-                "ZmFrZS1rZXlzdG9yZS1ieXRlcw==",
-            ),
-            (OORE_ANDROID_KEYSTORE_PASSWORD_ENV, "store-pass"),
-            (OORE_ANDROID_KEY_ALIAS_ENV, "upload"),
-            (OORE_ANDROID_KEY_PASSWORD_ENV, "key-pass"),
-        ]);
-
-        let inputs = resolve_android_signing_inputs(&env)
-            .expect("resolve")
-            .expect("inputs");
-        materialize_android_signing_files(&workspace, &inputs).expect("materialize");
-
-        let keystore_path = workspace.join("android/app/oore-upload-keystore.jks");
-        let key_properties_path = workspace.join("android/key.properties");
-        let key_properties = fs::read_to_string(&key_properties_path).expect("read key.properties");
-
-        assert!(keystore_path.exists());
-        assert!(key_properties.contains("storePassword=store-pass"));
-        assert!(key_properties.contains("keyPassword=key-pass"));
-        assert!(key_properties.contains("keyAlias=upload"));
-        assert!(key_properties.contains("storeFile=oore-upload-keystore.jks"));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&keystore_path)
-                    .expect("keystore metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-            assert_eq!(
-                fs::metadata(&key_properties_path)
-                    .expect("key.properties metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
+    #[tokio::test]
+    async fn repository_child_process_cannot_inherit_managed_signing_values() {
+        let mut command = tokio::process::Command::new("sh");
+        command.arg("-c").arg("env");
+        for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
+            command.env(key, "managed-secret");
         }
+        scrub_managed_android_signing_env(&mut command);
+        let output = command.output().await.expect("run scrubbed child");
+        assert!(output.status.success());
+        let environment = String::from_utf8_lossy(&output.stdout);
+        for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
+            assert!(!environment.contains(&format!("{key}=")));
+        }
+    }
 
-        cleanup_workspace(&workspace);
+    #[test]
+    fn android_signing_marker_exposes_no_reusable_authority() {
+        let marker =
+            android_signing_prepared_marker("pipeline_profile", AndroidSigningBuildType::Release);
+        assert!(marker.contains("runner_owned_post_build_signer"));
+        assert!(!marker.contains("password"));
+        assert!(!marker.contains("keystore"));
+        assert!(!marker.contains("key.properties"));
+    }
+
+    #[test]
+    fn runner_profile_decodes_only_into_runner_owned_inputs() {
+        let profile = RunnerAndroidSigningProfile {
+            build_type: AndroidSigningBuildType::Release,
+            enabled: true,
+            keystore_filename: "release.jks".to_string(),
+            keystore_base64: "ZmFrZS1rZXlzdG9yZS1ieXRlcw==".to_string(),
+            store_password: "store-pass".to_string(),
+            key_alias: "upload".to_string(),
+            key_password: "key-pass".to_string(),
+        };
+        let inputs = signing_inputs_from_runner_profile(&profile).expect("runner inputs");
+        assert_eq!(inputs.keystore_bytes, b"fake-keystore-bytes");
+        assert_eq!(inputs.keystore_password, "store-pass");
     }
 
     #[test]
@@ -4697,6 +4800,27 @@ mod tests {
         assert!(!is_android_flutter_build_command(
             "flutter build ios --release"
         ));
+    }
+
+    #[test]
+    fn android_signer_covers_every_split_artifact() {
+        let workspace = temp_workspace();
+        let outputs = workspace.join("build/app/outputs/flutter-apk");
+        fs::create_dir_all(&outputs).expect("create Android outputs");
+        for filename in ["app-arm64-v8a-release.apk", "app-x86_64-release.apk"] {
+            fs::write(outputs.join(filename), b"unsigned").expect("write split APK");
+        }
+        fs::write(outputs.join("ignored.aab"), b"unsigned").expect("write other artifact");
+
+        let artifacts =
+            android_artifacts_for_signing(&workspace, "apk").expect("discover every split APK");
+        assert_eq!(artifacts.len(), 2);
+        assert!(
+            artifacts
+                .iter()
+                .all(|path| path.extension().and_then(|value| value.to_str()) == Some("apk"))
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]

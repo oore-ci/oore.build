@@ -320,8 +320,20 @@ async fn test_gitlab_webhook_happy_path() {
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "test-group/test-project")
             .await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "test-group/test-project",
+        secret,
+    )
+    .await;
 
-    let payload = common::gitlab_push_payload("test-group/test-project", "main", "gl-sha-1");
+    let payload = common::gitlab_push_payload_for_project(
+        "test-group/test-project",
+        &external_id,
+        "main",
+        "gl-sha-1",
+    );
     let body_bytes = serde_json::to_vec(&payload).unwrap();
 
     let req = Request::post("/v1/webhooks/gitlab")
@@ -349,6 +361,85 @@ async fn test_gitlab_webhook_happy_path() {
 }
 
 #[tokio::test]
+async fn test_gitlab_repository_token_cannot_authorize_sibling_repository() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+    common::set_runtime_mode(&pool, "remote").await;
+
+    let user_id = common::seed_test_user(&pool).await;
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, "unused").await;
+    let (project_a, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "group/repo-a").await;
+    let (project_b, _) =
+        common::seed_project_chain(&pool, &integration_id, &user_id, "group/repo-b").await;
+    let external_a = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/repo-a",
+        "repo-a-token",
+    )
+    .await;
+    let external_b = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/repo-b",
+        "repo-b-token",
+    )
+    .await;
+
+    let sibling = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", "repo-a-token")
+        .header("x-gitlab-event-uuid", "gl-sibling-rejected")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(
+            serde_json::to_vec(&common::gitlab_push_payload_for_project(
+                "group/repo-b",
+                &external_b,
+                "main",
+                "sibling-sha",
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(sibling).await.unwrap().status(), 401);
+
+    // The payload path is untrusted routing data. A valid repository A token
+    // and immutable A project ID must route to A even when the path claims B.
+    let spoofed_path = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", "repo-a-token")
+        .header("x-gitlab-event-uuid", "gl-sibling-path-spoof")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(
+            serde_json::to_vec(&common::gitlab_push_payload_for_project(
+                "group/repo-b",
+                &external_a,
+                "main",
+                "trusted-a-sha",
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(spoofed_path).await.unwrap().status(),
+        200
+    );
+
+    let builds_a = common::wait_for_builds(&pool, &project_a, 1, 2_000).await;
+    assert_eq!(builds_a.len(), 1);
+    assert_eq!(builds_a[0]["commit_sha"], "trusted-a-sha");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let builds_b = common::wait_for_builds(&pool, &project_b, 0, 200).await;
+    assert!(
+        builds_b.is_empty(),
+        "sibling repository must not receive a build"
+    );
+}
+
+#[tokio::test]
 async fn test_gitlab_webhook_idempotency() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
@@ -361,8 +452,20 @@ async fn test_gitlab_webhook_idempotency() {
     let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "group/idemp-proj").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/idemp-proj",
+        secret,
+    )
+    .await;
 
-    let payload = common::gitlab_push_payload("group/idemp-proj", "dev", "gl-sha-idemp");
+    let payload = common::gitlab_push_payload_for_project(
+        "group/idemp-proj",
+        &external_id,
+        "dev",
+        "gl-sha-idemp",
+    );
     let body_bytes = serde_json::to_vec(&payload).unwrap();
 
     // First delivery
@@ -417,8 +520,16 @@ async fn test_gitlab_webhook_idempotency_without_event_uuid() {
     let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "group/fallback-proj").await;
-    let body = serde_json::to_vec(&common::gitlab_push_payload(
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
         "group/fallback-proj",
+        secret,
+    )
+    .await;
+    let body = serde_json::to_vec(&common::gitlab_push_payload_for_project(
+        "group/fallback-proj",
+        &external_id,
         "main",
         "gl-sha-fallback",
     ))
@@ -458,13 +569,24 @@ async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
 
     let user_id = common::seed_test_user(&pool).await;
     let old_secret = "gl-rotate-old-secret";
-    let new_secret = "gl-rotate-new-secret";
     let integration_id = common::seed_gitlab_integration(&pool, &user_id, old_secret).await;
     let (project_id, _) =
         common::seed_project_chain(&pool, &integration_id, &user_id, "group/rotate-proj").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/rotate-proj",
+        old_secret,
+    )
+    .await;
 
     // First webhook uses old secret and warms the in-process cache.
-    let payload1 = common::gitlab_push_payload("group/rotate-proj", "main", "gl-sha-old");
+    let payload1 = common::gitlab_push_payload_for_project(
+        "group/rotate-proj",
+        &external_id,
+        "main",
+        "gl-sha-old",
+    );
     let body1 = serde_json::to_vec(&payload1).unwrap();
     let req1 = Request::post("/v1/webhooks/gitlab")
         .header("content-type", "application/json")
@@ -478,24 +600,52 @@ async fn test_gitlab_webhook_secret_rotation_refreshes_cache_without_restart() {
     let builds1 = common::wait_for_builds(&pool, &project_id, 1, 2000).await;
     assert_eq!(builds1.len(), 1);
 
-    // Rotate stored webhook secret in DB.
-    let encrypted_new = oored::crypto::encrypt(new_secret, &common::TEST_ENCRYPTION_KEY)
-        .expect("failed to encrypt rotated secret");
-    sqlx::query(
-        "UPDATE integration_credentials \
-         SET encrypted_value = ?1, updated_at = ?2 \
-         WHERE integration_id = ?3 AND credential_type = 'webhook_secret'",
+    let repository_id: String = sqlx::query_scalar(
+        "SELECT r.id FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         WHERE inst.integration_id = ?1 AND r.full_name = 'group/rotate-proj'",
     )
-    .bind(&encrypted_new)
-    .bind(common::now_unix())
     .bind(&integration_id)
-    .execute(&pool)
+    .fetch_one(&pool)
     .await
-    .expect("failed to rotate webhook secret");
+    .unwrap();
+    let session = common::create_session_token(&pool, &user_id).await;
+    let rotate = Request::post(format!(
+        "/v1/integration-repositories/{repository_id}/gitlab-webhook-secret"
+    ))
+    .header("authorization", format!("Bearer {session}"))
+    .body(Body::empty())
+    .unwrap();
+    let rotate_response = app.clone().oneshot(rotate).await.unwrap();
+    assert_eq!(rotate_response.status(), 200);
+    let rotate_json = common::body_json(rotate_response.into_body()).await;
+    let new_secret = rotate_json["webhook_secret"].as_str().unwrap();
+
+    let old_replay = Request::post("/v1/webhooks/gitlab")
+        .header("content-type", "application/json")
+        .header("x-gitlab-token", old_secret)
+        .header("x-gitlab-event-uuid", "gl-delivery-rotate-old-replay")
+        .header("x-gitlab-event", "Push Hook")
+        .body(Body::from(
+            serde_json::to_vec(&common::gitlab_push_payload_for_project(
+                "group/rotate-proj",
+                &external_id,
+                "main",
+                "gl-sha-old-replay",
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(old_replay).await.unwrap().status(), 401);
 
     // Second webhook uses new secret. It should still succeed without restart
     // by forcing a cache refresh after the initial cached-token miss.
-    let payload2 = common::gitlab_push_payload("group/rotate-proj", "main", "gl-sha-new");
+    let payload2 = common::gitlab_push_payload_for_project(
+        "group/rotate-proj",
+        &external_id,
+        "main",
+        "gl-sha-new",
+    );
     let body2 = serde_json::to_vec(&payload2).unwrap();
     let req2 = Request::post("/v1/webhooks/gitlab")
         .header("content-type", "application/json")
@@ -525,9 +675,18 @@ async fn test_gitlab_webhook_wrong_token() {
     common::set_runtime_mode(&pool, "remote").await;
 
     let user_id = common::seed_test_user(&pool).await;
-    let _integration_id = common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, "correct-token").await;
+    common::seed_project_chain(&pool, &integration_id, &user_id, "group/repo").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/repo",
+        "correct-token",
+    )
+    .await;
 
-    let payload = common::gitlab_push_payload("group/repo", "main", "sha1");
+    let payload =
+        common::gitlab_push_payload_for_project("group/repo", &external_id, "main", "sha1");
     let body_bytes = serde_json::to_vec(&payload).unwrap();
 
     let req = Request::post("/v1/webhooks/gitlab")
@@ -578,7 +737,15 @@ async fn test_gitlab_webhook_stale_event() {
 
     let user_id = common::seed_test_user(&pool).await;
     let secret = "gl-stale-secret";
-    let _integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    let integration_id = common::seed_gitlab_integration(&pool, &user_id, secret).await;
+    common::seed_project_chain(&pool, &integration_id, &user_id, "group/stale-repo").await;
+    let external_id = common::seed_gitlab_repository_webhook_secret(
+        &pool,
+        &integration_id,
+        "group/stale-repo",
+        secret,
+    )
+    .await;
 
     // Create a payload with a timestamp 6 minutes in the past
     let stale_time = chrono::Utc::now() - chrono::Duration::seconds(360);
@@ -586,6 +753,7 @@ async fn test_gitlab_webhook_stale_event() {
         "ref": "refs/heads/main",
         "checkout_sha": "stale-sha",
         "project": {
+            "id": external_id,
             "path_with_namespace": "group/stale-repo",
             "web_url": "https://gitlab.com/group/stale-repo"
         },

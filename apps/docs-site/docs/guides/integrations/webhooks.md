@@ -64,7 +64,7 @@ In GitLab, go to **Project Settings > Webhooks** and click **Test** to send a te
 
 ### Signature verification
 
-Ensure the webhook secret token in GitLab matches the token from your Oore CI integration settings.
+Ensure the webhook secret token in GitLab matches the one-time token generated for that exact project in the Oore source details. Tokens from sibling projects are intentionally rejected.
 
 ## General troubleshooting
 

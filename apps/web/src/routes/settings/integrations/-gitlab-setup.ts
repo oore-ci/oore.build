@@ -13,7 +13,6 @@ export const gitLabSetupSchema = z
         'Use an HTTP(S) host URL only, without a path, query, or credentials.',
       ),
     auth_mode: z.enum(['personal_token', 'oauth_app']),
-    webhook_secret: z.string().trim().min(1, 'Webhook secret is required'),
     access_token: z.string().optional(),
     client_id: z.string().optional(),
     client_secret: z.string().optional(),
@@ -46,8 +45,3 @@ export const gitLabSetupSchema = z
 
 export type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
 export type GitLabHostKind = 'gitlab_com' | 'self_managed'
-
-export function generateWebhookSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(24))
-  return `oore_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
-}

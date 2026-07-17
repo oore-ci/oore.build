@@ -162,10 +162,16 @@ pub async fn transition_build(
     } else {
         ""
     };
+    let runner_revoke_update =
+        if target_status.is_terminal() || target_status == BuildStatus::Queued {
+            "runner_id = NULL, signing_token_hash = NULL,"
+        } else {
+            ""
+        };
 
     // Optimistic locking: WHERE status = current_status
     let query = format!(
-        "UPDATE builds SET status = ?1, {started_at_update} {finished_at_update} updated_at = ?4 \
+        "UPDATE builds SET status = ?1, {started_at_update} {finished_at_update} {runner_revoke_update} updated_at = ?4 \
          WHERE id = ?2 AND status = ?3"
     );
 

@@ -34,6 +34,7 @@ import type {
   GitLabAuthorizeRequest,
   GitLabAuthorizeResponse,
   GitLabCompleteResponse,
+  GitLabRepositoryWebhookSecretResponse,
   GitLabStartRequest,
   InstancePreferencesResponse,
   IntegrationDetailResponse,
@@ -637,6 +638,21 @@ export function gitlabAuthorize(
       method: 'POST',
       headers: authHeaders(token),
       body: JSON.stringify(data),
+    },
+  )
+}
+
+export function rotateGitLabRepositoryWebhookSecret(
+  baseUrl: string,
+  token: string,
+  repositoryId: string,
+): Promise<GitLabRepositoryWebhookSecretResponse> {
+  return request<GitLabRepositoryWebhookSecretResponse>(
+    baseUrl,
+    `/v1/integration-repositories/${repositoryId}/gitlab-webhook-secret`,
+    {
+      method: 'POST',
+      headers: authHeaders(token),
     },
   )
 }

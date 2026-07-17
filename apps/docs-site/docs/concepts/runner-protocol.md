@@ -13,7 +13,7 @@ Runners are processes that execute builds on behalf of the daemon. The protocol 
 
 ## Authentication
 
-Every runner request includes an `Authorization: Bearer <runner_token>` header. The runner token is generated during `POST /v1/runners/register` and must be stored securely by the runner operator. If the token is lost, the runner must be re-registered.
+Every runner request includes an `Authorization: Bearer <runner_token>` header. The runner token is generated during `POST /v1/runners/register` and must be stored securely by the runner operator. If the token is lost, the runner must be re-registered. Non-loopback runner connections require HTTPS; HTTP is accepted only for a literal loopback IP.
 
 ## Lifecycle
 
@@ -42,7 +42,7 @@ The daemon uses heartbeat data to track which runners are available.
 
 ### 3. Job claim
 
-The runner calls `POST /v1/runners/{runner_id}/claim` with `{"protocol_version": 2}` to request work. The daemon rejects incompatible runners before assigning work.
+The runner calls `POST /v1/runners/{runner_id}/claim` with `{"protocol_version": 3}` to request work. The daemon rejects incompatible runners before assigning work.
 
 1. Finds the oldest build with `status = queued`
 2. Transitions the build: `queued` → `scheduled` → `assigned`
@@ -59,6 +59,7 @@ The runner calls `POST /v1/runners/{runner_id}/claim` with `{"protocol_version":
 | `commit_sha`       | Git commit to build                                             |
 | `branch`           | Git branch                                                      |
 | `lease_expires_at` | Deadline for the runner to start reporting progress (5 minutes) |
+| `signing_token`    | Ephemeral, job-scoped capability held by the runner parent      |
 
 If no builds are queued, the endpoint returns `204 No Content`.
 
@@ -103,17 +104,18 @@ See [Artifact Access Model](/concepts/artifact-access) for details on how upload
 
 ## Signing credential retrieval
 
-Before building, the runner can fetch signing credentials:
+Before repository build stages run, the trusted runner parent can fetch signing credentials with both the runner token and the job-scoped signing capability:
 
 - **Android**: `GET /v1/runners/{runner_id}/jobs/{job_id}/android-signing` — returns keystore and signing config
 - **iOS**: `GET /v1/runners/{runner_id}/jobs/{job_id}/ios-signing` — returns certificates, provisioning profiles, and signing identity
 
-These endpoints return decrypted credentials that the runner injects into the build environment. Credentials are encrypted at rest and only decrypted for the assigned runner.
+These endpoints return decrypted credentials only while the job is assigned or running. The runner keeps them out of repository-controlled files, environment variables, and keychains. It builds unsigned outputs first, then invokes fixed runner-owned Android or iOS signing logic. Terminal and requeue transitions atomically revoke the assignment and signing capability.
 
 ## Security considerations
 
 - Runner tokens are long-lived secrets — treat them like API keys
-- The daemon verifies that the runner making a request is the one assigned to the build
+- The daemon verifies the active assignment and a separate per-job signing capability before returning signing material
+- Repository-controlled stages do not receive signing credentials or the job-scoped capability
 - Artifact upload URLs are time-limited (30-minute TTL)
 - Signing credentials are only served to the runner assigned to the build
 - Build lease expiry (5 minutes) prevents stale claims from blocking the queue

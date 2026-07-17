@@ -292,10 +292,15 @@ export interface SyncInstallationsResponse {
 export interface GitLabStartRequest {
   host_url: string
   auth_mode: string
-  webhook_secret: string
   client_id?: string
   client_secret?: string
   access_token?: string
+}
+
+export interface GitLabRepositoryWebhookSecretResponse {
+  repository_id: string
+  webhook_secret: string
+  rotated_at: number
 }
 
 export interface GitLabCompleteResponse {

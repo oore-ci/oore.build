@@ -662,13 +662,19 @@ pub struct SyncInstallationsResponse {
 pub struct GitLabStartRequest {
     pub host_url: String,
     pub auth_mode: String,
-    pub webhook_secret: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct GitLabRepositoryWebhookSecretResponse {
+    pub repository_id: String,
+    pub webhook_secret: String,
+    pub rotated_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1156,7 +1162,7 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
 }
 
-pub const RUNNER_PROTOCOL_VERSION: u32 = 2;
+pub const RUNNER_PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
@@ -1193,6 +1199,9 @@ pub struct ClaimedJob {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     pub lease_expires_at: i64,
+    /// Ephemeral capability required for runner-owned signing material fetches.
+    /// It is scoped to this job and revoked when the job leaves active execution.
+    pub signing_token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

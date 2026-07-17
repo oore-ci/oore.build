@@ -1,3 +1,5 @@
+use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,13 +21,17 @@ use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::session::DEFAULT_SESSION_TTL;
 use crate::store::write_audit_log;
 use crate::util::{api_err, extract_bearer, now_unix};
-use crate::{AppState, MAX_PENDING_AUTH};
 
 /// Maximum lifetime of a pending OIDC auth request before it expires (10 minutes).
 const PENDING_AUTH_TTL_SECS: i64 = 600;
+const MAX_PENDING_AUTH: usize = 1000;
+const OIDC_START_RATE_WINDOW_SECS: i64 = 60;
+const MAX_GLOBAL_OIDC_STARTS_PER_WINDOW: usize = 120;
+const MAX_SOURCE_OIDC_STARTS_PER_WINDOW: usize = 20;
 const AUTO_LOCAL_OWNER_EMAIL: &str = "owner@local";
 
 fn local_subject_for_email(email: &str) -> String {
@@ -60,6 +66,112 @@ pub struct PendingAuth {
     pub setup_session_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OidcAdmissionError {
+    Capacity,
+    GlobalRate,
+    SourceRate,
+    ReservationExpired,
+}
+
+#[derive(Default)]
+pub struct PendingAuthStore {
+    pending: HashMap<String, PendingAuth>,
+    reservations: HashMap<String, i64>,
+    global_starts: VecDeque<i64>,
+    source_starts: HashMap<IpAddr, VecDeque<i64>>,
+}
+
+impl PendingAuthStore {
+    fn cleanup(&mut self, now: i64) {
+        self.pending
+            .retain(|_, pending| now - pending.created_at < PENDING_AUTH_TTL_SECS);
+        self.reservations
+            .retain(|_, created_at| now - *created_at < PENDING_AUTH_TTL_SECS);
+
+        let cutoff = now - OIDC_START_RATE_WINDOW_SECS;
+        while self.global_starts.front().is_some_and(|at| *at <= cutoff) {
+            self.global_starts.pop_front();
+        }
+        self.source_starts.retain(|_, starts| {
+            while starts.front().is_some_and(|at| *at <= cutoff) {
+                starts.pop_front();
+            }
+            !starts.is_empty()
+        });
+    }
+
+    pub(crate) fn reserve_public(
+        &mut self,
+        reservation_id: String,
+        source: IpAddr,
+        now: i64,
+    ) -> Result<(), OidcAdmissionError> {
+        self.cleanup(now);
+        if self.pending.len() + self.reservations.len() >= MAX_PENDING_AUTH {
+            return Err(OidcAdmissionError::Capacity);
+        }
+        if self.global_starts.len() >= MAX_GLOBAL_OIDC_STARTS_PER_WINDOW {
+            return Err(OidcAdmissionError::GlobalRate);
+        }
+        if self
+            .source_starts
+            .get(&source)
+            .is_some_and(|starts| starts.len() >= MAX_SOURCE_OIDC_STARTS_PER_WINDOW)
+        {
+            return Err(OidcAdmissionError::SourceRate);
+        }
+
+        self.global_starts.push_back(now);
+        self.source_starts.entry(source).or_default().push_back(now);
+        self.reservations.insert(reservation_id, now);
+        Ok(())
+    }
+
+    pub(crate) fn commit_public(
+        &mut self,
+        reservation_id: &str,
+        state: String,
+        pending: PendingAuth,
+    ) -> Result<(), OidcAdmissionError> {
+        self.cleanup(pending.created_at);
+        if self.reservations.remove(reservation_id).is_none() {
+            return Err(OidcAdmissionError::ReservationExpired);
+        }
+        self.pending.insert(state, pending);
+        Ok(())
+    }
+
+    pub(crate) fn cancel_public(&mut self, reservation_id: &str) {
+        self.reservations.remove(reservation_id);
+    }
+
+    pub(crate) fn insert_setup(
+        &mut self,
+        state: String,
+        pending: PendingAuth,
+        now: i64,
+    ) -> Result<(), OidcAdmissionError> {
+        self.cleanup(now);
+        if self.pending.len() + self.reservations.len() >= MAX_PENDING_AUTH {
+            return Err(OidcAdmissionError::Capacity);
+        }
+        self.pending.insert(state, pending);
+        Ok(())
+    }
+
+    pub(crate) fn remove(&mut self, state: &str) -> Option<PendingAuth> {
+        self.pending.remove(state)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.pending.clear();
+        self.reservations.clear();
+        self.global_starts.clear();
+        self.source_starts.clear();
+    }
+}
+
 /// Query parameters returned by the IdP on the callback redirect.
 #[derive(Debug, Deserialize)]
 pub struct OidcCallbackParams {
@@ -81,6 +193,26 @@ pub struct OidcConfig {
     pub issuer_url: String,
     pub client_id: String,
     pub client_secret: Option<String>,
+}
+
+fn oidc_admission_error(error: OidcAdmissionError) -> (StatusCode, Json<ApiError>) {
+    match error {
+        OidcAdmissionError::Capacity => api_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_many_pending",
+            "Too many pending authentication requests",
+        ),
+        OidcAdmissionError::GlobalRate | OidcAdmissionError::SourceRate => api_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "oidc_start_rate_limited",
+            "Too many authentication starts; retry later",
+        ),
+        OidcAdmissionError::ReservationExpired => api_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "oidc_start_expired",
+            "OIDC discovery took too long; retry authentication",
+        ),
+    }
 }
 
 async fn auto_complete_local_setup_if_needed(
@@ -294,6 +426,8 @@ async fn load_oidc_config_inner(
 /// Returns the authorization URL for the frontend to redirect the user to.
 pub async fn oidc_start(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Query(params): Query<OidcStartParams>,
 ) -> Result<Json<OidcStartResponse>, (StatusCode, Json<ApiError>)> {
     let oidc_config = load_oidc_config(&state).await?;
@@ -307,98 +441,102 @@ pub async fn oidc_start(
     let allowed_origins = state.allowed_origins.read().await.clone();
     crate::validate_redirect_uri(&redirect_uri, &allowed_origins)?;
 
-    // Parse issuer URL
-    let issuer = IssuerUrl::new(oidc_config.issuer_url).map_err(|e| {
-        error!(error = %e, "invalid issuer URL");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "oidc_config_error",
-            "Invalid OIDC issuer URL in configuration",
-        )
-    })?;
+    // Reserve capacity and rate budget before issuer discovery or pending-state
+    // creation. The reservation is committed atomically only after discovery.
+    let reservation_id = Uuid::new_v4().to_string();
+    let source = crate::effective_client_ip(peer_addr, &headers);
+    let reserved_at = now_unix();
+    {
+        let mut pending = state.pending_auth.lock().await;
+        pending
+            .reserve_public(reservation_id.clone(), source, reserved_at)
+            .map_err(oidc_admission_error)?;
+    }
 
-    // Perform OIDC discovery
-    let http_client = build_http_client()?;
-    let provider_metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "OIDC discovery failed");
+    let discovery_result: Result<_, (StatusCode, Json<ApiError>)> = async {
+        let issuer = IssuerUrl::new(oidc_config.issuer_url).map_err(|e| {
+            error!(error = %e, "invalid issuer URL");
             api_err(
-                StatusCode::BAD_GATEWAY,
-                "oidc_discovery_error",
-                "Failed to discover OIDC provider metadata",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "oidc_config_error",
+                "Invalid OIDC issuer URL in configuration",
             )
         })?;
 
-    // Build OIDC client from discovered metadata
-    let oidc_client_id = ClientId::new(oidc_config.client_id);
-    let oidc_client_secret = oidc_config.client_secret.map(ClientSecret::new);
+        let http_client = build_http_client()?;
+        let provider_metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "OIDC discovery failed");
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "oidc_discovery_error",
+                    "Failed to discover OIDC provider metadata",
+                )
+            })?;
 
-    let client = openidconnect::core::CoreClient::from_provider_metadata(
-        provider_metadata,
-        oidc_client_id,
-        oidc_client_secret,
-    )
-    .set_redirect_uri(RedirectUrl::new(redirect_uri.clone()).map_err(|e| {
-        error!(error = %e, "invalid redirect URI");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "oidc_config_error",
-            "Invalid redirect URI",
+        let client = openidconnect::core::CoreClient::from_provider_metadata(
+            provider_metadata,
+            ClientId::new(oidc_config.client_id),
+            oidc_config.client_secret.map(ClientSecret::new),
         )
-    })?);
+        .set_redirect_uri(RedirectUrl::new(redirect_uri.clone()).map_err(|e| {
+            error!(error = %e, "invalid redirect URI");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "oidc_config_error",
+                "Invalid redirect URI",
+            )
+        })?);
 
-    // Generate PKCE challenge
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+        let (auth_url, csrf_state, nonce) = client
+            .authorize_url(
+                AuthenticationFlow::<openidconnect::core::CoreResponseType>::AuthorizationCode,
+                CsrfToken::new_random,
+                Nonce::new_random,
+            )
+            .add_scope(Scope::new("openid".to_string()))
+            .add_scope(Scope::new("email".to_string()))
+            .add_scope(Scope::new("profile".to_string()))
+            .set_pkce_challenge(pkce_challenge)
+            .url();
+        let state_value = csrf_state.secret().clone();
 
-    // Build authorization URL
-    let (auth_url, csrf_state, nonce) = client
-        .authorize_url(
-            AuthenticationFlow::<openidconnect::core::CoreResponseType>::AuthorizationCode,
-            CsrfToken::new_random,
-            Nonce::new_random,
-        )
-        .add_scope(Scope::new("openid".to_string()))
-        .add_scope(Scope::new("email".to_string()))
-        .add_scope(Scope::new("profile".to_string()))
-        .set_pkce_challenge(pkce_challenge)
-        .url();
-
-    let state_value = csrf_state.secret().clone();
-
-    // Store pending auth keyed by CSRF state value
-    {
-        let mut pending = state.pending_auth.lock().await;
-
-        // Cleanup expired entries while we have the lock
-        let now = now_unix();
-        pending.retain(|_, pa| now - pa.created_at < PENDING_AUTH_TTL_SECS);
-
-        // H3: Reject if too many pending auth requests
-        if pending.len() >= MAX_PENDING_AUTH {
-            return Err(api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "too_many_pending",
-                "Too many pending authentication requests",
-            ));
-        }
-
-        pending.insert(
-            state_value.clone(),
+        Ok((
+            OidcStartResponse {
+                authorization_url: auth_url.to_string(),
+                state: state_value.clone(),
+            },
+            state_value,
             PendingAuth {
                 pkce_verifier,
                 nonce,
                 redirect_uri,
-                created_at: now,
+                created_at: now_unix(),
                 setup_session_hash: None,
             },
-        );
+        ))
     }
+    .await;
 
-    Ok(Json(OidcStartResponse {
-        authorization_url: auth_url.to_string(),
-        state: state_value,
-    }))
+    match discovery_result {
+        Ok((response, state_value, pending_auth)) => {
+            let mut pending = state.pending_auth.lock().await;
+            pending
+                .commit_public(&reservation_id, state_value, pending_auth)
+                .map_err(oidc_admission_error)?;
+            Ok(Json(response))
+        }
+        Err(error) => {
+            state
+                .pending_auth
+                .lock()
+                .await
+                .cancel_public(&reservation_id);
+            Err(error)
+        }
+    }
 }
 
 /// `POST /v1/auth/oidc/callback`
@@ -755,6 +893,78 @@ pub async fn logout(
     })?;
 
     Ok(Json(LogoutResponse { ok: true }))
+}
+
+#[cfg(test)]
+mod pending_auth_tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn public_oidc_admission_is_atomic_under_concurrency() {
+        let store = Arc::new(Mutex::new(PendingAuthStore::default()));
+        let mut tasks = Vec::new();
+        for index in 0..400u16 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                let source = IpAddr::from([10, ((index / 250) + 1) as u8, (index % 250) as u8, 1]);
+                store
+                    .lock()
+                    .await
+                    .reserve_public(format!("reservation-{index}"), source, 1_000)
+                    .is_ok()
+            }));
+        }
+
+        let mut accepted = 0;
+        for task in tasks {
+            accepted += usize::from(task.await.expect("admission task"));
+        }
+        let store = store.lock().await;
+        assert_eq!(accepted, MAX_GLOBAL_OIDC_STARTS_PER_WINDOW);
+        assert_eq!(store.reservations.len(), accepted);
+        assert!(store.pending.len() + store.reservations.len() <= MAX_PENDING_AUTH);
+    }
+
+    #[test]
+    fn public_oidc_admission_enforces_source_rate_and_window_cleanup() {
+        let mut store = PendingAuthStore::default();
+        let source = IpAddr::from([192, 0, 2, 10]);
+        for index in 0..MAX_SOURCE_OIDC_STARTS_PER_WINDOW {
+            store
+                .reserve_public(format!("source-{index}"), source, 1_000)
+                .expect("source budget");
+        }
+        assert_eq!(
+            store.reserve_public("blocked".to_string(), source, 1_000),
+            Err(OidcAdmissionError::SourceRate)
+        );
+
+        store
+            .reserve_public("after-window".to_string(), source, 1_061)
+            .expect("expired rate entries must be cleaned");
+    }
+
+    #[test]
+    fn failed_discovery_reservation_cleanup_releases_capacity() {
+        let mut store = PendingAuthStore::default();
+        let source = IpAddr::from([198, 51, 100, 10]);
+        store
+            .reserve_public("discovery".to_string(), source, 1_000)
+            .expect("reserve discovery");
+        assert_eq!(store.reservations.len(), 1);
+        store.cancel_public("discovery");
+        assert!(store.reservations.is_empty());
+
+        store
+            .reserve_public("retry".to_string(), source, 1_000)
+            .expect("retry after discovery failure");
+        store.cleanup(1_601);
+        assert!(store.reservations.is_empty());
+        assert!(store.source_starts.is_empty());
+        assert!(store.global_starts.is_empty());
+    }
 }
 
 /// `POST /v1/auth/local/login`

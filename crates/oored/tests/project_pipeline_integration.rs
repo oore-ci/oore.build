@@ -2353,18 +2353,42 @@ async fn test_runner_fetches_pipeline_android_signing_for_assigned_job() {
     .unwrap();
 
     let build_id = uuid::Uuid::new_v4().to_string();
+    let signing_token = oored::token::generate_token();
+    let signing_token_hash = oored::token::hash_token(&signing_token);
     sqlx::query(
-        "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, runner_id, queued_at, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 1, 'assigned', 'manual', '{}', ?4, ?5, ?5, ?5)",
+        "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, runner_id, signing_token_hash, queued_at, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 1, 'assigned', 'manual', '{}', ?4, ?5, ?6, ?6, ?6)",
     )
     .bind(&build_id)
     .bind(&project_id)
     .bind(&pipeline_id)
     .bind(&runner_id)
+    .bind(&signing_token_hash)
     .bind(now)
     .execute(&pool)
     .await
     .unwrap();
+
+    let runner_token_only = Request::builder()
+        .uri(format!(
+            "/v1/runners/{runner_id}/jobs/{build_id}/android-signing"
+        ))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone()
+            .oneshot(runner_token_only)
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED,
+        "the reusable runner credential alone must not authorize signing material"
+    );
 
     let req = Request::builder()
         .uri(format!(
@@ -2375,6 +2399,7 @@ async fn test_runner_fetches_pipeline_android_signing_for_assigned_job() {
             http::header::AUTHORIZATION,
             format!("Bearer {runner_token}"),
         )
+        .header("x-oore-signing-token", &signing_token)
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -2396,6 +2421,29 @@ async fn test_runner_fetches_pipeline_android_signing_for_assigned_job() {
     );
     assert_eq!(json["release"]["key_alias"].as_str(), Some("releaseAlias"));
     assert_eq!(json["release"]["key_password"].as_str(), Some("key-pass"));
+
+    sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = ?1")
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let replay = Request::builder()
+        .uri(format!(
+            "/v1/runners/{runner_id}/jobs/{build_id}/android-signing"
+        ))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header("x-oore-signing-token", &signing_token)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.oneshot(replay).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "terminal jobs must not retain Android signing access even if a stale runner_id remains"
+    );
 }
 
 #[tokio::test]
@@ -2629,14 +2677,17 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
     .unwrap();
 
     let build_id = uuid::Uuid::new_v4().to_string();
+    let signing_token = oored::token::generate_token();
+    let signing_token_hash = oored::token::hash_token(&signing_token);
     sqlx::query(
-        "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, runner_id, queued_at, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 1, 'assigned', 'manual', '{}', ?4, ?5, ?5, ?5)",
+        "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, runner_id, signing_token_hash, queued_at, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 1, 'assigned', 'manual', '{}', ?4, ?5, ?6, ?6, ?6)",
     )
     .bind(&build_id)
     .bind(&project_id)
     .bind(&pipeline_id)
     .bind(&runner_id)
+    .bind(&signing_token_hash)
     .bind(now)
     .execute(&pool)
     .await
@@ -2651,6 +2702,7 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
             http::header::AUTHORIZATION,
             format!("Bearer {runner_token}"),
         )
+        .header("x-oore-signing-token", &signing_token)
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -2670,6 +2722,29 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
     assert_eq!(
         json["bundle"]["provisioning_profiles"][0]["bundle_id"].as_str(),
         Some("com.example.app")
+    );
+
+    sqlx::query("UPDATE builds SET status = 'failed' WHERE id = ?1")
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let replay = Request::builder()
+        .uri(format!(
+            "/v1/runners/{runner_id}/jobs/{build_id}/ios-signing"
+        ))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {runner_token}"),
+        )
+        .header("x-oore-signing-token", &signing_token)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.oneshot(replay).await.unwrap().status(),
+        StatusCode::CONFLICT,
+        "terminal jobs must not retain iOS signing access even if a stale runner_id remains"
     );
 }
 

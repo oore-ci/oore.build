@@ -27,8 +27,7 @@ Use OAuth when your organization manages applications centrally. The Oore form s
 1. In the web UI, open **Sources** and choose **Connect GitLab**.
 2. Enter the root origin, such as `https://gitlab.com` or `https://gitlab.example.com`. Do not append `/api/v4` or a group path.
 3. Choose **Personal Access Token** or **OAuth Application** and follow the inline fields.
-4. Copy the generated webhook secret before saving the source.
-5. For OAuth, register the callback URL shown by Oore, save the source, then choose **Authorize on GitLab** from its details page.
+4. For OAuth, register the callback URL shown by Oore, save the source, then choose **Authorize on GitLab** from its details page.
 
 Oore returns OAuth callbacks through the browser-facing Oore URL. In split deployments this is the AWS frontend/proxy URL, not the private macOS daemon address.
 
@@ -43,13 +42,14 @@ Go to **Projects**, create a project, and confirm the repository picker identifi
 When you create a project from a GitLab repository, Oore CI needs webhooks for automatic build triggers. Configure the webhook in your GitLab project:
 
 1. In GitLab, go to **Project Settings > Webhooks**
-2. Add a webhook using the values shown on the GitLab source screen:
+2. In the Oore source details, generate a webhook token for this exact project. Copy it immediately; it is shown once.
+3. Add a webhook using the values shown on the GitLab source screen:
    - **URL**: `https://<your-oore-frontend>/v1/webhooks/gitlab`
    - **Trigger**: Push events, Merge request events
-   - **Secret token**: the generated secret copied while connecting the source
-3. Click **Add webhook**
+   - **Secret token**: the token generated for this exact GitLab project
+4. Click **Add webhook**
 
-The URL must be reachable by GitLab. In a split deployment, the frontend proxy forwards this path to the private backend. Oore derives a stable delivery identity when older/self-managed GitLab versions omit `X-Gitlab-Event-UUID`, so retries do not create duplicate builds.
+The URL must be reachable by GitLab. In a split deployment, the frontend proxy forwards this path to the private backend. A project token is accepted only when the payload's immutable GitLab project ID matches the repository that owns the token; a token from another project in the same integration is rejected. Rotating a token immediately invalidates the previous token. Oore derives a stable delivery identity when older/self-managed GitLab versions omit `X-Gitlab-Event-UUID`, so retries do not create duplicate builds.
 
 ## Private repository checkout
 
@@ -74,6 +74,7 @@ Also revoke the OAuth application in GitLab if no longer needed.
 | `POST`   | `/v1/integrations/gitlab/start`      | Begin GitLab OAuth flow      |
 | `POST`   | `/v1/integrations/gitlab/authorize`  | Complete authorization       |
 | `GET`    | `/v1/integrations/{id}/repositories` | List accessible repositories |
+| `POST`   | `/v1/integration-repositories/{id}/gitlab-webhook-secret` | Generate or rotate a project webhook token |
 | `DELETE` | `/v1/integrations/{id}`              | Remove integration           |
 
 ## Reference

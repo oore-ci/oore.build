@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{FromRequestParts, Path, State};
-use axum::http::StatusCode;
 use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobRequest, ClaimJobResponse,
     ClaimedJob, JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION,
@@ -23,6 +23,73 @@ use crate::token::{generate_token, hash_token};
 use crate::util::{api_err, extract_bearer, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+
+/// Resolve the pipeline for a currently assigned job. Signing bundles are
+/// available only while the build is assigned or running; requeue and terminal
+/// transitions revoke `runner_id` atomically in the build state machine.
+pub(crate) async fn require_active_job_signing_grant(
+    pool: &sqlx::SqlitePool,
+    job_id: &str,
+    runner_id: &str,
+    headers: &HeaderMap,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT pipeline_id, status, runner_id, signing_token_hash FROM builds WHERE id = ?1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, job_id = %job_id, "failed to load active runner assignment");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to authorize runner job",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+
+    let status: String = row.get("status");
+    if !matches!(status.as_str(), "assigned" | "running") {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "job_not_active",
+            "Signing material is available only while the job is active",
+        ));
+    }
+
+    let assigned_runner: Option<String> = row.get("runner_id");
+    if assigned_runner.as_deref() != Some(runner_id) {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "runner_mismatch",
+            "This build is not assigned to your runner",
+        ));
+    }
+
+    let supplied_token = headers
+        .get("x-oore-signing-token")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::UNAUTHORIZED,
+                "signing_grant_required",
+                "A job-scoped signing grant is required",
+            )
+        })?;
+    let expected_hash: Option<String> = row.get("signing_token_hash");
+    let supplied_hash = hash_token(supplied_token);
+    if expected_hash.as_deref() != Some(supplied_hash.as_str()) {
+        return Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_signing_grant",
+            "The job-scoped signing grant is invalid or expired",
+        ));
+    }
+
+    Ok(row.get("pipeline_id"))
+}
 
 // ── RunnerAuth extractor ────────────────────────────────────────
 
@@ -394,20 +461,32 @@ pub async fn claim_job(
         }
     }
 
-    // Set runner_id on the build
-    sqlx::query("UPDATE builds SET runner_id = ?1 WHERE id = ?2")
-        .bind(&runner_id)
-        .bind(&build_id)
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, build_id = %build_id, "failed to set runner_id on build");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to assign runner to build",
-            )
-        })?;
+    // Bind an unguessable signing grant to this active assignment. The raw
+    // capability is returned once to the trusted runner parent and never
+    // persisted or exposed to repository-controlled child processes.
+    let signing_token = generate_token();
+    let signing_token_hash = hash_token(&signing_token);
+    let result = sqlx::query(
+        "UPDATE builds SET runner_id = ?1, signing_token_hash = ?2 \
+         WHERE id = ?3 AND status = 'assigned' AND runner_id IS NULL",
+    )
+    .bind(&runner_id)
+    .bind(&signing_token_hash)
+    .bind(&build_id)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to set runner_id on build");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to assign runner to build",
+        )
+    })?;
+    if result.rows_affected() != 1 {
+        warn!(build_id = %build_id, "build assignment changed before signing grant was bound");
+        return Ok(Json(ClaimJobResponse { job: None }));
+    }
 
     let now = now_unix();
     let lease_expires_at = now + 300; // 5 minutes
@@ -429,6 +508,7 @@ pub async fn claim_job(
             commit_sha,
             branch,
             lease_expires_at,
+            signing_token,
         }),
     }))
 }

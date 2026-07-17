@@ -257,7 +257,7 @@ async fn test_runner_claim_empty_queue() {
             format!("Bearer {runner_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -311,7 +311,7 @@ async fn test_runner_claim_and_execute() {
             format!("Bearer {runner_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -320,6 +320,21 @@ async fn test_runner_claim_and_execute() {
     let json = body_json(resp.into_body()).await;
     assert!(!json["job"].is_null(), "should have claimed a job");
     assert_eq!(json["job"]["build_id"].as_str().unwrap(), build_id);
+    let signing_token = json["job"]["signing_token"]
+        .as_str()
+        .expect("claim returns an ephemeral signing grant");
+    assert_eq!(signing_token.len(), 64);
+    let persisted_signing_hash: Option<String> =
+        sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        persisted_signing_hash.as_deref(),
+        Some(oored::token::hash_token(signing_token).as_str()),
+        "only the hash of the job-scoped signing grant may be persisted"
+    );
     assert_eq!(
         json["job"]["config_snapshot"]["ui_execution_config"]["env"][0]["value"],
         "runner-secret-value",
@@ -379,6 +394,85 @@ async fn test_runner_claim_and_execute() {
 
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["build"]["status"].as_str().unwrap(), "succeeded");
+    let retained_runner: Option<String> =
+        sqlx::query_scalar("SELECT runner_id FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        retained_runner.is_none(),
+        "terminal transition must atomically revoke the runner assignment"
+    );
+    let retained_signing_hash: Option<String> =
+        sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        retained_signing_hash.is_none(),
+        "terminal transition must atomically revoke the signing grant"
+    );
+}
+
+#[tokio::test]
+async fn test_requeue_atomically_revokes_runner_assignment() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let _app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &user_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "test/requeue").await;
+    let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let runner_id = Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
+         VALUES (?1, 'requeue-runner', 'unused', 'busy', '{}', ?2, ?3, ?3)",
+    )
+    .bind(&runner_id)
+    .bind(&user_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "UPDATE builds SET status = 'assigned', runner_id = ?1, signing_token_hash = 'stale' WHERE id = ?2",
+    )
+        .bind(&runner_id)
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    oored::builds::transition_build(
+        &pool,
+        &build_id,
+        oore_contract::BuildStatus::Queued,
+        None,
+        Some("test lease expiry"),
+    )
+    .await
+    .expect("requeue build");
+
+    let retained_runner: Option<String> =
+        sqlx::query_scalar("SELECT runner_id FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(retained_runner.is_none());
+    let retained_signing_hash: Option<String> =
+        sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(retained_signing_hash.is_none());
 }
 
 #[tokio::test]
@@ -456,7 +550,7 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
             format!("Bearer {runner_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -561,7 +655,7 @@ async fn test_no_double_claim() {
             format!("Bearer {runner1_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp1 = app.clone().oneshot(req1).await.unwrap();
@@ -577,7 +671,7 @@ async fn test_no_double_claim() {
             format!("Bearer {runner2_token}"),
         )
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"protocol_version":2}"#))
+        .body(Body::from(r#"{"protocol_version":3}"#))
         .unwrap();
 
     let resp2 = app.clone().oneshot(req2).await.unwrap();

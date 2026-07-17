@@ -89,6 +89,7 @@ use utoipa::OpenApi;
         paths::github_complete,
         paths::gitlab_start,
         paths::gitlab_authorize,
+        paths::rotate_gitlab_repository_webhook_secret,
         paths::browse_local_git_directories,
         paths::create_local_git_integration,
         paths::list_local_git_integrations,
@@ -240,6 +241,7 @@ use utoipa::OpenApi;
         oore_contract::GitLabCompleteResponse,
         oore_contract::GitLabAuthorizeRequest,
         oore_contract::GitLabAuthorizeResponse,
+        oore_contract::GitLabRepositoryWebhookSecretResponse,
         oore_contract::LocalGitDirectoryEntry,
         oore_contract::LocalGitPathSuggestion,
         oore_contract::BrowseLocalGitDirectoriesResponse,
@@ -1198,6 +1200,18 @@ mod paths {
         )
     )]
     pub(super) async fn gitlab_authorize() {}
+
+    /// Generate or rotate a repository-scoped GitLab webhook token
+    #[utoipa::path(post, path = "/v1/integration-repositories/{id}/gitlab-webhook-secret", tag = "Integrations",
+        params(("id" = String, Path, description = "Integration repository ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "One-time webhook token", body = GitLabRepositoryWebhookSecretResponse),
+            (status = 403, description = "Integration write permission or Remote mode required", body = ApiError),
+            (status = 404, description = "Active GitLab repository not found", body = ApiError),
+        )
+    )]
+    pub(super) async fn rotate_gitlab_repository_webhook_secret() {}
 
     /// Create local git integration
     #[utoipa::path(post, path = "/v1/integrations/local-git", tag = "Integrations",

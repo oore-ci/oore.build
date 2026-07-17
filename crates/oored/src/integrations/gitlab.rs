@@ -10,7 +10,8 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use base64::Engine;
 use oore_contract::{
     ApiError, GitLabAuthorizeRequest, GitLabAuthorizeResponse, GitLabCompleteResponse,
-    GitLabStartRequest, Integration, IntegrationInstallation,
+    GitLabRepositoryWebhookSecretResponse, GitLabStartRequest, Integration,
+    IntegrationInstallation,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -24,7 +25,7 @@ use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::runners::RunnerAuth;
 use crate::store::write_audit_log;
-use crate::token::hash_token;
+use crate::token::{generate_token, hash_token};
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
@@ -655,14 +656,6 @@ pub async fn gitlab_start(
 
     let host_url = normalize_gitlab_host_url(&req.host_url)?;
 
-    if req.webhook_secret.trim().is_empty() {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "webhook_secret is required",
-        ));
-    }
-
     let auth_mode = req.auth_mode.as_str();
     if !matches!(auth_mode, "oauth_app" | "personal_token") {
         return Err(api_err(
@@ -837,32 +830,6 @@ pub async fn gitlab_start(
     .map_err(|e| {
         error!(error = %e, "failed to insert GitLab integration");
         api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to create integration")
-    })?;
-
-    // Store credentials
-    let encrypted_webhook_secret =
-        crypto::encrypt(req.webhook_secret.trim(), &state.encryption_key).map_err(|e| {
-            error!(error = %e, "failed to encrypt webhook secret");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "encryption_error",
-                "Failed to encrypt credentials",
-            )
-        })?;
-
-    sqlx::query(
-        "INSERT INTO integration_credentials (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
-         VALUES (?1, ?2, 'webhook_secret', ?3, ?4, ?4)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&integration_id)
-    .bind(&encrypted_webhook_secret)
-    .bind(now)
-    .execute(&pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to store webhook secret");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to store credentials")
     })?;
 
     match auth_mode {
@@ -1161,6 +1128,139 @@ async fn sync_gitlab_projects(
 
     info!(project_count = projects.len(), "GitLab projects synced");
     Ok(())
+}
+
+/// `POST /v1/integration-repositories/{id}/gitlab-webhook-secret` — generate
+/// or rotate the one-time-revealed webhook token for one GitLab repository.
+pub async fn rotate_repository_webhook_secret(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(repository_id): Path<String>,
+) -> ApiResult<GitLabRepositoryWebhookSecretResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    require_remote_mode(&pool).await?;
+
+    let repository = sqlx::query(
+        "SELECT i.id AS integration_id, r.full_name \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.provider = 'gitlab' AND i.status = 'active'",
+    )
+    .bind(&repository_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to load GitLab repository for webhook rotation");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to rotate webhook token",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Active GitLab repository not found",
+        )
+    })?;
+
+    let integration_id: String = repository.get("integration_id");
+    let full_name: String = repository.get("full_name");
+    let webhook_secret = format!("oore_{}", generate_token());
+    let encrypted_secret = crypto::encrypt(&webhook_secret, &state.encryption_key).map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to encrypt GitLab repository webhook token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encryption_error",
+            "Failed to rotate webhook token",
+        )
+    })?;
+    let now = now_unix();
+    let mut tx = pool.begin().await.map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to begin GitLab webhook token rotation");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to rotate webhook token",
+        )
+    })?;
+
+    sqlx::query(
+        "INSERT INTO integration_repository_webhook_secrets \
+         (repository_id, encrypted_secret, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?3) \
+         ON CONFLICT(repository_id) DO UPDATE SET \
+         encrypted_secret = excluded.encrypted_secret, updated_at = excluded.updated_at",
+    )
+    .bind(&repository_id)
+    .bind(&encrypted_secret)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to store GitLab repository webhook token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to rotate webhook token",
+        )
+    })?;
+
+    sqlx::query(
+        "DELETE FROM integration_credentials \
+         WHERE integration_id = ?1 AND credential_type = 'webhook_secret'",
+    )
+    .bind(&integration_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, integration_id = %integration_id, "failed to retire legacy GitLab webhook token");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to rotate webhook token",
+        )
+    })?;
+    tx.commit().await.map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to commit GitLab webhook token rotation");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to rotate webhook token",
+        )
+    })?;
+
+    super::webhooks::invalidate_webhook_secret_cache(super::webhooks::WebhookProvider::Gitlab)
+        .await;
+
+    let details = serde_json::json!({
+        "integration_id": integration_id,
+        "repository_id": repository_id,
+        "repository_full_name": full_name,
+        "rotated_by": auth.0.email,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        &pool,
+        Some(&auth.0.user_id),
+        "gitlab_repository_webhook_secret_rotated",
+        "integration_repository",
+        Some(&repository_id),
+        Some(&details),
+    )
+    .await;
+
+    Ok(Json(GitLabRepositoryWebhookSecretResponse {
+        repository_id,
+        webhook_secret,
+        rotated_at: now,
+    }))
 }
 
 /// Stream Git smart-HTTP through the daemon so runner jobs can clone private

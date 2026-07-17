@@ -18,12 +18,12 @@ Without signing, builds produce unsigned artifacts that can't be installed on de
 
 ## Oore CI's approach
 
-Oore CI stores signing credentials (keystores, certificates, profiles, API keys) encrypted at rest and injects them into builds at execution time. The runner:
+Oore CI stores signing credentials (keystores, certificates, profiles, API keys) encrypted at rest. The trusted runner parent:
 
-1. Retrieves signing assets from the daemon before the build starts
-2. Places them in temporary locations accessible to the build process
-3. Sets environment variables so Gradle/Xcode can find them
-4. Cleans up after the build completes
+1. Retrieves signing assets with an ephemeral job-scoped capability
+2. Runs repository-controlled build stages without signing authority
+3. Uses fixed runner-owned logic to sign the completed Android artifact or iOS archive
+4. Verifies the signature, cleans private temporary state, and revokes access when the job leaves active execution
 
 Signing credentials never leave your infrastructure — they're stored on the daemon (encrypted with AES-256-GCM) and only transmitted to the runner over your local network.
 
@@ -31,9 +31,9 @@ Signing credentials never leave your infrastructure — they're stored on the da
 
 Android signing is straightforward: upload a keystore (`.jks` / `.keystore`), provide the passwords, and Oore CI handles the rest.
 
-| What you provide          | What Oore CI does                       |
-| ------------------------- | --------------------------------------- |
-| Keystore file + passwords | Stores encrypted, injects at build time |
+| What you provide          | What Oore CI does                                      |
+| ------------------------- | ------------------------------------------------------ |
+| Keystore file + passwords | Stores encrypted and signs the completed artifact      |
 
 See [Generate an Android Keystore](/guides/signing/android-keystore) and [Configure Gradle Signing](/guides/signing/android-gradle).
 
@@ -67,6 +67,7 @@ See [iOS Manual Signing](/guides/signing/ios-manual-signing) and [iOS API Signin
 
 - All signing credentials are encrypted at rest with AES-256-GCM
 - The encryption key is stored in the macOS Keychain (with a file-based fallback)
-- Credentials are transmitted from daemon to runner over HTTP (use HTTPS in production)
-- Only the runner processing a specific build receives that build's signing credentials
+- Credentials are transmitted only over HTTPS, except literal-loopback runner connections
+- Only the actively assigned runner with the per-job signing capability receives credentials
+- Repository-controlled commands never receive signing files, passwords, capability tokens, or an unlocked signing keychain
 - Credentials are not included in build logs

@@ -2475,6 +2475,7 @@ fn get_hostname() -> String {
 }
 
 async fn handle_runner_register(args: RunnerRegisterArgs) -> anyhow::Result<()> {
+    oore_runner::require_safe_daemon_url(&args.daemon_url)?;
     let name = args.name.unwrap_or_else(get_hostname);
 
     let capabilities = detect_capabilities().await;
