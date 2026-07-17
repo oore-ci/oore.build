@@ -140,7 +140,7 @@ For an interactive Linux frontend install, run:
 curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 ```
 
-The installer asks for the backend daemon URL, keeps `oore-web` on loopback by default, can install a systemd user service, and can enable lingering so the service survives logout/reboot.
+The installer asks for the backend daemon URL, keeps `oore-web` on loopback by default, can install a systemd user service, and can enable lingering so the service survives logout/reboot. For remote HTTP backends or non-loopback HTTP listeners, the interactive flow requires an explicit confirmation that the corresponding encrypted transport is already configured; non-interactive installs use the transport-protection variables shown below.
 
 Example for a frontend host that reaches the backend over a private network:
 
@@ -149,6 +149,7 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_CHANNEL=alpha \
   OORE_INSTALL_MODE=frontend \
   OORE_WEB_BACKEND_URL=http://10.0.0.20:8787 \
+  OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true \
   OORE_LOCAL_WEB_LISTEN=127.0.0.1:4173 \
   OORE_LOCAL_WEB_MODE=login \
   OORE_ENABLE_LINGER=true \
@@ -163,12 +164,13 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_CHANNEL=alpha \
   OORE_INSTALL_MODE=frontend \
   OORE_WEB_BACKEND_URL=http://10.0.0.20:8787 \
+  OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true \
   OORE_FRONTEND_PAIRING_CODE=fp_replace_with_the_code \
   OORE_NONINTERACTIVE=1 \
   bash
 ```
 
-Pairing requires a ready backend with Trusted Proxy configured and permits the exchange only from its trusted frontend/proxy CIDRs. Use HTTPS or an encrypted private overlay such as NetBird for that path; the exchange returns the durable backend proof and must not cross an untrusted plaintext network. The frontend installer saves it and creates a separate local upstream proof for the reverse proxy -> `oore-web` hop.
+Pairing requires a ready backend with Trusted Proxy configured and permits the exchange only from its trusted frontend/proxy CIDRs. Use HTTPS or an encrypted private overlay such as NetBird for that path; the exchange returns the durable backend proof and must not cross an untrusted plaintext network. `OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true` explicitly asserts that this protection is already configured when the backend URL uses remote HTTP. The frontend installer saves the returned proof, persists the protected-transport launcher argument, and creates a separate local upstream proof for the reverse proxy -> `oore-web` hop.
 
 Frontend-only mode:
 
@@ -280,7 +282,7 @@ Continue with [Set Up Your Instance](/getting-started/first-instance). If you pl
 | `OORE_INSTALL_ROOT`                                  | `~/.oore`                                                       | Installation directory                                                                                                                                                |
 | `OORE_GITHUB_REPO`                                   | `oore-ci/oore.build`                                            | GitHub repository used to download release assets                                                                                                                     |
 | `OORE_RELEASE_BASE_URL`                              | `https://github.com/<repo>/releases/download`                   | Base URL that contains `<tag>/` release assets                                                                                                                        |
-| `OORE_RELEASE_INDEX_BASE_URL`                        | `https://releases.oore.build`                                   | Static release discovery origin; latest manifests live at `/latest/<channel>.json` and channel history at `/<channel>.json`                                          |
+| `OORE_RELEASE_INDEX_BASE_URL`                        | `https://releases.oore.build`                                   | Static release discovery origin; latest manifests live at `/latest/<channel>.json` and channel history at `/<channel>.json`                                           |
 | `OORE_RELEASE_MANIFEST_URL`                          | `<release-index>/latest/<channel>.json`                         | Exact latest-channel manifest override used when `OORE_VERSION=latest`                                                                                                |
 | `OORE_NONINTERACTIVE`                                | `0`                                                             | Disable prompts when set to `1`                                                                                                                                       |
 | `OORE_OPEN_BROWSER`                                  | interactive local install only                                  | Open the local web root after a default macOS install; set `true` to opt in for non-interactive installs                                                              |
@@ -291,6 +293,8 @@ Continue with [Set Up Your Instance](/getting-started/first-instance). If you pl
 | `OORE_CORS_ORIGINS`                                  | `OORE_PUBLIC_URL` when set                                      | Comma-separated allowed browser origins passed to the daemon service                                                                                                  |
 | `OORE_DAEMON_URL`                                    | `http://127.0.0.1:8787`                                         | Daemon URL used by backend setup helpers                                                                                                                              |
 | `OORE_WEB_BACKEND_URL`                               | `OORE_DAEMON_URL`                                               | Backend URL proxied by `oore-web`, useful for frontend-only hosts                                                                                                     |
+| `OORE_WEB_BACKEND_TRANSPORT_PROTECTED`               | `false`                                                         | Assert that an encrypted transport already protects a remote HTTP backend hop; persists `--backend-transport-protected`                                               |
+| `OORE_WEB_BROWSER_TRANSPORT_PROTECTED`               | `false`                                                         | Assert that encrypted ingress already protects a non-loopback HTTP web listener; persists `--browser-transport-protected`                                             |
 | `OORE_FRONTEND_PAIRING_CODE`                         | unset                                                           | Short-lived, single-use code from `oore frontend invite`; exchanges over the private backend path for the backend proof and generates a separate local upstream proof |
 | `OORE_SETUP_OWNER_EMAIL`                             | unset                                                           | Initial owner email to prefill in Trusted Proxy setup                                                                                                                 |
 | `OORE_SETUP_PROXY_PRESET`                            | `generic`                                                       | Trusted Proxy setup prefill: `generic`, `warpgate`, or `custom`                                                                                                       |

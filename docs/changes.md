@@ -14,6 +14,12 @@ Rules:
 
 ## 2026-07-17
 
+- **Safe frontend service installs and updates across protected transports**:
+  - Frontend installer commands and generated systemd/launchd services now persist explicit browser-ingress and backend-hop transport assertions. Remote HTTP fails before service state changes when its assertion is missing, and backend URLs are validated before pairing exchanges any capability or durable proof.
+  - Managed web UI updates preflight the candidate launcher against the active service configuration before replacing files, and release packaging exercises that contract on the compiled native launcher. Installer health checks require the launcher JSON response, while `oore-web status` reports an upstream HTML `503` by status instead of misdiagnosing it as malformed launcher JSON.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Guided split deployment feature doc: https://linear.app/oorebuild/document/feature-guided-split-deployment-installer-9da0d4bf02f6
+
 - **Rust 1.97 release-gate compatibility**:
   - Removed two redundant formatting borrows newly rejected by Rust 1.97 Clippy so strict alpha validation remains green without changing runtime behavior.
   - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
@@ -364,6 +370,7 @@ Rules:
   - Builds show project context globally and accept optional named project/pipeline/runner context from the backend; terminal details prioritize failure reasons, failed steps, final-log states, and status-appropriate artifact empty states.
   - The hosted demo is explicitly sample-data, read-only UI: common build/project/pipeline mutations are visibly disabled and the API guard rejects all other mutations without returning fake success.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 ## 2026-07-13
 
 - **Default-branch release dispatch compatibility**:

@@ -173,6 +173,40 @@ jobs:
           bun build --compile --target=bun-linux-x64 --outfile dist/oore-web-linux-x86_64 apps/web/tools/oore-web.js
           chmod +x dist/oore-web-arm64 dist/oore-web-x86_64 dist/oore-web-linux-arm64 dist/oore-web-linux-x86_64
 
+      - name: Validate standalone web server
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) launcher=dist/oore-web-arm64 ;;
+            x86_64) launcher=dist/oore-web-x86_64 ;;
+            *) echo "Unsupported release runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+
+          "$launcher" validate-config \
+            --listen 100.64.10.30:4174 \
+            --backend-url http://100.64.10.20:8787 \
+            --browser-transport-protected \
+            --backend-transport-protected \
+            --dist-dir apps/web/dist
+
+          if "$launcher" validate-config \
+            --listen 100.64.10.30:4174 \
+            --backend-url http://100.64.10.20:8787 \
+            --browser-transport-protected \
+            --dist-dir apps/web/dist; then
+            echo 'Standalone launcher accepted an unprotected remote HTTP backend.' >&2
+            exit 1
+          fi
+
+          if "$launcher" validate-config \
+            --listen 100.64.10.30:4174 \
+            --backend-url http://100.64.10.20:8787 \
+            --backend-transport-protected \
+            --dist-dir apps/web/dist; then
+            echo 'Standalone launcher accepted an unprotected non-loopback listener.' >&2
+            exit 1
+          fi
+
       - name: Package release tarballs
         run: |
           set -euo pipefail

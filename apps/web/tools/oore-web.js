@@ -381,6 +381,54 @@ export function parseServeArgs(argv) {
   return config
 }
 
+export function validateServeConfig(config) {
+  const backendUrl = parseBackendUrl(
+    config.backendUrl,
+    config.backendTransportProtected,
+  )
+  const listen = parseListen(config.listen, config.browserTransportProtected)
+  const distDir = path.resolve(config.distDir)
+  const indexPath = path.join(distDir, 'index.html')
+  if (!fileExists(indexPath)) {
+    throw new Error(
+      `missing web assets at ${indexPath}. Reinstall or set --dist-dir.`,
+    )
+  }
+  return { backendUrl, listen, distDir }
+}
+
+export function candidateValidationArgs(config, distDir) {
+  const args = [
+    'validate-config',
+    '--listen',
+    config.listen,
+    '--backend-url',
+    config.backendUrl,
+    '--dist-dir',
+    distDir,
+    '--trusted-proxy-user-email-header',
+    config.trustedProxyUserEmailHeader,
+    '--upstream-trusted-proxy-secret-header',
+    config.upstreamTrustedProxySecretHeader,
+  ]
+  if (config.browserTransportProtected) {
+    args.push('--browser-transport-protected')
+  }
+  if (config.backendTransportProtected) {
+    args.push('--backend-transport-protected')
+  }
+  if (config.trustedProxySecretFile) {
+    args.push('--trusted-proxy-secret-file', config.trustedProxySecretFile)
+  }
+  if (config.upstreamTrustedProxySecretFile) {
+    args.push(
+      '--upstream-trusted-proxy-secret-file',
+      config.upstreamTrustedProxySecretFile,
+    )
+  }
+  return args
+}
+
 function parseUpdateArgs(argv) {
   const config = {
     channel: process.env.OORE_CHANNEL || '',
@@ -723,6 +771,7 @@ function statusValue(value) {
 
 function probeFailure(probe) {
   if (probe.error === 'connection_failed') return 'connection failed'
+  if (probe.status >= 400) return `HTTP ${probe.status}`
   if (probe.error === 'invalid_json') return 'invalid JSON response'
   if (probe.status) return `HTTP ${probe.status}`
   return 'unhealthy response'
@@ -840,7 +889,79 @@ async function runStatus(config) {
   if (!report.ok) process.exitCode = 1
 }
 
-async function runUpdate(config) {
+function validateUpdateCandidate(
+  binaryPath,
+  distDir,
+  activeConfig,
+  installRoot,
+) {
+  const binDir = path.join(installRoot, 'bin')
+  const stagedBinary = path.join(
+    binDir,
+    `.oore-web.candidate-${process.pid}-${crypto.randomBytes(6).toString('hex')}`,
+  )
+  fs.mkdirSync(binDir, { recursive: true })
+  try {
+    fs.copyFileSync(binaryPath, stagedBinary)
+    fs.chmodSync(stagedBinary, 0o755)
+    const result = spawnSync(
+      stagedBinary,
+      candidateValidationArgs(activeConfig, distDir),
+      {
+        encoding: 'utf8',
+        timeout: 5000,
+      },
+    )
+    if (result.error) {
+      throw new Error(
+        `candidate launcher validation failed: ${result.error.message}`,
+      )
+    }
+    if (result.status !== 0) {
+      const reason = (result.stderr || result.stdout || 'unknown error')
+        .trim()
+        .slice(0, 1024)
+      throw new Error(
+        `candidate launcher rejected the active service configuration: ${reason}`,
+      )
+    }
+  } finally {
+    fs.rmSync(stagedBinary, { force: true })
+  }
+}
+
+export function installUpdateCandidate({
+  installRoot,
+  extractedBinary,
+  extractedDist,
+  extractedVersion,
+  extractedLicense,
+  channel,
+  repo,
+  activeConfig = null,
+}) {
+  if (activeConfig) {
+    validateUpdateCandidate(
+      extractedBinary,
+      extractedDist,
+      activeConfig,
+      installRoot,
+    )
+  }
+
+  const binDir = path.join(installRoot, 'bin')
+  fs.mkdirSync(binDir, { recursive: true })
+  replaceFile(extractedBinary, path.join(binDir, 'oore-web'))
+  replaceDirectory(extractedDist, path.join(installRoot, 'web-dist'))
+  fs.copyFileSync(extractedVersion, path.join(installRoot, 'VERSION'))
+  fs.writeFileSync(path.join(installRoot, 'CHANNEL'), `${channel}\n`)
+  fs.writeFileSync(path.join(installRoot, 'GITHUB_REPO'), `${repo}\n`)
+  if (fileExists(extractedLicense)) {
+    fs.copyFileSync(extractedLicense, path.join(installRoot, 'LICENSE'))
+  }
+}
+
+async function runUpdate(config, activeConfig = null) {
   const installRoot = resolveInstallRoot()
   const currentRaw = readInstalledVersion(installRoot) || '0.0.0'
   const current = parseVersion(currentRaw)
@@ -920,16 +1041,16 @@ async function runUpdate(config) {
     if (!fileExists(extractedVersion))
       throw new Error('archive missing VERSION')
 
-    const binDir = path.join(installRoot, 'bin')
-    fs.mkdirSync(binDir, { recursive: true })
-    replaceFile(extractedBinary, path.join(binDir, 'oore-web'))
-    replaceDirectory(extractedDist, path.join(installRoot, 'web-dist'))
-    fs.copyFileSync(extractedVersion, path.join(installRoot, 'VERSION'))
-    fs.writeFileSync(path.join(installRoot, 'CHANNEL'), `${channel}\n`)
-    fs.writeFileSync(path.join(installRoot, 'GITHUB_REPO'), `${repo}\n`)
-    if (fileExists(extractedLicense)) {
-      fs.copyFileSync(extractedLicense, path.join(installRoot, 'LICENSE'))
-    }
+    installUpdateCandidate({
+      installRoot,
+      extractedBinary,
+      extractedDist,
+      extractedVersion,
+      extractedLicense,
+      channel,
+      repo,
+      activeConfig,
+    })
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
@@ -1156,6 +1277,17 @@ async function main() {
     printVersion()
     return
   }
+  if (parsedCommand.command === 'validate-config') {
+    try {
+      validateServeConfig(parseServeArgs(parsedCommand.args))
+    } catch (error) {
+      console.error(
+        `[oore-web] ${error instanceof Error ? error.message : 'invalid service configuration'}`,
+      )
+      process.exit(2)
+    }
+    return
+  }
   if (parsedCommand.command === 'status') {
     let statusConfig
     try {
@@ -1202,37 +1334,16 @@ async function main() {
     process.exit(2)
   }
 
-  let backendUrl
+  let validated
   try {
-    backendUrl = parseBackendUrl(
-      config.backendUrl,
-      config.backendTransportProtected,
-    )
+    validated = validateServeConfig(config)
   } catch (error) {
     console.error(
-      `[oore-web] ${error instanceof Error ? error.message : 'invalid backend URL'}`,
+      `[oore-web] ${error instanceof Error ? error.message : 'invalid service configuration'}`,
     )
     process.exit(2)
   }
-
-  let listen
-  try {
-    listen = parseListen(config.listen, config.browserTransportProtected)
-  } catch (error) {
-    console.error(
-      `[oore-web] ${error instanceof Error ? error.message : 'invalid listen'}`,
-    )
-    process.exit(2)
-  }
-
-  const distDir = path.resolve(config.distDir)
-  const indexPath = path.join(distDir, 'index.html')
-  if (!fileExists(indexPath)) {
-    console.error(
-      `[oore-web] missing web assets at ${indexPath}. Reinstall or set --dist-dir.`,
-    )
-    process.exit(2)
-  }
+  const { backendUrl, listen, distDir } = validated
 
   const updateState = { phase: 'idle', error: null }
   const server = Bun.serve({
@@ -1311,7 +1422,7 @@ async function main() {
 
         updateState.phase = 'updating'
         updateState.error = null
-        void runUpdate({ check: false, force: false }).then(
+        void runUpdate({ check: false, force: false }, config).then(
           (result) => {
             if (!result.updated) {
               updateState.phase = 'idle'
