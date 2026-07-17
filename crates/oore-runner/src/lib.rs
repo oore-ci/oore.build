@@ -1,6 +1,11 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -26,8 +31,12 @@ const OORE_ANDROID_KEY_ALIAS_ENV: &str = "OORE_ANDROID_KEY_ALIAS";
 const OORE_ANDROID_KEY_PASSWORD_ENV: &str = "OORE_ANDROID_KEY_PASSWORD";
 const OORE_ANDROID_KEY_PROPERTIES_PATH_ENV: &str = "OORE_ANDROID_KEY_PROPERTIES_PATH";
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
-const BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
+const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
+const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
+const LEGACY_BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
 const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
+// ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
+const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -56,6 +65,57 @@ fn try_mark_no_spotlight_index(path: &Path) {
             err
         );
     }
+}
+
+fn runner_workspace_prefix(runner_id: &str) -> String {
+    let digest = Sha256::digest(runner_id.as_bytes());
+    format!("{BUILD_WORKSPACE_PREFIX}-{}-", hex::encode(&digest[..8]))
+}
+
+fn create_private_workspace_in(parent: &Path, runner_id: &str) -> std::io::Result<PathBuf> {
+    let prefix = runner_workspace_prefix(runner_id);
+    for _ in 0..16 {
+        let mut random = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut random);
+        let path = parent.join(format!("{prefix}{}", hex::encode(random)));
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        ErrorKind::AlreadyExists,
+        "failed to allocate a unique runner workspace",
+    ))
+}
+
+fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    if let Err(error) = file.write_all(content).and_then(|()| file.sync_all()) {
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub async fn detect_capabilities() -> serde_json::Value {
@@ -448,21 +508,48 @@ struct SignedIosArchive {
     app: IosAppMetadata,
 }
 
-struct IosSigningCleanup {
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct IosCleanupJournal {
     keychain_path: PathBuf,
     original_default_keychain: String,
     original_keychains: Vec<String>,
     installed_profiles: Vec<PathBuf>,
 }
 
+struct IosSigningCleanup {
+    journal_path: Option<PathBuf>,
+    journal: IosCleanupJournal,
+}
+
+impl IosSigningCleanup {
+    fn cleanup(&mut self) -> anyhow::Result<()> {
+        if self.journal_path.is_none() {
+            return Ok(());
+        }
+        cleanup_ios_signing_state(&self.journal)?;
+        let journal_path = self
+            .journal_path
+            .take()
+            .expect("journal path checked before cleanup");
+        match fs::remove_file(&journal_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                self.journal_path = Some(journal_path.clone());
+                Err(anyhow::anyhow!(
+                    "failed to remove iOS cleanup journal {}: {error}",
+                    journal_path.display()
+                ))
+            }
+        }
+    }
+}
+
 impl Drop for IosSigningCleanup {
     fn drop(&mut self) {
-        cleanup_ios_signing_state(
-            Some(&self.keychain_path),
-            Some(&self.original_default_keychain),
-            &self.original_keychains,
-            &self.installed_profiles,
-        );
+        if let Err(error) = self.cleanup() {
+            eprintln!("Warning: failed to clean up iOS signing state: {error:#}");
+        }
     }
 }
 
@@ -490,47 +577,108 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn cleanup_ios_signing_state(
-    keychain_path: Option<&Path>,
-    original_default_keychain: Option<&str>,
-    original_keychains: &[String],
-    installed_profiles: &[PathBuf],
-) {
-    for profile in installed_profiles {
-        let _ = fs::remove_file(profile);
-    }
-
-    if let Some(path) = keychain_path {
-        if let Some(default_keychain) = original_default_keychain {
-            let _ = run_security_command_with_strings(&[
+fn cleanup_ios_signing_state(journal: &IosCleanupJournal) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    let keychain_path = journal.keychain_path.display().to_string();
+    match run_security_command(&["default-keychain", "-d", "user"]) {
+        Ok(output)
+            if parse_keychain_list(&output).into_iter().next().as_deref()
+                == Some(keychain_path.as_str()) =>
+        {
+            if let Err(error) = run_security_command_with_strings(&[
                 "default-keychain".to_string(),
                 "-d".to_string(),
                 "user".to_string(),
                 "-s".to_string(),
-                default_keychain.to_string(),
-            ]);
+                journal.original_default_keychain.clone(),
+            ]) {
+                errors.push(format!("failed to restore default keychain: {error:#}"));
+            }
         }
-        if !original_keychains.is_empty() {
-            let _ = run_security_command_with_strings(
-                &[
-                    "list-keychains".to_string(),
-                    "-d".to_string(),
-                    "user".to_string(),
-                    "-s".to_string(),
-                ]
-                .into_iter()
-                .chain(original_keychains.iter().cloned())
-                .collect::<Vec<_>>(),
-            );
-        }
-
-        let keychain_str = path.display().to_string();
-        let _ = run_security_command_with_strings(&[
-            "delete-keychain".to_string(),
-            keychain_str.clone(),
-        ]);
-        let _ = fs::remove_file(path);
+        Ok(_) => {}
+        Err(error) => errors.push(format!("failed to inspect default keychain: {error:#}")),
     }
+
+    match run_security_command(&["list-keychains", "-d", "user"]) {
+        Ok(output) => {
+            let current_keychains = parse_keychain_list(&output);
+            if current_keychains.iter().any(|path| path == &keychain_path)
+                && let Err(error) = run_security_command_with_strings(
+                    &[
+                        "list-keychains".to_string(),
+                        "-d".to_string(),
+                        "user".to_string(),
+                        "-s".to_string(),
+                    ]
+                    .into_iter()
+                    .chain(
+                        current_keychains
+                            .into_iter()
+                            .filter(|path| path != &keychain_path),
+                    )
+                    .collect::<Vec<_>>(),
+                )
+            {
+                errors.push(format!("failed to restore keychain search list: {error:#}"));
+            }
+        }
+        Err(error) => errors.push(format!("failed to inspect keychain search list: {error:#}")),
+    }
+
+    if journal.keychain_path.exists() {
+        if let Err(error) = run_security_command_with_strings(&[
+            "delete-keychain".to_string(),
+            keychain_path.clone(),
+        ]) {
+            errors.push(format!("failed to delete build keychain: {error:#}"));
+        }
+        match fs::remove_file(&journal.keychain_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!(
+                "failed to remove iOS signing keychain {}: {error}",
+                journal.keychain_path.display()
+            )),
+        }
+    }
+
+    for profile in &journal.installed_profiles {
+        match fs::remove_file(profile) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!(
+                "failed to remove installed provisioning profile {}: {error}",
+                profile.display()
+            )),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(errors.join("; "))
+    }
+}
+
+fn write_ios_cleanup_journal(path: &Path, journal: &IosCleanupJournal) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec(journal)?;
+    let temporary_path = path.with_extension("tmp");
+    write_private_file(&temporary_path, &bytes).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to write iOS cleanup journal {}: {error}",
+            temporary_path.display()
+        )
+    })?;
+    fs::rename(&temporary_path, path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to publish iOS cleanup journal {}: {error}",
+            path.display()
+        )
+    })?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
 }
 
 fn parse_keychain_list(raw: &str) -> Vec<String> {
@@ -730,60 +878,83 @@ fn install_ios_signing_bundle(
         )
     })?;
 
-    let mut installed_profiles = Vec::new();
     let keychain_password = random_password_hex();
     let keychain_path = signing_dir.join("oore-ci-build.keychain-db");
     let keychain_path_str = keychain_path.display().to_string();
-    let mut keychain_created = false;
-    let mut original_default_keychain = None;
-    let mut original_keychains = Vec::new();
+    let mut prepared_profiles = Vec::new();
+    for profile in &bundle.provisioning_profiles {
+        if profile.bundle_id.trim().is_empty() {
+            anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
+        }
+        let profile_bytes = decode_runner_b64(
+            &profile.profile_base64,
+            &format!("provisioning profile '{}'", profile.bundle_id),
+        )?;
+        if profile_bytes.is_empty() {
+            anyhow::bail!(
+                "decoded provisioning profile '{}' is empty",
+                profile.bundle_id
+            );
+        }
+
+        let fallback_profile_name = format!("{}.mobileprovision", profile.bundle_id);
+        let work_file_name = safe_ios_signing_filename(
+            &profile.profile_filename,
+            &fallback_profile_name,
+            "profile_filename",
+        )?;
+        let work_path = profile_work_dir.join(work_file_name);
+        write_private_file(&work_path, &profile_bytes).map_err(|error| {
+            anyhow::anyhow!("failed to write profile {}: {error}", work_path.display())
+        })?;
+
+        let profile_ref = profile
+            .profile_uuid
+            .clone()
+            .or_else(|| profile.profile_name.clone())
+            .unwrap_or_else(|| hex::encode(Sha256::digest(&profile_bytes)));
+        let installed_path = installed_profiles_dir.join(format!("{profile_ref}.mobileprovision"));
+        prepared_profiles.push((
+            profile.bundle_id.clone(),
+            profile_ref,
+            work_path,
+            installed_path,
+            profile_bytes,
+        ));
+    }
+
+    let original_keychains =
+        parse_keychain_list(&run_security_command(&["list-keychains", "-d", "user"])?);
+    let original_default_keychain =
+        parse_keychain_list(&run_security_command(&["default-keychain", "-d", "user"])?)
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("no default user keychain is configured"))?;
+    let journal = IosCleanupJournal {
+        keychain_path: keychain_path.clone(),
+        original_default_keychain,
+        original_keychains,
+        installed_profiles: prepared_profiles
+            .iter()
+            .map(|(_, _, _, installed_path, _)| installed_path.clone())
+            .collect(),
+    };
+    let journal_path = workspace.join(IOS_CLEANUP_JOURNAL);
+    write_ios_cleanup_journal(&journal_path, &journal)?;
 
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
         let mut bundle_profile_mapping = Vec::new();
         let mut bundle_profile_paths = Vec::new();
-        for profile in &bundle.provisioning_profiles {
-            if profile.bundle_id.trim().is_empty() {
-                anyhow::bail!("iOS signing bundle has profile with empty bundle_id");
-            }
-            let profile_bytes = decode_runner_b64(
-                &profile.profile_base64,
-                &format!("provisioning profile '{}'", profile.bundle_id),
-            )?;
-            if profile_bytes.is_empty() {
-                anyhow::bail!(
-                    "decoded provisioning profile '{}' is empty",
-                    profile.bundle_id
-                );
-            }
-
-            let fallback_profile_name = format!("{}.mobileprovision", profile.bundle_id);
-            let work_file_name = safe_ios_signing_filename(
-                &profile.profile_filename,
-                &fallback_profile_name,
-                "profile_filename",
-            )?;
-            let work_path = profile_work_dir.join(work_file_name);
-            fs::write(&work_path, &profile_bytes).map_err(|e| {
-                anyhow::anyhow!("failed to write profile {}: {e}", work_path.display())
-            })?;
-
-            let profile_ref = profile
-                .profile_uuid
-                .clone()
-                .or_else(|| profile.profile_name.clone())
-                .unwrap_or_else(|| hex::encode(Sha256::digest(&profile_bytes)));
-
-            let installed_name = format!("{profile_ref}.mobileprovision");
-            let installed_path = installed_profiles_dir.join(installed_name);
-            fs::write(&installed_path, &profile_bytes).map_err(|e| {
+        for (bundle_id, profile_ref, work_path, installed_path, profile_bytes) in &prepared_profiles
+        {
+            write_private_file(installed_path, profile_bytes).map_err(|e| {
                 anyhow::anyhow!(
                     "failed to install provisioning profile {}: {e}",
                     installed_path.display()
                 )
             })?;
-            installed_profiles.push(installed_path);
-            bundle_profile_mapping.push((profile.bundle_id.clone(), profile_ref));
-            bundle_profile_paths.push((profile.bundle_id.clone(), work_path));
+            bundle_profile_mapping.push((bundle_id.clone(), profile_ref.clone()));
+            bundle_profile_paths.push((bundle_id.clone(), work_path.clone()));
         }
 
         run_security_command_with_strings(&[
@@ -792,7 +963,6 @@ fn install_ios_signing_bundle(
             keychain_password.clone(),
             keychain_path_str.clone(),
         ])?;
-        keychain_created = true;
 
         run_security_command_with_strings(&[
             "set-keychain-settings".to_string(),
@@ -813,17 +983,6 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
         ])?;
 
-        let original_keychain_output = run_security_command(&["list-keychains", "-d", "user"])?;
-        original_keychains = parse_keychain_list(&original_keychain_output);
-        let original_default_output = run_security_command(&["default-keychain", "-d", "user"])?;
-        original_default_keychain = parse_keychain_list(&original_default_output)
-            .into_iter()
-            .next();
-        anyhow::ensure!(
-            original_default_keychain.is_some(),
-            "no default user keychain is configured"
-        );
-
         // Match Codemagic's proven keychain layout: keep the user's normal
         // keychains available for Apple's public trust chain and append the
         // isolated build keychain that owns the private signing identity.
@@ -833,7 +992,7 @@ fn install_ios_signing_bundle(
             "user".to_string(),
             "-s".to_string(),
         ];
-        build_keychain_search_list.extend(original_keychains.iter().cloned());
+        build_keychain_search_list.extend(journal.original_keychains.iter().cloned());
         build_keychain_search_list.push(keychain_path_str.clone());
         run_security_command_with_strings(&build_keychain_search_list)?;
         run_security_command_with_strings(&[
@@ -935,25 +1094,19 @@ fn install_ios_signing_bundle(
         Ok(materialization) => Ok((
             materialization,
             IosSigningCleanup {
-                keychain_path,
-                original_default_keychain: original_default_keychain
-                    .expect("default keychain verified before signing setup"),
-                original_keychains,
-                installed_profiles,
+                journal_path: Some(journal_path),
+                journal,
             },
         )),
         Err(err) => {
-            cleanup_ios_signing_state(
-                if keychain_created {
-                    Some(&keychain_path)
-                } else {
-                    None
-                },
-                original_default_keychain.as_deref(),
-                &original_keychains,
-                &installed_profiles,
-            );
-            Err(err)
+            match cleanup_ios_signing_state(&journal)
+                .and_then(|()| fs::remove_file(&journal_path).map_err(anyhow::Error::from))
+            {
+                Ok(()) => Err(err),
+                Err(cleanup_error) => Err(err.context(format!(
+                    "iOS signing cleanup was deferred for startup reconciliation: {cleanup_error:#}"
+                ))),
+            }
         }
     }
 }
@@ -1499,12 +1652,167 @@ async fn fetch_job_ios_signing(
     Ok(Some(payload))
 }
 
+fn validate_ios_cleanup_journal(
+    workspace: &Path,
+    journal: &IosCleanupJournal,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        journal.keychain_path
+            == workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+        "iOS cleanup journal keychain path is outside its workspace"
+    );
+    let profile_root = PathBuf::from(
+        std::env::var("HOME")
+            .map_err(|_| anyhow::anyhow!("HOME environment variable is not set"))?,
+    )
+    .join("Library/MobileDevice/Provisioning Profiles");
+    anyhow::ensure!(
+        journal.installed_profiles.iter().all(|path| {
+            path.parent() == Some(profile_root.as_path())
+                && path.extension().and_then(|extension| extension.to_str())
+                    == Some("mobileprovision")
+        }),
+        "iOS cleanup journal contains an invalid provisioning profile path"
+    );
+    anyhow::ensure!(
+        journal
+            .original_keychains
+            .contains(&journal.original_default_keychain),
+        "iOS cleanup journal has no original default keychain"
+    );
+    Ok(())
+}
+
+fn ensure_legacy_workspace_has_no_residue(path: &Path) -> anyhow::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "legacy runner workspace {} is not a trusted directory; remove it before starting the runner",
+        path.display()
+    );
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_name() != SPOTLIGHT_NO_INDEX_SENTINEL {
+            anyhow::bail!(
+                "legacy runner workspace {} contains unreconciled build state; clean it before starting the runner",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn current_uid() -> anyhow::Result<u32> {
+    let output = Command::new("/usr/bin/id").arg("-u").output()?;
+    anyhow::ensure!(output.status.success(), "failed to determine runner uid");
+    String::from_utf8(output.stdout)?
+        .trim()
+        .parse()
+        .context("invalid uid returned by /usr/bin/id")
+}
+
+fn reconcile_stale_workspaces_with(
+    parent: &Path,
+    runner_id: &str,
+    mut reconcile_journal: impl FnMut(&Path, &IosCleanupJournal) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let prefix = runner_workspace_prefix(runner_id);
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    #[cfg(unix)]
+    let uid = current_uid()?;
+
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let Some(random_suffix) = file_name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if random_suffix.len() != 32 || !random_suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            continue;
+        }
+
+        let workspace = entry.path();
+        let metadata = fs::symlink_metadata(&workspace)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            if metadata.uid() != uid {
+                continue;
+            }
+            anyhow::ensure!(
+                metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
+                "runner workspace {} is not a private directory",
+                workspace.display()
+            );
+        }
+        #[cfg(not(unix))]
+        anyhow::ensure!(
+            metadata.is_dir(),
+            "runner workspace {} is not a directory",
+            workspace.display()
+        );
+
+        let journal_path = workspace.join(IOS_CLEANUP_JOURNAL);
+        if journal_path.exists() {
+            let journal: IosCleanupJournal =
+                serde_json::from_slice(&fs::read(&journal_path).with_context(|| {
+                    format!(
+                        "failed to read iOS cleanup journal {}",
+                        journal_path.display()
+                    )
+                })?)
+                .with_context(|| {
+                    format!(
+                        "failed to parse iOS cleanup journal {}",
+                        journal_path.display()
+                    )
+                })?;
+            reconcile_journal(&workspace, &journal)?;
+            fs::remove_file(&journal_path)?;
+        }
+        fs::remove_dir_all(&workspace).with_context(|| {
+            format!(
+                "failed to remove stale runner workspace {}",
+                workspace.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn reconcile_stale_runner_mutations(runner_id: &str) -> anyhow::Result<()> {
+    // ponytail: one process per runner ID; add a process lease if replicas become supported.
+    ensure_legacy_workspace_has_no_residue(Path::new(LEGACY_BUILD_WORKSPACE_ROOT))?;
+    reconcile_stale_workspaces_with(&std::env::temp_dir(), runner_id, |workspace, journal| {
+        validate_ios_cleanup_journal(workspace, journal)?;
+        cleanup_ios_signing_state(journal)
+    })
+}
+
 pub async fn run_runner_forever(
     config: RunnerConfig,
     daemon_url_override: Option<String>,
 ) -> anyhow::Result<()> {
     let daemon_url = daemon_url_override.unwrap_or(config.daemon_url.clone());
     let client = reqwest::Client::new();
+
+    reconcile_stale_runner_mutations(&config.runner_id)
+        .context("failed to reconcile stale runner state before startup")?;
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
     println!("Connecting to: {}", daemon_url);
@@ -1542,6 +1850,11 @@ pub async fn run_runner_forever(
 
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
+        if let Err(error) = reconcile_stale_runner_mutations(&config.runner_id) {
+            eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            continue;
+        }
         match claim_and_execute(&client, &daemon_url, &config).await {
             Ok(_executed) => {}
             Err(e) => {
@@ -1651,6 +1964,13 @@ struct WorkspaceCleanup {
 
 impl Drop for WorkspaceCleanup {
     fn drop(&mut self) {
+        if self.path.join(IOS_CLEANUP_JOURNAL).exists() {
+            eprintln!(
+                "Warning: retaining workspace {} for iOS signing reconciliation",
+                self.path.display()
+            );
+            return;
+        }
         if self.path.exists()
             && let Err(e) = fs::remove_dir_all(&self.path)
         {
@@ -2124,11 +2444,58 @@ fn resolve_execution_plan(
     })
 }
 
+#[derive(Default)]
+struct BuildAuthorityState {
+    consecutive_failures: AtomicU8,
+}
+
+impl BuildAuthorityState {
+    fn confirmed_active(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
+
+    fn transient_failure(&self) -> anyhow::Result<()> {
+        let failures = self
+            .consecutive_failures
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                Some(value.saturating_add(1))
+            })
+            .unwrap_or(u8::MAX)
+            .saturating_add(1);
+        if failures >= MAX_CONSECUTIVE_AUTHORITY_FAILURES {
+            return Err(BuildTerminated {
+                status: "controller_unavailable".to_string(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+}
+
+fn authority_loss(status: reqwest::StatusCode) -> anyhow::Error {
+    let status = match status {
+        reqwest::StatusCode::UNAUTHORIZED => "runner_unauthorized".to_string(),
+        reqwest::StatusCode::FORBIDDEN => "assignment_lost".to_string(),
+        reqwest::StatusCode::NOT_FOUND => "build_missing".to_string(),
+        status => format!("protocol_rejected_{status}"),
+    };
+    BuildTerminated { status }.into()
+}
+
+fn is_transient_authority_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || matches!(
+            status,
+            reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+        )
+}
+
 async fn check_build_active(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    authority: &BuildAuthorityState,
 ) -> anyhow::Result<()> {
     let resp = client
         .get(format!(
@@ -2156,9 +2523,14 @@ async fn check_build_active(
                 }
                 .into());
             }
+            authority.confirmed_active();
             Ok(())
         }
-        Ok(_) | Err(_) => Ok(()),
+        Ok(response) if is_transient_authority_status(response.status()) => {
+            authority.transient_failure()
+        }
+        Ok(response) => Err(authority_loss(response.status())),
+        Err(_) => authority.transient_failure(),
     }
 }
 
@@ -2167,10 +2539,11 @@ async fn poll_cancellation(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
+    authority: Arc<BuildAuthorityState>,
 ) {
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        if check_build_active(client, daemon_url, config, build_id)
+        if check_build_active(client, daemon_url, config, build_id, &authority)
             .await
             .is_err()
         {
@@ -2274,26 +2647,23 @@ async fn execute_build(
     daemon_url: &str,
     config: &RunnerConfig,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
-    let workspace_root = PathBuf::from(BUILD_WORKSPACE_ROOT);
-    if let Err(e) = fs::create_dir_all(&workspace_root) {
-        return (vec![], Err(e.into()));
-    }
-    try_mark_no_spotlight_index(&workspace_root);
-
-    let workspace = workspace_root.join(&job.build_id);
-    if let Err(e) = fs::create_dir_all(&workspace) {
-        return (vec![], Err(e.into()));
-    }
+    let workspace = match create_private_workspace_in(&std::env::temp_dir(), &config.runner_id) {
+        Ok(workspace) => workspace,
+        Err(error) => return (vec![], Err(error.into())),
+    };
+    try_mark_no_spotlight_index(&workspace);
 
     let _cleanup = WorkspaceCleanup {
         path: workspace.clone(),
     };
+    let authority = Arc::new(BuildAuthorityState::default());
 
     let snapshot = &job.config_snapshot;
     let mut steps = Vec::new();
     let mut log_seq: i64 = 0;
 
-    if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id).await {
+    if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id, &authority).await
+    {
         return (steps, Err(e));
     }
 
@@ -2375,7 +2745,7 @@ async fn execute_build(
         config,
         &job.build_id,
         &mut log_seq,
-        poll_cancellation(client, daemon_url, config, &job.build_id),
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
     )
     .await;
 
@@ -2639,7 +3009,7 @@ async fn execute_build(
             content.push('\n');
         }
         let define_file_path = workspace.join(".env");
-        if let Err(e) = fs::write(&define_file_path, content) {
+        if let Err(e) = write_private_file(&define_file_path, content.as_bytes()) {
             return (
                 steps,
                 Err(anyhow::anyhow!(
@@ -2665,7 +3035,9 @@ async fn execute_build(
         ),
     ] {
         for (index, command) in commands.iter().enumerate() {
-            if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id).await {
+            if let Err(e) =
+                check_build_active(client, daemon_url, config, &job.build_id, &authority).await
+            {
                 return (steps, Err(e));
             }
 
@@ -2739,7 +3111,7 @@ async fn execute_build(
                 config,
                 &job.build_id,
                 &mut log_seq,
-                poll_cancellation(client, daemon_url, config, &job.build_id),
+                poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
             )
             .await;
 
@@ -2995,7 +3367,11 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         return (steps, Err(error));
     }
 
-    drop(ios_signing_cleanup);
+    if let Some(mut cleanup) = ios_signing_cleanup.take()
+        && let Err(error) = cleanup.cleanup()
+    {
+        return (steps, Err(error));
+    }
 
     (steps, Ok(()))
 }
@@ -3696,6 +4072,215 @@ mod tests {
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|version| !version.is_empty())
         );
+    }
+
+    #[test]
+    fn authority_loss_stops_definitive_revocations_and_bounds_outages() {
+        for (status, expected) in [
+            (reqwest::StatusCode::UNAUTHORIZED, "runner_unauthorized"),
+            (reqwest::StatusCode::FORBIDDEN, "assignment_lost"),
+            (reqwest::StatusCode::NOT_FOUND, "build_missing"),
+        ] {
+            let error = authority_loss(status);
+            assert_eq!(
+                error
+                    .downcast_ref::<BuildTerminated>()
+                    .expect("authority loss must terminate the build")
+                    .status,
+                expected
+            );
+        }
+
+        let authority = BuildAuthorityState::default();
+        assert!(authority.transient_failure().is_ok());
+        assert!(authority.transient_failure().is_ok());
+        authority.confirmed_active();
+        assert!(authority.transient_failure().is_ok());
+        assert!(authority.transient_failure().is_ok());
+        let error = authority
+            .transient_failure()
+            .expect_err("the transient grace budget must be finite");
+        assert_eq!(
+            error
+                .downcast_ref::<BuildTerminated>()
+                .expect("grace exhaustion must terminate the build")
+                .status,
+            "controller_unavailable"
+        );
+        assert!(is_transient_authority_status(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ));
+        assert!(!is_transient_authority_status(
+            reqwest::StatusCode::BAD_REQUEST
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_workspace_ignores_legacy_symlink_and_excludes_other_users() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let parent = temp_workspace();
+        let attacker_target = parent.join("attacker-target");
+        fs::create_dir(&attacker_target).expect("create synthetic symlink target");
+        symlink(&attacker_target, parent.join("oore-builds.noindex"))
+            .expect("create legacy workspace symlink");
+
+        let first = create_private_workspace_in(&parent, "runner-security-test")
+            .expect("create first private workspace");
+        let second = create_private_workspace_in(&parent, "runner-security-test")
+            .expect("create second private workspace");
+        fs::write(first.join("marker"), b"runner-owned").expect("write workspace marker");
+
+        assert_ne!(first, second);
+        assert_eq!(
+            fs::metadata(&first)
+                .expect("stat private workspace")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert!(!attacker_target.join("marker").exists());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_and_journal_paths_fail_closed_before_cleanup() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace();
+        let legacy = parent.join("oore-builds.noindex");
+        fs::create_dir(&legacy).expect("create clean legacy root");
+        fs::write(legacy.join(SPOTLIGHT_NO_INDEX_SENTINEL), b"").expect("write legacy sentinel");
+        ensure_legacy_workspace_has_no_residue(&legacy).expect("clean legacy root remains valid");
+        fs::create_dir(legacy.join("stale-build")).expect("create stale legacy build");
+        assert!(ensure_legacy_workspace_has_no_residue(&legacy).is_err());
+        fs::remove_dir_all(&legacy).expect("remove legacy fixture");
+        let target = parent.join("legacy-target");
+        fs::create_dir(&target).expect("create legacy symlink target");
+        symlink(&target, &legacy).expect("create legacy symlink");
+        assert!(ensure_legacy_workspace_has_no_residue(&legacy).is_err());
+
+        let workspace = parent.join("workspace");
+        let profile_root = PathBuf::from(std::env::var("HOME").expect("HOME is set"))
+            .join("Library/MobileDevice/Provisioning Profiles");
+        let valid = IosCleanupJournal {
+            keychain_path: workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+            original_default_keychain: "/placeholder/login.keychain-db".to_string(),
+            original_keychains: vec!["/placeholder/login.keychain-db".to_string()],
+            installed_profiles: vec![profile_root.join("placeholder.mobileprovision")],
+        };
+        validate_ios_cleanup_journal(&workspace, &valid).expect("valid journal paths");
+        let mut escaped = valid;
+        escaped.installed_profiles = vec![profile_root.join("../escaped.mobileprovision")];
+        assert!(validate_ios_cleanup_journal(&workspace, &escaped).is_err());
+        cleanup_workspace(&parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_replaces_public_files_and_symlinks_at_mode_0600() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+        let workspace = temp_workspace();
+        let env_path = workspace.join(".env");
+        fs::write(&env_path, b"PUBLIC_PLACEHOLDER=1\n").expect("write public placeholder");
+        fs::set_permissions(&env_path, fs::Permissions::from_mode(0o644))
+            .expect("set permissive fixture mode");
+        let original_inode = fs::metadata(&env_path).expect("stat public fixture").ino();
+
+        write_private_file(&env_path, b"PIPELINE_PLACEHOLDER=2\n")
+            .expect("replace with private environment file");
+        let metadata = fs::metadata(&env_path).expect("stat private environment file");
+        assert_ne!(metadata.ino(), original_inode);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::read_to_string(&env_path).expect("read private environment file"),
+            "PIPELINE_PLACEHOLDER=2\n"
+        );
+
+        let symlink_target = workspace.join("unrelated");
+        fs::write(&symlink_target, b"UNCHANGED").expect("write symlink target");
+        fs::remove_file(&env_path).expect("remove first private file");
+        symlink(&symlink_target, &env_path).expect("replace env with symlink fixture");
+        write_private_file(&env_path, b"PIPELINE_PLACEHOLDER=3\n")
+            .expect("replace symlink without following it");
+        assert_eq!(
+            fs::read_to_string(&symlink_target).expect("read untouched target"),
+            "UNCHANGED"
+        );
+        assert!(
+            !fs::symlink_metadata(&env_path)
+                .expect("stat replaced symlink")
+                .file_type()
+                .is_symlink()
+        );
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_signing_journal_blocks_then_reconciles_before_later_work() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = temp_workspace();
+        let runner_id = "runner-reconciliation-test";
+        let workspace =
+            create_private_workspace_in(&parent, runner_id).expect("create stale workspace");
+        fs::create_dir_all(workspace.join(IOS_SIGNING_DIR)).expect("create signing directory");
+        let owned_profile = parent.join("generation-a.mobileprovision");
+        let unrelated = parent.join("generation-b.mobileprovision");
+        fs::write(&owned_profile, b"GENERATION_A").expect("write owned placeholder");
+        fs::write(&unrelated, b"GENERATION_B").expect("write unrelated placeholder");
+        let journal = IosCleanupJournal {
+            keychain_path: workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+            original_default_keychain: "/placeholder/login.keychain-db".to_string(),
+            original_keychains: vec!["/placeholder/login.keychain-db".to_string()],
+            installed_profiles: vec![owned_profile.clone()],
+        };
+        let journal_path = workspace.join(IOS_CLEANUP_JOURNAL);
+        write_ios_cleanup_journal(&journal_path, &journal).expect("write durable journal");
+        assert_eq!(
+            fs::metadata(&journal_path)
+                .expect("stat cleanup journal")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        drop(WorkspaceCleanup {
+            path: workspace.clone(),
+        });
+        assert!(workspace.exists(), "journal must preserve cleanup evidence");
+
+        let blocked = reconcile_stale_workspaces_with(&parent, runner_id, |_, _| {
+            anyhow::bail!("synthetic cleanup failure")
+        });
+        assert!(blocked.is_err());
+        assert!(workspace.exists());
+        assert!(journal_path.exists());
+
+        reconcile_stale_workspaces_with(&parent, runner_id, |seen_workspace, seen_journal| {
+            assert_eq!(seen_workspace, workspace);
+            assert_eq!(seen_journal.installed_profiles, vec![owned_profile.clone()]);
+            fs::remove_file(&owned_profile)?;
+            Ok(())
+        })
+        .expect("reconcile stale generation");
+        assert!(!workspace.exists());
+        assert!(!owned_profile.exists());
+        assert_eq!(
+            fs::read_to_string(&unrelated).expect("read newer generation placeholder"),
+            "GENERATION_B"
+        );
+        cleanup_workspace(&parent);
     }
 
     #[test]
