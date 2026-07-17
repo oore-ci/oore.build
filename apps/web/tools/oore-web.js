@@ -2,6 +2,7 @@
 
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -58,14 +59,14 @@ Options:
   --listen        Listen address (default: ${DEFAULT_LISTEN})
   --backend-url   Backend API base URL (default: ${DEFAULT_BACKEND_URL})
   --dist-dir      Path to web static assets (default: ${DEFAULT_DIST_DIR})
-  --trusted-proxy-secret
-                  Secret injected only on proxied backend API requests
+  --browser-transport-protected
+                  Assert encrypted ingress before a non-loopback HTTP listen
+  --backend-transport-protected
+                  Assert an encrypted transport protects a remote HTTP backend
   --trusted-proxy-secret-file
                   File containing the backend trusted-proxy secret
   --trusted-proxy-user-email-header
                   Identity header to forward after upstream proof (default: ${DEFAULT_TRUSTED_PROXY_USER_EMAIL_HEADER})
-  --upstream-trusted-proxy-secret
-                  Secret required from the auth proxy before identity headers are forwarded
   --upstream-trusted-proxy-secret-file
                   File containing the upstream auth-proxy secret
   --upstream-trusted-proxy-secret-header
@@ -132,13 +133,38 @@ Options:
 `)
 }
 
-function parseListen(raw) {
+function normalizeHostname(raw) {
+  const hostname = raw.toLowerCase()
+  return hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname
+}
+
+function isLiteralLoopback(raw) {
+  const hostname = normalizeHostname(raw)
+  return (
+    (net.isIP(hostname) === 4 && hostname.startsWith('127.')) ||
+    hostname === '::1'
+  )
+}
+
+function parseListenAddress(raw) {
   const value = raw.trim()
   if (!value) throw new Error('listen value cannot be empty')
 
-  if (value.startsWith('http://') || value.startsWith('https://')) {
+  const scheme = value.match(/^([a-z][a-z0-9+.-]*):\/\//i)?.[1]?.toLowerCase()
+  if (scheme === 'https') {
+    throw new Error(
+      '--listen does not terminate TLS; use a loopback listener behind HTTPS',
+    )
+  }
+  if (scheme && scheme !== 'http') {
+    throw new Error('--listen URL must use http')
+  }
+
+  if (scheme === 'http') {
     const parsed = new URL(value)
-    const hostname = parsed.hostname || '127.0.0.1'
+    const hostname = normalizeHostname(parsed.hostname || '127.0.0.1')
     const port = Number(parsed.port || 80)
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
       throw new Error(`invalid listen port: ${parsed.port}`)
@@ -151,7 +177,7 @@ function parseListen(raw) {
     throw new Error(`listen must be <host:port>, got: ${value}`)
   }
 
-  const hostname = value.slice(0, lastColon)
+  const hostname = normalizeHostname(value.slice(0, lastColon))
   const port = Number(value.slice(lastColon + 1))
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`invalid listen port: ${value}`)
@@ -160,8 +186,34 @@ function parseListen(raw) {
   return { hostname, port }
 }
 
+export function parseListen(raw, protectedTransport = false) {
+  const listen = parseListenAddress(raw)
+  if (!isLiteralLoopback(listen.hostname) && !protectedTransport) {
+    throw new Error(
+      'non-loopback HTTP listen requires --browser-transport-protected after encrypted ingress is configured',
+    )
+  }
+  return listen
+}
+
+export function parseBackendUrl(raw, protectedTransport = false) {
+  const url = new URL(raw)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('--backend-url must use http or https')
+  }
+
+  const hostname = normalizeHostname(url.hostname)
+  const loopback = hostname === 'localhost' || isLiteralLoopback(hostname)
+  if (url.protocol === 'http:' && !loopback && !protectedTransport) {
+    throw new Error(
+      'non-loopback HTTP backend requires https or --backend-transport-protected after an encrypted transport is configured',
+    )
+  }
+  return url
+}
+
 function defaultStatusUrl() {
-  const { hostname, port } = parseListen(DEFAULT_LISTEN)
+  const { hostname, port } = parseListenAddress(DEFAULT_LISTEN)
   const host = hostname.includes(':') ? `[${hostname}]` : hostname
   return `http://${host}:${port}`
 }
@@ -200,11 +252,13 @@ function parseStatusArgs(argv) {
   return config
 }
 
-function parseServeArgs(argv) {
+export function parseServeArgs(argv) {
   const config = {
     listen: DEFAULT_LISTEN,
     backendUrl: DEFAULT_BACKEND_URL,
     distDir: DEFAULT_DIST_DIR,
+    browserTransportProtected: false,
+    backendTransportProtected: false,
     trustedProxySecret: DEFAULT_TRUSTED_PROXY_SECRET,
     trustedProxySecretFile: DEFAULT_TRUSTED_PROXY_SECRET_FILE,
     trustedProxyUserEmailHeader: DEFAULT_TRUSTED_PROXY_USER_EMAIL_HEADER,
@@ -245,12 +299,23 @@ function parseServeArgs(argv) {
       continue
     }
 
-    if (arg === '--trusted-proxy-secret') {
-      const value = argv[i + 1]
-      if (!value) throw new Error('--trusted-proxy-secret requires a value')
-      config.trustedProxySecret = value
-      i += 1
+    if (arg === '--browser-transport-protected') {
+      config.browserTransportProtected = true
       continue
+    }
+
+    if (arg === '--backend-transport-protected') {
+      config.backendTransportProtected = true
+      continue
+    }
+
+    if (
+      arg === '--trusted-proxy-secret' ||
+      arg === '--upstream-trusted-proxy-secret'
+    ) {
+      throw new Error(
+        `${arg} is disabled because process arguments are observable; use ${arg}-file`,
+      )
     }
 
     if (arg === '--trusted-proxy-secret-file') {
@@ -267,15 +332,6 @@ function parseServeArgs(argv) {
       if (!value)
         throw new Error('--trusted-proxy-user-email-header requires a value')
       config.trustedProxyUserEmailHeader = value
-      i += 1
-      continue
-    }
-
-    if (arg === '--upstream-trusted-proxy-secret') {
-      const value = argv[i + 1]
-      if (!value)
-        throw new Error('--upstream-trusted-proxy-secret requires a value')
-      config.upstreamTrustedProxySecret = value
       i += 1
       continue
     }
@@ -1046,9 +1102,17 @@ export function spaCacheControl(pathname) {
   return 'public, max-age=3600, must-revalidate'
 }
 
+export function spaResponseHeaders(pathname) {
+  return {
+    'Cache-Control': spaCacheControl(pathname),
+    'Content-Security-Policy': "frame-ancestors 'none'",
+    'X-Frame-Options': 'DENY',
+  }
+}
+
 function spaFileResponse(filePath, pathname) {
   return new Response(Bun.file(filePath), {
-    headers: { 'Cache-Control': spaCacheControl(pathname) },
+    headers: spaResponseHeaders(pathname),
   })
 }
 
@@ -1140,15 +1204,20 @@ async function main() {
 
   let backendUrl
   try {
-    backendUrl = new URL(config.backendUrl)
-  } catch {
-    console.error(`[oore-web] invalid backend URL: ${config.backendUrl}`)
+    backendUrl = parseBackendUrl(
+      config.backendUrl,
+      config.backendTransportProtected,
+    )
+  } catch (error) {
+    console.error(
+      `[oore-web] ${error instanceof Error ? error.message : 'invalid backend URL'}`,
+    )
     process.exit(2)
   }
 
   let listen
   try {
-    listen = parseListen(config.listen)
+    listen = parseListen(config.listen, config.browserTransportProtected)
   } catch (error) {
     console.error(
       `[oore-web] ${error instanceof Error ? error.message : 'invalid listen'}`,
@@ -1272,6 +1341,21 @@ async function main() {
   console.log(
     `[oore-web] listening on http://${listen.hostname}:${listen.port} (backend: ${backendUrl.toString()})`,
   )
+  if (config.browserTransportProtected && !isLiteralLoopback(listen.hostname)) {
+    console.warn(
+      '[oore-web] non-loopback HTTP listener relies on separately protected browser transport',
+    )
+  }
+  if (
+    config.backendTransportProtected &&
+    backendUrl.protocol === 'http:' &&
+    backendUrl.hostname !== 'localhost' &&
+    !isLiteralLoopback(backendUrl.hostname)
+  ) {
+    console.warn(
+      '[oore-web] remote HTTP backend relies on separately protected backend transport',
+    )
+  }
   if (config.trustedProxySecret?.trim()) {
     console.log('[oore-web] trusted proxy shared secret injection enabled')
     if (config.upstreamTrustedProxySecret?.trim()) {

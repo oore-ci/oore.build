@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -8,20 +10,18 @@ import {
   authorizeOwner,
   getWebUpdateStatus,
   isApiPath,
+  parseBackendUrl,
+  parseListen,
+  parseServeArgs,
   spaCacheControl,
+  spaResponseHeaders,
 } from './oore-web.js'
 
 const ooreWebPath = path.resolve(process.cwd(), 'tools/oore-web.js')
 
-async function runStatus(url, json = false) {
+async function runOoreWeb(args) {
   return await new Promise((resolve, reject) => {
-    const child = spawn('bun', [
-      ooreWebPath,
-      'status',
-      '--url',
-      url,
-      ...(json ? ['--json'] : []),
-    ])
+    const child = spawn('bun', [ooreWebPath, ...args])
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (chunk) => (stdout += chunk))
@@ -29,6 +29,10 @@ async function runStatus(url, json = false) {
     child.once('error', reject)
     child.once('close', (exitCode) => resolve({ stdout, stderr, exitCode }))
   })
+}
+
+async function runStatus(url, json = false) {
+  return runOoreWeb(['status', '--url', url, ...(json ? ['--json'] : [])])
 }
 
 async function startServer(handler) {
@@ -60,6 +64,110 @@ describe('oore-web SPA caching', () => {
     expect(spaCacheControl('/')).toBe('public, max-age=0, must-revalidate')
     expect(spaCacheControl('/index.html')).toBe(
       'public, max-age=0, must-revalidate',
+    )
+  })
+
+  it('denies framing without changing cache behavior', () => {
+    const headers = new Headers(spaResponseHeaders('/'))
+
+    expect(headers.get('cache-control')).toBe(
+      'public, max-age=0, must-revalidate',
+    )
+    expect(headers.get('content-security-policy')).toContain(
+      "frame-ancestors 'none'",
+    )
+    expect(headers.get('x-frame-options')).toBe('DENY')
+  })
+})
+
+describe('oore-web launcher security policy', () => {
+  it('rejects literal trusted-proxy proofs and keeps file inputs', async () => {
+    for (const [flag, replacement] of [
+      ['--trusted-proxy-secret', '--trusted-proxy-secret-file'],
+      [
+        '--upstream-trusted-proxy-secret',
+        '--upstream-trusted-proxy-secret-file',
+      ],
+    ]) {
+      expect(() => parseServeArgs([flag, 'PLACEHOLDER_PROOF'])).toThrow(
+        replacement,
+      )
+    }
+
+    const help = await runOoreWeb(['--help'])
+    expect(help.exitCode).toBe(0)
+    expect(help.stdout).not.toMatch(/--(?:upstream-)?trusted-proxy-secret\s/)
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oore-web-test-'))
+    const backendProof = path.join(tempDir, 'backend-proof')
+    const upstreamProof = path.join(tempDir, 'upstream-proof')
+    try {
+      fs.writeFileSync(backendProof, 'backend-proof\n', { mode: 0o600 })
+      fs.writeFileSync(upstreamProof, 'upstream-proof\n', { mode: 0o600 })
+      const config = parseServeArgs([
+        '--trusted-proxy-secret-file',
+        backendProof,
+        '--upstream-trusted-proxy-secret-file',
+        upstreamProof,
+      ])
+      expect(config.trustedProxySecret).toBe('backend-proof')
+      expect(config.upstreamTrustedProxySecret).toBe('upstream-proof')
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('requires HTTPS or an explicit protected transport for remote backends', () => {
+    expect(parseBackendUrl('https://backend.example.test').protocol).toBe(
+      'https:',
+    )
+    for (const raw of [
+      'http://localhost:8787',
+      'http://127.23.45.67:8787',
+      'http://[::1]:8787',
+    ]) {
+      expect(parseBackendUrl(raw).protocol).toBe('http:')
+    }
+    for (const raw of [
+      'http://192.0.2.10:8787',
+      'http://10.0.0.20:8787',
+      'http://backend.example.test:8787',
+    ]) {
+      expect(() => parseBackendUrl(raw)).toThrow(
+        '--backend-transport-protected',
+      )
+    }
+    expect(parseBackendUrl('http://192.0.2.10:8787', true).protocol).toBe(
+      'http:',
+    )
+    expect(() => parseBackendUrl('ftp://backend.example.test', true)).toThrow(
+      'http or https',
+    )
+  })
+
+  it('requires explicit protected ingress for non-loopback HTTP listeners', () => {
+    expect(parseListen('127.0.0.1:4173')).toEqual({
+      hostname: '127.0.0.1',
+      port: 4173,
+    })
+    expect(parseListen('[::1]:4173')).toEqual({
+      hostname: '::1',
+      port: 4173,
+    })
+    for (const raw of [
+      '0.0.0.0:4173',
+      '[::]:4173',
+      '192.0.2.10:4173',
+      'web.example.test:4173',
+    ]) {
+      expect(() => parseListen(raw)).toThrow('--browser-transport-protected')
+    }
+    expect(parseListen('192.0.2.10:4173', true)).toEqual({
+      hostname: '192.0.2.10',
+      port: 4173,
+    })
+    expect(() => parseListen('https://192.0.2.10:4173', true)).toThrow(
+      'does not terminate TLS',
     )
   })
 })
