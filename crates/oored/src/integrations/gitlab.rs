@@ -2266,6 +2266,7 @@ mod tests {
                 id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, external_id TEXT NOT NULL,
                 full_name TEXT NOT NULL, default_branch TEXT, is_private INTEGER NOT NULL,
                 html_url TEXT, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                allow_direct_macos_runner INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(installation_id, external_id)
             )",
         )
@@ -2277,7 +2278,19 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO integration_repositories VALUES ('stale', 'install', 'stale', 'group/stale', 'main', 1, NULL, NULL, 1, 1)",
+            "INSERT INTO integration_repositories \
+             (id, installation_id, external_id, full_name, default_branch, is_private, \
+              html_url, avatar_url, created_at, updated_at) \
+             VALUES ('stale', 'install', 'stale', 'group/stale', 'main', 1, NULL, NULL, 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO integration_repositories \
+             (id, installation_id, external_id, full_name, default_branch, is_private, \
+              html_url, avatar_url, created_at, updated_at, allow_direct_macos_runner) \
+             VALUES ('approved', 'install', '1', 'group/old-name', 'main', 1, NULL, NULL, 1, 1, 1)",
         )
         .execute(&pool)
         .await
@@ -2330,6 +2343,39 @@ mod tests {
         assert_eq!(
             fallback_avatar.as_deref(),
             Some("https://gitlab.example/namespace-avatar.png")
+        );
+        let approved: i64 = sqlx::query_scalar(
+            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(approved, 1, "repository sync must preserve runner approval");
+
+        sqlx::query("DELETE FROM integration_repositories WHERE external_id = '1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sync_gitlab_projects(
+            &build_http_client().unwrap(),
+            &pool,
+            &host,
+            "token",
+            "install",
+            false,
+            2,
+        )
+        .await
+        .unwrap();
+        let readded_approval: i64 = sqlx::query_scalar(
+            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            readded_approval, 0,
+            "deleting and rediscovering a repository must reset runner approval"
         );
         assert!(linked.is_none());
         server.abort();

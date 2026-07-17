@@ -30,6 +30,8 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
 /// Maximum age (seconds) for GitHub install-callback browser cookie.
 const INSTALL_STATE_MAX_AGE_SECS: i64 = 1800; // 30 minutes
+const GITHUB_API_BASE_URL: &str = "https://api.github.com";
+const GITHUB_PAGE_SIZE: usize = 100;
 
 type PendingStates = tokio::sync::Mutex<HashMap<String, i64>>;
 
@@ -987,6 +989,26 @@ struct GitHubInstallation {
     target_type: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GitHubRepositoriesResponse {
+    repositories: Vec<GitHubRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubRepository {
+    id: i64,
+    full_name: String,
+    default_branch: Option<String>,
+    private: bool,
+    html_url: Option<String>,
+    owner: Option<GitHubRepositoryOwner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubRepositoryOwner {
+    avatar_url: Option<String>,
+}
+
 /// Generate a GitHub App JWT for authenticating as the app.
 fn generate_github_jwt(
     app_id: &str,
@@ -1321,6 +1343,105 @@ pub(crate) async fn compare_commits(
         })
 }
 
+/// Fetch every GitHub App installation page before using the result for cleanup.
+async fn list_github_installations(
+    client: &reqwest::Client,
+    jwt: &str,
+    api_base_url: &str,
+) -> Result<Vec<GitHubInstallation>, String> {
+    let mut installations = Vec::new();
+    let mut page = 1;
+
+    loop {
+        let resp = client
+            .get(format!(
+                "{api_base_url}/app/installations?per_page={GITHUB_PAGE_SIZE}&page={page}"
+            ))
+            .header("Authorization", format!("Bearer {jwt}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "oore-ci")
+            .send()
+            .await
+            .map_err(|e| format!("GitHub API request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            error!(status = %status, body = %body, page, "GitHub installations list failed");
+            return Err(format!("GitHub returned {status}"));
+        }
+
+        let mut response_installations: Vec<GitHubInstallation> = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse GitHub response: {e}"))?;
+        let page_len = response_installations.len();
+        installations.append(&mut response_installations);
+        if page_len < GITHUB_PAGE_SIZE {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok(installations)
+}
+
+async fn cleanup_stale_installations(
+    pool: &sqlx::SqlitePool,
+    integration_id: &str,
+    synced_external_ids: &[String],
+) -> Result<u64, String> {
+    let synced_json = serde_json::json!(synced_external_ids).to_string();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to begin stale installation cleanup: {e}"))?;
+
+    sqlx::query(
+        "UPDATE projects SET repository_id = NULL \
+         WHERE repository_id IN (\
+             SELECT r.id FROM integration_repositories r \
+             JOIN integration_installations i ON i.id = r.installation_id \
+             WHERE i.integration_id = ?1 \
+               AND i.external_id NOT IN (SELECT value FROM json_each(?2))\
+         )",
+    )
+    .bind(integration_id)
+    .bind(&synced_json)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to unlink projects from stale installations: {e}"))?;
+
+    sqlx::query(
+        "DELETE FROM integration_repositories WHERE installation_id IN (\
+             SELECT id FROM integration_installations \
+             WHERE integration_id = ?1 \
+               AND external_id NOT IN (SELECT value FROM json_each(?2))\
+         )",
+    )
+    .bind(integration_id)
+    .bind(&synced_json)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to remove repositories from stale installations: {e}"))?;
+
+    let deleted = sqlx::query(
+        "DELETE FROM integration_installations \
+         WHERE integration_id = ?1 \
+           AND external_id NOT IN (SELECT value FROM json_each(?2))",
+    )
+    .bind(integration_id)
+    .bind(&synced_json)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to clean up stale installations: {e}"))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("Failed to commit stale installation cleanup: {e}"))?;
+    Ok(deleted.rows_affected())
+}
+
 /// Core sync logic — fetches installations and repos from GitHub, upserts them,
 /// and removes stale records that are no longer present on GitHub.
 ///
@@ -1365,26 +1486,7 @@ pub(crate) async fn perform_sync(
         .map_err(|(_, e)| format!("JWT generation failed: {}", e.0.error))?;
 
     let client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
-    let resp = client
-        .get("https://api.github.com/app/installations")
-        .header("Authorization", format!("Bearer {jwt}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "oore-ci")
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        error!(status = %status, body = %body, "GitHub installations list failed");
-        return Err(format!("GitHub returned {status}"));
-    }
-
-    let gh_installations: Vec<GitHubInstallation> = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse GitHub response: {e}"))?;
+    let gh_installations = list_github_installations(&client, &jwt, GITHUB_API_BASE_URL).await?;
 
     let now = now_unix();
     let mut installations = Vec::new();
@@ -1430,7 +1532,7 @@ pub(crate) async fn perform_sync(
             created_at: now,
         });
 
-        if let Err(e) = sync_installation_repos(
+        sync_installation_repos(
             &client,
             pool,
             encryption_key,
@@ -1441,42 +1543,21 @@ pub(crate) async fn perform_sync(
             now,
         )
         .await
-        {
-            error!(error = ?e, installation_id = %gh_inst.id, "failed to sync repos for installation");
-        }
+        .map_err(|(_, error)| {
+            format!(
+                "Failed to sync repositories for installation {}: {}",
+                gh_inst.id, error.error
+            )
+        })?;
     }
 
     // Remove installations (and their repos) that no longer exist on GitHub
-    let synced_json = serde_json::json!(synced_external_ids).to_string();
+    let removed = cleanup_stale_installations(pool, integration_id, &synced_external_ids).await?;
 
-    // Delete repos belonging to stale installations
-    let _ = sqlx::query(
-        "DELETE FROM integration_repositories WHERE installation_id IN (\
-         SELECT id FROM integration_installations \
-         WHERE integration_id = ?1 \
-         AND external_id NOT IN (SELECT value FROM json_each(?2)))",
-    )
-    .bind(integration_id)
-    .bind(&synced_json)
-    .execute(pool)
-    .await;
-
-    // Delete stale installations
-    let deleted = sqlx::query(
-        "DELETE FROM integration_installations \
-         WHERE integration_id = ?1 \
-         AND external_id NOT IN (SELECT value FROM json_each(?2))",
-    )
-    .bind(integration_id)
-    .bind(&synced_json)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("Failed to clean up stale installations: {e}"))?;
-
-    if deleted.rows_affected() > 0 {
+    if removed > 0 {
         info!(
             integration_id = %integration_id,
-            removed = deleted.rows_affected(),
+            removed,
             "removed stale installations"
         );
     }
@@ -1535,63 +1616,86 @@ async fn sync_installation_repos(
     )
     .await?;
 
-    let repos_resp = client
-        .get("https://api.github.com/installation/repositories?per_page=100")
-        .header("Authorization", format!("token {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "oore-ci")
-        .send()
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to list installation repos");
-            api_err(
+    sync_installation_repos_with_token(
+        client,
+        pool,
+        GITHUB_API_BASE_URL,
+        &token,
+        installation_id_external,
+        installation_id_internal,
+        now,
+    )
+    .await
+}
+
+async fn sync_installation_repos_with_token(
+    client: &reqwest::Client,
+    pool: &sqlx::SqlitePool,
+    api_base_url: &str,
+    token: &str,
+    installation_id_external: i64,
+    installation_id_internal: &str,
+    now: i64,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let mut repositories = Vec::new();
+    let mut page = 1;
+
+    loop {
+        let repos_resp = client
+            .get(format!(
+                "{api_base_url}/installation/repositories?per_page={GITHUB_PAGE_SIZE}&page={page}"
+            ))
+            .header("Authorization", format!("token {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "oore-ci")
+            .send()
+            .await
+            .map_err(|e| {
+                error!(error = %e, page, "failed to list installation repos");
+                api_err(
+                    StatusCode::BAD_GATEWAY,
+                    "github_api_error",
+                    "Failed to list repositories",
+                )
+            })?;
+
+        if !repos_resp.status().is_success() {
+            let status = repos_resp.status();
+            return Err(api_err(
                 StatusCode::BAD_GATEWAY,
                 "github_api_error",
-                "Failed to list repositories",
+                format!("GitHub returned {status} for repos"),
+            ));
+        }
+
+        let mut response: GitHubRepositoriesResponse = repos_resp.json().await.map_err(|e| {
+            error!(error = %e, page, "failed to parse repos response");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "github_parse_error",
+                "Failed to parse repos response",
             )
         })?;
-
-    if !repos_resp.status().is_success() {
-        let status = repos_resp.status();
-        return Err(api_err(
-            StatusCode::BAD_GATEWAY,
-            "github_api_error",
-            format!("GitHub returned {status} for repos"),
-        ));
+        let page_len = response.repositories.len();
+        repositories.append(&mut response.repositories);
+        if page_len < GITHUB_PAGE_SIZE {
+            break;
+        }
+        page += 1;
     }
 
-    #[derive(Deserialize)]
-    struct ReposResponse {
-        repositories: Vec<GitHubRepo>,
-    }
-
-    #[derive(Deserialize)]
-    struct GitHubRepo {
-        id: i64,
-        full_name: String,
-        default_branch: Option<String>,
-        private: bool,
-        html_url: Option<String>,
-        owner: Option<GitHubRepositoryOwner>,
-    }
-
-    #[derive(Deserialize)]
-    struct GitHubRepositoryOwner {
-        avatar_url: Option<String>,
-    }
-
-    let repos: ReposResponse = repos_resp.json().await.map_err(|e| {
-        error!(error = %e, "failed to parse repos response");
+    let mut tx = pool.begin().await.map_err(|e| {
+        error!(error = %e, "failed to begin GitHub repository sync transaction");
         api_err(
-            StatusCode::BAD_GATEWAY,
-            "github_parse_error",
-            "Failed to parse repos response",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to sync repositories",
         )
     })?;
 
-    let mut synced_repo_ids: Vec<String> = Vec::new();
+    let mut synced_repo_ids: Vec<String> = Vec::with_capacity(repositories.len());
 
-    for repo in &repos.repositories {
+    for repo in &repositories {
         let repo_id = Uuid::new_v4().to_string();
         let external_id = repo.id.to_string();
         synced_repo_ids.push(external_id.clone());
@@ -1612,24 +1716,48 @@ async fn sync_installation_repos(
         .bind(&repo.html_url)
         .bind(repo.owner.as_ref().and_then(|owner| owner.avatar_url.as_ref()))
         .bind(now)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, repo = %repo.full_name, "failed to upsert repo");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to store repository")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to store repository",
+            )
         })?;
     }
 
-    // Remove repos that are no longer accessible in this installation
     let synced_json = serde_json::json!(synced_repo_ids).to_string();
-    let deleted = sqlx::query(
-        "DELETE FROM integration_repositories \
-         WHERE installation_id = ?1 \
-         AND external_id NOT IN (SELECT value FROM json_each(?2))",
+    sqlx::query(
+        "UPDATE projects SET repository_id = NULL \
+         WHERE repository_id IN (\
+             SELECT id FROM integration_repositories \
+             WHERE installation_id = ?1 \
+               AND external_id NOT IN (SELECT value FROM json_each(?2))\
+         )",
     )
     .bind(installation_id_internal)
     .bind(&synced_json)
-    .execute(pool)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to unlink projects from stale GitHub repositories");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to clean up stale repositories",
+        )
+    })?;
+
+    let deleted = sqlx::query(
+        "DELETE FROM integration_repositories \
+         WHERE installation_id = ?1 \
+           AND external_id NOT IN (SELECT value FROM json_each(?2))",
+    )
+    .bind(installation_id_internal)
+    .bind(&synced_json)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to clean up stale repos");
@@ -1637,6 +1765,15 @@ async fn sync_installation_repos(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
             "Failed to clean up stale repositories",
+        )
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        error!(error = %e, "failed to commit GitHub repository sync");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to sync repositories",
         )
     })?;
 
@@ -1650,7 +1787,7 @@ async fn sync_installation_repos(
 
     info!(
         installation_id = %installation_id_external,
-        repo_count = repos.repositories.len(),
+        repo_count = repositories.len(),
         "repos synced"
     );
 
@@ -1662,11 +1799,231 @@ use super::{error_page, favicon_data_uri, html_escape, require_remote_mode};
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use axum::Json;
+    use axum::extract::Query;
+    use axum::routing::get;
+
     use super::{
-        INSTALL_STATE_MAX_AGE_SECS, consume_pending_state, parse_cookie_secure_override,
+        INSTALL_STATE_MAX_AGE_SECS, build_http_client, cleanup_stale_installations,
+        consume_pending_state, list_github_installations, parse_cookie_secure_override,
         pending_install_states, preferred_frontend_origin, register_pending_state,
-        validate_redirect_origin,
+        sync_installation_repos_with_token, validate_redirect_origin,
     };
+
+    #[tokio::test]
+    async fn github_sync_paginates_and_preserves_or_resets_repository_approval() {
+        let app = axum::Router::new()
+            .route(
+                "/app/installations",
+                get(|Query(params): Query<HashMap<String, String>>| async move {
+                    let page = params.get("page").map(String::as_str).unwrap_or("1");
+                    let installations: Vec<_> = if page == "1" {
+                        (1..=100)
+                            .map(|id| {
+                                serde_json::json!({
+                                    "id": id,
+                                    "account": { "login": format!("org-{id}") },
+                                    "target_type": "Organization",
+                                })
+                            })
+                            .collect()
+                    } else {
+                        vec![serde_json::json!({
+                            "id": 101,
+                            "account": { "login": "org-101" },
+                            "target_type": "Organization",
+                        })]
+                    };
+                    Json(installations)
+                }),
+            )
+            .route(
+                "/installation/repositories",
+                get(|Query(params): Query<HashMap<String, String>>| async move {
+                    let page = params.get("page").map(String::as_str).unwrap_or("1");
+                    let repositories: Vec<_> = if page == "1" {
+                        (1..=100)
+                            .map(|id| {
+                                serde_json::json!({
+                                    "id": id,
+                                    "full_name": format!("org/repo-{id}"),
+                                    "default_branch": "main",
+                                    "private": true,
+                                    "html_url": format!("https://github.example/org/repo-{id}"),
+                                    "owner": { "avatar_url": "https://github.example/avatar.png" },
+                                })
+                            })
+                            .collect()
+                    } else {
+                        vec![serde_json::json!({
+                            "id": 101,
+                            "full_name": "org/repo-101",
+                            "default_branch": "main",
+                            "private": true,
+                            "html_url": "https://github.example/org/repo-101",
+                        })]
+                    };
+                    Json(serde_json::json!({
+                        "total_count": 101,
+                        "repositories": repositories,
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = build_http_client().unwrap();
+
+        let installations = list_github_installations(&client, "jwt", &host)
+            .await
+            .unwrap();
+        assert_eq!(installations.len(), 101);
+
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE integration_repositories (
+                id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, external_id TEXT NOT NULL,
+                full_name TEXT NOT NULL, default_branch TEXT, is_private INTEGER NOT NULL,
+                html_url TEXT, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                allow_direct_macos_runner INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(installation_id, external_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, repository_id TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO integration_repositories
+             (id, installation_id, external_id, full_name, default_branch, is_private,
+              created_at, updated_at, allow_direct_macos_runner)
+             VALUES ('approved', 'install', '1', 'org/old-name', 'main', 1, 1, 1, 1),
+                    ('stale', 'install', 'stale', 'org/stale', 'main', 1, 1, 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO projects VALUES ('project', 'stale')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sync_installation_repos_with_token(&client, &pool, &host, "token", 1, "install", 2)
+            .await
+            .unwrap();
+
+        let repository_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM integration_repositories WHERE installation_id = 'install'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = 'project'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let approval: i64 = sqlx::query_scalar(
+            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(repository_count, 101);
+        assert!(linked.is_none());
+        assert_eq!(approval, 1, "repository sync must preserve runner approval");
+
+        sqlx::query("DELETE FROM integration_repositories WHERE external_id = '1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sync_installation_repos_with_token(&client, &pool, &host, "token", 1, "install", 3)
+            .await
+            .unwrap();
+        let readded_approval: i64 = sqlx::query_scalar(
+            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            readded_approval, 0,
+            "deleting and rediscovering a repository must reset runner approval"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn stale_installation_cleanup_unlinks_projects_before_deletion() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE integration_installations (
+                id TEXT PRIMARY KEY, integration_id TEXT NOT NULL, external_id TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE integration_repositories (
+                id TEXT PRIMARY KEY, installation_id TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, repository_id TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO integration_installations VALUES
+             ('current', 'integration', '1'), ('stale', 'integration', '2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO integration_repositories VALUES
+             ('current-repo', 'current'), ('stale-repo', 'stale')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO projects VALUES ('project', 'stale-repo')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let removed = cleanup_stale_installations(&pool, "integration", &["1".to_string()])
+            .await
+            .unwrap();
+
+        let installation_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM integration_installations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let repository_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM integration_repositories")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let linked: Option<String> =
+            sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = 'project'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(installation_count, 1);
+        assert_eq!(repository_count, 1);
+        assert!(linked.is_none());
+    }
 
     #[test]
     fn redirect_origin_accepts_default_localhost_origin() {

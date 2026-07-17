@@ -11,6 +11,7 @@ import {
   listIntegrationRepos,
   rotateGitLabRepositoryWebhookSecret,
   syncInstallations,
+  updateRepositoryRunnerPolicy,
 } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
@@ -80,6 +81,47 @@ export function useIntegrationRepos(integrationId: string) {
   })
 }
 
+export function useUpdateRepositoryRunnerPolicy(integrationId: string) {
+  const queryClient = useQueryClient()
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+
+  return useMutation({
+    mutationFn: ({
+      repositoryId,
+      allow,
+    }: {
+      repositoryId: string
+      allow: boolean
+    }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return updateRepositoryRunnerPolicy(baseUrl, token, repositoryId, {
+        allow_direct_macos_runner: allow,
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: [
+          instance?.id ?? '__none__',
+          'integration-repos',
+          integrationId,
+        ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-repos-for-runner-policy'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'builds'],
+      })
+    },
+  })
+}
+
 export function useSyncInstallations() {
   const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
@@ -105,6 +147,9 @@ export function useSyncInstallations() {
           'integration-repos',
           integrationId,
         ],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-repos-for-runner-policy'],
       })
     },
   })
@@ -154,11 +199,7 @@ export function useRotateGitLabRepositoryWebhookSecret() {
     mutationFn: (repositoryId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return rotateGitLabRepositoryWebhookSecret(
-        baseUrl,
-        token,
-        repositoryId,
-      )
+      return rotateGitLabRepositoryWebhookSecret(baseUrl, token, repositoryId)
     },
   })
 }

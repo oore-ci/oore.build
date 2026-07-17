@@ -16,7 +16,7 @@ Upload your signing certificate and provisioning profile directly to Oore CI for
 - A macOS runner started with `oore runner install-service` in an interactive login session
 
 ::: warning Runner session
-iOS signing cannot run inside the `oored` system LaunchDaemon. Configure the backend with `OORED_RUNNER_MODE=external`, register the Mac as an external runner, and install its user service. The user may connect over SSH, but an interactive macOS login session must remain active for Apple Keychain code signing.
+iOS signing cannot run inside the `oored` system LaunchDaemon. Register the Mac as a Direct macOS runner and install its user service. The user may connect over SSH, but an interactive macOS login session must remain active for Apple Keychain code signing.
 :::
 
 ## Steps

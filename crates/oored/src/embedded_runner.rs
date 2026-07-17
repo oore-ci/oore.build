@@ -13,7 +13,7 @@ impl RunnerMode {
         match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
             None | Some("external") => Ok(Self::External),
             Some("embedded" | "hybrid") => anyhow::bail!(
-                "embedded runner execution is disabled; use a dedicated external runner account"
+                "embedded runner execution is disabled; use an external Direct macOS runner"
             ),
             Some(raw) => anyhow::bail!("invalid OORED_RUNNER_MODE: {raw:?}"),
         }
@@ -33,7 +33,7 @@ pub async fn start_if_enabled(
     _daemon_url: String,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     RunnerMode::from_env()?;
-    info!("embedded runner disabled; use a dedicated external runner account");
+    info!("embedded runner disabled; use an external Direct macOS runner");
     Ok(None)
 }
 
@@ -47,8 +47,14 @@ mod tests {
             RunnerMode::from_value(Some(" external ")).unwrap(),
             RunnerMode::External
         );
-        assert!(RunnerMode::from_value(Some("embedded")).is_err());
-        assert!(RunnerMode::from_value(Some("hybrid")).is_err());
+        for mode in ["embedded", "hybrid"] {
+            let error = RunnerMode::from_value(Some(mode)).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("use an external Direct macOS runner")
+            );
+        }
         assert!(RunnerMode::from_value(Some("invalid")).is_err());
     }
 }

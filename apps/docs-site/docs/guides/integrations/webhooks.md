@@ -9,11 +9,13 @@ Webhooks enable automatic build triggers from GitHub and GitLab. This guide cove
 
 ## How webhooks work
 
-When you push code or open a pull request:
+When you push code or update a same-repository pull or merge request:
 
 1. GitHub/GitLab sends a POST request to your Oore CI instance
 2. The daemon verifies the webhook signature/token
 3. If the event matches a pipeline's trigger config, a build is created
+
+Oore validates immutable source and target repository IDs before creating a change-request build. External forks, ambiguous repository identity, and non-revision events are recorded as ignored and never reach the Direct runner.
 
 ## Webhook endpoints
 
@@ -51,6 +53,7 @@ Even if the webhook is delivered successfully, a build only starts if:
 1. The event type matches the pipeline's `triggers.events` setting
 2. The branch matches the pipeline's `triggers.branches` setting
 3. The pipeline is enabled
+4. For a pull request, the action is `opened`, `reopened`, or `synchronize`, and the source repository matches the target repository
 
 ## GitLab webhook troubleshooting
 
@@ -66,6 +69,8 @@ In GitLab, go to **Project Settings > Webhooks** and click **Test** to send a te
 
 Ensure the webhook secret token in GitLab matches the one-time token generated for that exact project in the Oore source details. Tokens from sibling projects are intentionally rejected.
 
+Merge requests trigger only for a verified same-project open/reopen or an update that proves the head commit changed. Forked, label-only, closed, merged, or ambiguous merge-request deliveries are ignored.
+
 ## General troubleshooting
 
 ### Daemon not reachable
@@ -77,4 +82,4 @@ Webhooks require your daemon to be reachable from the internet (or from your Git
 
 ### Build created but stuck in queued
 
-This is a runner issue, not a webhook issue. See [builds stuck in queued](/operations/troubleshooting#builds-stuck-in-queued).
+Check the wait reason shown on the build. The instance Direct runner switch may be paused, the repository may need approval, or no runner may be online. See [builds stuck in queued](/operations/troubleshooting#builds-stuck-in-queued).

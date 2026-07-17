@@ -1,10 +1,24 @@
 import RepositoryAvatar from '@/components/repository-avatar'
+import { toast } from '@/lib/toast'
 import type {
   Integration,
   IntegrationInstallation,
   IntegrationRepository,
 } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { useUpdateRepositoryRunnerPolicy } from '@/hooks/use-integrations'
 import {
   Table,
   TableBody,
@@ -58,19 +72,99 @@ function RepositoryIdentity({
   )
 }
 
+function RepositoryRunnerPolicy({
+  canWrite,
+  onChange,
+  pending,
+  repository,
+}: {
+  canWrite: boolean
+  onChange: (allow: boolean) => void
+  pending: boolean
+  repository: IntegrationRepository
+}) {
+  const approved = repository.allow_direct_macos_runner
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <Badge variant={approved ? 'success' : 'outline'}>
+        {approved ? 'Approved' : 'Needs approval'}
+      </Badge>
+      {canWrite ? (
+        <AlertDialog>
+          <AlertDialogTrigger
+            render={
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                className="min-h-11 sm:min-h-8"
+              >
+                {pending ? 'Saving...' : approved ? 'Revoke' : 'Approve'}
+              </Button>
+            }
+          />
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {approved
+                  ? 'Revoke runner approval?'
+                  : 'Approve this repository?'}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {approved
+                  ? 'Running builds will finish, but queued builds for every project linked to this repository will wait.'
+                  : 'Build commands from every project linked to this repository will run with the macOS permissions of the runner account. Approve only code and contributors you would run directly on this Mac.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => onChange(!approved)}>
+                {approved ? 'Revoke approval' : 'Approve repository'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+    </div>
+  )
+}
+
 export function IntegrationInventory({
+  canWrite,
   installations,
   installationsLabel,
   integration,
   repositories,
   repositoriesLabel,
 }: {
+  canWrite: boolean
   installations: Array<IntegrationInstallation>
   installationsLabel: string
   integration: Integration
   repositories: Array<IntegrationRepository>
   repositoriesLabel: string
 }) {
+  const policyMutation = useUpdateRepositoryRunnerPolicy(integration.id)
+
+  function updateRunnerPolicy(
+    repository: IntegrationRepository,
+    allow: boolean,
+  ) {
+    policyMutation.mutate(
+      { repositoryId: repository.id, allow },
+      {
+        onSuccess: () =>
+          toast.success(
+            allow
+              ? `${repository.full_name} approved for Direct runner builds.`
+              : `${repository.full_name} runner approval revoked.`,
+          ),
+        onError: (error) =>
+          toast.error(`Failed to update repository approval: ${error.message}`),
+      },
+    )
+  }
+
   return (
     <>
       <section aria-labelledby="installations-title" className="min-w-0">
@@ -191,6 +285,15 @@ export function IntegrationInventory({
                       {repository.is_private ? 'Private' : 'Public'}
                     </Badge>
                   </div>
+                  <RepositoryRunnerPolicy
+                    canWrite={canWrite}
+                    onChange={(allow) => updateRunnerPolicy(repository, allow)}
+                    pending={
+                      policyMutation.isPending &&
+                      policyMutation.variables.repositoryId === repository.id
+                    }
+                    repository={repository}
+                  />
                 </article>
               ))}
             </div>
@@ -204,6 +307,7 @@ export function IntegrationInventory({
                     <TableHead className="hidden lg:table-cell">
                       Visibility
                     </TableHead>
+                    <TableHead className="text-right">Direct runner</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -226,6 +330,20 @@ export function IntegrationInventory({
                         >
                           {repository.is_private ? 'Private' : 'Public'}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <RepositoryRunnerPolicy
+                          canWrite={canWrite}
+                          onChange={(allow) =>
+                            updateRunnerPolicy(repository, allow)
+                          }
+                          pending={
+                            policyMutation.isPending &&
+                            policyMutation.variables.repositoryId ===
+                              repository.id
+                          }
+                          repository={repository}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}

@@ -7,7 +7,7 @@ description: 'Deploy Oore CI on a Mac Studio with NetBird reachability and Warpg
 
 This is the recommended first company rollout shape for an internal-only Oore CI instance:
 
-- Mac Studio runs `oored` and the embedded runner
+- Mac Studio runs `oored` and the separate Direct macOS runner service
 - NetBird provides private network reachability
 - Ubuntu runs the browser-facing `oore-web` behind Warpgate and HAProxy
 
@@ -22,12 +22,12 @@ Browser
   -> oore-web on a separate loopback port
   -> NetBird
   -> oored on Mac Studio NetBird address:8787
-  -> embedded runner on Mac Studio
+  -> Direct macOS runner service on Mac Studio
 ```
 
 In this shape:
 
-- Mac Studio runs `oored` and the embedded runner.
+- Mac Studio runs `oored` plus a separately registered Direct macOS runner service.
 - Ubuntu runs only `oore-web` plus the static frontend assets.
 - Warpgate overwrites `X-Warpgate-Username` with the authenticated email before forwarding the request to HAProxy.
 - HAProxy is reachable only from Warpgate, forwards that identity, and adds the frontend proof header expected by `oore-web`.
@@ -72,7 +72,13 @@ Replace `100.64.10.20` with the Mac NetBird address, `100.64.10.30/32` with the 
 
 Backend-only macOS installs use a system LaunchDaemon running as the installing account. The installer asks for `sudo` so the daemon starts at boot without a GUI login session.
 
-When the daemon binds a specific NetBird address, it also opens the same port on loopback for the embedded runner and local operator commands. It does not add a wildcard listener; the NetBird address remains the only non-loopback daemon address.
+When the daemon binds a specific NetBird address, it also opens the same port on loopback for the local Direct runner and operator commands. It does not add a wildcard listener; the NetBird address remains the only non-loopback daemon address.
+
+After backend setup, register the Mac once with `oore runner register`, then run
+`oore runner install-service` in the macOS account that will execute builds. In
+the web UI, enable Direct runner execution in **Settings > Preferences** and
+approve each source in **Settings > Sources**. A dedicated non-admin account is
+recommended hardening, but Direct mode is not hostile-code isolation.
 
 ### 2. Create a frontend pairing code
 
@@ -144,7 +150,7 @@ On the Mac:
 curl -fsS http://127.0.0.1:8787/readyz
 ```
 
-The loopback readiness request must succeed. After signing in, **Runners** must show the embedded runner as `online`; backend readiness alone is not sufficient for a testable build host.
+The loopback readiness request must succeed. After signing in, **Runners** must show the Direct macOS runner as `online`; backend readiness alone is not sufficient for a testable build host. Confirm the instance-level switch and repository approval before expecting queued builds to be claimed.
 
 On Ubuntu:
 

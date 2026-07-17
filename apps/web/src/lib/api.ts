@@ -104,6 +104,8 @@ import type {
   UpdateProjectMemberResponse,
   UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
+  UpdateRepositoryRunnerPolicyRequest,
+  UpdateRepositoryRunnerPolicyResponse,
   UpdateRunnerResponse,
   UpdateTrustedProxySettingsRequest,
   UpdateUserRoleRequest,
@@ -539,17 +541,27 @@ export function deleteIntegration(
   })
 }
 
-export function listIntegrationRepos(
+export async function listIntegrationRepos(
   baseUrl: string,
   token: string,
   integrationId: string,
   options?: RequestOptions,
 ): Promise<ListRepositoriesResponse> {
-  return request<ListRepositoriesResponse>(
-    baseUrl,
-    `/v1/integrations/${integrationId}/repositories`,
-    { headers: authHeaders(token), signal: options?.signal },
-  )
+  const repositories: ListRepositoriesResponse['repositories'] = []
+  const pageSize = 500
+  let pageLength: number
+
+  do {
+    const page = await request<ListRepositoriesResponse>(
+      baseUrl,
+      `/v1/integrations/${integrationId}/repositories?limit=${pageSize}&offset=${repositories.length}`,
+      { headers: authHeaders(token), signal: options?.signal },
+    )
+    pageLength = page.repositories.length
+    repositories.push(...page.repositories)
+  } while (pageLength === pageSize)
+
+  return { repositories }
 }
 
 export function getRepositoryAvatar(
@@ -562,6 +574,23 @@ export function getRepositoryAvatar(
     baseUrl,
     `/v1/integration-repositories/${repositoryId}/avatar`,
     { headers: authHeaders(token), signal: options?.signal },
+  )
+}
+
+export function updateRepositoryRunnerPolicy(
+  baseUrl: string,
+  token: string,
+  repositoryId: string,
+  data: UpdateRepositoryRunnerPolicyRequest,
+): Promise<UpdateRepositoryRunnerPolicyResponse> {
+  return request<UpdateRepositoryRunnerPolicyResponse>(
+    baseUrl,
+    `/v1/integration-repositories/${repositoryId}/runner-policy`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    },
   )
 }
 

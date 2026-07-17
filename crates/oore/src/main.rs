@@ -5062,7 +5062,7 @@ mod tests {
     }
 
     #[test]
-    fn deferred_daemon_update_still_restarts_the_updated_runner() {
+    fn deferred_daemon_update_restarts_runner_with_installed_binary() {
         let (_temp, install, stage, snapshot) = prepare_update_transaction();
         let mut control = RecordingUpdateServiceControl {
             install_root: install.clone(),

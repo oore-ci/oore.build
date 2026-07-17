@@ -109,6 +109,16 @@ Oore CI is designed for local-network deployment:
 - Runner-to-daemon communication happens over your local network
 - The hosted UI at `ci.oore.build` connects directly to your daemon — no data proxied through a third party
 
+## Repository execution trust
+
+Oore V1 uses a **Direct macOS runner** for repositories you trust. Checkout and build commands run with the permissions of the runner's macOS account; Oore does not use `sandbox-exec` or claim that Direct mode contains hostile repository code.
+
+An owner or admin must enable Direct runner execution for the instance and approve each repository. Approval means the operator accepts the same code, dependency, build-script, and contributor risk as running that build directly on the runner Mac. New and re-added repositories start unapproved. External-fork pull and merge requests are ignored rather than executed automatically.
+
+Private workspaces, environment scrubbing, scoped checkout credentials, late signing-material retrieval, one-time signing grants, fixed signer commands, output verification, and cleanup remain defense-in-depth against accidental leakage. They are not an isolation boundary against malicious code already approved to run under the same account.
+
+A dedicated non-admin runner account is recommended. Strong isolation for untrusted contributions requires disposable macOS virtual machines and is outside V1.
+
 ## Audit logging
 
 User management and local recovery operations are logged:

@@ -330,6 +330,86 @@ pub async fn runner_heartbeat(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Atomically linearize a direct-runner claim against both policy gates.
+///
+/// The initial queue lookup chooses the oldest eligible build. Rechecking the
+/// gates in the queued -> scheduled update closes the race with an operator
+/// disabling either policy while a claim request is in flight.
+async fn schedule_eligible_direct_runner_build(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    actor: &str,
+) -> Result<bool, (StatusCode, Json<ApiError>)> {
+    let mut tx = pool.begin().await.map_err(|e| {
+        error!(error = %e, "failed to start runner claim transaction");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+    let now = now_unix();
+    let result = sqlx::query(
+        "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
+         WHERE id = ?2 AND status = 'queued' \
+           AND EXISTS ( \
+             SELECT 1 FROM projects p \
+             JOIN integration_repositories r ON r.id = p.repository_id \
+             JOIN instance_preferences pref ON pref.id = 1 \
+             WHERE p.id = builds.project_id \
+               AND pref.direct_macos_runner_enabled = 1 \
+               AND r.allow_direct_macos_runner = 1 \
+           )",
+    )
+    .bind(now)
+    .bind(build_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to schedule eligible build");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+
+    if result.rows_affected() == 0 {
+        tx.rollback().await.ok();
+        return Ok(false);
+    }
+
+    sqlx::query(
+        "INSERT INTO build_events \
+         (id, build_id, from_status, to_status, actor, reason, created_at) \
+         VALUES (?1, ?2, 'queued', 'scheduled', ?3, 'claimed by runner', ?4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(build_id)
+    .bind(actor)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to record runner claim event");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to commit runner claim");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+    Ok(true)
+}
+
 /// `POST /v1/runners/{runner_id}/claim` — runner claims next available build.
 pub async fn claim_job(
     State(state): State<Arc<AppState>>,
@@ -358,19 +438,28 @@ pub async fn claim_job(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    // Find oldest queued build
-    let build_row =
-        sqlx::query("SELECT * FROM builds WHERE status = 'queued' ORDER BY queued_at ASC LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to query queued builds");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to query builds",
-                )
-            })?;
+    // Missing repository or instance policy rows fail closed. Filtering before
+    // ordering prevents blocked work from starving later eligible builds.
+    let build_row = sqlx::query(
+        "SELECT b.* FROM builds b \
+         JOIN projects p ON p.id = b.project_id \
+         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN instance_preferences pref ON pref.id = 1 \
+         WHERE b.status = 'queued' \
+           AND pref.direct_macos_runner_enabled = 1 \
+           AND r.allow_direct_macos_runner = 1 \
+         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to query queued builds");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to query builds",
+        )
+    })?;
 
     let build_row = match build_row {
         Some(row) => row,
@@ -424,26 +513,13 @@ pub async fn claim_job(
 
     let actor_str = format!("runner:{runner_id}");
 
-    // Transition queued -> assigned using the state machine.
-    // The valid transitions are queued -> scheduled -> assigned, so step through both.
-    let scheduled = transition_build(
-        pool,
-        &build_id,
-        BuildStatus::Scheduled,
-        Some(&actor_str),
-        Some("claimed by runner"),
-    )
-    .await;
-
-    match scheduled {
-        Ok(_) => {}
-        Err(e) => {
-            // Another runner may have claimed it concurrently
-            warn!(build_id = %build_id, error = ?e, "failed to transition build to scheduled");
-            return Ok(Json(ClaimJobResponse { job: None }));
-        }
+    // Atomically transition queued -> scheduled while rechecking the policy
+    // gates. A successful update is the linearization point for drain behavior.
+    if !schedule_eligible_direct_runner_build(pool, &build_id, &actor_str).await? {
+        return Ok(Json(ClaimJobResponse { job: None }));
     }
 
+    // Complete the valid queued -> scheduled -> assigned sequence.
     let assigned = transition_build(
         pool,
         &build_id,

@@ -31,12 +31,14 @@ See [Environment Variables](/reference/config/environment-variables) for the com
 
 Override the database path with `--state-file` or `OORE_SETUP_STATE_FILE`.
 
-## Runner mode
+## Runner execution
 
-| Mode                   | How to set                    | Behavior                                                              |
-| ---------------------- | ----------------------------- | --------------------------------------------------------------------- |
-| **Embedded** (default) | Don't set `OORED_RUNNER_MODE` | Daemon runs a built-in runner that claims and executes builds         |
-| **External**           | `OORED_RUNNER_MODE=external`  | Daemon only serves the API; builds require an external runner process |
+`oored` does not execute repository commands. Builds require the separate Direct
+macOS runner process. `OORED_RUNNER_MODE` may be omitted or set to `external`;
+legacy `embedded` and `hybrid` values are rejected.
+
+The runner claims a queued build only when Direct runner execution is enabled in
+instance Preferences and that build's source repository has been approved.
 
 ## CORS configuration
 

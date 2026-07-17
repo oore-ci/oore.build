@@ -1653,6 +1653,73 @@
         ]
       }
     },
+    "/v1/integration-repositories/{id}/runner-policy": {
+      "put": {
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Update direct macOS runner policy for a repository",
+        "operationId": "update_repository_runner_policy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration repository ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRepositoryRunnerPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Repository runner policy updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRepositoryRunnerPolicyResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or administrator permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Repository not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/integrations": {
       "get": {
         "tags": [
@@ -7525,6 +7592,16 @@
               "null"
             ]
           },
+          "runner_policy_block_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerPolicyBlockReason"
+              }
+            ]
+          },
           "source_build_id": {
             "type": [
               "string",
@@ -8700,9 +8777,13 @@
           "key_storage_mode",
           "runtime_mode",
           "remote_auth_mode",
+          "direct_macos_runner_enabled",
           "restart_required"
         ],
         "properties": {
+          "direct_macos_runner_enabled": {
+            "type": "boolean"
+          },
           "key_storage_mode": {
             "$ref": "#/components/schemas/KeyStorageMode"
           },
@@ -8873,10 +8954,14 @@
           "external_id",
           "full_name",
           "is_private",
+          "allow_direct_macos_runner",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "allow_direct_macos_runner": {
+            "type": "boolean"
+          },
           "avatar_url": {
             "type": [
               "string",
@@ -10681,6 +10766,14 @@
           }
         }
       },
+      "RunnerPolicyBlockReason": {
+        "type": "string",
+        "enum": [
+          "instance_disabled",
+          "repository_unavailable",
+          "repository_not_approved"
+        ]
+      },
       "RunnerStatus": {
         "type": "string",
         "enum": [
@@ -11414,6 +11507,12 @@
           "key_storage_mode"
         ],
         "properties": {
+          "direct_macos_runner_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "key_storage_mode": {
             "$ref": "#/components/schemas/KeyStorageMode"
           },
@@ -11768,6 +11867,28 @@
               "null"
             ],
             "format": "int64"
+          }
+        }
+      },
+      "UpdateRepositoryRunnerPolicyRequest": {
+        "type": "object",
+        "required": [
+          "allow_direct_macos_runner"
+        ],
+        "properties": {
+          "allow_direct_macos_runner": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UpdateRepositoryRunnerPolicyResponse": {
+        "type": "object",
+        "required": [
+          "repository"
+        ],
+        "properties": {
+          "repository": {
+            "$ref": "#/components/schemas/IntegrationRepository"
           }
         }
       },

@@ -17,7 +17,7 @@ use sqlx::Row;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::row_to_integration;
+use super::{delete_integration_records, row_to_integration};
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
@@ -603,6 +603,7 @@ pub async fn create_local_git_integration(
         full_name: repo_name,
         default_branch,
         is_private: true,
+        allow_direct_macos_runner: false,
         avatar_url: None,
         created_at: now,
         updated_at: now,
@@ -687,18 +688,14 @@ pub async fn delete_local_git_integration(
 
     let display_name: Option<String> = row.get("display_name");
 
-    sqlx::query("DELETE FROM integrations WHERE id = ?1")
-        .bind(&id)
-        .execute(&pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to delete local git integration");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to delete integration",
-            )
-        })?;
+    delete_integration_records(&pool, &id).await.map_err(|e| {
+        error!(error = %e, "failed to delete local git integration");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete integration",
+        )
+    })?;
 
     let details = serde_json::json!({
         "provider": "local_git",

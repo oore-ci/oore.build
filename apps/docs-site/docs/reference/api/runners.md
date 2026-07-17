@@ -117,6 +117,8 @@ POST /v1/runners/{runner_id}/claim
 
 **Authentication**: Runner token (Bearer)
 
+The request must use runner protocol version `4`. The daemon considers only queued builds whose repository is approved and whose instance Direct runner switch is enabled. A blocked oldest build does not prevent a later eligible build from being claimed.
+
 ### Response `200 OK`
 
 Returns the claimed job details:
@@ -134,7 +136,7 @@ Returns the claimed job details:
 }
 ```
 
-If no jobs are available, returns `204 No Content`.
+If no eligible jobs are available, returns `204 No Content`. Policy-blocked builds remain queued and expose `runner_policy_block_reason` through ordinary build list/detail responses.
 
 ---
 

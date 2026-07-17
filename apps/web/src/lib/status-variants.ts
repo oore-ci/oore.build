@@ -1,5 +1,5 @@
 import type { BadgeVariant } from '@/components/ui/badge'
-import type { BuildStatus } from '@/lib/types'
+import type { BuildStatus, RunnerPolicyBlockReason } from '@/lib/types'
 
 export const BUILD_STATUS_FILTER_OPTIONS = {
   all: 'All statuses',
@@ -33,6 +33,18 @@ const BUILD_STATUS_VARIANT: Record<string, BadgeVariant> = {
 
 export function getStatusVariant(status: string): BadgeVariant {
   return BUILD_STATUS_VARIANT[status] ?? 'outline'
+}
+
+const RUNNER_POLICY_BLOCK_LABEL: Record<RunnerPolicyBlockReason, string> = {
+  instance_disabled: 'Direct runner paused',
+  repository_not_approved: 'Repository approval required',
+  repository_unavailable: 'Repository policy unavailable',
+}
+
+export function getRunnerPolicyBlockLabel(
+  reason: RunnerPolicyBlockReason,
+): string {
+  return RUNNER_POLICY_BLOCK_LABEL[reason]
 }
 
 export const INTEGRATION_STATUS_VARIANT: Record<string, BadgeVariant> = {

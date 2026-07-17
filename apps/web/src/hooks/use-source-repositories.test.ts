@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Integration, ListRepositoriesResponse } from '@/lib/types'
-import { discoverSourceRepositories } from '@/hooks/use-source-repositories'
+import {
+  discoverSourceRepositories,
+  discoverSourceRepositoriesStrict,
+} from '@/hooks/use-source-repositories'
 
 function integration(id: string): Integration {
   return {
@@ -25,6 +28,7 @@ function repositories(id: string): ListRepositoriesResponse {
         external_id: id,
         full_name: `owner/${id}`,
         is_private: true,
+        allow_direct_macos_runner: false,
         created_at: 0,
         updated_at: 0,
       },
@@ -83,5 +87,17 @@ describe('discoverSourceRepositories', () => {
     result.resolve(repositories('first'))
 
     await expect(discovered).rejects.toThrow('Cancelled source discovery')
+  })
+
+  it('fails closed when policy discovery cannot inspect every source', async () => {
+    await expect(
+      discoverSourceRepositoriesStrict(
+        [integration('first'), integration('second')],
+        (source) =>
+          source.id === 'second'
+            ? Promise.reject(new Error('Source unavailable'))
+            : Promise.resolve(repositories(source.id)),
+      ),
+    ).rejects.toThrow('Source unavailable')
   })
 })

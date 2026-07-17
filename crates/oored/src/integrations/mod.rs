@@ -67,6 +67,7 @@ use oore_contract::{
     ApiError, Integration, IntegrationDetailResponse, IntegrationInstallation,
     IntegrationRepository, ListInstallationsResponse, ListIntegrationsResponse,
     ListRepositoriesResponse, RuntimeMode, SyncInstallationsRequest, SyncInstallationsResponse,
+    UpdateRepositoryRunnerPolicyRequest, UpdateRepositoryRunnerPolicyResponse,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -76,7 +77,7 @@ use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
-use crate::util::api_err;
+use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -322,6 +323,7 @@ pub fn row_to_repository(row: &sqlx::sqlite::SqliteRow) -> IntegrationRepository
         full_name: row.get("full_name"),
         default_branch: row.get("default_branch"),
         is_private: row.get::<i32, _>("is_private") != 0,
+        allow_direct_macos_runner: row.get::<i32, _>("allow_direct_macos_runner") != 0,
         avatar_url: row.get("avatar_url"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -488,6 +490,30 @@ pub async fn get_integration(
     }))
 }
 
+pub(crate) async fn delete_integration_records(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "UPDATE projects SET repository_id = NULL \
+         WHERE repository_id IN (\
+             SELECT r.id FROM integration_repositories r \
+             JOIN integration_installations i ON i.id = r.installation_id \
+             WHERE i.integration_id = ?1\
+         )",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    let deleted = sqlx::query("DELETE FROM integrations WHERE id = ?1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(deleted.rows_affected() > 0)
+}
+
 /// `DELETE /v1/integrations/{id}` — disconnect and cascade delete.
 pub async fn delete_integration(
     State(state): State<Arc<AppState>>,
@@ -517,19 +543,15 @@ pub async fn delete_integration(
     let provider: String = row.get("provider");
     let display_name: Option<String> = row.get("display_name");
 
-    // Cascade delete (credentials, installations, repos, webhooks all have ON DELETE CASCADE)
-    sqlx::query("DELETE FROM integrations WHERE id = ?1")
-        .bind(&id)
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to delete integration");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to delete integration",
-            )
-        })?;
+    // Credentials, installations, repositories, and webhooks cascade from the integration.
+    delete_integration_records(pool, &id).await.map_err(|e| {
+        error!(error = %e, "failed to delete integration");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete integration",
+        )
+    })?;
 
     let details = serde_json::json!({
         "provider": provider,
@@ -606,6 +628,97 @@ pub async fn list_repositories(
     let repositories = rows.iter().map(row_to_repository).collect();
 
     Ok(Json(ListRepositoriesResponse { repositories }))
+}
+
+/// `PUT /v1/integration-repositories/{id}/runner-policy` — update whether a
+/// repository may execute builds on the direct macOS runner.
+pub async fn update_repository_runner_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateRepositoryRunnerPolicyRequest>,
+) -> ApiResult<UpdateRepositoryRunnerPolicyResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
+
+    let pool = {
+        let store = state.store.lock().await;
+        store.pool().clone()
+    };
+    let existing = sqlx::query("SELECT * FROM integration_repositories WHERE id = ?1")
+        .bind(&id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, repository_id = %id, "failed to load repository runner policy");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load repository runner policy",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Repository not found"))?;
+
+    let previous = existing.get::<i32, _>("allow_direct_macos_runner") != 0;
+    if previous != req.allow_direct_macos_runner {
+        let now = now_unix();
+        sqlx::query(
+            "UPDATE integration_repositories \
+             SET allow_direct_macos_runner = ?1, updated_at = ?2 WHERE id = ?3",
+        )
+        .bind(req.allow_direct_macos_runner)
+        .bind(now)
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, repository_id = %id, "failed to update repository runner policy");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update repository runner policy",
+            )
+        })?;
+
+        let details = serde_json::json!({
+            "previous_allow_direct_macos_runner": previous,
+            "allow_direct_macos_runner": req.allow_direct_macos_runner,
+            "updated_by": auth.0.email,
+        })
+        .to_string();
+        let _ = write_audit_log(
+            &pool,
+            Some(&auth.0.user_id),
+            "repository_runner_policy_updated",
+            "integration_repository",
+            Some(&id),
+            Some(&details),
+        )
+        .await;
+
+        info!(
+            repository_id = %id,
+            allow_direct_macos_runner = req.allow_direct_macos_runner,
+            updated_by = %auth.0.email,
+            "repository runner policy updated"
+        );
+    }
+
+    let row = sqlx::query("SELECT * FROM integration_repositories WHERE id = ?1")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, repository_id = %id, "failed to reload repository runner policy");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load updated repository runner policy",
+            )
+        })?;
+
+    Ok(Json(UpdateRepositoryRunnerPolicyResponse {
+        repository: row_to_repository(&row),
+    }))
 }
 
 /// `GET /v1/integration-repositories/{id}/avatar` — proxy a private GitLab avatar.

@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   InformationCircleIcon,
@@ -224,6 +224,52 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           </div>
         }
       />
+
+      {build.runner_policy_block_reason ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            {build.runner_policy_block_reason === 'instance_disabled' ? (
+              <>
+                This build is waiting because the Direct macOS runner is paused.
+                An owner or admin can enable it in{' '}
+                <Link
+                  to="/settings/preferences"
+                  className="font-medium underline underline-offset-4"
+                >
+                  Preferences
+                </Link>
+                .
+              </>
+            ) : build.runner_policy_block_reason ===
+              'repository_not_approved' ? (
+              <>
+                This build is waiting for repository approval. An owner or admin
+                can approve it under{' '}
+                <Link
+                  to="/settings/integrations"
+                  className="font-medium underline underline-offset-4"
+                >
+                  Sources
+                </Link>
+                .
+              </>
+            ) : (
+              <>
+                This build is waiting because its repository policy is
+                unavailable. Check the project&apos;s repository under{' '}
+                <Link
+                  to="/settings/integrations"
+                  className="font-medium underline underline-offset-4"
+                >
+                  Sources
+                </Link>
+                .
+              </>
+            )}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {failureReason ? (
         <Alert variant="destructive">

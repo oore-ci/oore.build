@@ -207,6 +207,7 @@ describe('types', () => {
       runtime_mode: 'local',
       remote_auth_mode: 'oidc',
       restart_required: false,
+      direct_macos_runner_enabled: false,
       updated_at: 123,
     }
     const response: InstancePreferencesResponse = { preferences: prefs }

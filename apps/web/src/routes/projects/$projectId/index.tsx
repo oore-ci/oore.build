@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
@@ -18,6 +18,8 @@ import { useBuilds } from '@/hooks/use-builds'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
+import { useSourceRepositories } from '@/hooks/use-source-repositories'
+import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { relativeTime } from '@/lib/format-utils'
 import { PageMeta } from '@/lib/seo'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
@@ -142,6 +144,7 @@ function useProjectDetailPageState() {
   const canWriteProjectsGlobally = useHasPermission('projects', 'write')
   const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const canWriteInstanceSettings = useHasPermission('instance_settings', 'write')
   const projectRole = data?.current_user_role ?? data?.project.current_user_role
   const canWriteProjects =
     canWriteProjectsGlobally &&
@@ -167,6 +170,12 @@ function useProjectDetailPageState() {
     undefined,
     { enabled: shouldDiscoverWorkflows },
   )
+  const sourceRepositoriesQuery = useSourceRepositories(
+    !!data?.project.repository_id,
+  )
+  const preferencesQuery = useInstancePreferences({
+    enabled: !!data?.project.repository_id,
+  })
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [dangerOpen, setDangerOpen] = useState(false)
@@ -212,6 +221,18 @@ function useProjectDetailPageState() {
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
   const projectHasSource = !!project.repository_id
+  const sourceRepository = sourceRepositoriesQuery.data?.find(
+    (repository) => repository.id === project.repository_id,
+  )
+  const runnerPolicyBlockReason = !preferencesQuery.data
+    ? undefined
+    : !preferencesQuery.data.preferences.direct_macos_runner_enabled
+      ? ('instance_disabled' as const)
+      : sourceRepository && !sourceRepository.allow_direct_macos_runner
+        ? ('repository_not_approved' as const)
+        : sourceRepositoriesQuery.isSuccess && !sourceRepository
+          ? ('repository_unavailable' as const)
+          : undefined
 
   function setTab(value: TabValue) {
     void navigate({
@@ -249,6 +270,7 @@ function useProjectDetailPageState() {
     canDeleteProjects,
     canManageAccess,
     canTriggerBuild,
+    canWriteInstanceSettings,
     canWritePipelines,
     canWriteProjects,
     dangerOpen,
@@ -264,11 +286,13 @@ function useProjectDetailPageState() {
     projectHasSource,
     projectId,
     repositoryWorkflowsQuery,
+    runnerPolicyBlockReason,
     setDangerOpen,
     setDeleteOpen,
     setTab,
     setTriggerBuildOpen,
     setTriggerPipelineId,
+    sourceRepository,
     triggerBuildOpen,
     triggerPipelineId,
   }
@@ -310,6 +334,7 @@ function ProjectDetailPage() {
     canDeleteProjects,
     canManageAccess,
     canTriggerBuild,
+    canWriteInstanceSettings,
     canWritePipelines,
     canWriteProjects,
     dangerOpen,
@@ -325,11 +350,13 @@ function ProjectDetailPage() {
     projectHasSource,
     projectId,
     repositoryWorkflowsQuery,
+    runnerPolicyBlockReason,
     setDangerOpen,
     setDeleteOpen,
     setTab,
     setTriggerBuildOpen,
     setTriggerPipelineId,
+    sourceRepository,
     triggerBuildOpen,
     triggerPipelineId,
   } = pageState
@@ -409,6 +436,61 @@ function ProjectDetailPage() {
           <AlertDescription>
             This project has no linked source repository. Link a repository
             before triggering builds.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {projectHasSource && runnerPolicyBlockReason ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            {runnerPolicyBlockReason === 'instance_disabled' ? (
+              <>
+                Direct macOS runner is paused. Builds can be queued, but they
+                will not start until an owner or admin enables it
+                {canWriteInstanceSettings ? (
+                  <>
+                    {' in '}
+                    <Link
+                      to="/settings/preferences"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Preferences
+                    </Link>
+                  </>
+                ) : null}
+                .
+              </>
+            ) : runnerPolicyBlockReason === 'repository_not_approved' ? (
+              <>
+                This repository is not approved for Direct runner builds.
+                Builds will remain queued until an owner or admin approves it
+                {sourceRepository ? (
+                  <>
+                    {' in '}
+                    <Link
+                      to="/settings/integrations/$integrationId"
+                      params={{ integrationId: sourceRepository.integration_id }}
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Sources
+                    </Link>
+                  </>
+                ) : null}
+                .
+              </>
+            ) : (
+              <>
+                Oore cannot find this project&apos;s repository policy. Builds
+                fail closed and remain queued. Check the repository under{' '}
+                <Link
+                  to="/settings/integrations"
+                  className="font-medium underline underline-offset-4"
+                >
+                  Sources
+                </Link>
+                .
+              </>
+            )}
           </AlertDescription>
         </Alert>
       ) : null}

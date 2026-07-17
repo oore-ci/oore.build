@@ -185,101 +185,10 @@ fn prepare_runner_workspace_root() -> anyhow::Result<PathBuf> {
     fs::canonicalize(&path).context("failed to resolve runner workspace root")
 }
 
-fn repository_shell_command(
-    script: &str,
-    workspace: &Path,
-    runner_workspace_root: &Path,
-    protected_host_paths: &[PathBuf],
-) -> anyhow::Result<tokio::process::Command> {
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let runner_workspace_root_path = fs::canonicalize(runner_workspace_root)
-            .context("failed to resolve runner workspace root")?;
-        let workspace_path =
-            fs::canonicalize(workspace).context("failed to resolve build workspace")?;
-        anyhow::ensure!(
-            workspace_path.parent() == Some(runner_workspace_root_path.as_path()),
-            "build workspace is outside the runner workspace root"
-        );
-        let mut protected_host_write_denials = String::new();
-        for protected_path in protected_host_paths {
-            let protected_path = fs::canonicalize(protected_path).with_context(|| {
-                format!(
-                    "failed to resolve protected host toolchain path {}",
-                    protected_path.display()
-                )
-            })?;
-            anyhow::ensure!(
-                protected_path.is_absolute()
-                    && !protected_path.starts_with(&workspace_path)
-                    && !workspace_path.starts_with(&protected_path),
-                "protected host toolchain path {} is not outside the repository workspace",
-                protected_path.display()
-            );
-            let protected_path = protected_path
-                .to_str()
-                .context("protected host toolchain path is not valid UTF-8")?;
-            anyhow::ensure!(
-                !protected_path.chars().any(char::is_control),
-                "protected host toolchain path contains control characters"
-            );
-            let protected_path = protected_path.replace('\\', "\\\\").replace('"', "\\\"");
-            protected_host_write_denials.push_str(&format!(
-                "(deny file-write* (literal \"{protected_path}\"))\n\
-                 (deny file-write* (subpath \"{protected_path}\"))\n"
-            ));
-        }
-        let runner_workspace_root = runner_workspace_root_path
-            .to_str()
-            .context("runner workspace root path is not valid UTF-8")?;
-        let workspace = workspace_path
-            .to_str()
-            .context("build workspace path is not valid UTF-8")?;
-        anyhow::ensure!(
-            !runner_workspace_root.chars().any(char::is_control)
-                && !workspace.chars().any(char::is_control),
-            "runner workspace path contains control characters"
-        );
-        let runner_workspace_root = runner_workspace_root
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"");
-        let workspace = workspace.replace('\\', "\\\\").replace('"', "\\\"");
-        // Seatbelt restrictions survive fork, exec, and setsid. Keep the current repository
-        // generation usable while denying every sibling generation and brokered escape route.
-        let profile = format!(
-            r#"(version 1)
-(allow default)
-(deny file* (subpath "{runner_workspace_root}"))
-(allow file* (subpath "{workspace}"))
-(allow file-read-metadata (literal "{runner_workspace_root}"))
-{protected_host_write_denials}
-(deny process-info*)
-(allow process-info-pidinfo (target self))
-(deny mach-task-name)
-(deny signal)
-(allow signal (target same-sandbox))
-(deny job-creation)
-(deny appleevent-send)
-(deny process-exec (literal "/usr/bin/security"))
-(deny mach-lookup
-  (global-name "com.apple.securityd")
-  (global-name "com.apple.securityd.xpc")
-  (global-name "com.apple.securityd.general")
-  (global-name "com.apple.securityd.systemkeychain")
-  (global-name "com.apple.coreservices.launchservicesd")
-  (global-name "com.apple.coreservices.appleevents")
-  (global-name "com.apple.lsd.open")
-  (global-name "com.apple.lsd.xpc"))"#
-        );
-        let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
-        command.args(["-p", &profile, "/bin/sh"]);
-        command
-    };
-    #[cfg(not(target_os = "macos"))]
-    let mut command = tokio::process::Command::new("sh");
-
+fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("/bin/sh");
     command.arg("-c").arg(script).current_dir(workspace);
-    Ok(command)
+    command
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -336,6 +245,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         "arch": arch,
         "xcode_version": xcode_version,
         "version": version,
+        "protocol_version": RUNNER_PROTOCOL_VERSION,
     })
 }
 
@@ -515,20 +425,12 @@ struct AndroidSigningToolchain {
     jarsigner: PathBuf,
     zip: PathBuf,
     java_home: Option<PathBuf>,
-    protected_host_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
 struct ResolvedAndroidJava {
     home: PathBuf,
     jarsigner: PathBuf,
-    protected_host_paths: Vec<PathBuf>,
-}
-
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.contains(&path) {
-        paths.push(path);
-    }
 }
 
 fn canonical_file(path: &Path) -> Option<PathBuf> {
@@ -544,7 +446,7 @@ fn fixed_system_executable(name: &str) -> Option<PathBuf> {
         .find_map(|root| canonical_file(&Path::new(root).join(name)))
 }
 
-fn find_apksigner() -> (PathBuf, Vec<PathBuf>) {
+fn find_apksigner() -> PathBuf {
     let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
         .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
@@ -568,51 +470,22 @@ fn find_apksigner() -> (PathBuf, Vec<PathBuf>) {
             let Some(apksigner) = canonical_file(&path) else {
                 continue;
             };
-            let mut protected_host_paths = Vec::new();
-            if let Ok(root) = fs::canonicalize(&root) {
-                push_unique_path(&mut protected_host_paths, root);
-            }
-            if let Some(version_root) = apksigner.parent() {
-                push_unique_path(&mut protected_host_paths, version_root.to_path_buf());
-            }
-            return (apksigner, protected_host_paths);
+            return apksigner;
         }
     }
-    (
-        fixed_system_executable("apksigner").unwrap_or_else(|| PathBuf::from("apksigner")),
-        Vec::new(),
-    )
+    fixed_system_executable("apksigner").unwrap_or_else(|| PathBuf::from("apksigner"))
 }
 
-fn resolve_android_signing_java(
-    home: &Path,
-    protection_root: Option<&Path>,
-) -> Option<ResolvedAndroidJava> {
+fn resolve_android_signing_java(home: &Path) -> Option<ResolvedAndroidJava> {
     let home = fs::canonicalize(home).ok()?;
-    let java = canonical_file(&home.join("bin/java"))?;
+    canonical_file(&home.join("bin/java"))?;
     let jarsigner = canonical_file(&home.join("bin/jarsigner"))?;
-    let mut protected_host_paths = Vec::new();
-    if let Some(protection_root) = protection_root
-        && let Ok(protection_root) = fs::canonicalize(protection_root)
-    {
-        push_unique_path(&mut protected_host_paths, protection_root);
-    }
-    push_unique_path(&mut protected_host_paths, home.clone());
-    for executable in [&java, &jarsigner] {
-        if let Some(parent) = executable.parent() {
-            push_unique_path(&mut protected_host_paths, parent.to_path_buf());
-        }
-    }
-    Some(ResolvedAndroidJava {
-        home,
-        jarsigner,
-        protected_host_paths,
-    })
+    Some(ResolvedAndroidJava { home, jarsigner })
 }
 
 fn find_android_signing_java() -> Option<ResolvedAndroidJava> {
     if let Some(path) = std::env::var_os("JAVA_HOME").map(PathBuf::from)
-        && let Some(java) = resolve_android_signing_java(&path, Some(&path))
+        && let Some(java) = resolve_android_signing_java(&path)
     {
         return Some(java);
     }
@@ -628,7 +501,7 @@ fn find_android_signing_java() -> Option<ResolvedAndroidJava> {
             for app in ["Android Studio.app", "Android Studio Preview.app"] {
                 let app_root = root.join(app);
                 let home = app_root.join("Contents/jbr/Contents/Home");
-                if let Some(java) = resolve_android_signing_java(&home, Some(&app_root)) {
+                if let Some(java) = resolve_android_signing_java(&home) {
                     return Some(java);
                 }
             }
@@ -638,8 +511,7 @@ fn find_android_signing_java() -> Option<ResolvedAndroidJava> {
             && output.status.success()
         {
             let home = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-            let bundle_root = home.parent().and_then(Path::parent);
-            if let Some(java) = resolve_android_signing_java(&home, bundle_root) {
+            if let Some(java) = resolve_android_signing_java(&home) {
                 return Some(java);
             }
         }
@@ -650,12 +522,9 @@ fn find_android_signing_java() -> Option<ResolvedAndroidJava> {
 
 impl AndroidSigningToolchain {
     fn discover() -> Self {
-        let (apksigner, mut protected_host_paths) = find_apksigner();
+        let apksigner = find_apksigner();
         let java = find_android_signing_java();
         let (java_home, jarsigner) = if let Some(java) = java {
-            for path in java.protected_host_paths {
-                push_unique_path(&mut protected_host_paths, path);
-            }
             (Some(java.home), java.jarsigner)
         } else {
             (
@@ -668,7 +537,6 @@ impl AndroidSigningToolchain {
             jarsigner,
             zip: fixed_system_executable("zip").unwrap_or_else(|| PathBuf::from("zip")),
             java_home,
-            protected_host_paths,
         }
     }
 
@@ -3306,15 +3174,7 @@ async fn execute_build(
     )
     .await;
 
-    let mut checkout_child = match repository_shell_command(
-        &checkout.shell_script,
-        &workspace,
-        &runner_workspace_root,
-        &android_signing_toolchain.protected_host_paths,
-    ) {
-        Ok(command) => command,
-        Err(error) => return (steps, Err(error)),
-    };
+    let mut checkout_child = repository_shell_command(&checkout.shell_script, &workspace);
     checkout_child
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -3621,15 +3481,7 @@ async fn execute_build(
             )
             .await;
 
-            let mut step_cmd = match repository_shell_command(
-                &normalized_command,
-                &workspace,
-                &runner_workspace_root,
-                &android_signing_toolchain.protected_host_paths,
-            ) {
-                Ok(command) => command,
-                Err(error) => return (steps, Err(error)),
-            };
+            let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
             step_cmd
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -4702,13 +4554,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reported_capabilities_include_runner_version() {
+    async fn reported_capabilities_identify_the_installed_runner() {
         let capabilities = detect_capabilities().await;
         assert!(
             capabilities
                 .get("version")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|version| !version.is_empty())
+        );
+        assert_eq!(
+            capabilities
+                .get("protocol_version")
+                .and_then(serde_json::Value::as_u64),
+            Some(u64::from(RUNNER_PROTOCOL_VERSION))
         );
     }
 
@@ -5355,24 +5213,18 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn repository_shell_command_allows_apple_git_init() {
+    async fn repository_shell_command_runs_apple_git_directly() {
         let parent = temp_workspace();
-        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
-            .expect("create protected runner root");
-        let repository_workspace =
-            create_private_workspace_in(&runner_workspace_root, "repository")
-                .expect("create repository workspace");
+        let repository_workspace = parent.join("repository");
+        fs::create_dir(&repository_workspace).expect("create repository workspace");
 
-        let output = repository_shell_command(
-            "/usr/bin/git init --quiet",
-            &repository_workspace,
-            &runner_workspace_root,
-            &[],
-        )
-        .expect("build contained repository command")
-        .output()
-        .await
-        .expect("run Apple Git through repository sandbox");
+        let mut command =
+            repository_shell_command("/usr/bin/git init --quiet", &repository_workspace);
+        assert_eq!(
+            command.as_std().get_program(),
+            Path::new("/bin/sh").as_os_str()
+        );
+        let output = command.output().await.expect("run Apple Git directly");
 
         assert!(
             output.status.success(),
@@ -5382,233 +5234,6 @@ mod tests {
             String::from_utf8_lossy(&output.stderr),
         );
         assert!(repository_workspace.join(".git").is_dir());
-        cleanup_workspace(&parent);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn repository_command_cannot_mutate_android_signing_toolchain() {
-        let parent = temp_workspace();
-        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
-            .expect("create protected runner root");
-        let repository_workspace =
-            create_private_workspace_in(&runner_workspace_root, "repository")
-                .expect("create repository workspace");
-        let sdk_root = parent.join("host-android-sdk");
-        let java_home = parent.join("host-jdk");
-        let apksigner = sdk_root.join("build-tools/36.1.0/apksigner");
-        let java = java_home.join("bin/java");
-        let jarsigner = java_home.join("bin/jarsigner");
-        for path in [&apksigner, &java, &jarsigner] {
-            fs::create_dir_all(path.parent().expect("tool parent"))
-                .expect("create synthetic tool parent");
-            fs::write(path, b"TRUSTED_TOOL").expect("write synthetic trusted tool");
-        }
-
-        let allowed_write = repository_workspace.join("allowed-write");
-        let protected_host_paths = vec![
-            fs::canonicalize(&sdk_root).expect("resolve synthetic SDK root"),
-            fs::canonicalize(&java_home).expect("resolve synthetic JDK root"),
-        ];
-        let mut command = repository_shell_command(
-            r#"printf 'REPOSITORY_CONTROLLED' > "$OORE_TEST_APKSIGNER"
-printf 'REPOSITORY_CONTROLLED' > "$OORE_TEST_JAVA"
-printf 'REPOSITORY_CONTROLLED' > "$OORE_TEST_JARSIGNER"
-printf 'ALLOWED' > "$OORE_TEST_ALLOWED_WRITE""#,
-            &repository_workspace,
-            &runner_workspace_root,
-            &protected_host_paths,
-        )
-        .expect("build contained repository command");
-        command
-            .env("OORE_TEST_APKSIGNER", &apksigner)
-            .env("OORE_TEST_JAVA", &java)
-            .env("OORE_TEST_JARSIGNER", &jarsigner)
-            .env("OORE_TEST_ALLOWED_WRITE", &allowed_write);
-        let output = command
-            .output()
-            .await
-            .expect("run repository toolchain mutation attempt");
-        assert!(
-            output.status.success(),
-            "mutation probe failed: status={:?}, stdout={}, stderr={}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-        assert_eq!(
-            fs::read(&apksigner).expect("read apksigner"),
-            b"TRUSTED_TOOL"
-        );
-        assert_eq!(fs::read(&java).expect("read java"), b"TRUSTED_TOOL");
-        assert_eq!(
-            fs::read(&jarsigner).expect("read jarsigner"),
-            b"TRUSTED_TOOL"
-        );
-        assert_eq!(
-            fs::read(&allowed_write).expect("read allowed write"),
-            b"ALLOWED"
-        );
-        cleanup_workspace(&parent);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn repository_descendant_escape_helper() {
-        let Ok(ready_path) = std::env::var("OORE_ESCAPE_READY") else {
-            return;
-        };
-        let signer_path = std::env::var("OORE_ESCAPE_SIGNER").expect("signer marker path");
-        let result_path = std::env::var("OORE_ESCAPE_RESULT").expect("result path");
-        let canary_path = std::env::var("OORE_ESCAPE_CANARY").expect("canary path");
-        let protected_root =
-            std::env::var("OORE_ESCAPE_PROTECTED_ROOT").expect("protected runner root path");
-        let signing_workspace =
-            std::env::var("OORE_ESCAPE_SIGNING_WORKSPACE").expect("signing workspace path");
-        let signing_link =
-            std::env::var("OORE_ESCAPE_SIGNING_LINK").expect("signing workspace link path");
-
-        unsafe extern "C" {
-            fn setsid() -> libc::pid_t;
-        }
-        let detached = unsafe { setsid() } >= 0;
-        fs::write(&ready_path, std::process::id().to_string()).expect("publish detached child");
-
-        let signer_pid = (0..250)
-            .find_map(|_| {
-                fs::read_to_string(&signer_path)
-                    .ok()
-                    .and_then(|value| value.trim().parse::<u32>().ok())
-                    .or_else(|| {
-                        std::thread::sleep(Duration::from_millis(20));
-                        None
-                    })
-            })
-            .expect("signer marker must appear");
-        let can_read_canary = fs::read(&canary_path).is_ok();
-        let can_list_protected_root = fs::read_dir(&protected_root).is_ok();
-        let can_list_signing_workspace = fs::read_dir(&signing_workspace).is_ok();
-        let can_follow_signing_link =
-            fs::read(Path::new(&signing_link).join("signing-canary")).is_ok();
-        let can_inspect_signer = Command::new("/bin/ps")
-            .args(["eww", "-p", &signer_pid.to_string(), "-o", "command="])
-            .output()
-            .is_ok_and(|output| output.status.success());
-        let can_signal_signer = Command::new("/bin/kill")
-            .args(["-0", &signer_pid.to_string()])
-            .status()
-            .is_ok_and(|status| status.success());
-        let can_access_keychain = Command::new("/usr/bin/security")
-            .args(["default-keychain", "-d", "user"])
-            .output()
-            .is_ok_and(|output| output.status.success());
-        fs::write(
-            result_path,
-            serde_json::to_vec(&serde_json::json!({
-                "detached": detached,
-                "can_read_canary": can_read_canary,
-                "can_list_protected_root": can_list_protected_root,
-                "can_list_signing_workspace": can_list_signing_workspace,
-                "can_follow_signing_link": can_follow_signing_link,
-                "can_inspect_signer": can_inspect_signer,
-                "can_signal_signer": can_signal_signer,
-                "can_access_keychain": can_access_keychain,
-            }))
-            .expect("encode escape result"),
-        )
-        .expect("publish escape result");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn detached_repository_descendant_cannot_reach_later_signer() {
-        use std::os::unix::fs::symlink;
-
-        let parent = temp_workspace();
-        let runner_workspace_root = create_private_workspace_in(&parent, "protected-runner")
-            .expect("create protected runner root");
-        let repository_workspace =
-            create_private_workspace_in(&runner_workspace_root, "repository")
-                .expect("create repository workspace");
-        let signing_workspace = runner_workspace_root.join("later-signer");
-        let ready_path = repository_workspace.join("detached-ready");
-        let signer_path = repository_workspace.join("signer-pid");
-        let result_path = repository_workspace.join("escape-result.json");
-        let signing_link = repository_workspace.join("signing-link");
-        let canary_path = signing_workspace.join("signing-canary");
-        let test_binary = std::env::current_exe().expect("resolve test binary");
-        symlink(&signing_workspace, &signing_link).expect("link future signing workspace");
-
-        let mut repository_command = repository_shell_command(
-            "\"$OORE_ESCAPE_HELPER\" --exact tests::repository_descendant_escape_helper >/dev/null 2>&1 &",
-            &repository_workspace,
-            &runner_workspace_root,
-            &[],
-        )
-        .expect("build contained repository command");
-        repository_command
-            .env("OORE_ESCAPE_HELPER", test_binary)
-            .env("OORE_ESCAPE_READY", &ready_path)
-            .env("OORE_ESCAPE_SIGNER", &signer_path)
-            .env("OORE_ESCAPE_RESULT", &result_path)
-            .env("OORE_ESCAPE_CANARY", &canary_path)
-            .env("OORE_ESCAPE_PROTECTED_ROOT", &runner_workspace_root)
-            .env("OORE_ESCAPE_SIGNING_WORKSPACE", &signing_workspace)
-            .env("OORE_ESCAPE_SIGNING_LINK", &signing_link);
-        let stage_status = repository_command
-            .status()
-            .await
-            .expect("run contained repository stage");
-        assert!(stage_status.success());
-
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while !ready_path.exists() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("detached child must survive its stage shell");
-
-        fs::create_dir(&signing_workspace).expect("create later signing workspace");
-        write_private_file(&canary_path, b"RUNNER_SIGNING_AUTHORITY")
-            .expect("write protected signer canary");
-        let mut signer = tokio::process::Command::new("/bin/sleep")
-            .arg("5")
-            .env("OORE_SIGNER_SECRET", "RUNNER_SIGNING_AUTHORITY")
-            .spawn()
-            .expect("start simulated signer");
-        fs::write(&signer_path, signer.id().expect("signer pid").to_string())
-            .expect("publish signer pid");
-
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while !result_path.exists() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("detached child must publish its denied escape attempts");
-        let result: serde_json::Value =
-            serde_json::from_slice(&fs::read(&result_path).expect("read escape result"))
-                .expect("parse escape result");
-        assert_eq!(
-            result,
-            serde_json::json!({
-                "detached": true,
-                "can_read_canary": false,
-                "can_list_protected_root": false,
-                "can_list_signing_workspace": false,
-                "can_follow_signing_link": false,
-                "can_inspect_signer": false,
-                "can_signal_signer": false,
-                "can_access_keychain": false,
-            })
-        );
-        assert_eq!(
-            fs::read(&canary_path).expect("read intact signer canary"),
-            b"RUNNER_SIGNING_AUTHORITY"
-        );
-        signer.kill().await.ok();
-        signer.wait().await.ok();
         cleanup_workspace(&parent);
     }
 
@@ -5748,7 +5373,6 @@ printf 'ALLOWED' > "$OORE_TEST_ALLOWED_WRITE""#,
             jarsigner,
             zip: fixed_system_executable("zip").expect("system zip is installed"),
             java_home: None,
-            protected_host_paths: Vec::new(),
         };
         let inputs = AndroidSigningInputs {
             keystore_bytes: b"synthetic-keystore".to_vec(),

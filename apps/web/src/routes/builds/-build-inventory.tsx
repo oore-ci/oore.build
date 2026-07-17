@@ -17,7 +17,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { relativeTime } from '@/lib/format-utils'
-import { getStatusVariant } from '@/lib/status-variants'
+import {
+  getRunnerPolicyBlockLabel,
+  getStatusVariant,
+} from '@/lib/status-variants'
 
 export type BuildSort =
   'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
@@ -90,6 +93,13 @@ export function BuildInventory({
                     {build.status}
                   </Badge>
                 </div>
+                {build.runner_policy_block_reason ? (
+                  <p className="text-xs text-warning">
+                    {getRunnerPolicyBlockLabel(
+                      build.runner_policy_block_reason,
+                    )}
+                  </p>
+                ) : null}
                 <p className="truncate text-sm">
                   {projectName(build, projects)}
                   {build.context?.pipeline_name ? (
@@ -197,6 +207,13 @@ export function BuildInventory({
                       <Badge variant={getStatusVariant(build.status)}>
                         {build.status}
                       </Badge>
+                      {build.runner_policy_block_reason ? (
+                        <p className="mt-1 text-xs text-warning">
+                          {getRunnerPolicyBlockLabel(
+                            build.runner_policy_block_reason,
+                          )}
+                        </p>
+                      ) : null}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       <Badge variant="outline">{build.trigger_type}</Badge>

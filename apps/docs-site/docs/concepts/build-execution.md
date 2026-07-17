@@ -18,14 +18,20 @@ Trigger → Queue → Claim → Clone → Setup → Build → Collect → Store
 A build can be triggered three ways:
 
 - **Manual** — user clicks "Trigger Build" in the UI or calls the API
-- **Webhook** — GitHub or GitLab sends a push or pull request event
+- **Webhook** — GitHub or GitLab sends a push or verified same-repository pull/merge-request revision
 - **API** — direct `POST /v1/projects/{project_id}/builds`
 
 The daemon creates a build record with status `queued` and a snapshot of the pipeline configuration at that moment.
 
 ### 2. Queue and scheduling
 
-The build enters the queue. The scheduler picks the oldest queued build and assigns it to an available runner. In V1, there is no capability matching — the scheduler simply picks the oldest job.
+The build enters the queue. A runner can claim it only when the instance Direct runner switch is enabled and its repository is approved. The claim query picks the oldest eligible build, so an unapproved repository does not block approved work behind it.
+
+Running builds finish if either control is disabled. Queued builds wait and expose one of these policy reasons in the API and UI:
+
+- `instance_disabled`
+- `repository_not_approved`
+- `repository_unavailable`
 
 ### 3. Claim
 
@@ -55,7 +61,7 @@ Commands execute in three stages:
 2. **build** — the main build commands (e.g., `flutter build apk --release`)
 3. **post_build** — optional post-processing
 
-Each command runs in the cloned repository directory. Output is streamed to the daemon in real-time via `POST /v1/runners/{runner_id}/jobs/{job_id}/logs`.
+Each command runs directly in the cloned repository directory with the permissions of the runner's macOS account. Output is streamed to the daemon in real-time via `POST /v1/runners/{runner_id}/jobs/{job_id}/logs`.
 
 If any command returns a non-zero exit code, the build fails immediately and subsequent commands are skipped.
 
@@ -75,31 +81,16 @@ The daemon stores artifacts according to the instance's storage configuration:
 
 Download links are time-limited and generated on demand via `POST /v1/artifacts/{artifact_id}/download-link`.
 
-## Embedded vs. external runners
+## Direct macOS runner
 
-### Embedded runner (default)
-
-When `oored` starts in default mode, it runs an embedded runner in the same process. This is the simplest setup — no additional configuration needed. The embedded runner:
-
-- Starts automatically with the daemon
-- Claims and executes builds locally
-- Has access to the local filesystem for artifact storage
-- Suitable for single-host deployments
-
-### External runner
-
-For more control, set `OORED_RUNNER_MODE=external` and start a separate runner process:
+Repository execution uses the separate `oore-runner` process. Register and start it with:
 
 ```bash
 oore runner register --daemon-url http://127.0.0.1:8787 --token <session_token>
 oore runner start
 ```
 
-External runners are useful for:
-
-- Running builds on a different machine than the daemon
-- Isolating build environments
-- Future multi-runner setups
+The runner can be on the daemon Mac or another macOS host. It is a compatibility-first execution mode for trusted repositories, not a sandbox for hostile code. A dedicated non-admin runner account is recommended hardening. Embedded repository execution is unavailable.
 
 ## Config resolution at build time
 

@@ -7,7 +7,7 @@ use oore_contract::{
     ApiError, Build, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse, BuildEvent,
     BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest,
     CreateBuildResponse, ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse,
-    TriggerConfig,
+    RunnerPolicyBlockReason, TriggerConfig,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -50,6 +50,11 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         pipeline_id: row.get("pipeline_id"),
         build_number: row.get("build_number"),
         status: row.get("status"),
+        runner_policy_block_reason: row
+            .try_get::<Option<String>, _>("runner_policy_block_reason")
+            .ok()
+            .flatten()
+            .and_then(|reason| reason.parse::<RunnerPolicyBlockReason>().ok()),
         trigger_type: row.get("trigger_type"),
         trigger_actor: row.get("trigger_actor"),
         trigger_event: row.get("trigger_event"),
@@ -85,6 +90,37 @@ fn row_to_redacted_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         }
     }
     build
+}
+
+async fn runner_policy_block_reason_for_project(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<Option<RunnerPolicyBlockReason>, (StatusCode, Json<ApiError>)> {
+    let reason: Option<String> = sqlx::query_scalar(
+        "SELECT CASE \
+           WHEN COALESCE(pref.direct_macos_runner_enabled, 0) = 0 THEN 'instance_disabled' \
+           WHEN r.id IS NULL THEN 'repository_unavailable' \
+           WHEN r.allow_direct_macos_runner = 0 THEN 'repository_not_approved' \
+           ELSE NULL \
+         END \
+         FROM projects p \
+         LEFT JOIN integration_repositories r ON r.id = p.repository_id \
+         LEFT JOIN instance_preferences pref ON pref.id = 1 \
+         WHERE p.id = ?1",
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to derive runner policy status");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to derive runner policy status",
+        )
+    })?;
+
+    Ok(reason.and_then(|value| value.parse().ok()))
 }
 
 fn row_to_build_event(row: &sqlx::sqlite::SqliteRow) -> BuildEvent {
@@ -967,12 +1003,15 @@ pub async fn create_build(
         "build created"
     );
 
+    let runner_policy_block_reason =
+        runner_policy_block_reason_for_project(&pool, &project_id).await?;
     let build = Build {
         id: build_id,
         project_id,
         pipeline_id: req.pipeline_id,
         build_number,
         status: "queued".to_string(),
+        runner_policy_block_reason,
         trigger_type: "manual".to_string(),
         trigger_actor: Some(auth.0.email),
         trigger_event: None,
@@ -1083,9 +1122,18 @@ pub async fn list_builds(
 
     let count_query = format!("SELECT COUNT(*) FROM builds {where_clause}");
     let list_query = format!(
-        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name \
+        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name, \
+         CASE \
+           WHEN builds.status != 'queued' THEN NULL \
+           WHEN COALESCE(instance_preferences.direct_macos_runner_enabled, 0) = 0 THEN 'instance_disabled' \
+           WHEN integration_repositories.id IS NULL THEN 'repository_unavailable' \
+           WHEN integration_repositories.allow_direct_macos_runner = 0 THEN 'repository_not_approved' \
+           ELSE NULL \
+         END AS runner_policy_block_reason \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
+         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
          LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
          LEFT JOIN runners ON runners.id = builds.runner_id \
          {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
@@ -1131,9 +1179,18 @@ pub async fn get_build(
     let pool = store.pool();
 
     let build_row = sqlx::query(
-        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name \
+        "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name, \
+         CASE \
+           WHEN builds.status != 'queued' THEN NULL \
+           WHEN COALESCE(instance_preferences.direct_macos_runner_enabled, 0) = 0 THEN 'instance_disabled' \
+           WHEN integration_repositories.id IS NULL THEN 'repository_unavailable' \
+           WHEN integration_repositories.allow_direct_macos_runner = 0 THEN 'repository_not_approved' \
+           ELSE NULL \
+         END AS runner_policy_block_reason \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
+         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
          LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
          LEFT JOIN runners ON runners.id = builds.runner_id \
          WHERE builds.id = ?1",
@@ -1412,12 +1469,15 @@ pub async fn rerun_build(
     let config_snapshot: serde_json::Value =
         serde_json::from_str(&config_snapshot_str).unwrap_or(serde_json::json!({}));
 
+    let runner_policy_block_reason =
+        runner_policy_block_reason_for_project(pool, &project_id).await?;
     let build = Build {
         id: new_build_id,
         project_id,
         pipeline_id,
         build_number,
         status: "queued".to_string(),
+        runner_policy_block_reason,
         trigger_type: "manual".to_string(),
         trigger_actor: Some(auth.0.email),
         trigger_event: Some("rerun".to_string()),
@@ -1486,6 +1546,8 @@ pub async fn trigger_build_from_webhook(
 
     for project_row in &project_rows {
         let project_id: String = project_row.get("id");
+        let runner_policy_block_reason =
+            runner_policy_block_reason_for_project(pool, &project_id).await?;
 
         // Resolve repo clone URL for this specific project/repository.
         let repo_url: Option<String> = sqlx::query_scalar(
@@ -1656,6 +1718,7 @@ pub async fn trigger_build_from_webhook(
                 pipeline_id,
                 build_number,
                 status: "queued".to_string(),
+                runner_policy_block_reason,
                 trigger_type: "webhook".to_string(),
                 trigger_actor: actor.map(String::from),
                 trigger_event: Some(event_type.to_string()),
