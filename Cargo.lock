@@ -2628,6 +2628,7 @@ dependencies = [
  "ipnet",
  "jsonwebtoken",
  "lettre",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "oore-contract",

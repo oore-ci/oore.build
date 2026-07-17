@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use oored::build_test_router;
+use oored::local_recovery::RecoveryCapabilityStore;
 use oored::store::SetupStore;
 use ring::hmac;
 use sqlx::SqlitePool;
@@ -31,6 +32,26 @@ pub async fn create_test_app(db_path: &Path) -> Router {
         .await
         .expect("failed to init database");
     build_test_router(store, TEST_ENCRYPTION_KEY.to_vec()).await
+}
+
+/// Create a test app with a caller-owned local recovery capability store.
+pub async fn create_test_app_with_recovery(
+    db_path: &Path,
+    recovery_capabilities: RecoveryCapabilityStore,
+) -> Router {
+    let store = SetupStore::connect(db_path.to_path_buf())
+        .await
+        .expect("failed to connect to test database");
+    store
+        .init_if_missing()
+        .await
+        .expect("failed to init database");
+    oored::build_test_router_with_recovery(
+        store,
+        TEST_ENCRYPTION_KEY.to_vec(),
+        recovery_capabilities,
+    )
+    .await
 }
 
 /// Create a test app with an externally reachable public URL loaded into runtime state.

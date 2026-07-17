@@ -13,6 +13,7 @@ pub mod extractors;
 pub mod frontend_pairing;
 pub mod instance_settings;
 pub mod integrations;
+pub mod local_recovery;
 pub mod logs;
 pub mod notification_channels;
 pub mod notification_dispatch;
@@ -106,6 +107,8 @@ pub struct AppState {
     pub public_url: Arc<RwLock<Option<String>>>,
     /// Owner-triggered backend update state.
     pub runtime_update: runtime_updates::RuntimeUpdateState,
+    /// Short-lived, single-use local recovery capabilities minted over UDS.
+    pub recovery_capabilities: local_recovery::RecoveryCapabilityStore,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -2029,7 +2032,29 @@ pub async fn build_router(
     encryption_key: Vec<u8>,
     metrics_handle: PrometheusHandle,
 ) -> Router {
-    build_router_inner(store, encryption_key, false, metrics_handle).await
+    build_router_with_recovery(
+        store,
+        encryption_key,
+        metrics_handle,
+        local_recovery::RecoveryCapabilityStore::default(),
+    )
+    .await
+}
+
+pub async fn build_router_with_recovery(
+    store: SetupStore,
+    encryption_key: Vec<u8>,
+    metrics_handle: PrometheusHandle,
+    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
+) -> Router {
+    build_router_inner(
+        store,
+        encryption_key,
+        false,
+        metrics_handle,
+        recovery_capabilities,
+    )
+    .await
 }
 
 /// Build a test router that skips real OIDC discovery in `configure_oidc`.
@@ -2038,6 +2063,20 @@ pub async fn build_router(
 /// making any network calls.
 #[cfg(any(test, feature = "test-support"))]
 pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Router {
+    build_test_router_with_recovery(
+        store,
+        encryption_key,
+        local_recovery::RecoveryCapabilityStore::default(),
+    )
+    .await
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub async fn build_test_router_with_recovery(
+    store: SetupStore,
+    encryption_key: Vec<u8>,
+    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
+) -> Router {
     use std::sync::OnceLock;
     static TEST_METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
     let metrics_handle = TEST_METRICS
@@ -2047,7 +2086,14 @@ pub async fn build_test_router(store: SetupStore, encryption_key: Vec<u8>) -> Ro
                 .expect("failed to install test metrics recorder")
         })
         .clone();
-    build_router_inner(store, encryption_key, true, metrics_handle).await
+    build_router_inner(
+        store,
+        encryption_key,
+        true,
+        metrics_handle,
+        recovery_capabilities,
+    )
+    .await
 }
 
 async fn build_router_inner(
@@ -2055,6 +2101,7 @@ async fn build_router_inner(
     encryption_key: Vec<u8>,
     _skip_oidc_discovery: bool,
     metrics_handle: PrometheusHandle,
+    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
 ) -> Router {
     let session_store = SessionStore::new(store.pool().clone());
     let enforcer = rbac::init_enforcer()
@@ -2125,6 +2172,7 @@ async fn build_router_inner(
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
+        recovery_capabilities,
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)

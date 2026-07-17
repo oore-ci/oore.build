@@ -969,9 +969,9 @@ mod pending_auth_tests {
 
 /// `POST /v1/auth/local/login`
 ///
-/// Creates a loopback-only local session without OIDC.
-/// - If setup is not complete, local setup is auto-finalized on first login.
-/// - If `email` is omitted, auto-selects the single active user.
+/// Creates a passwordless local session without OIDC.
+/// - Local Only mode requires a loopback client and may auto-finalize setup.
+/// - Ready External Access mode requires a single-use recovery capability.
 pub async fn local_login(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
@@ -979,22 +979,13 @@ pub async fn local_login(
     Json(req): Json<LocalLoginRequest>,
 ) -> Result<Json<LocalLoginResponse>, (StatusCode, Json<ApiError>)> {
     let effective_ip = crate::effective_client_ip(peer_addr, &headers);
-    if !effective_ip.is_loopback() {
-        warn!(
-            peer_ip = %peer_addr.ip(),
-            source_ip = %effective_ip,
-            "blocked local login attempt from non-loopback client"
-        );
-        return Err(api_err(
-            StatusCode::FORBIDDEN,
-            "local_login_loopback_required",
-            "Local login is only available from loopback clients",
-        ));
-    }
-
     let requested_email = req
         .email
         .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty());
+    let recovery_capability = req
+        .recovery_capability
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
     let store = state.store.lock().await;
@@ -1016,6 +1007,18 @@ pub async fn local_login(
                 "Failed to determine runtime mode",
             )
         })?;
+    if mode == RuntimeMode::Local && !effective_ip.is_loopback() {
+        warn!(
+            peer_ip = %peer_addr.ip(),
+            source_ip = %effective_ip,
+            "blocked local login attempt from non-loopback client"
+        );
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "local_login_loopback_required",
+            "Local login is only available from loopback clients",
+        ));
+    }
     if sf.setup_state != SetupState::Ready {
         if mode != RuntimeMode::Local {
             return Err(api_err(
@@ -1030,7 +1033,76 @@ pub async fn local_login(
     let pool = store.pool().clone();
     drop(store);
 
-    let row = if let Some(email) = requested_email {
+    let mut recovery_id = None;
+    let bound_user_id = if mode == RuntimeMode::Remote {
+        let raw = match recovery_capability.as_deref() {
+            Some(raw) => raw,
+            None => {
+                audit_recovery_failure(
+                    &pool,
+                    "capability_required",
+                    peer_addr.ip().is_loopback(),
+                    has_forwarding_metadata(&headers),
+                )
+                .await;
+                return Err(api_err(
+                    StatusCode::FORBIDDEN,
+                    "local_recovery_capability_required",
+                    "External Access local recovery requires a capability minted by oore recovery",
+                ));
+            }
+        };
+        let consumed = match state
+            .recovery_capabilities
+            .consume(raw, requested_email.as_deref())
+            .await
+        {
+            Ok(consumed) => consumed,
+            Err(reason) => {
+                audit_recovery_failure(
+                    &pool,
+                    reason.reason(),
+                    peer_addr.ip().is_loopback(),
+                    has_forwarding_metadata(&headers),
+                )
+                .await;
+                let (code, message) = match reason {
+                    crate::local_recovery::ConsumeError::AccountMismatch => (
+                        "local_recovery_account_mismatch",
+                        "Recovery capability is not valid for the requested account",
+                    ),
+                    crate::local_recovery::ConsumeError::Malformed
+                    | crate::local_recovery::ConsumeError::UnknownOrExpired => (
+                        "local_recovery_capability_invalid",
+                        "Recovery capability is invalid, expired, or already used",
+                    ),
+                };
+                return Err(api_err(StatusCode::FORBIDDEN, code, message));
+            }
+        };
+        recovery_id = Some(consumed.id);
+        Some(consumed.user_id)
+    } else {
+        None
+    };
+
+    let row = if let Some(user_id) = bound_user_id {
+        sqlx::query(
+            "SELECT id, email, role, oidc_subject, avatar_url \
+             FROM users WHERE id = ?1 AND status = 'active' LIMIT 1",
+        )
+        .bind(user_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to look up recovery user");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to look up recovery user",
+            )
+        })?
+    } else if let Some(email) = requested_email {
         sqlx::query(
             "SELECT id, email, role, oidc_subject, avatar_url \
              FROM users WHERE lower(email) = ?1 AND status = 'active' LIMIT 1",
@@ -1130,6 +1202,33 @@ pub async fn local_login(
             )
         })?;
 
+    if let Some(capability_id) = recovery_id {
+        let details = serde_json::json!({
+            "capability_id": capability_id,
+            "peer_loopback": peer_addr.ip().is_loopback(),
+            "forwarding_metadata_present": has_forwarding_metadata(&headers),
+        })
+        .to_string();
+        if let Err(audit_error) = write_audit_log(
+            &pool,
+            Some(&user_id),
+            "local_recovery_login_succeeded",
+            "local_recovery_capability",
+            Some(&capability_id),
+            Some(&details),
+        )
+        .await
+        {
+            error!(error = %audit_error, "failed to audit local recovery login");
+            let _ = state.sessions.revoke_session(&session_token).await;
+            return Err(api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "audit_error",
+                "Failed to complete audited local recovery",
+            ));
+        }
+    }
+
     Ok(Json(LocalLoginResponse {
         session_token,
         expires_at: session_info.expires_at,
@@ -1141,6 +1240,43 @@ pub async fn local_login(
             avatar_url,
         },
     }))
+}
+
+fn has_forwarding_metadata(headers: &HeaderMap) -> bool {
+    [
+        "forwarded",
+        "x-forwarded-for",
+        "cf-connecting-ip",
+        "x-real-ip",
+    ]
+    .iter()
+    .any(|name| headers.contains_key(*name))
+}
+
+async fn audit_recovery_failure(
+    pool: &sqlx::SqlitePool,
+    reason: &str,
+    peer_loopback: bool,
+    forwarding_metadata_present: bool,
+) {
+    let details = serde_json::json!({
+        "reason": reason,
+        "peer_loopback": peer_loopback,
+        "forwarding_metadata_present": forwarding_metadata_present,
+    })
+    .to_string();
+    if let Err(error) = write_audit_log(
+        pool,
+        None,
+        "local_recovery_login_failed",
+        "local_recovery_capability",
+        None,
+        Some(&details),
+    )
+    .await
+    {
+        error!(%error, "failed to audit rejected local recovery login");
+    }
 }
 
 #[cfg(test)]

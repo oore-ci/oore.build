@@ -9,8 +9,9 @@ use std::{ffi::OsStr, fs};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use oored::build_router;
+use oored::build_router_with_recovery;
 use oored::crypto;
+use oored::local_recovery::{ManagementSocket, RecoveryCapabilityStore, management_socket_path};
 use oored::observability;
 use oored::store::SetupStore;
 use tracing::{error, info};
@@ -105,7 +106,7 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         .context("failed to resolve database path")?;
     info!(path = %db_path.display(), "using database");
 
-    let store = SetupStore::connect(db_path)
+    let store = SetupStore::connect(db_path.clone())
         .await
         .context("failed to connect to database")?;
     let initial = store
@@ -140,7 +141,30 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
     );
 
     let runner_pool = store.pool().clone();
-    let app = build_router(store, runtime_key.key, metrics_handle).await;
+    let recovery_capabilities = RecoveryCapabilityStore::default();
+    let app = build_router_with_recovery(
+        store,
+        runtime_key.key,
+        metrics_handle,
+        recovery_capabilities.clone(),
+    )
+    .await;
+    let management_socket = ManagementSocket::bind(
+        management_socket_path(&db_path),
+        runner_pool.clone(),
+        recovery_capabilities.clone(),
+    )
+    .await
+    .context("failed to start local recovery management socket")?;
+    info!(
+        path = %management_socket.path().display(),
+        "local recovery management socket ready"
+    );
+    let management_task = tokio::spawn(async move {
+        if let Err(error) = management_socket.serve().await {
+            error!(%error, "local recovery management socket stopped");
+        }
+    });
 
     info!(listen = %addr, "starting oored daemon");
 
@@ -173,12 +197,15 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         .await
         .context("failed to initialize embedded runner")?;
 
-    axum::serve(
+    let server_result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await
-    .context("oored server failed")?;
+    .await;
+
+    management_task.abort();
+    recovery_capabilities.clear().await;
+    server_result.context("oored server failed")?;
 
     // Best-effort flush of OTel spans on shutdown
     observability::shutdown_tracing();

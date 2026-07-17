@@ -24,7 +24,7 @@ interface AuthStoreState {
   clearAuth: () => void
 }
 
-export type LastAuthMethod = 'oidc' | 'local' | 'trusted_proxy'
+export type LastAuthMethod = 'oidc' | 'local' | 'recovery' | 'trusted_proxy'
 
 export interface LastAuthMeta {
   method: LastAuthMethod
@@ -138,7 +138,10 @@ export function getLastAuthMetaForInstance(
     const method = localStorage.getItem(lastMethodKey(instanceId))
     const atRaw = localStorage.getItem(lastAtKey(instanceId))
     if (
-      (method !== 'oidc' && method !== 'local' && method !== 'trusted_proxy') ||
+      (method !== 'oidc' &&
+        method !== 'local' &&
+        method !== 'recovery' &&
+        method !== 'trusted_proxy') ||
       !atRaw
     )
       return null

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Oore CI API",
-    "description": "REST API for Oore CI — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support local-mode login and OIDC login/logout flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince Oore CI is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
+    "description": "REST API for Oore CI — a self-hosted, Flutter-first mobile CI and internal app distribution platform.\n\nThe backend daemon (`oored`) exposes this API on the configured listen address. All endpoints under `/v1/` use JSON request/response bodies unless noted otherwise.\n\n## Authentication\n\n- **Setup endpoints** (`/v1/setup/*`) are token-gated by a bootstrap session token and auto-disabled after setup completes.\n- **Auth endpoints** (`/v1/auth/*`) support Local Only login, single-use local recovery in Ready External Access mode, and configured OIDC or trusted-proxy flows.\n- **All other endpoints** require a valid session token via `Authorization: Bearer <token>` header.\n- **Runner endpoints** use a separate runner token for authentication.\n\n## Base URL\n\nSince Oore CI is self-hosted, the base URL is your daemon's listen address (e.g. `http://localhost:8787`).",
     "contact": {
       "name": "Oore CI",
       "url": "https://oore.build"
@@ -789,8 +789,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Local login",
-        "description": "Creates a loopback-only local session without OIDC.\nIf setup is still pending in Local Only mode, first login auto-finalizes\nlocal owner bootstrap. When setup is already complete, loopback local\nlogin remains available even if External Access is enabled.",
+        "summary": "Local login and recovery",
+        "description": "In Local Only mode, creates a loopback local session and may auto-finalize\nfirst-run owner bootstrap. In Ready External Access mode, every request\nrequires a short-lived, single-use recovery capability minted by the\nlocal `oore recovery` command over the daemon's Unix management socket.\nTCP loopback and forwarding headers do not grant recovery authority.",
         "operationId": "local_login",
         "requestBody": {
           "content": {
@@ -824,7 +824,7 @@
             }
           },
           "403": {
-            "description": "Blocked by mode policy or non-loopback source",
+            "description": "Blocked by mode policy, source policy, or missing/invalid recovery capability",
             "content": {
               "application/json": {
                 "schema": {
@@ -9426,7 +9426,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Optional account selector for Local Only login. In Ready Remote recovery,\nit may only confirm the account already bound to the capability."
+          },
+          "recovery_capability": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short-lived, single-use capability required for Ready Remote recovery."
           }
         }
       },

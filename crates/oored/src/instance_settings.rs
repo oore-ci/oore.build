@@ -1435,6 +1435,7 @@ pub async fn update_external_access_trusted_proxy_settings(
                 "Failed to load updated trusted proxy settings",
             )
         })?;
+    state.recovery_capabilities.clear().await;
 
     Ok(Json(trusted_proxy_settings_response(settings)))
 }
@@ -1583,6 +1584,7 @@ pub async fn update_external_access_network_settings(
         let mut runtime_allowed_origins = state.allowed_origins.write().await;
         *runtime_allowed_origins = allowed_origins.clone();
     }
+    state.recovery_capabilities.clear().await;
     // Hot-reload storage backend because local artifact links depend on public_base_url.
     let backend = storage::load_backend(&pool, &state.encryption_key, public_url.clone()).await;
     {
@@ -1978,6 +1980,7 @@ pub async fn configure_external_access_oidc(
         let mut pending = state.pending_auth.lock().await;
         pending.clear();
     }
+    state.recovery_capabilities.clear().await;
 
     let details = serde_json::json!({
         "issuer_url": discovered.issuer.clone(),
@@ -2155,6 +2158,7 @@ pub async fn update_instance_preferences(
     .await;
 
     if auth_policy_changed {
+        state.recovery_capabilities.clear().await;
         let revoked_sessions = state.sessions.revoke_all_sessions().await.map_err(|e| {
             error!(error = %e, "failed to revoke sessions after auth policy change");
             api_err(

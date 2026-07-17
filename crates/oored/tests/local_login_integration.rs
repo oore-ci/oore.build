@@ -107,7 +107,7 @@ async fn test_local_login_rejected_when_runtime_mode_remote() {
 }
 
 #[tokio::test]
-async fn test_local_login_allowed_on_loopback_when_runtime_mode_remote_and_setup_ready() {
+async fn test_local_login_requires_recovery_capability_on_loopback_when_remote_and_ready() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("test.db");
     let app = common::create_test_app(&db_path).await;
@@ -136,9 +136,9 @@ async fn test_local_login_allowed_on_loopback_when_runtime_mode_remote_and_setup
         )
         .await
         .expect("local login");
-    assert_eq!(login_resp.status(), 200);
+    assert_eq!(login_resp.status(), 403);
     let body = common::body_json(login_resp.into_body()).await;
-    assert!(body["session_token"].as_str().is_some());
+    assert_eq!(body["code"], "local_recovery_capability_required");
 }
 
 #[tokio::test]

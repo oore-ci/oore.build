@@ -140,6 +140,7 @@ export interface OidcCallbackResponse {
 
 export interface LocalLoginRequest {
   email?: string
+  recovery_capability?: string
 }
 
 export interface LocalLoginResponse {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLoginBackendCommands } from './login'
+import { buildLoginBackendCommands, recoveryCapabilityFromHash } from './login'
 
 describe('buildLoginBackendCommands', () => {
   it('quotes a crafted backend as one argument in both commands', () => {
@@ -19,5 +19,19 @@ describe('buildLoginBackendCommands', () => {
       cloudflared: "cloudflared tunnel --url 'https://ci.example.com'",
       ooreWeb: "oore-web --backend-url 'https://ci.example.com'",
     })
+  })
+})
+
+describe('recoveryCapabilityFromHash', () => {
+  it('accepts a syntactically valid fragment capability', () => {
+    const capability = `oore_recovery_${'0'.repeat(64)}`
+    expect(recoveryCapabilityFromHash(`#recovery=${capability}`)).toBe(
+      capability,
+    )
+  })
+
+  it('rejects malformed or absent fragment capabilities', () => {
+    expect(recoveryCapabilityFromHash('#recovery=too-short')).toBeNull()
+    expect(recoveryCapabilityFromHash('#unrelated=value')).toBeNull()
   })
 })
