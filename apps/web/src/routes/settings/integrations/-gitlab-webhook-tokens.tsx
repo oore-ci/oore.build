@@ -2,70 +2,151 @@ import { useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Copy01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { useRotateGitLabRepositoryWebhookSecret } from '@/hooks/use-integrations'
 import { toast } from '@/lib/toast'
 import type { IntegrationRepository } from '@/lib/types'
 
-export function GitLabWebhookTokens({
-  repositories,
+interface RevealedWebhookToken {
+  repository: IntegrationRepository
+  secret: string
+}
+
+function copyToClipboard(value: string, label: string) {
+  void navigator.clipboard.writeText(value).then(
+    () => toast.success(`${label} copied`),
+    () => toast.error(`Could not copy ${label.toLocaleLowerCase()}`),
+  )
+}
+
+export function GitLabWebhookTokenDialogs({
+  onClose,
+  repository,
+  webhookUrl,
 }: {
-  repositories: Array<IntegrationRepository>
+  onClose: () => void
+  repository: IntegrationRepository | null
+  webhookUrl: string
 }) {
   const rotate = useRotateGitLabRepositoryWebhookSecret()
-  const [revealed, setRevealed] = useState<{
-    repositoryId: string
-    secret: string
-  } | null>(null)
+  const [revealed, setRevealed] = useState<RevealedWebhookToken | null>(null)
 
-  function rotateToken(repository: IntegrationRepository) {
-    rotate.mutate(repository.id, {
+  function generateToken() {
+    if (!repository) return
+    const target = repository
+    rotate.mutate(target.id, {
       onSuccess: (response) => {
         setRevealed({
-          repositoryId: repository.id,
+          repository: target,
           secret: response.webhook_secret,
         })
-        toast.success(`Webhook token rotated for ${repository.full_name}`)
+        onClose()
+        toast.success(`Webhook token created for ${target.full_name}`)
       },
       onError: (error) =>
-        toast.error(`Could not rotate webhook token: ${error.message}`),
+        toast.error(`Could not create webhook token: ${error.message}`),
     })
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          GitLab webhook tokens
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Each project uses its own token. Generating a token immediately
-          invalidates the previous token for that project.
-        </p>
-        {revealed ? (
-          <Alert>
-            <AlertDescription className="space-y-2">
-              <p>
-                Copy this token now. Oore stores it encrypted and will not show
-                it again.
+    <>
+      <AlertDialog
+        open={repository !== null}
+        onOpenChange={(open) => {
+          if (!open && !rotate.isPending) onClose()
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Create a webhook token?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This creates a new token for {repository?.full_name}. If the
+              project already has an Oore webhook token, it will stop working.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rotate.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={generateToken}
+              disabled={rotate.isPending}
+            >
+              <HugeiconsIcon icon={Refresh01Icon} />
+              {rotate.isPending ? 'Creating...' : 'Create token'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog
+        open={revealed !== null}
+        onOpenChange={(open) => {
+          if (!open) setRevealed(null)
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>
+              Webhook token for {revealed?.repository.full_name}
+            </DialogTitle>
+            <DialogDescription>
+              Add this URL and token to the project&apos;s GitLab webhook with
+              Push events enabled. The token is shown once.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                Webhook URL
               </p>
               <div className="flex gap-2">
                 <Input
                   readOnly
-                  value={revealed.secret}
+                  value={webhookUrl}
+                  aria-label="GitLab webhook URL"
+                  className="font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Copy GitLab webhook URL"
+                  onClick={() => copyToClipboard(webhookUrl, 'Webhook URL')}
+                >
+                  <HugeiconsIcon icon={Copy01Icon} />
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                Secret token
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={revealed?.secret ?? ''}
                   aria-label="New GitLab webhook token"
                   className="font-mono"
                 />
@@ -75,56 +156,24 @@ export function GitLabWebhookTokens({
                   size="icon"
                   aria-label="Copy new GitLab webhook token"
                   onClick={() => {
-                    void navigator.clipboard.writeText(revealed.secret).then(
-                      () => toast.success('Webhook token copied'),
-                      () => toast.error('Could not copy webhook token'),
-                    )
+                    if (revealed) {
+                      copyToClipboard(revealed.secret, 'Webhook token')
+                    }
                   }}
                 >
                   <HugeiconsIcon icon={Copy01Icon} />
                 </Button>
               </div>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-        {repositories.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Sync GitLab projects before generating webhook tokens.
-          </p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Project</TableHead>
-                <TableHead className="w-44 text-right">Token</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {repositories.map((repository) => (
-                <TableRow key={repository.id}>
-                  <TableCell className="font-medium">
-                    {repository.full_name}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={rotate.isPending}
-                      onClick={() => rotateToken(repository)}
-                    >
-                      <HugeiconsIcon icon={Refresh01Icon} />
-                      {rotate.isPending && rotate.variables === repository.id
-                        ? 'Rotating...'
-                        : 'Generate / rotate'}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" onClick={() => setRevealed(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

@@ -20,7 +20,13 @@ export function CollectionSearchInput({
   placeholder: string
 }) {
   const [value, setValue] = useState(initialValue)
+  const [lastExternalValue, setLastExternalValue] = useState(initialValue)
   const debouncedSearch = useDebouncedCallback(onSearch, 300)
+
+  if (initialValue !== lastExternalValue) {
+    setLastExternalValue(initialValue)
+    setValue(initialValue)
+  }
 
   return (
     <div className={cn('relative w-full sm:max-w-sm', className)}>

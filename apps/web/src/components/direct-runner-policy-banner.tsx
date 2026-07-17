@@ -2,49 +2,40 @@ import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Alert02Icon } from '@hugeicons/core-free-icons'
 
-import { useInstancePreferences } from '@/hooks/use-artifact-storage'
-import { useRunnerPolicyRepositories } from '@/hooks/use-source-repositories'
-import { useAuthStore } from '@/stores/auth-store'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-
-export interface DirectRunnerPolicySummary {
-  instanceEnabled: boolean
-  repositoriesKnown: boolean
-  unapprovedRepositoryCount: number
-}
-
-export function needsDirectRunnerPolicySetup(
-  summary: DirectRunnerPolicySummary,
-): boolean {
-  return (
-    !summary.instanceEnabled ||
-    !summary.repositoriesKnown ||
-    summary.unapprovedRepositoryCount > 0
-  )
-}
+import { Button } from '@/components/ui/button'
+import { useAuthStore } from '@/stores/auth-store'
+import { useInstanceStore } from '@/stores/instance-store'
+import { useUiStore } from '@/stores/ui-store'
+import {
+  directRunnerTrustNoticeKey,
+  shouldShowDirectRunnerTrustNotice,
+} from './direct-runner-policy-banner-utils'
 
 export default function DirectRunnerPolicyBanner() {
-  const role = useAuthStore((state) => state.user?.role)
-  const canConfigure = role === 'owner' || role === 'admin'
-  const preferencesQuery = useInstancePreferences({ enabled: canConfigure })
-  const repositoriesQuery = useRunnerPolicyRepositories(canConfigure)
+  const user = useAuthStore((state) => state.user)
+  const activeInstanceId = useInstanceStore((state) => state.activeInstanceId)
+  const acknowledgements = useUiStore(
+    (state) => state.directRunnerTrustNoticeAcknowledgements,
+  )
+  const acknowledge = useUiStore(
+    (state) => state.acknowledgeDirectRunnerTrustNotice,
+  )
+  const noticeKey =
+    activeInstanceId && user
+      ? directRunnerTrustNoticeKey(activeInstanceId, user.user_id)
+      : null
 
-  if (!canConfigure) return null
-  if (preferencesQuery.isLoading || repositoriesQuery.isLoading) return null
-
-  const preferences = preferencesQuery.data?.preferences
-  const repositories = repositoriesQuery.data
-  const summary: DirectRunnerPolicySummary = {
-    instanceEnabled: preferences?.direct_macos_runner_enabled ?? false,
-    repositoriesKnown:
-      !preferencesQuery.isError && !repositoriesQuery.isError && !!repositories,
-    unapprovedRepositoryCount:
-      repositories?.filter(
-        (repository) => !repository.allow_direct_macos_runner,
-      ).length ?? 0,
+  if (
+    !shouldShowDirectRunnerTrustNotice(
+      user?.role,
+      noticeKey,
+      acknowledgements,
+    ) ||
+    noticeKey === null
+  ) {
+    return null
   }
-
-  if (!needsDirectRunnerPolicySetup(summary)) return null
 
   return (
     <Alert className="rounded-none border-x-0 border-t-0 border-warning/30 bg-warning/10 text-foreground">
@@ -54,25 +45,34 @@ export default function DirectRunnerPolicyBanner() {
         className="text-warning"
         aria-hidden
       />
-      <AlertTitle>Direct runner setup required</AlertTitle>
+      <AlertTitle>Direct runner access</AlertTitle>
       <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span>
-          Build code now runs with the runner account&apos;s macOS permissions.
-          Enable the instance runner, then approve each trusted repository.
+          Build commands run with the runner account&apos;s macOS permissions.
+          Only repositories you allow can run; all others stay blocked.
         </span>
-        <span className="ml-auto flex items-center gap-3">
+        <span className="ml-auto flex flex-wrap items-center gap-3">
           <Link
             to="/settings/preferences"
             className="inline-flex min-h-11 items-center font-medium sm:min-h-0"
           >
-            Preferences
+            Runner settings
           </Link>
           <Link
             to="/settings/integrations"
             className="inline-flex min-h-11 items-center font-medium sm:min-h-0"
           >
-            Sources
+            Repository access
           </Link>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="min-h-11 sm:min-h-8"
+            onClick={() => acknowledge(noticeKey)}
+          >
+            Dismiss
+          </Button>
         </span>
       </AlertDescription>
     </Alert>
