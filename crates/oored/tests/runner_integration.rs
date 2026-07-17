@@ -287,6 +287,17 @@ async fn test_runner_claim_and_execute() {
 
     // Create a build
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let snapshot = serde_json::json!({
+        "ui_execution_config": {
+            "env": [{ "key": "DEPLOY_TOKEN", "value": "runner-secret-value" }]
+        }
+    });
+    sqlx::query("UPDATE builds SET config_snapshot = ?1 WHERE id = ?2")
+        .bind(snapshot.to_string())
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Register runner
     let (runner_id, runner_token) = register_runner(&app, &session_token, "exec-runner").await;
@@ -309,6 +320,11 @@ async fn test_runner_claim_and_execute() {
     let json = body_json(resp.into_body()).await;
     assert!(!json["job"].is_null(), "should have claimed a job");
     assert_eq!(json["job"]["build_id"].as_str().unwrap(), build_id);
+    assert_eq!(
+        json["job"]["config_snapshot"]["ui_execution_config"]["env"][0]["value"],
+        "runner-secret-value",
+        "runner execution must retain raw environment values"
+    );
 
     // Update status to running
     let body = serde_json::json!({

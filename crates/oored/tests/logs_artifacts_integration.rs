@@ -366,6 +366,54 @@ async fn test_build_list_sort_is_allowlisted() {
 }
 
 #[tokio::test]
+async fn test_build_list_pagination_is_positive_and_bounded() {
+    let (app, pool, session_token, _runner_id, _runner_token, first_build_id) =
+        full_scaffold().await;
+    let (project_id, pipeline_id): (String, String) =
+        sqlx::query_as("SELECT project_id, pipeline_id FROM builds WHERE id = ?1")
+            .bind(&first_build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let now = common::now_unix();
+    sqlx::query(
+        "WITH RECURSIVE seq(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM seq WHERE n < 201) \
+         INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+          config_snapshot, queued_at, created_at, updated_at) \
+         SELECT printf('page-build-%03d', n), ?1, ?2, n, 'succeeded', 'manual', '{}', ?3, ?3, ?3 \
+         FROM seq",
+    )
+    .bind(&project_id)
+    .bind(&pipeline_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (uri, expected_len) in [
+        ("/v1/builds", 50),
+        ("/v1/builds?limit=2", 2),
+        ("/v1/builds?limit=500", 200),
+    ] {
+        let (status, response) = json_request(&app, "GET", uri, &session_token, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {response}");
+        assert_eq!(response["total"], 201);
+        assert_eq!(response["builds"].as_array().unwrap().len(), expected_len);
+    }
+
+    for uri in [
+        "/v1/builds?limit=-1",
+        "/v1/builds?limit=0",
+        "/v1/builds?offset=-1",
+        "/v1/builds?limit=500&offset=-1",
+    ] {
+        let (status, response) = json_request(&app, "GET", uri, &session_token, None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {response}");
+        assert_eq!(response["code"], "invalid_input");
+    }
+}
+
+#[tokio::test]
 async fn test_append_build_logs() {
     let (app, _pool, _session_token, runner_id, runner_token, build_id) = full_scaffold().await;
 

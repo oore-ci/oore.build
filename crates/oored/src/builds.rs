@@ -23,6 +23,7 @@ use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+const REDACTED_ENV_VALUE: &str = "[REDACTED]";
 
 // ── Row conversion helpers ──────────────────────────────────────
 
@@ -68,6 +69,22 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
+}
+
+fn row_to_redacted_build(row: &sqlx::sqlite::SqliteRow) -> Build {
+    let mut build = row_to_build(row);
+    if let Some(entries) = build
+        .config_snapshot
+        .pointer_mut("/ui_execution_config/env")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for entry in entries {
+            if let Some(value) = entry.get_mut("value") {
+                *value = serde_json::Value::String(REDACTED_ENV_VALUE.to_string());
+            }
+        }
+    }
+    build
 }
 
 fn row_to_build_event(row: &sqlx::sqlite::SqliteRow) -> BuildEvent {
@@ -982,7 +999,22 @@ pub async fn list_builds(
     let store = state.store.lock().await;
     let pool = store.pool();
 
-    let limit = params.limit.unwrap_or(50).min(200);
+    let requested_limit = params.limit.unwrap_or(50);
+    if requested_limit <= 0 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "limit must be greater than zero",
+        ));
+    }
+    if params.offset.is_some_and(|offset| offset < 0) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "offset must not be negative",
+        ));
+    }
+    let limit = requested_limit.min(200);
     let offset = params.offset.unwrap_or(0);
     let order_by = build_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
@@ -1078,7 +1110,7 @@ pub async fn list_builds(
         )
     })?;
 
-    let builds = rows.iter().map(row_to_build).collect();
+    let builds = rows.iter().map(row_to_redacted_build).collect();
 
     Ok(Json(ListBuildsResponse { builds, total }))
 }
@@ -1124,7 +1156,7 @@ pub async fn get_build(
     .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
 
-    let build = row_to_build(&build_row);
+    let build = row_to_redacted_build(&build_row);
 
     let event_rows =
         sqlx::query("SELECT * FROM build_events WHERE build_id = ?1 ORDER BY created_at ASC")

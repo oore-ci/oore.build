@@ -7,7 +7,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, CreateProjectRequest, CreateProjectResponse, ListProjectsResponse, Project,
-    ProjectDetailResponse, UpdateProjectRequest,
+    ProjectDetailResponse, RuntimeMode, UpdateProjectRequest,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -273,6 +273,84 @@ async fn ensure_local_repository_for_project(
     Ok((repository_id, default_branch))
 }
 
+async fn require_repository_attach_permission(
+    pool: &sqlx::SqlitePool,
+    auth: &AuthUser,
+    repository_id: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let repository = sqlx::query(
+        "SELECT r.is_private, i.provider FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id WHERE r.id = ?1",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to authorize repository attachment");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to validate repository",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_repository",
+            "Repository not found",
+        )
+    })?;
+
+    let provider: String = repository.get("provider");
+    if provider == "local_git"
+        && crate::instance_settings::load_runtime_mode(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load runtime mode");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to determine runtime mode",
+                )
+            })?
+            != RuntimeMode::Local
+    {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "mode_restricted",
+            "Local repositories are only available in local mode",
+        ));
+    }
+
+    if auth.0.role == "owner" || auth.0.role == "admin" || !repository.get::<bool, _>("is_private")
+    {
+        return Ok(());
+    }
+
+    let assigned: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM projects p \
+         JOIN project_members pm ON pm.project_id = p.id \
+         WHERE p.repository_id = ?1 AND pm.user_id = ?2 \
+         AND pm.role IN ('developer', 'maintainer')",
+    )
+    .bind(repository_id)
+    .bind(&auth.0.user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if assigned {
+        Ok(())
+    } else {
+        Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_repository",
+            "Repository not found",
+        ))
+    }
+}
+
 // ── Query parameters ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -347,27 +425,34 @@ pub async fn create_project(
         ));
     }
 
+    if req.local_repository_path.is_some() {
+        check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
+        if crate::instance_settings::load_runtime_mode(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to load runtime mode");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to determine runtime mode",
+                )
+            })?
+            != RuntimeMode::Local
+        {
+            return Err(api_err(
+                StatusCode::FORBIDDEN,
+                "mode_restricted",
+                "Local repositories are only available in local mode",
+            ));
+        }
+    }
+
     let (repository_id, inferred_default_branch) = match (
         req.repository_id.clone(),
         req.local_repository_path.as_deref(),
     ) {
         (Some(repo_id), None) => {
-            // Validate repository_id if provided
-            let repo_exists: bool = sqlx::query_scalar(
-                "SELECT COUNT(*) > 0 FROM integration_repositories WHERE id = ?1",
-            )
-            .bind(&repo_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(false);
-
-            if !repo_exists {
-                return Err(api_err(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_repository",
-                    "Repository not found",
-                ));
-            }
+            require_repository_attach_permission(&pool, &auth, &repo_id).await?;
             (Some(repo_id), None)
         }
         (None, Some(local_repo_path)) => {
@@ -725,22 +810,8 @@ pub async fn update_project(
         ));
     }
 
-    // Validate repository_id if provided
     if let Some(ref repo_id) = req.repository_id {
-        let repo_exists: bool =
-            sqlx::query_scalar("SELECT COUNT(*) > 0 FROM integration_repositories WHERE id = ?1")
-                .bind(repo_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap_or(false);
-
-        if !repo_exists {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_repository",
-                "Repository not found",
-            ));
-        }
+        require_repository_attach_permission(&pool, &auth, repo_id).await?;
     }
 
     let now = now_unix();
@@ -911,6 +982,46 @@ pub async fn delete_project(
             "active_builds",
             "Cannot delete project with active builds",
         ));
+    }
+
+    let artifact_rows = sqlx::query(
+        "SELECT DISTINCT a.file_path FROM artifacts a \
+         JOIN builds b ON b.id = a.build_id WHERE b.project_id = ?1",
+    )
+    .bind(&project_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to load project artifacts");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete project",
+        )
+    })?;
+
+    {
+        let storage = state.storage.read().await;
+        if !artifact_rows.is_empty()
+            && matches!(&*storage, crate::storage::StorageBackend::Disabled)
+        {
+            return Err(api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "Artifact storage must be available to delete this project",
+            ));
+        }
+        for artifact in artifact_rows {
+            let file_path: String = artifact.get("file_path");
+            storage.delete_object(&file_path).await.map_err(|e| {
+                error!(error = %e, file_path = %file_path, "failed to delete project artifact");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "Failed to delete project artifacts",
+                )
+            })?;
+        }
     }
 
     // Delete terminal builds first (non-cascading FK on builds.project_id)

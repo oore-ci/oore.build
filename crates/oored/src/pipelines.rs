@@ -18,14 +18,15 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{
-    ProjectPermission, require_pipeline_project_permission, require_project_permission,
-    resolve_effective_project_role,
+    ProjectPermission, check_project_permission, require_pipeline_project_permission,
+    require_project_permission, resolve_effective_project_role,
 };
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+const REDACTED_ENV_VALUE: &str = "[REDACTED]";
 
 // ── Validation helpers ──────────────────────────────────────────
 
@@ -354,6 +355,15 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
     }
 }
 
+fn shape_pipeline_response(mut pipeline: Pipeline, can_manage: bool) -> Pipeline {
+    if !can_manage {
+        for entry in &mut pipeline.execution_config.env {
+            entry.value = REDACTED_ENV_VALUE.to_string();
+        }
+    }
+    pipeline
+}
+
 // ── Query parameters ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -551,6 +561,7 @@ pub async fn list_pipelines(
     )
     .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
+    let can_manage = check_project_permission(&effective, ProjectPermission::ManagePipelines);
 
     // Validate project exists
     let project_exists: bool =
@@ -594,7 +605,10 @@ pub async fn list_pipelines(
         )
     })?;
 
-    let pipelines = rows.iter().map(row_to_pipeline).collect();
+    let pipelines = rows
+        .iter()
+        .map(|row| shape_pipeline_response(row_to_pipeline(row), can_manage))
+        .collect();
 
     Ok(Json(ListPipelinesResponse { pipelines, total }))
 }
@@ -607,16 +621,6 @@ pub async fn get_pipeline(
 ) -> ApiResult<PipelineDetailResponse> {
     let store = state.store.lock().await;
     let pool = store.pool();
-    require_pipeline_project_permission(
-        pool,
-        &auth.0.user_id,
-        &auth.0.role,
-        &auth.0.auth_source,
-        &pipeline_id,
-        ProjectPermission::Read,
-    )
-    .await?;
-
     let pipeline_row = sqlx::query("SELECT * FROM pipelines WHERE id = ?1")
         .bind(&pipeline_id)
         .fetch_optional(pool)
@@ -631,7 +635,20 @@ pub async fn get_pipeline(
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"))?;
 
-    let pipeline = row_to_pipeline(&pipeline_row);
+    let project_id: String = pipeline_row.get("project_id");
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Read)?;
+    let pipeline = shape_pipeline_response(
+        row_to_pipeline(&pipeline_row),
+        check_project_permission(&effective, ProjectPermission::ManagePipelines),
+    );
 
     let build_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE pipeline_id = ?1")
         .bind(&pipeline_id)
