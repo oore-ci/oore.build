@@ -1448,6 +1448,24 @@ install_executable() {
   mv -f "$staged" "$destination"
 }
 
+install_release_metadata() {
+  local version_file="$1"
+  if is_daemon_install; then
+    cp "$version_file" "$OORE_INSTALL_ROOT/VERSION"
+    if [[ -n "${RESOLVED_CHANNEL:-}" ]]; then
+      printf '%s\n' "$RESOLVED_CHANNEL" > "$OORE_INSTALL_ROOT/CHANNEL"
+    fi
+    printf '%s\n' "$OORE_GITHUB_REPO" > "$OORE_INSTALL_ROOT/GITHUB_REPO"
+  fi
+  if is_web_install; then
+    cp "$version_file" "$OORE_INSTALL_ROOT/WEB_VERSION"
+    if [[ -n "${RESOLVED_CHANNEL:-}" ]]; then
+      printf '%s\n' "$RESOLVED_CHANNEL" > "$OORE_INSTALL_ROOT/WEB_CHANNEL"
+    fi
+    printf '%s\n' "$OORE_GITHUB_REPO" > "$OORE_INSTALL_ROOT/WEB_GITHUB_REPO"
+  fi
+}
+
 install_binaries() {
   local archive_name
   local extract_dir="$TMP_DIR/extract"
@@ -1475,17 +1493,10 @@ install_binaries() {
     install_executable "$extract_dir/bin/oore-web" "$WEB_BINARY"
     rm -rf "$WEB_DIST_DIR"
     cp -R "$extract_dir/web-dist" "$WEB_DIST_DIR"
-  else
-    rm -f "$WEB_BINARY"
-    rm -rf "$WEB_DIST_DIR"
   fi
 
-  cp "$extract_dir/VERSION" "$OORE_INSTALL_ROOT/VERSION"
+  install_release_metadata "$extract_dir/VERSION"
   printf '%s\n' "$OORE_INSTALL_MODE" > "$OORE_INSTALL_ROOT/INSTALL_MODE"
-  if [[ -n "${RESOLVED_CHANNEL:-}" ]]; then
-    printf '%s\n' "$RESOLVED_CHANNEL" > "$OORE_INSTALL_ROOT/CHANNEL"
-  fi
-  printf '%s\n' "$OORE_GITHUB_REPO" > "$OORE_INSTALL_ROOT/GITHUB_REPO"
   if [[ -f "$extract_dir/LICENSE" ]]; then
     cp "$extract_dir/LICENSE" "$OORE_INSTALL_ROOT/LICENSE"
   fi

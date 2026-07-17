@@ -14,6 +14,12 @@ Rules:
 
 ## 2026-07-17
 
+- **Managed runner updates and Android JDK discovery**:
+  - Runner-owned Android signing now resolves and canonicalizes one host SDK/JDK toolchain before checkout from an explicit valid configuration, the standard macOS SDK location, Android Studio's bundled runtime, or the macOS Java registry. Repository stages cannot write the pinned SDK/JDK paths; AAB preprocessing pins the system `zip`; and signer children use only pinned executables plus fixed system paths, so APK `apksigner` and AAB `jarsigner` work under launchd without accepting repository-controlled helpers. `oore doctor --platform android` recognizes the same standard launchd-compatible topology.
+  - Full managed updates now restart only the loaded runner whose launchd executable matches the `oore` binary being replaced, including web-triggered deferred-daemon updates, and repeat that restart after rollback restores the old binary. Frontend-only updates use component-scoped version, channel, and repository metadata with legacy fallbacks, preventing them from making an old backend or runner appear current. Backend-only installer runs preserve any existing frontend binary, assets, and component metadata instead of leaving its managed service broken.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+
 - **macOS managed-runner Android signing tool discovery**:
   - Runner-owned Android signing now finds `apksigner` in the standard per-user macOS SDK directory when launchd does not provide `ANDROID_HOME` or `ANDROID_SDK_ROOT`. Explicit SDK variables still take precedence, repository-controlled paths remain excluded, and signer launch failures now name the unresolved program.
   - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77

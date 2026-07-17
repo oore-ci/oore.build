@@ -125,8 +125,8 @@ Usage:
   oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
 
 Options:
-  --channel   Release channel. Defaults to installed CHANNEL, then current VERSION.
-  --repo      GitHub repo. Defaults to installed GITHUB_REPO, then ${DEFAULT_GITHUB_REPO}.
+  --channel   Release channel. Defaults to the installed frontend channel, then current version.
+  --repo      GitHub repo. Defaults to the installed frontend repository, then ${DEFAULT_GITHUB_REPO}.
   --check     Only print whether an update is available.
   --force     Reinstall the latest release even if already current.
   --help      Show this help text
@@ -717,18 +717,32 @@ function replaceDirectory(src, dst) {
 }
 
 function readInstalledVersion(installRoot) {
-  return readTrimmedFile(path.join(installRoot, 'VERSION'))
+  return (
+    readTrimmedFile(path.join(installRoot, 'WEB_VERSION')) ||
+    readTrimmedFile(path.join(installRoot, 'VERSION'))
+  )
 }
 
-function readInstalledMetadata() {
-  const installRoot = resolveInstallRoot()
+function readInstalledChannel(installRoot) {
+  return (
+    readTrimmedFile(path.join(installRoot, 'WEB_CHANNEL')) ||
+    readTrimmedFile(path.join(installRoot, 'CHANNEL'))
+  )
+}
+
+function readInstalledRepo(installRoot) {
+  return normalizeGitHubRepo(
+    readTrimmedFile(path.join(installRoot, 'WEB_GITHUB_REPO')) ||
+      readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
+      DEFAULT_GITHUB_REPO,
+  )
+}
+
+export function readInstalledMetadata(installRoot = resolveInstallRoot()) {
   return {
     version: readInstalledVersion(installRoot) || 'unknown',
-    channel: readTrimmedFile(path.join(installRoot, 'CHANNEL')),
-    github_repo: normalizeGitHubRepo(
-      readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
-        DEFAULT_GITHUB_REPO,
-    ),
+    channel: readInstalledChannel(installRoot),
+    github_repo: readInstalledRepo(installRoot),
   }
 }
 
@@ -953,9 +967,9 @@ export function installUpdateCandidate({
   fs.mkdirSync(binDir, { recursive: true })
   replaceFile(extractedBinary, path.join(binDir, 'oore-web'))
   replaceDirectory(extractedDist, path.join(installRoot, 'web-dist'))
-  fs.copyFileSync(extractedVersion, path.join(installRoot, 'VERSION'))
-  fs.writeFileSync(path.join(installRoot, 'CHANNEL'), `${channel}\n`)
-  fs.writeFileSync(path.join(installRoot, 'GITHUB_REPO'), `${repo}\n`)
+  fs.copyFileSync(extractedVersion, path.join(installRoot, 'WEB_VERSION'))
+  fs.writeFileSync(path.join(installRoot, 'WEB_CHANNEL'), `${channel}\n`)
+  fs.writeFileSync(path.join(installRoot, 'WEB_GITHUB_REPO'), `${repo}\n`)
   if (fileExists(extractedLicense)) {
     fs.copyFileSync(extractedLicense, path.join(installRoot, 'LICENSE'))
   }
@@ -963,17 +977,13 @@ export function installUpdateCandidate({
 
 async function runUpdate(config, activeConfig = null) {
   const installRoot = resolveInstallRoot()
-  const currentRaw = readInstalledVersion(installRoot) || '0.0.0'
+  const installed = readInstalledMetadata(installRoot)
+  const currentRaw =
+    installed.version === 'unknown' ? '0.0.0' : installed.version
   const current = parseVersion(currentRaw)
-  const repo = normalizeGitHubRepo(
-    config.repo ||
-      readTrimmedFile(path.join(installRoot, 'GITHUB_REPO')) ||
-      DEFAULT_GITHUB_REPO,
-  )
+  const repo = normalizeGitHubRepo(config.repo || installed.github_repo)
   const channel = parseChannel(
-    config.channel ||
-      readTrimmedFile(path.join(installRoot, 'CHANNEL')) ||
-      inferChannelFromVersion(current),
+    config.channel || installed.channel || inferChannelFromVersion(current),
   )
 
   const release = await fetchReleaseManifest(channel, repo)

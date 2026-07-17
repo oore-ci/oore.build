@@ -47,6 +47,67 @@ new_inode="$(ls -di "$atomic_dir/oored" | awk '{print $1}')"
 [[ "$(< "$atomic_dir/oored")" == "new" ]]
 rm -rf "$atomic_dir"
 
+metadata_dir="$(mktemp -d)"
+version_file="$metadata_dir/release-version"
+printf '2.0.0\n' > "$version_file"
+OORE_INSTALL_ROOT="$metadata_dir"
+RESOLVED_CHANNEL=alpha
+OORE_GITHUB_REPO=oore-ci/oore.build
+
+printf '1.0.0\n' > "$metadata_dir/VERSION"
+printf 'stable\n' > "$metadata_dir/CHANNEL"
+printf 'backend/repository\n' > "$metadata_dir/GITHUB_REPO"
+OORE_INSTALL_MODE=frontend
+install_release_metadata "$version_file"
+[[ "$(< "$metadata_dir/VERSION")" == "1.0.0" ]]
+[[ "$(< "$metadata_dir/CHANNEL")" == "stable" ]]
+[[ "$(< "$metadata_dir/GITHUB_REPO")" == "backend/repository" ]]
+[[ "$(< "$metadata_dir/WEB_VERSION")" == "2.0.0" ]]
+[[ "$(< "$metadata_dir/WEB_CHANNEL")" == "alpha" ]]
+[[ "$(< "$metadata_dir/WEB_GITHUB_REPO")" == "oore-ci/oore.build" ]]
+
+rm -rf "$metadata_dir"
+
+transition_dir="$(mktemp -d)"
+release_dir="$transition_dir/release"
+TMP_DIR="$transition_dir/download"
+OORE_INSTALL_ROOT="$transition_dir/install"
+BIN_DIR="$OORE_INSTALL_ROOT/bin"
+LOG_DIR="$OORE_INSTALL_ROOT/logs"
+WEB_BINARY="$BIN_DIR/oore-web"
+WEB_DIST_DIR="$OORE_INSTALL_ROOT/web-dist"
+mkdir -p "$release_dir/bin" "$TMP_DIR" "$BIN_DIR" "$WEB_DIST_DIR"
+printf 'new-oored\n' > "$release_dir/bin/oored"
+printf 'new-oore\n' > "$release_dir/bin/oore"
+chmod +x "$release_dir/bin/oored" "$release_dir/bin/oore"
+printf '2.0.0\n' > "$release_dir/VERSION"
+printf 'old-oore-web\n' > "$WEB_BINARY"
+chmod +x "$WEB_BINARY"
+printf 'old-web-dist\n' > "$WEB_DIST_DIR/index.html"
+printf '1.5.0\n' > "$OORE_INSTALL_ROOT/WEB_VERSION"
+printf 'beta\n' > "$OORE_INSTALL_ROOT/WEB_CHANNEL"
+printf 'frontend/repository\n' > "$OORE_INSTALL_ROOT/WEB_GITHUB_REPO"
+OORE_INSTALL_MODE=backend
+RELEASE_VERSION=2.0.0
+RELEASE_OS=darwin
+RELEASE_ARCH=arm64
+RESOLVED_CHANNEL=alpha
+OORE_GITHUB_REPO=oore-ci/oore.build
+tar -czf "$TMP_DIR/$(release_archive_name)" -C "$release_dir" .
+install_binaries
+[[ "$(< "$BIN_DIR/oored")" == "new-oored" ]]
+[[ "$(< "$BIN_DIR/oore")" == "new-oore" ]]
+[[ "$(< "$WEB_BINARY")" == "old-oore-web" ]]
+[[ "$(< "$WEB_DIST_DIR/index.html")" == "old-web-dist" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/VERSION")" == "2.0.0" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/CHANNEL")" == "alpha" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/GITHUB_REPO")" == "oore-ci/oore.build" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/WEB_VERSION")" == "1.5.0" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/WEB_CHANNEL")" == "beta" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/WEB_GITHUB_REPO")" == "frontend/repository" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/INSTALL_MODE")" == "backend" ]]
+rm -rf "$transition_dir"
+
 sudo_call="$(mktemp)"
 oored_call="$(mktemp)"
 service_bin_dir="$(mktemp -d)"
