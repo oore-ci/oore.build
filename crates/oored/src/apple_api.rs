@@ -4,6 +4,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use oore_contract::ApiError;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
+use uuid::Uuid;
 
 use crate::util::{api_err, now_unix};
 
@@ -602,7 +603,7 @@ pub async fn create_ad_hoc_profile(
         );
     }
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "data": {
             "type": "profiles",
             "attributes": {
@@ -641,12 +642,10 @@ pub async fn create_ad_hoc_profile(
         warn!(
             profile_name = %profile_name,
             response = %body_text,
-            "Apple profile creation returned 409 Conflict; deleting existing profiles and retrying"
+            "Apple profile creation returned 409 Conflict; retrying with a unique name"
         );
-        let existing = list_profiles_by_name(client, creds, profile_name).await?;
-        for existing_profile in &existing {
-            delete_profile(client, creds, &existing_profile.profile_id).await?;
-        }
+        body["data"]["attributes"]["name"] =
+            serde_json::Value::String(format!("oore-adhoc-{}", Uuid::new_v4()));
         let retry_jwt = generate_app_store_connect_jwt(creds)?;
         let retry_resp = client
             .post(endpoint("/v1/profiles"))
@@ -666,7 +665,7 @@ pub async fn create_ad_hoc_profile(
             let retry_status = retry_resp.status();
             let retry_body = retry_resp.text().await.unwrap_or_default();
             return Err(map_upstream_error(
-                "Apple profile creation (retry after deleting duplicates)",
+                "Apple profile creation (retry with unique name)",
                 retry_status,
                 &retry_body,
             ));
@@ -704,84 +703,39 @@ pub async fn create_ad_hoc_profile(
     Ok(to_profile_record(payload.data))
 }
 
-async fn list_profiles_by_name(
-    client: &reqwest::Client,
-    creds: &AppleApiCredentials,
-    name: &str,
-) -> Result<Vec<AppleProfileRecord>, (StatusCode, Json<ApiError>)> {
-    let jwt = generate_app_store_connect_jwt(creds)?;
-    let resp = client
-        .get(endpoint("/v1/profiles"))
-        .query(&[
-            ("filter[name]", name),
-            (
-                "fields[profiles]",
-                "name,uuid,expirationDate,profileContent",
-            ),
-            ("limit", "50"),
-        ])
-        .bearer_auth(jwt)
-        .send()
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to call App Store Connect list profiles API");
-            api_err(
-                StatusCode::BAD_GATEWAY,
-                "apple_api_error",
-                "Failed to list profiles from Apple",
-            )
-        })?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(map_upstream_error("Apple profile list", status, &body));
-    }
-
-    let payload: AppleApiListResponse<AppleProfileData> = resp.json().await.map_err(|e| {
-        error!(error = %e, "failed to parse App Store Connect profile list response");
-        api_err(
-            StatusCode::BAD_GATEWAY,
-            "apple_api_error",
-            "Invalid response from Apple profile list",
-        )
-    })?;
-
-    Ok(payload.data.into_iter().map(to_profile_record).collect())
-}
-
-async fn delete_profile(
-    client: &reqwest::Client,
-    creds: &AppleApiCredentials,
-    profile_id: &str,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let jwt = generate_app_store_connect_jwt(creds)?;
-    let resp = client
-        .delete(endpoint(&format!("/v1/profiles/{profile_id}")))
-        .bearer_auth(jwt)
-        .send()
-        .await
-        .map_err(|e| {
-            error!(error = %e, profile_id = %profile_id, "failed to call App Store Connect delete profile API");
-            api_err(
-                StatusCode::BAD_GATEWAY,
-                "apple_api_error",
-                "Failed to delete iOS provisioning profile",
-            )
-        })?;
-
-    if !resp.status().is_success() && resp.status() != reqwest::StatusCode::NOT_FOUND {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(map_upstream_error("Apple profile deletion", status, &body));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::should_retry_profile_create_after_conflict;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use axum::Json as AxumJson;
+    use axum::Router;
+    use axum::http::StatusCode;
+    use axum::routing::{delete, post};
+
+    use super::{
+        AppleApiCredentials, create_ad_hoc_profile, should_retry_profile_create_after_conflict,
+    };
+
+    static APPLE_API_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct AppleApiEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl AppleApiEnvGuard {
+        fn set(value: &str) -> Self {
+            let lock = APPLE_API_ENV_LOCK.lock().expect("Apple API env lock");
+            unsafe { std::env::set_var("OORE_APP_STORE_CONNECT_API_BASE_URL", value) };
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for AppleApiEnvGuard {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var("OORE_APP_STORE_CONNECT_API_BASE_URL") };
+        }
+    }
 
     #[test]
     fn retries_only_for_duplicate_profile_name_conflicts() {
@@ -804,5 +758,111 @@ mod tests {
         assert!(!should_retry_profile_create_after_conflict(
             invalid_certificate
         ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_profile_name_retry_never_deletes_existing_profiles() {
+        let post_count = Arc::new(AtomicUsize::new(0));
+        let delete_count = Arc::new(AtomicUsize::new(0));
+        let requested_names = Arc::new(Mutex::new(Vec::new()));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock Apple API");
+        let address = listener.local_addr().expect("mock Apple API address");
+        let post_count_for_route = Arc::clone(&post_count);
+        let delete_count_for_route = Arc::clone(&delete_count);
+        let requested_names_for_route = Arc::clone(&requested_names);
+        let mock = Router::new().route(
+            "/v1/profiles",
+            post(move |AxumJson(body): AxumJson<serde_json::Value>| {
+                let post_count = Arc::clone(&post_count_for_route);
+                let requested_names = Arc::clone(&requested_names_for_route);
+                async move {
+                    let name = body["data"]["attributes"]["name"]
+                        .as_str()
+                        .expect("profile name")
+                        .to_string();
+                    requested_names
+                        .lock()
+                        .expect("requested profile names")
+                        .push(name.clone());
+                    if post_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                        (
+                            StatusCode::CONFLICT,
+                            AxumJson(serde_json::json!({
+                                "errors": [{"detail": "A profile with this name already exists."}]
+                            })),
+                        )
+                    } else {
+                        (
+                            StatusCode::CREATED,
+                            AxumJson(serde_json::json!({
+                                "data": {
+                                    "id": "new-profile",
+                                    "attributes": {
+                                        "name": name,
+                                        "uuid": "NEW-PROFILE-UUID",
+                                        "expirationDate": "2030-01-01T00:00:00Z",
+                                        "profileContent": "cHJvZmlsZQ=="
+                                    }
+                                }
+                            })),
+                        )
+                    }
+                }
+            })
+            .get(|| async {
+                AxumJson(serde_json::json!({
+                    "data": [{
+                        "id": "foreign-profile",
+                        "attributes": {
+                            "name": "oore-adhoc-com-example-foo-bar",
+                            "uuid": "FOREIGN-PROFILE-UUID"
+                        }
+                    }]
+                }))
+            }),
+        )
+        .route(
+            "/v1/profiles/{profile_id}",
+            delete(move || {
+                let delete_count = Arc::clone(&delete_count_for_route);
+                async move {
+                    delete_count.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, mock).await.expect("mock Apple API");
+        });
+        let _env = AppleApiEnvGuard::set(&format!("http://{address}"));
+
+        let creds = AppleApiCredentials {
+            key_id: "KEY123".to_string(),
+            issuer_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            private_key_pem: "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEcE27O5vCf64/k4O\n7U3hR/7SFXFrdGszvS0RZiIoXDGhRANCAAQuK9eOqVNMkR4i2w4LK2BSYQVeTch0\nNwWg0o+NYS5KJTd9VTYzKyF4mDmJfq8Jhml8o4vXuFc2vztW/mm35VIo\n-----END PRIVATE KEY-----\n".to_string(),
+        };
+        let result = create_ad_hoc_profile(
+            &reqwest::Client::new(),
+            &creds,
+            "oore-adhoc-com-example-foo-bar",
+            "bundle-id-2",
+            &["certificate-id".to_string()],
+            &["device-id".to_string()],
+        )
+        .await
+        .expect("unique-name retry succeeds");
+
+        let names = requested_names.lock().expect("requested profile names");
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0], "oore-adhoc-com-example-foo-bar");
+        assert_ne!(names[1], names[0]);
+        assert!(names[1].starts_with("oore-adhoc-"));
+        assert_eq!(result.name, names[1]);
+        assert_eq!(delete_count.load(Ordering::SeqCst), 0);
+
+        server.abort();
     }
 }

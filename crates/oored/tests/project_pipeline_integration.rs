@@ -2055,6 +2055,53 @@ async fn test_pipeline_ios_signing_crud() {
         api_private_key_encrypted,
         "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"
     );
+
+    let now = common::now_unix();
+    for bundle_id in ["com.example.app", "com.example.removed"] {
+        sqlx::query(
+            "INSERT INTO pipeline_ios_provisioning_profiles (
+                id, pipeline_id, bundle_id, profile_filename, profile_encrypted,
+                created_by, updated_by, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, 'profile.mobileprovision', 'encrypted', ?4, ?4, ?5, ?5)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&pipeline_id)
+        .bind(bundle_id)
+        .bind(&user_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let (status, json) = json_request(
+        &app,
+        "PUT",
+        &format!("/v1/pipelines/{pipeline_id}/ios-signing"),
+        &token,
+        Some(serde_json::json!({
+            "enabled": false,
+            "mode": "hybrid",
+            "team_id": "TEAM1234",
+            "bundle_ids": ["com.example.app"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "remove iOS bundle profile: {json}");
+    assert_eq!(json["provisioning_profiles"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        json["provisioning_profiles"][0]["bundle_id"].as_str(),
+        Some("com.example.app")
+    );
+    let stored_bundles = sqlx::query_scalar::<_, String>(
+        "SELECT bundle_id FROM pipeline_ios_provisioning_profiles
+         WHERE pipeline_id = ?1 ORDER BY bundle_id",
+    )
+    .bind(&pipeline_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored_bundles, vec!["com.example.app"]);
 }
 
 #[tokio::test]
@@ -2096,7 +2143,7 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
             api_key_id, api_issuer_id, api_private_key_encrypted,
             created_by, updated_by, created_at, updated_at
          ) VALUES (
-            ?1, ?2, 1, 'manual', 'TEAM1234', 'ad_hoc', '[\"com.example.app\"]',
+            ?1, ?2, 1, 'manual', 'TEAM1234', 'ad_hoc', '[\"com.example.app\",\"com.example.expired\"]',
             'dist.p12', ?3, ?4, 'fingerprint', NULL,
             NULL, NULL, NULL,
             ?5, ?5, ?6, ?6
@@ -2114,6 +2161,31 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
 
     let profile_encrypted =
         oored::crypto::encrypt("ZmFrZS1wcm9maWxlLWJ5dGVz", &common::TEST_ENCRYPTION_KEY).unwrap();
+    for (bundle_id, expires_at) in [
+        ("com.example.removed", None),
+        ("com.example.expired", Some(now - 1)),
+    ] {
+        sqlx::query(
+            "INSERT INTO pipeline_ios_provisioning_profiles (
+                id, pipeline_id, bundle_id, profile_filename, profile_encrypted, profile_uuid,
+                profile_name, team_id, expires_at, checksum, created_by, updated_by, created_at, updated_at
+             ) VALUES (
+                ?1, ?2, ?3, 'stale.mobileprovision', ?4, 'STALE-PROFILE-UUID',
+                'Stale Profile', 'TEAM1234', ?5, 'checksum', ?6, ?6, ?7, ?7
+             )",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&pipeline_id)
+        .bind(bundle_id)
+        .bind(&profile_encrypted)
+        .bind(expires_at)
+        .bind(&user_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
     sqlx::query(
         "INSERT INTO pipeline_ios_provisioning_profiles (
             id, pipeline_id, bundle_id, profile_filename, profile_encrypted, profile_uuid,
@@ -2164,6 +2236,13 @@ async fn test_runner_fetches_pipeline_ios_signing_for_assigned_job() {
     assert_eq!(status, StatusCode::OK, "runner iOS signing lookup: {json}");
     assert_eq!(json["bundle"]["team_id"].as_str(), Some("TEAM1234"));
     assert_eq!(json["bundle"]["p12_filename"].as_str(), Some("dist.p12"));
+    assert_eq!(
+        json["bundle"]["provisioning_profiles"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(
         json["bundle"]["provisioning_profiles"][0]["bundle_id"].as_str(),
         Some("com.example.app")
