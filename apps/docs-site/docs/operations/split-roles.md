@@ -75,6 +75,7 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
   OORE_CHANNEL=alpha \
   OORE_INSTALL_MODE=frontend \
   OORE_WEB_BACKEND_URL=http://10.0.0.20:8787 \
+  OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true \
   OORE_LOCAL_WEB_LISTEN=127.0.0.1:4173 \
   OORE_LOCAL_WEB_MODE=login \
   OORE_ENABLE_LINGER=true \
@@ -84,6 +85,8 @@ curl -fsSL https://alpha.oore.pages.dev/install | \
 ```
 
 Put your HTTPS reverse proxy in front of `http://127.0.0.1:4173`. In the web UI, add the instance with **Backend URL** empty so browser API calls stay on the same HTTPS origin and flow through the frontend proxy.
+
+`OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true` is an explicit assertion that the remote HTTP backend hop is already protected by the private overlay. It does not create that protection. The installer rejects remote HTTP without the assertion and persists the corresponding launcher argument in foreground, systemd, and launchd commands.
 
 The installer checks the selected listen port before changing service state. If your reverse proxy already owns `4173`, choose another loopback port such as `127.0.0.1:4174` and point the proxy backend at that address.
 
@@ -101,7 +104,7 @@ To pull a newer frontend-only release later:
 oore-web update
 ```
 
-`oore-web update --check` reports whether the installed channel has a newer release without changing files. Restart the `oore-web` service after an update if you want the running launcher process to pick up binary changes immediately.
+`oore-web update --check` reports whether the installed channel has a newer release without changing files. Restart the `oore-web` service after an update if you want the running launcher process to pick up binary changes immediately. Updates started from the managed web UI preflight the candidate launcher against the active service configuration before replacing files.
 
 Verify both frontend and backend readiness through the installed proxy path:
 

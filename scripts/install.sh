@@ -39,6 +39,8 @@ OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER="${OORE_WEB_UPSTREAM_TRUSTED_PROXY
 OORE_FRONTEND_PAIRING_CODE="${OORE_FRONTEND_PAIRING_CODE:-}"
 OORE_DAEMON_URL="${OORE_DAEMON_URL:-http://127.0.0.1:8787}"
 OORE_WEB_BACKEND_URL="${OORE_WEB_BACKEND_URL:-$OORE_DAEMON_URL}"
+OORE_WEB_BROWSER_TRANSPORT_PROTECTED="${OORE_WEB_BROWSER_TRANSPORT_PROTECTED:-false}"
+OORE_WEB_BACKEND_TRANSPORT_PROTECTED="${OORE_WEB_BACKEND_TRANSPORT_PROTECTED:-false}"
 OORE_LOCAL_WEB_MODE="${OORE_LOCAL_WEB_MODE:-}"
 OORE_LOCAL_WEB_LISTEN="${OORE_LOCAL_WEB_LISTEN:-127.0.0.1:4173}"
 
@@ -107,6 +109,8 @@ Environment overrides:
   OORE_CORS_ORIGINS          Comma-separated allowed browser origins (default: OORE_PUBLIC_URL when set)
   OORE_DAEMON_URL            Daemon URL used by all/backend setup helpers (default: http://127.0.0.1:8787)
   OORE_WEB_BACKEND_URL       Backend URL proxied by oore-web (default: OORE_DAEMON_URL)
+  OORE_WEB_BROWSER_TRANSPORT_PROTECTED Assert encrypted ingress before a non-loopback HTTP web listen (true/false)
+  OORE_WEB_BACKEND_TRANSPORT_PROTECTED Assert an encrypted transport protects a remote HTTP backend (true/false)
   OORE_FRONTEND_PAIRING_CODE Short-lived code from `oore frontend invite`
   OORE_LOCAL_WEB_MODE        Local web behavior in non-interactive mode: off|run|login
   OORE_LOCAL_WEB_LISTEN      Local web listen address (default: 127.0.0.1:4173)
@@ -412,6 +416,7 @@ pair_frontend_with_backend() {
   local email_header=""
 
   [[ "$code" == fp_* ]] || die 'Frontend pairing code must start with fp_.'
+  validate_web_transport_config
   response="$(printf '{\"code\":\"%s\"}' "$code" | \
     curl -fsS --connect-timeout 10 --max-time 30 \
       -H 'content-type: application/json' \
@@ -466,6 +471,22 @@ systemd_secret_environment_lines() {
   systemd_env_line OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER "$OORE_WEB_UPSTREAM_TRUSTED_PROXY_SECRET_HEADER"
 }
 
+web_transport_cli_args() {
+  normalize_bool "$OORE_WEB_BROWSER_TRANSPORT_PROTECTED" \
+    && printf ' --browser-transport-protected'
+  normalize_bool "$OORE_WEB_BACKEND_TRANSPORT_PROTECTED" \
+    && printf ' --backend-transport-protected'
+  return 0
+}
+
+web_transport_launchd_args() {
+  normalize_bool "$OORE_WEB_BROWSER_TRANSPORT_PROTECTED" \
+    && printf '      <string>--browser-transport-protected</string>\n'
+  normalize_bool "$OORE_WEB_BACKEND_TRANSPORT_PROTECTED" \
+    && printf '      <string>--backend-transport-protected</string>\n'
+  return 0
+}
+
 ensure_install_root_writable() {
   if [[ -e "$OORE_INSTALL_ROOT" ]]; then
     [[ -d "$OORE_INSTALL_ROOT" ]] || die "Install root exists but is not a directory: $OORE_INSTALL_ROOT"
@@ -492,6 +513,105 @@ normalize_bool() {
       return 2
       ;;
   esac
+}
+
+web_backend_uses_remote_http() {
+  local authority=""
+  [[ "$OORE_WEB_BACKEND_URL" == http://* ]] || return 1
+  authority="${OORE_WEB_BACKEND_URL#http://}"
+  authority="${authority%%/*}"
+  authority="${authority%%\?*}"
+  authority="${authority%%#*}"
+  case "$authority" in
+    localhost|localhost:*|127.0.0.1|127.0.0.1:*|'[::1]'|'[::1]':*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+validate_web_backend_url() {
+  local authority=""
+  case "$OORE_WEB_BACKEND_URL" in
+    http://*|https://*) ;;
+    *)
+      die 'OORE_WEB_BACKEND_URL must use lowercase http:// or https://.'
+      ;;
+  esac
+  [[ "$OORE_WEB_BACKEND_URL" != *[[:space:]]* ]] \
+    || die 'OORE_WEB_BACKEND_URL must not contain whitespace.'
+  authority="${OORE_WEB_BACKEND_URL#*://}"
+  authority="${authority%%/*}"
+  authority="${authority%%\?*}"
+  authority="${authority%%#*}"
+  [[ -n "$authority" ]] || die 'OORE_WEB_BACKEND_URL must include a host.'
+  [[ "$authority" != *@* ]] \
+    || die 'OORE_WEB_BACKEND_URL must not include credentials.'
+}
+
+web_listen_is_non_loopback() {
+  case "$OORE_LOCAL_WEB_LISTEN" in
+    127.0.0.1:*|'[::1]':*|http://127.0.0.1:*|http://'[::1]':*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+validate_web_transport_config() {
+  validate_web_backend_url
+  if web_backend_uses_remote_http \
+    && ! normalize_bool "$OORE_WEB_BACKEND_TRANSPORT_PROTECTED"; then
+    die 'Remote HTTP OORE_WEB_BACKEND_URL requires OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true after an encrypted transport such as NetBird is configured.'
+  fi
+  if web_listen_is_non_loopback \
+    && ! normalize_bool "$OORE_WEB_BROWSER_TRANSPORT_PROTECTED"; then
+    die 'Non-loopback OORE_LOCAL_WEB_LISTEN requires OORE_WEB_BROWSER_TRANSPORT_PROTECTED=true after encrypted ingress is configured.'
+  fi
+}
+
+configure_web_transport_assertions() {
+  local choice=""
+
+  if web_backend_uses_remote_http \
+    && ! normalize_bool "$OORE_WEB_BACKEND_TRANSPORT_PROTECTED"; then
+    if is_noninteractive || ! has_prompt_tty; then
+      validate_web_transport_config
+    fi
+    choice="$(
+      prompt_select \
+        "The backend URL uses remote HTTP. Is this hop already protected by an encrypted private network or VPN?" \
+        "no" \
+        "yes:Yes, persist the protected-transport assertion" \
+        "no:No, stop so I can use HTTPS or configure protection first"
+    )"
+    [[ "$choice" == "yes" ]] \
+      || die 'Remote HTTP requires HTTPS or an encrypted transport before installation can continue.'
+    OORE_WEB_BACKEND_TRANSPORT_PROTECTED=true
+  fi
+
+  if web_listen_is_non_loopback \
+    && ! normalize_bool "$OORE_WEB_BROWSER_TRANSPORT_PROTECTED"; then
+    if is_noninteractive || ! has_prompt_tty; then
+      validate_web_transport_config
+    fi
+    choice="$(
+      prompt_select \
+        "The oore-web listener uses non-loopback HTTP. Is encrypted ingress already configured in front of it?" \
+        "no" \
+        "yes:Yes, persist the protected-ingress assertion" \
+        "no:No, stop so I can keep the listener on loopback or configure protection first"
+    )"
+    [[ "$choice" == "yes" ]] \
+      || die 'A non-loopback HTTP listener requires encrypted ingress before installation can continue.'
+    OORE_WEB_BROWSER_TRANSPORT_PROTECTED=true
+  fi
+
+  validate_web_transport_config
 }
 
 validate_optional_bool_env() {
@@ -987,6 +1107,8 @@ configure_frontend_install() {
         "required"
     )"
 
+    configure_web_transport_assertions
+
     if [[ -z "$OORE_LOCAL_WEB_MODE" ]]; then
       OORE_LOCAL_WEB_MODE="$(
         prompt_select \
@@ -1058,6 +1180,7 @@ configure_frontend_install() {
     if [[ "$OORE_WEB_BACKEND_URL_WAS_SET" -eq 0 && "$OORE_DAEMON_URL_WAS_SET" -eq 0 ]]; then
       die 'Frontend-only non-interactive install requires OORE_WEB_BACKEND_URL, for example http://<backend-host>:8787.'
     fi
+    configure_web_transport_assertions
     if [[ -n "$OORE_FRONTEND_PAIRING_CODE" ]]; then
       pair_frontend_with_backend "$OORE_FRONTEND_PAIRING_CODE"
     fi
@@ -1065,6 +1188,7 @@ configure_frontend_install() {
 
   [[ "$OORE_INSTALL_MODE" == "frontend" ]] || return 0
 
+  validate_web_transport_config
   ensure_frontend_secret_files
   WEB_BACKEND_URL="$OORE_WEB_BACKEND_URL"
   resolve_local_web_url
@@ -1719,7 +1843,14 @@ has_local_web_bundle() {
 }
 
 is_local_web_healthy() {
-  curl_quick "${LOCAL_WEB_URL}/__oore_web_healthz" >/dev/null 2>&1
+  local response=""
+  response="$(curl_quick "${LOCAL_WEB_URL}/__oore_web_healthz" 2>/dev/null)" \
+    || return 1
+  printf '%s' "$response" \
+    | grep -Eq '^[[:space:]]*\{[[:space:]]*"ok"[[:space:]]*:[[:space:]]*true[,}]' \
+    || return 1
+  printf '%s' "$response" \
+    | grep -Eq '"version"[[:space:]]*:[[:space:]]*"[^"]+"'
 }
 
 preflight_local_web_listen() {
@@ -1764,6 +1895,10 @@ start_local_web() {
     --backend-url "$WEB_BACKEND_URL"
     --dist-dir "$WEB_DIST_DIR"
   )
+  normalize_bool "$OORE_WEB_BROWSER_TRANSPORT_PROTECTED" \
+    && web_cmd+=(--browser-transport-protected)
+  normalize_bool "$OORE_WEB_BACKEND_TRANSPORT_PROTECTED" \
+    && web_cmd+=(--backend-transport-protected)
   local web_env=()
   [[ -n "$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE" ]] && web_env+=(OORE_TRUSTED_PROXY_SHARED_SECRET_FILE="$OORE_TRUSTED_PROXY_SHARED_SECRET_FILE")
   [[ -n "$OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER" ]] && web_env+=(OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER="$OORE_WEB_TRUSTED_PROXY_USER_EMAIL_HEADER")
@@ -1788,7 +1923,7 @@ start_local_web() {
   report_component_failure \
     "oore-web" \
     "$WEB_LOG" \
-    "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR" \
+    "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR$(web_transport_cli_args)" \
     "$LOCAL_WEB_URL"
   return 1
 }
@@ -1818,6 +1953,7 @@ install_local_web_launch_agent() {
       <string>$WEB_BACKEND_URL</string>
       <string>--dist-dir</string>
       <string>$WEB_DIST_DIR</string>
+$(web_transport_launchd_args)
     </array>
 $(launchd_environment_dict)
     <key>RunAtLoad</key>
@@ -1878,7 +2014,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR
+ExecStart=$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR$(web_transport_cli_args)
 Restart=on-failure
 RestartSec=3
 Environment=NODE_ENV=production
@@ -2153,7 +2289,7 @@ print_next_steps() {
       printf 'Verify frontend + backend: oore-web status --url %s\n' "$LOCAL_WEB_URL"
     else
       printf 'Start the frontend:\n'
-      printf '  oore-web --listen %s --backend-url %s\n' "$OORE_LOCAL_WEB_LISTEN" "$WEB_BACKEND_URL"
+      printf '  oore-web --listen %s --backend-url %s%s\n' "$OORE_LOCAL_WEB_LISTEN" "$WEB_BACKEND_URL" "$(web_transport_cli_args)"
     fi
     if [[ "$(uname -s)" == "Linux" && "$OORE_LOCAL_WEB_MODE" == "login" ]]; then
       printf '\nSystemd service:\n'
@@ -2272,6 +2408,8 @@ main() {
   validate_optional_bool_env OORE_INSTALL_DAEMON_SERVICE "$OORE_INSTALL_DAEMON_SERVICE"
   validate_optional_bool_env OORE_ENABLE_LINGER "$OORE_ENABLE_LINGER"
   validate_optional_bool_env OORE_OPEN_BROWSER "$OORE_OPEN_BROWSER"
+  validate_optional_bool_env OORE_WEB_BROWSER_TRANSPORT_PROTECTED "$OORE_WEB_BROWSER_TRANSPORT_PROTECTED"
+  validate_optional_bool_env OORE_WEB_BACKEND_TRANSPORT_PROTECTED "$OORE_WEB_BACKEND_TRANSPORT_PROTECTED"
 
   if normalize_bool "$OORE_NONINTERACTIVE"; then
     :
@@ -2457,7 +2595,7 @@ main() {
       report_component_failure \
         "oore-web" \
         "$WEB_LOG" \
-        "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR" \
+        "$WEB_BINARY --listen $OORE_LOCAL_WEB_LISTEN --backend-url $WEB_BACKEND_URL --dist-dir $WEB_DIST_DIR$(web_transport_cli_args)" \
         "$LOCAL_WEB_URL"
       return 1
     fi
