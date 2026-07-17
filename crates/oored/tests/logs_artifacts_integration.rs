@@ -81,6 +81,62 @@ async fn json_request(
     (status, json)
 }
 
+async fn open_api_token_stream(
+    app: &axum::Router,
+    build_id: &str,
+    api_token: &str,
+) -> http::Response<Body> {
+    let (status, json) = json_request(
+        app,
+        "POST",
+        &format!("/v1/builds/{build_id}/stream-token"),
+        api_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stream_token = json["token"].as_str().unwrap();
+    let request = Request::builder()
+        .uri(format!(
+            "/v1/builds/{build_id}/logs/stream?token={stream_token}"
+        ))
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+}
+
+async fn assert_stream_ends_before_log(response: http::Response<Body>, marker: &str) {
+    let bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        response.into_body().collect(),
+    )
+    .await
+    .expect("unauthorized stream must close promptly")
+    .unwrap()
+    .to_bytes();
+    let body = String::from_utf8_lossy(&bytes);
+    assert!(body.contains("authorization_ended"), "stream body: {body}");
+    assert!(!body.contains(marker), "stream body: {body}");
+}
+
+async fn insert_log_marker(pool: &sqlx::SqlitePool, build_id: &str, sequence: i64, marker: &str) {
+    sqlx::query(
+        "INSERT INTO build_logs (id, build_id, sequence, content, stream, created_at) \
+         VALUES (?1, ?2, ?3, ?4, 'stdout', ?5)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(build_id)
+    .bind(sequence)
+    .bind(marker)
+    .bind(common::now_unix())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Register a runner and return (runner_id, runner_token).
 async fn register_runner(app: &axum::Router, session_token: &str, name: &str) -> (String, String) {
     let body = serde_json::json!({
@@ -1041,6 +1097,62 @@ async fn test_open_stream_stops_after_api_token_revocation() {
 }
 
 #[tokio::test]
+async fn test_open_api_token_stream_revalidates_role_status_and_expiry() {
+    let (app, pool, _session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE role = 'owner' LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (_id, api_token, _prefix, _created_at) = oored::api_tokens::create_api_token(
+        &pool,
+        &user_id,
+        "current-user-revalidation",
+        "owner",
+        Some(common::now_unix() + 60),
+    )
+    .await
+    .unwrap();
+
+    let demoted = open_api_token_stream(&app, &build_id, &api_token).await;
+    sqlx::query("UPDATE users SET role = 'developer' WHERE id = ?1")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_log_marker(&pool, &build_id, 100, "after-role-demotion").await;
+    assert_stream_ends_before_log(demoted, "after-role-demotion").await;
+
+    sqlx::query("UPDATE users SET role = 'owner' WHERE id = ?1")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let disabled = open_api_token_stream(&app, &build_id, &api_token).await;
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = ?1")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_log_marker(&pool, &build_id, 101, "after-user-disablement").await;
+    assert_stream_ends_before_log(disabled, "after-user-disablement").await;
+
+    sqlx::query("UPDATE users SET status = 'active' WHERE id = ?1")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired = open_api_token_stream(&app, &build_id, &api_token).await;
+    sqlx::query("UPDATE api_tokens SET expires_at = ?1 WHERE token_hash = ?2")
+        .bind(common::now_unix() - 1)
+        .bind(oored::token::hash_token(&api_token))
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_log_marker(&pool, &build_id, 102, "after-token-expiry").await;
+    assert_stream_ends_before_log(expired, "after-token-expiry").await;
+}
+
+#[tokio::test]
 async fn test_open_stream_stops_after_project_membership_removal() {
     let (app, pool, _owner_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
@@ -1107,6 +1219,42 @@ async fn test_open_stream_stops_after_project_membership_removal() {
         !body.contains("after-membership-removal"),
         "stream body: {body}"
     );
+}
+
+#[tokio::test]
+async fn test_open_api_token_stream_stops_after_project_membership_removal() {
+    let (app, pool, _owner_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let owner_id: String = sqlx::query_scalar("SELECT id FROM users WHERE role = 'owner' LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let developer_id =
+        seed_user_with_role(&pool, "api-stream-developer@example.com", "developer").await;
+    seed_project_member(&pool, &project_id, &developer_id, &owner_id, "viewer").await;
+    let (_id, api_token, _prefix, _created_at) = oored::api_tokens::create_api_token(
+        &pool,
+        &developer_id,
+        "membership-revalidation",
+        "developer",
+        None,
+    )
+    .await
+    .unwrap();
+    let response = open_api_token_stream(&app, &build_id, &api_token).await;
+
+    sqlx::query("DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2")
+        .bind(&project_id)
+        .bind(&developer_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_log_marker(&pool, &build_id, 103, "after-api-membership-removal").await;
+    assert_stream_ends_before_log(response, "after-api-membership-removal").await;
 }
 
 #[tokio::test]

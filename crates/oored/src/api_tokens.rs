@@ -86,6 +86,13 @@ pub async fn validate_api_token(
     token: &str,
 ) -> Result<Option<SessionInfo>, sqlx::Error> {
     let hashed = hash_token(token);
+    validate_api_token_hash(pool, &hashed).await
+}
+
+pub(crate) async fn validate_api_token_hash(
+    pool: &SqlitePool,
+    token_hash: &str,
+) -> Result<Option<SessionInfo>, sqlx::Error> {
     let now = now_unix();
 
     let row = sqlx::query(
@@ -98,7 +105,7 @@ pub async fn validate_api_token(
            AND (t.expires_at IS NULL OR t.expires_at > ?2) \
            AND u.status = 'active'",
     )
-    .bind(&hashed)
+    .bind(token_hash)
     .bind(now)
     .fetch_optional(pool)
     .await?;

@@ -3332,7 +3332,7 @@ pub async fn get_job_ios_signing(
         .into_iter()
         .filter(|row| {
             active_bundle_ids.contains(&row.bundle_id)
-                && row.expires_at.map_or(true, |expires_at| expires_at > now)
+                && row.expires_at.is_none_or(|expires_at| expires_at > now)
         })
         .collect();
     if profile_rows.is_empty() {

@@ -111,7 +111,7 @@ impl StreamTokenStore {
         session: &SessionInfo,
         credential_hash: String,
         build_id: &str,
-    ) -> Result<(String, i64), ()> {
+    ) -> Option<(String, i64)> {
         let now = now_unix();
         let expires_at = (now + STREAM_TOKEN_TTL_SECS).min(session.expires_at);
         let mut state = self.lock();
@@ -138,7 +138,7 @@ impl StreamTokenStore {
                 || user_tokens >= MAX_OUTSTANDING_STREAM_TOKENS_PER_USER
                 || build_tokens >= MAX_OUTSTANDING_STREAM_TOKENS_PER_BUILD
             {
-                return Err(());
+                return None;
             }
         }
         if let Some(hash) = replace {
@@ -158,7 +158,7 @@ impl StreamTokenStore {
                 build_id: build_id.to_string(),
             },
         );
-        Ok((token, expires_at))
+        Some((token, expires_at))
     }
 
     /// Consume a streaming token. Each capability admits at most one stream.
@@ -289,43 +289,30 @@ async fn load_current_stream_session(
     pool: &sqlx::SqlitePool,
     authorization: &StreamAuthorization,
 ) -> Result<Option<SessionInfo>, sqlx::Error> {
-    let now = now_unix();
-    let row = match authorization.auth_source {
+    match authorization.auth_source {
         AuthSource::Session => {
-            sqlx::query(
+            let row = sqlx::query(
                 "SELECT u.id, u.email, u.oidc_subject, u.role, s.expires_at \
                  FROM sessions s JOIN users u ON u.id = s.user_id \
                  WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND u.status = 'active'",
             )
             .bind(&authorization.credential_hash)
-            .bind(now)
+            .bind(now_unix())
             .fetch_optional(pool)
-            .await?
+            .await?;
+            Ok(row.map(|row| SessionInfo {
+                user_id: row.get("id"),
+                email: row.get("email"),
+                oidc_subject: row.get("oidc_subject"),
+                role: row.get("role"),
+                expires_at: row.get("expires_at"),
+                auth_source: AuthSource::Session,
+            }))
         }
         AuthSource::ApiToken => {
-            sqlx::query(
-                "SELECT u.id, u.email, u.oidc_subject, t.role, \
-                        COALESCE(t.expires_at, 9223372036854775807) AS expires_at \
-                 FROM api_tokens t JOIN users u ON u.id = t.created_by \
-                 WHERE t.token_hash = ?1 AND t.revoked_at IS NULL \
-                   AND (t.expires_at IS NULL OR t.expires_at > ?2) \
-                   AND u.status = 'active'",
-            )
-            .bind(&authorization.credential_hash)
-            .bind(now)
-            .fetch_optional(pool)
-            .await?
+            crate::api_tokens::validate_api_token_hash(pool, &authorization.credential_hash).await
         }
-    };
-
-    Ok(row.map(|row| SessionInfo {
-        user_id: row.get("id"),
-        email: row.get("email"),
-        oidc_subject: row.get("oidc_subject"),
-        role: row.get("role"),
-        expires_at: row.get("expires_at"),
-        auth_source: authorization.auth_source.clone(),
-    }))
+    }
 }
 
 async fn require_current_stream_authorization(
@@ -562,7 +549,7 @@ pub async fn create_stream_token(
     let (token, expires_at) = state
         .stream_tokens
         .create(&auth.0, credential_hash, &build_id)
-        .map_err(|_| {
+        .ok_or_else(|| {
             api_err(
                 StatusCode::TOO_MANY_REQUESTS,
                 "stream_token_limit",
@@ -825,7 +812,7 @@ mod tests {
                     "excess-credential".to_string(),
                     "excess-build",
                 )
-                .is_err()
+                .is_none()
         );
     }
 
@@ -845,7 +832,7 @@ mod tests {
         assert!(
             user_store
                 .create(&user, "bounded-credential".to_string(), "excess-build")
-                .is_err()
+                .is_none()
         );
 
         let build_store = StreamTokenStore::new();
@@ -865,7 +852,7 @@ mod tests {
                     "excess-credential".to_string(),
                     "bounded-build",
                 )
-                .is_err()
+                .is_none()
         );
     }
 

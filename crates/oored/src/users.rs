@@ -422,7 +422,7 @@ pub async fn delete_user(
     })
     .to_string();
     let _ = write_audit_log(
-        &pool,
+        pool,
         Some(&auth.0.user_id),
         "user_disabled",
         "user",
