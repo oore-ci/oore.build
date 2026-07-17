@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-17
 
+- **macOS managed-runner Android signing tool discovery**:
+  - Runner-owned Android signing now finds `apksigner` in the standard per-user macOS SDK directory when launchd does not provide `ANDROID_HOME` or `ANDROID_SDK_ROOT`. Explicit SDK variables still take precedence, repository-controlled paths remain excluded, and signer launch failures now name the unresolved program.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 - **macOS runner checkout sandbox compatibility**:
   - Repository commands may query only their own PID metadata, allowing the Apple `/usr/bin/git` Xcode-select shim to initialize without restoring access to unrelated processes. The sandbox also permits metadata lookup of the runner workspace root required to resolve the repository working directory while continuing to deny sibling contents.
   - The Keychain CLI is denied explicitly, and the detached-descendant regression continues to prove that repository code cannot inspect or signal a later runner-owned signer or reach its protected workspace.
