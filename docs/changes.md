@@ -12,6 +12,16 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-17
+
+- **Security remediation batch**:
+  - Frontend instance changes now invalidate credentials and setup capabilities, displayed recovery/setup commands quote untrusted values, and the self-hosted web launcher enforces framing, secret-input, listener, and backend-transport boundaries.
+  - Runner execution, backup/restore, installer/uninstaller, authentication, OIDC, trusted-proxy, API-token, service-secret, and iOS-signing lifecycles now fail closed and clean up reusable authority and sensitive files.
+  - Project, pipeline, build, retention, runner, log-stream, SCM callback/webhook, artifact-storage, notification, SMTP, S3, setup-throttling, and metrics paths now enforce their authorization, destination, transport, resource, and data-lifecycle boundaries.
+  - This integrated batch intentionally leaves `R077-001`, `R077-005`, `R086-001`, `R086-003`, `R088-008`, and `R092-003` open for the follow-up remediation owner.
+  - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - V1 Roadmap: https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+
 ## 2026-07-16
 
 - **Stable-release UI and frontend engineering hardening**:
