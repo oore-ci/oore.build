@@ -20,7 +20,7 @@ features:
   - title: Flutter-First
     details: Purpose-built for Flutter. Android, iOS, and macOS builds with automatic Flutter version management via FVM and file-first pipeline configuration.
   - title: Remote Auth
-    details: OIDC or trusted-proxy auth for non-loopback access, plus loopback-only local login for local-first onboarding. Use your IdP directly or put Oore behind Warpgate — no local passwords, ever.
+    details: OIDC or trusted-proxy auth for Remote access, loopback login for Local Only onboarding, and host-authorized one-use recovery. No local passwords, ever.
 ---
 
 ## Who is this for?

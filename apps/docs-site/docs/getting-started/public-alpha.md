@@ -47,6 +47,8 @@ Choosing the right authentication mode depends on where you access your daemon f
 | **Remote OIDC**          | HTTPS                        | Any OIDC-compatible provider                                       | Team access without an identity proxy           |
 | **Remote Trusted Proxy** | HTTPS through identity proxy | Forwarded identity header plus shared secret on trusted proxy hops | Private networks or enterprise identity proxies |
 
+Ready Remote instances do not accept passwordless login based on TCP loopback alone. If an operator needs local recovery, run [`oore recovery`](/reference/cli/oore-recovery) on the daemon host to create a five-minute, single-use browser link for one active account. Normal OIDC or Trusted Proxy sign-in remains the everyday path.
+
 ## Supported onboarding paths
 
 Choosing the right path depends on how your browser reaches the backend. The backend owns setup and auth; the hosted or local frontend only drives the backend setup API.

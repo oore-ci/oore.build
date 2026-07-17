@@ -27,6 +27,7 @@ This page lists intentional constraints and known gaps for the current public al
 
 - For non-loopback/remote access, configure remote authentication before team usage.
 - Loopback-only local login is available for local-first onboarding in Local Only mode.
+- Ready Remote local recovery requires host access to run `oore recovery`; TCP loopback alone is deliberately insufficient.
 - Oore CI does not support local password-based auth.
 
 ## Operational expectations

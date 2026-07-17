@@ -23,7 +23,7 @@ Oore CI consists of three components that communicate over HTTP:
                                   │   oore.db    │
                                   └──────────────┘
 
-┌─────────────┐     HTTP/CLI      ┌──────────────┐
+┌─────────────┐  HTTP + local UDS ┌──────────────┐
 │    oore     │ ◄───────────────► │    oored     │
 │   (CLI)     │                   │   (daemon)   │
 └─────────────┘                   └──────────────┘
@@ -50,6 +50,7 @@ The operator CLI communicates with the daemon over HTTP. It handles:
 - Instance setup (bootstrap token generation, interactive setup wizard)
 - External runner registration and management
 - Diagnostic checks (`oore doctor`)
+- Ready Remote browser recovery through the daemon's filesystem-permissioned Unix management socket (`oore recovery`)
 
 The CLI shares the same SQLite database as the daemon for bootstrap token operations.
 
@@ -110,7 +111,7 @@ OIDC (default) uses your existing identity provider:
 - **Centralized access control** — disable a user in your IdP and they lose access to Oore CI
 - **Enterprise ready** — works with Google Workspace, Okta, Azure AD, Auth0, Keycloak, and any OIDC-compliant provider
 
-The daemon also supports loopback-only local login (no OIDC) for local-first onboarding and local operator access (auto-bootstrap requires Local Only mode).
+The daemon supports passwordless loopback login only in Local Only mode. Ready Remote recovery begins with local filesystem authority: `oore recovery` asks the daemon over its Unix management socket to mint one account-bound, single-use browser capability. The public TCP router never exposes minting and never treats loopback or proxy headers as recovery authority. Normal Remote OIDC or Trusted Proxy sign-in is unchanged.
 
 ## Technology choices
 

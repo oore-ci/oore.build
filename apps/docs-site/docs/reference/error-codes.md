@@ -19,14 +19,17 @@ All error codes returned by the Oore CI API, consolidated from all endpoint grou
 
 ## Authentication errors
 
-| Code              | HTTP Status | Description                             |
-| ----------------- | ----------- | --------------------------------------- |
-| `missing_auth`    | 401         | Authorization header not provided       |
-| `invalid_session` | 401         | Session token is invalid                |
-| `session_expired` | 401         | Session token has expired               |
-| `no_session`      | 401         | No active setup session exists          |
-| `forbidden`       | 403         | Insufficient RBAC permissions           |
-| `user_not_found`  | 403         | No user account for this email/identity |
+| Code                                 | HTTP Status | Description                                                     |
+| ------------------------------------ | ----------- | --------------------------------------------------------------- |
+| `missing_auth`                       | 401         | Authorization header not provided                               |
+| `invalid_session`                    | 401         | Session token is invalid                                        |
+| `session_expired`                    | 401         | Session token has expired                                       |
+| `no_session`                         | 401         | No active setup session exists                                  |
+| `forbidden`                          | 403         | Insufficient RBAC permissions                                   |
+| `user_not_found`                     | 403         | No user account for this email/identity                         |
+| `local_recovery_capability_required` | 403         | Ready Remote recovery capability was omitted                    |
+| `local_recovery_capability_invalid`  | 403         | Recovery capability is malformed, expired, unknown, or consumed |
+| `local_recovery_account_mismatch`    | 403         | Request account differs from the capability-bound account       |
 
 ## Setup errors
 

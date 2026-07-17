@@ -7,7 +7,7 @@ description: 'Security architecture of Oore CI including Remote auth providers, 
 
 This page explains the security design decisions in Oore CI and how they protect your instance.
 
-## Authentication: Remote OIDC or Trusted Proxy + Loopback Local Login (Local Only)
+## Authentication: Remote OIDC or Trusted Proxy + Host-Authorized Recovery
 
 For any non-loopback access (`runtime_mode=remote`), Oore CI requires one of:
 
@@ -16,7 +16,9 @@ For any non-loopback access (`runtime_mode=remote`), Oore CI requires one of:
 
 There are no local passwords, no password storage, and no password reset flows.
 
-The daemon also supports loopback-only local login (`POST /v1/auth/local/login`) for local-first onboarding and local operator access. When setup is incomplete, local login is only available in Local Only mode; in Remote mode it is only available after setup is complete. In Local Only mode, the first successful local login may auto-complete setup and create the initial owner record.
+The daemon supports loopback-only local login (`POST /v1/auth/local/login`) for Local Only onboarding and operator access. The first successful Local Only login may auto-complete setup and create the initial owner record.
+
+In a Ready Remote instance, TCP loopback is not authentication authority. A local operator runs [`oore recovery`](/reference/cli/oore-recovery), which connects through an owner-only Unix management socket and mints a short-lived, single-use capability bound to one active account. The browser receives that capability in a URL fragment, removes the fragment from browser history, and submits it in the local-login POST body. The daemon atomically consumes the capability before creating a session. Missing, expired, replayed, malformed, unknown, or wrong-account capabilities fail regardless of loopback or forwarding headers.
 
 **Why**: Eliminates an entire class of vulnerabilities (credential storage, brute force attacks, password reuse). Users authenticate with identity systems already used by the organization. Disabling a user in the upstream identity system revokes their ability to start new sessions.
 
@@ -83,6 +85,7 @@ The first-run bootstrap token (required for Remote-mode setup flows) has multipl
 | Bootstrap token             | SHA-256 hash in SQLite          | Plaintext never stored     |
 | Setup session token         | SHA-256 hash in SQLite          | 30-minute sliding TTL      |
 | User session token          | SHA-256 hash in SQLite          | 24-hour TTL                |
+| Local recovery capability   | SHA-256 hash in daemon memory   | At most 5 minutes, one use |
 | OIDC client secret          | AES-256-GCM encrypted in SQLite | File-stored encryption key |
 | Trusted proxy shared secret | AES-256-GCM encrypted in SQLite | File-stored encryption key |
 | Signing certificates        | AES-256-GCM encrypted in SQLite | Same encryption key        |
@@ -108,8 +111,9 @@ Oore CI is designed for local-network deployment:
 
 ## Audit logging
 
-User management operations are logged:
+User management and local recovery operations are logged:
 
 - `user_invited`, `role_changed`, `user_disabled`, `user_enabled`, `user_activated`, `owner_created`
+- `local_recovery_capability_minted`, `local_recovery_capability_mint_failed`, `local_recovery_login_succeeded`, `local_recovery_login_failed`
 
-These events are stored in the SQLite database and available through the admin interface.
+Recovery audit details contain only bounded metadata such as a non-secret capability ID, reason, expiry, and transport facts. Raw capabilities are never written to audit details.

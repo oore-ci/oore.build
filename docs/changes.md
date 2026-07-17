@@ -14,12 +14,21 @@ Rules:
 
 ## 2026-07-17
 
+- **Host-authorized local recovery for Ready Remote instances (R086-001)**:
+  - Ready Remote local recovery no longer treats a TCP loopback peer or forwarding headers as authentication authority. The public local-login route requires and atomically consumes a short-lived, single-use capability bound to one active account.
+  - `oored` exposes capability minting only through an effective-user-owned Unix management socket under a `0700` directory with a `0600` socket. Ownership, exact modes, symlinks, active paths, and stale sockets fail closed; raw capabilities are held only in a URL fragment and submitted once in a POST body.
+  - `oore recovery` mints a browser link on the daemon host. Local Only passwordless loopback login and normal Remote OIDC/Trusted Proxy flows remain unchanged; reconfiguration and shutdown clear outstanding recovery authority.
+  - The web flow, OpenAPI contract, CLI/operator/security documentation, audit events, replay/expiry/account-binding/concurrency tests, and socket path-hazard tests now cover the architecture.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
+  - V1 Roadmap: https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+
 - **Final product-security remediation follow-up**:
   - External runner registration and runtime now require HTTPS except for literal loopback IPs; runner protocol v3 adds an ephemeral job-scoped signing grant.
   - Repository-controlled stages no longer receive Android keystores/passwords or an active iOS signing keychain. Fixed runner-owned post-build signers create and verify mobile signatures, while terminal and requeue transitions atomically revoke assignment and signing access.
   - Public OIDC starts reserve bounded capacity and per-source/global rate budget atomically before discovery, including concurrent admission and cleanup coverage.
   - GitLab webhook tokens are repository-scoped, one-time revealed, independently rotatable, and validated against the immutable payload project ID. Legacy integration-wide GitLab tokens are retired fail-closed.
-  - Remote-mode loopback local login remains unchanged because a shared TCP listener cannot distinguish a direct local browser from a same-host reverse proxy without a new listener/capability contract; the required Linear/ADR decision is documented in the remediation handoff.
+  - The original R086-001 deferral recorded that a shared TCP listener could not distinguish a direct local browser from a same-host reverse proxy. The host-authorized Unix-socket capability contract above now resolves that boundary without weakening the validated fixes in this batch.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
   - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
   - V1 Roadmap: https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04

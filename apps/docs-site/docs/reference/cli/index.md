@@ -113,6 +113,7 @@ The operator CLI handles setup, authentication, and administration.
 | [`oore setup`](/reference/cli/oore-setup)                     | Interactive 4-step instance setup                       | Implemented |
 | [`oore setup token`](/reference/cli/oore-setup#setup-token)   | Generate a bootstrap token                              | Implemented |
 | [`oore login`](/reference/cli/oore-login)                     | Authenticate in local mode or import a token            | Implemented |
+| [`oore recovery`](/reference/cli/oore-recovery)               | Mint a one-use browser recovery link on the daemon host | Implemented |
 | [`oore status`](/reference/cli/oore-status)                   | Show setup status and authenticated operational summary | Implemented |
 | `oore runner register`                                        | Register an external build runner                       | Implemented |
 | `oore runner start`                                           | Start external runner process                           | Implemented |
