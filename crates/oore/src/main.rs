@@ -3280,6 +3280,17 @@ fn set_private_permissions(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn create_private_file(path: &Path) -> anyhow::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("failed to create private file {}", path.display()))
+}
+
 fn snapshot_sqlite_path(source: &Path, destination: &Path) -> anyhow::Result<()> {
     use std::str::FromStr;
 
@@ -3351,6 +3362,9 @@ fn unpack_backup(input: &Path, destination: &Path) -> anyhow::Result<BackupManif
         }
         if found.insert(name.clone(), ()).is_some() {
             anyhow::bail!("backup contains duplicate path: {name}");
+        }
+        if !entry.header().entry_type().is_file() {
+            anyhow::bail!("backup entry {name} must be a regular file");
         }
         entry
             .unpack(destination.join(&name))
@@ -3448,7 +3462,7 @@ fn backup_create(args: BackupCreateArgs) -> anyhow::Result<()> {
             .unwrap_or_default()
             .to_string_lossy()
     ));
-    let file = fs::File::create(&temp_output)
+    let file = create_private_file(&temp_output)
         .with_context(|| format!("failed to create backup {}", temp_output.display()))?;
     let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
     let mut archive = tar::Builder::new(encoder);
@@ -4502,6 +4516,51 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_output_is_private_before_first_write() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("backup.tmp");
+        let mut file = create_private_file(&path).unwrap();
+
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        file.write_all(b"backup").unwrap();
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn backup_rejects_link_members() {
+        for entry_type in [tar::EntryType::Symlink, tar::EntryType::Link] {
+            let temp = tempfile::tempdir().unwrap();
+            let input = temp.path().join("backup.tar.gz");
+            let file = fs::File::create(&input).unwrap();
+            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut archive = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(entry_type);
+            header.set_mode(0o600);
+            header.set_size(0);
+            header.set_path(BACKUP_DATABASE_FILE).unwrap();
+            header.set_link_name("/outside-backup").unwrap();
+            header.set_cksum();
+            archive.append(&header, std::io::empty()).unwrap();
+            archive.finish().unwrap();
+            archive.into_inner().unwrap().finish().unwrap();
+
+            let destination = temp.path().join("unpack");
+            fs::create_dir(&destination).unwrap();
+            let error = unpack_backup(&input, &destination).unwrap_err();
+            assert!(
+                error.to_string().contains("must be a regular file"),
+                "unexpected error: {error:#}"
+            );
+        }
+    }
 
     #[test]
     fn runner_service_is_scoped_to_the_aqua_login_session() {

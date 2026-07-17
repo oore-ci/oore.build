@@ -311,17 +311,30 @@ systemd_env_quote() {
   printf '"%s"' "$value"
 }
 
-write_secret_file() {
+write_secret_file() (
   local path="$1"
   local value="$2"
-  local previous_umask
+  local dir tmp mode
 
-  mkdir -p "$(dirname "$path")"
-  previous_umask="$(umask)"
+  dir="$(dirname "$path")"
+  mkdir -p "$dir"
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -f "$path" && ! -L "$path" && -O "$path" ]] \
+      || die "Secret destination must be an installer-owned regular file: $path"
+  fi
   umask 077
-  printf '%s\n' "$value" > "$path"
-  umask "$previous_umask"
-}
+  tmp="$(mktemp "$dir/.oore-secret.XXXXXX")"
+  trap 'rm -f "$tmp"' EXIT HUP INT TERM
+  printf '%s\n' "$value" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$path"
+  trap - EXIT HUP INT TERM
+
+  mode="$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path" 2>/dev/null)" \
+    || die "Failed to inspect secret destination: $path"
+  [[ -f "$path" && ! -L "$path" && -O "$path" && "$mode" == "600" ]] \
+    || die "Secret destination has unsafe ownership or permissions: $path"
+)
 
 trusted_proxy_secret_file_path() {
   printf '%s' "${OORE_TRUSTED_PROXY_SHARED_SECRET_FILE:-$OORE_INSTALL_ROOT/trusted-proxy-shared-secret}"
