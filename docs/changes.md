@@ -12,6 +12,13 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-19
+
+- **Lucide icons and dashboard active-build items**:
+  - Replaced the remaining Hugeicons usage with Lucide and switched the dashboard active-build list to the default shadcn Item composition without local Item styling overrides.
+  - Demo mode now suppresses MSW's handled request/response console dumps.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 ## 2026-07-18
 
 - **Dynamic shadcn component styles**:

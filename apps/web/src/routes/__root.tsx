@@ -2,8 +2,10 @@ import { Suspense, lazy } from 'react'
 import { Outlet, createRootRoute, useMatches } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Search01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Search as Search01Icon,
+} from 'lucide-react'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
@@ -165,7 +167,7 @@ function RootLayout() {
                     onClick={() => openCommandPalette(true)}
                     className="w-10 justify-center bg-background px-0 text-xs text-muted-foreground sm:w-52 sm:justify-between sm:px-3"
                   >
-                    <HugeiconsIcon icon={Search01Icon} size={14} />
+                    <DynamicLucideIcon icon={Search01Icon} size={14} />
                     <span className="hidden sm:inline">Search</span>
                     <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
                   </Button>

@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowLeft01Icon,
-  ArrowRight01Icon,
-  Cancel01Icon,
-  GitBranchIcon,
-  InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
-  Refresh01Icon,
-  Search01Icon,
-  Tick02Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowLeft as ArrowLeft01Icon,
+  ArrowRight as ArrowRight01Icon,
+  X as Cancel01Icon,
+  GitBranch as GitBranchIcon,
+  Info as InformationCircleIcon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+  RefreshCw as Refresh01Icon,
+  Search as Search01Icon,
+  Check as Tick02Icon,
+} from 'lucide-react'
 
 import RepositoryAvatar from '@/components/repository-avatar'
 import { CollectionPagination } from '@/components/collection-controls'
@@ -141,11 +141,11 @@ function RepositoryActions({
           />
         }
       >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
         <DropdownMenuItem onClick={onPolicySelect} disabled={pending}>
-          <HugeiconsIcon icon={allowed ? Cancel01Icon : Tick02Icon} />
+          <DynamicLucideIcon icon={allowed ? Cancel01Icon : Tick02Icon} />
           {pending
             ? 'Saving runner access...'
             : allowed
@@ -154,7 +154,7 @@ function RepositoryActions({
         </DropdownMenuItem>
         {onWebhookSelect ? (
           <DropdownMenuItem onClick={onWebhookSelect}>
-            <HugeiconsIcon icon={Refresh01Icon} />
+            <DynamicLucideIcon icon={Refresh01Icon} />
             Create webhook token
           </DropdownMenuItem>
         ) : null}
@@ -323,7 +323,7 @@ function RepositoryPagination({
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
         >
-          <HugeiconsIcon icon={ArrowLeft01Icon} aria-hidden />
+          <DynamicLucideIcon icon={ArrowLeft01Icon} aria-hidden />
           Previous
         </Button>
         <span className="min-w-20 text-center text-xs text-muted-foreground">
@@ -337,7 +337,7 @@ function RepositoryPagination({
           onClick={() => onPageChange(page + 1)}
         >
           Next
-          <HugeiconsIcon icon={ArrowRight01Icon} aria-hidden />
+          <DynamicLucideIcon icon={ArrowRight01Icon} aria-hidden />
         </Button>
       </div>
     </div>
@@ -449,7 +449,7 @@ export function IntegrationRepositoryInventory({
 
       {error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Could not load {repositoryKind}: {error.message}
@@ -473,7 +473,7 @@ export function IntegrationRepositoryInventory({
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={GitBranchIcon} />
+              <DynamicLucideIcon icon={GitBranchIcon} />
             </EmptyMedia>
             <EmptyTitle>No synced {repositoryKind}</EmptyTitle>
             <EmptyDescription>
@@ -487,7 +487,7 @@ export function IntegrationRepositoryInventory({
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <DynamicLucideIcon icon={Search01Icon} />
             </EmptyMedia>
             <EmptyTitle>No matching {repositoryKind}</EmptyTitle>
             <EmptyDescription>
@@ -580,7 +580,7 @@ export function IntegrationAccountsInventory({
   if (error) {
     return (
       <Alert variant="destructive">
-        <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+        <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
         <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span>
             Could not load {label.toLocaleLowerCase()}: {error.message}

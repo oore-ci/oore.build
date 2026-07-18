@@ -1,11 +1,11 @@
 import {
-  Delete02Icon,
-  LinkSquare02Icon,
-  MoreHorizontalCircle01Icon,
-  Refresh01Icon,
-  Setting07Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  Trash2 as Delete02Icon,
+  SquareArrowOutUpRight as LinkSquare02Icon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+  RefreshCw as Refresh01Icon,
+  Settings as Setting07Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -42,12 +42,12 @@ export function IntegrationHeaderActions({
     <>
       {needsAuthorization ? (
         <Button onClick={onAuthorize} disabled={authorizePending}>
-          <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+          <DynamicLucideIcon icon={LinkSquare02Icon} size={16} />
           {authorizePending ? 'Redirecting...' : 'Authorize GitLab'}
         </Button>
       ) : canSync ? (
         <Button onClick={onSync} disabled={syncPending}>
-          <HugeiconsIcon icon={Refresh01Icon} />
+          <DynamicLucideIcon icon={Refresh01Icon} />
           {syncPending ? 'Syncing...' : syncLabel}
         </Button>
       ) : null}
@@ -58,7 +58,7 @@ export function IntegrationHeaderActions({
             <Button variant="outline" size="icon" aria-label="Source actions" />
           }
         >
-          <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+          <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
           {manageHref ? (
@@ -67,12 +67,12 @@ export function IntegrationHeaderActions({
                 window.open(manageHref, '_blank', 'noopener,noreferrer')
               }
             >
-              <HugeiconsIcon icon={Setting07Icon} />
+              <DynamicLucideIcon icon={Setting07Icon} />
               {manageLabel}
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem variant="destructive" onClick={onDisconnect}>
-            <HugeiconsIcon icon={Delete02Icon} />
+            <DynamicLucideIcon icon={Delete02Icon} />
             Disconnect source
           </DropdownMenuItem>
         </DropdownMenuContent>

@@ -1,9 +1,9 @@
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  AlertCircleIcon,
-  CheckmarkCircle02Icon,
-} from '@hugeicons/core-free-icons'
+  CircleAlert as AlertCircleIcon,
+  CircleCheck as CheckmarkCircle02Icon,
+} from 'lucide-react'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { getApiErrorMessage } from '@/lib/api'
 import { OidcIssuerUrlAutocomplete } from '@/components/oidc-issuer-url-autocomplete'
@@ -148,7 +148,7 @@ export default function OidcSettingsDialog({
 
             {testOidcConnectionMutation.isSuccess ? (
               <Alert>
-                <HugeiconsIcon
+                <DynamicLucideIcon
                   icon={CheckmarkCircle02Icon}
                   size={16}
                   className="text-success"
@@ -162,7 +162,7 @@ export default function OidcSettingsDialog({
               </Alert>
             ) : testOidcConnectionMutation.isError ? (
               <Alert variant="destructive">
-                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                <DynamicLucideIcon icon={AlertCircleIcon} size={16} />
                 <AlertDescription>
                   Connection failed. Verify the issuer URL and try again.
                 </AlertDescription>

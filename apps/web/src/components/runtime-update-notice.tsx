@@ -1,6 +1,8 @@
 import { Suspense, lazy, useState } from 'react'
-import { WorkUpdateIcon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+import {
+  BriefcaseBusiness as WorkUpdateIcon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import {
   SidebarMenu,
@@ -29,7 +31,7 @@ export default function RuntimeUpdateNotice() {
             tooltip={`${updateCount} update${updateCount === 1 ? '' : 's'} available`}
             onClick={() => setOpen(true)}
           >
-            <HugeiconsIcon icon={WorkUpdateIcon} size={18} />
+            <DynamicLucideIcon icon={WorkUpdateIcon} size={18} />
             <span>Updates available</span>
           </SidebarMenuButton>
           <SidebarMenuBadge>{updateCount}</SidebarMenuBadge>

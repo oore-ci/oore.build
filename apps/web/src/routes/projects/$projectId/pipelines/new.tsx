@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  AlertCircleIcon,
-  CheckmarkCircle02Icon,
-  File02Icon,
-  RefreshIcon,
-} from '@hugeicons/core-free-icons'
+  CircleAlert as AlertCircleIcon,
+  CircleCheck as CheckmarkCircle02Icon,
+  FileText as File02Icon,
+  RefreshCw as RefreshIcon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type {
@@ -238,7 +238,7 @@ function RepositoryWorkflowSummary({
   return (
     <div className="space-y-4">
       <Alert>
-        <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} />
+        <DynamicLucideIcon icon={CheckmarkCircle02Icon} size={16} />
         <AlertDescription>
           Oore will read <code>{workflow.path}</code> from the exact commit
           being built. This preview is from <code>{reference}</code>.
@@ -735,7 +735,7 @@ function NewPipelinePage() {
           </Card>
         ) : workflowsQuery.error ? (
           <Alert variant="destructive">
-            <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+            <DynamicLucideIcon icon={AlertCircleIcon} size={16} />
             <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
               <span>
                 Oore could not inspect this repository. Nothing has been
@@ -747,7 +747,7 @@ function NewPipelinePage() {
                 variant="outline"
                 onClick={() => void workflowsQuery.refetch()}
               >
-                <HugeiconsIcon icon={RefreshIcon} />
+                <DynamicLucideIcon icon={RefreshIcon} />
                 Retry
               </Button>
               <Button
@@ -765,7 +765,7 @@ function NewPipelinePage() {
             <CardHeader className="gap-2">
               <div className="flex items-center justify-between gap-3">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <HugeiconsIcon icon={File02Icon} size={18} />
+                  <DynamicLucideIcon icon={File02Icon} size={18} />
                   Repository workflow found
                 </CardTitle>
                 <Badge variant="secondary">
@@ -793,7 +793,7 @@ function NewPipelinePage() {
                       className="justify-start font-mono"
                       onClick={() => setSelectedWorkflowPath(workflow.path)}
                     >
-                      <HugeiconsIcon icon={File02Icon} />
+                      <DynamicLucideIcon icon={File02Icon} />
                       {workflow.path}
                     </Button>
                   ))}
@@ -813,7 +813,7 @@ function NewPipelinePage() {
           <div className="space-y-3">
             {invalidWorkflows.length > 0 ? (
               <Alert variant="destructive">
-                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                <DynamicLucideIcon icon={AlertCircleIcon} size={16} />
                 <AlertDescription>
                   Oore found repository workflow files, but they need attention:
                   <ul className="mt-2 list-disc pl-5">
@@ -828,7 +828,7 @@ function NewPipelinePage() {
               </Alert>
             ) : !manualSetup ? (
               <Alert>
-                <HugeiconsIcon icon={File02Icon} size={16} />
+                <DynamicLucideIcon icon={File02Icon} size={16} />
                 <AlertDescription>
                   No Oore workflow was found on{' '}
                   <code>{workflowsQuery.data?.reference}</code>. Choose a

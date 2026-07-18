@@ -1,11 +1,11 @@
 import { Link, useLocation, useMatches } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  CommandLineIcon,
-  DashboardSquare01Icon,
-  Folder02Icon,
-  Settings01Icon,
-} from '@hugeicons/core-free-icons'
+  Command as CommandLineIcon,
+  LayoutDashboard as DashboardSquare01Icon,
+  Folder as Folder02Icon,
+  Settings as Settings01Icon,
+} from 'lucide-react'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -68,7 +68,7 @@ export default function NavMain() {
                   tooltip={item.title}
                   render={<Link to={item.to} />}
                 >
-                  <HugeiconsIcon icon={item.icon} size={18} />
+                  <DynamicLucideIcon icon={item.icon} size={18} />
                   <span>{item.title}</span>
                 </SidebarMenuButton>
                 {item.to === '/builds' && <ActiveBuildBadge />}

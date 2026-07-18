@@ -1,12 +1,12 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowRight01Icon,
-  FilterIcon,
-  RefreshIcon,
-  SmartPhone01Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowRight as ArrowRight01Icon,
+  ListFilter as FilterIcon,
+  RefreshCw as RefreshIcon,
+  Smartphone as SmartPhone01Icon,
+} from 'lucide-react'
 
 import type { Artifact, Build, BuildStatus, Project } from '@/lib/types'
 import { useArtifactsForBuilds, useBuilds } from '@/hooks/use-builds'
@@ -201,7 +201,7 @@ function QaActivityRow({
           {relativeTime(build.finished_at ?? build.created_at)}
         </p>
       </div>
-      <HugeiconsIcon
+      <DynamicLucideIcon
         icon={ArrowRight01Icon}
         className="shrink-0 text-muted-foreground"
         aria-hidden
@@ -339,7 +339,7 @@ function ActivityPanel({
             }
           >
             <span className="relative flex">
-              <HugeiconsIcon icon={FilterIcon} data-icon="inline-start" />
+              <DynamicLucideIcon icon={FilterIcon} data-icon="inline-start" />
               {statuses.length > 0 ? (
                 <Badge
                   aria-hidden
@@ -427,7 +427,7 @@ function ActivityPanel({
                 size="sm"
                 onClick={() => void buildsQuery.refetch()}
               >
-                <HugeiconsIcon icon={RefreshIcon} />
+                <DynamicLucideIcon icon={RefreshIcon} />
                 Retry
               </Button>
             </AlertDescription>
@@ -469,7 +469,7 @@ function ActivityPanel({
                     size="sm"
                     onClick={() => void artifactsQuery.refetch()}
                   >
-                    <HugeiconsIcon icon={RefreshIcon} />
+                    <DynamicLucideIcon icon={RefreshIcon} />
                     Retry
                   </Button>
                 </AlertDescription>
@@ -548,7 +548,7 @@ export default function QaReleasesPage() {
               size="sm"
               onClick={() => void projectsQuery.refetch()}
             >
-              <HugeiconsIcon icon={RefreshIcon} />
+              <DynamicLucideIcon icon={RefreshIcon} />
               Retry
             </Button>
           </AlertDescription>
@@ -564,7 +564,7 @@ export default function QaReleasesPage() {
           <Empty className="py-12">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <HugeiconsIcon icon={SmartPhone01Icon} />
+                <DynamicLucideIcon icon={SmartPhone01Icon} />
               </EmptyMedia>
               <EmptyTitle>No apps shared with you yet</EmptyTitle>
               <EmptyDescription>

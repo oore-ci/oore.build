@@ -1,7 +1,9 @@
 import { lazy, Suspense, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { MoreHorizontalCircle01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+} from 'lucide-react'
 
 import type { AuthorizedProject, Project } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
@@ -77,7 +79,7 @@ function ProjectActionsControl({
         setOpen(true)
       }}
     >
-      <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+      <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
     </Button>
   )
 

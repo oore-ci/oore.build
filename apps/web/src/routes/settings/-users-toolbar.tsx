@@ -1,9 +1,9 @@
 import {
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowDown as ArrowDown01Icon,
+  ArrowUp as ArrowUp01Icon,
+  Search as Search01Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import type { Table } from '@tanstack/react-table'
 import { useState } from 'react'
 
@@ -48,7 +48,7 @@ export function UsersToolbar({
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <div className="relative w-full sm:max-w-sm">
-        <HugeiconsIcon
+        <DynamicLucideIcon
           icon={Search01Icon}
           className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
           aria-hidden
@@ -92,7 +92,7 @@ export function UsersToolbar({
             onSortChange(sort, direction === 'asc' ? 'desc' : 'asc')
           }
         >
-          <HugeiconsIcon
+          <DynamicLucideIcon
             icon={direction === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
           />
         </Button>

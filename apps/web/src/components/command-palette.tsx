@@ -1,15 +1,15 @@
 import { useCallback, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  CommandLineIcon,
-  ComputerIcon,
-  FolderLibraryIcon,
-  Home01Icon,
-  LinkSquare01Icon,
-  Settings01Icon,
-  UserMultiple02Icon,
-} from '@hugeicons/core-free-icons'
+  Command as CommandLineIcon,
+  Monitor as ComputerIcon,
+  Library as FolderLibraryIcon,
+  House as Home01Icon,
+  SquareArrowOutUpRight as LinkSquare01Icon,
+  Settings as Settings01Icon,
+  Users as UserMultiple02Icon,
+} from 'lucide-react'
 
 import {
   Command,
@@ -177,7 +177,7 @@ export default function CommandPalette() {
                 keywords={item.keywords ? [item.keywords] : undefined}
                 onSelect={() => item.action()}
               >
-                <HugeiconsIcon
+                <DynamicLucideIcon
                   icon={item.icon}
                   size={16}
                   className="text-muted-foreground"
@@ -197,7 +197,7 @@ export default function CommandPalette() {
                     keywords={item.keywords ? [item.keywords] : undefined}
                     onSelect={() => item.action()}
                   >
-                    <HugeiconsIcon
+                    <DynamicLucideIcon
                       icon={item.icon}
                       size={16}
                       className="text-muted-foreground"
@@ -219,7 +219,7 @@ export default function CommandPalette() {
                     keywords={item.keywords ? [item.keywords] : undefined}
                     onSelect={() => item.action()}
                   >
-                    <HugeiconsIcon
+                    <DynamicLucideIcon
                       icon={item.icon}
                       size={16}
                       className="text-muted-foreground"
@@ -241,7 +241,7 @@ export default function CommandPalette() {
                     keywords={item.keywords ? [item.keywords] : undefined}
                     onSelect={() => item.action()}
                   >
-                    <HugeiconsIcon
+                    <DynamicLucideIcon
                       icon={item.icon}
                       size={16}
                       className="text-muted-foreground"

@@ -1,12 +1,12 @@
 import { lazy, Suspense, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  Delete02Icon,
-  Edit02Icon,
-  InformationCircleIcon,
-  PlayIcon,
-} from '@hugeicons/core-free-icons'
+  Trash2 as Delete02Icon,
+  Pencil as Edit02Icon,
+  Info as InformationCircleIcon,
+  Play as PlayIcon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import {
@@ -210,7 +210,7 @@ function PipelineDetailPage() {
       <PageLayout width="wide">
         <PageMeta title={pageState.label} noindex />
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             Failed to load pipeline: {pageState.message}
           </AlertDescription>
@@ -275,7 +275,7 @@ function PipelineDetailPage() {
                   onClick={() => setTriggerBuildOpen(true)}
                   disabled={!projectHasSource}
                 >
-                  <HugeiconsIcon icon={PlayIcon} />
+                  <DynamicLucideIcon icon={PlayIcon} />
                   Run build
                 </Button>
               ) : null}
@@ -300,7 +300,7 @@ function PipelineDetailPage() {
                   }
                   nativeButton={false}
                 >
-                  <HugeiconsIcon icon={Edit02Icon} />
+                  <DynamicLucideIcon icon={Edit02Icon} />
                   Edit
                 </Button>
               ) : null}
@@ -309,7 +309,7 @@ function PipelineDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} />
+                  <DynamicLucideIcon icon={Delete02Icon} />
                   Delete
                 </Button>
               ) : null}
@@ -319,7 +319,7 @@ function PipelineDetailPage() {
       />
       {!projectHasSource ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             This project has no linked source repository. Link a repository
             before triggering builds.
@@ -341,7 +341,7 @@ function PipelineDetailPage() {
             <Empty className="p-8">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={PlayIcon} />
+                  <DynamicLucideIcon icon={PlayIcon} />
                 </EmptyMedia>
                 <EmptyTitle>No builds yet</EmptyTitle>
                 <EmptyDescription>
@@ -357,7 +357,7 @@ function PipelineDetailPage() {
                     onFocus={() => void loadTriggerBuildDialog()}
                     onClick={() => setTriggerBuildOpen(true)}
                   >
-                    <HugeiconsIcon icon={PlayIcon} />
+                    <DynamicLucideIcon icon={PlayIcon} />
                     Run first build
                   </Button>
                 </EmptyContent>

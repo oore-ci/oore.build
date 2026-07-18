@@ -1,12 +1,12 @@
 import { Suspense, lazy, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  Add01Icon,
-  ArrowUpDownIcon,
-  Delete02Icon,
-  PencilEdit02Icon,
-  Tick02Icon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  ArrowUpDown as ArrowUpDownIcon,
+  Trash2 as Delete02Icon,
+  Pencil as PencilEdit02Icon,
+  Check as Tick02Icon,
+} from 'lucide-react'
 
 import type { Instance } from '@/lib/types'
 import { getInstanceIcon } from '@/lib/instance-icons'
@@ -69,7 +69,7 @@ export default function InstanceSwitcherMenu({
               }
             >
               <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center">
-                <HugeiconsIcon
+                <DynamicLucideIcon
                   icon={getInstanceIcon(instance?.icon)}
                   size={16}
                 />
@@ -82,7 +82,7 @@ export default function InstanceSwitcherMenu({
                   {hostname}
                 </span>
               </div>
-              <HugeiconsIcon
+              <DynamicLucideIcon
                 icon={ArrowUpDownIcon}
                 className="ml-auto"
                 size={16}
@@ -104,7 +104,7 @@ export default function InstanceSwitcherMenu({
                     className="min-w-0 gap-2 rounded-r-none p-2"
                   >
                     <div className="flex size-6 items-center justify-center border">
-                      <HugeiconsIcon
+                      <DynamicLucideIcon
                         icon={getInstanceIcon(candidate.icon)}
                         size={14}
                       />
@@ -113,7 +113,7 @@ export default function InstanceSwitcherMenu({
                       {candidate.label}
                     </span>
                     {candidate.id === instance?.id ? (
-                      <HugeiconsIcon
+                      <DynamicLucideIcon
                         icon={Tick02Icon}
                         size={14}
                         className="text-primary"
@@ -128,7 +128,7 @@ export default function InstanceSwitcherMenu({
                       requestAnimationFrame(() => setEditingInstance(candidate))
                     }}
                   >
-                    <HugeiconsIcon icon={PencilEdit02Icon} size={14} />
+                    <DynamicLucideIcon icon={PencilEdit02Icon} size={14} />
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
               ))}
@@ -140,7 +140,7 @@ export default function InstanceSwitcherMenu({
                 }}
               >
                 <div className="flex size-6 items-center justify-center border bg-background">
-                  <HugeiconsIcon icon={Add01Icon} size={14} />
+                  <DynamicLucideIcon icon={Add01Icon} size={14} />
                 </div>
                 Add instance
               </DropdownMenuItem>
@@ -150,7 +150,7 @@ export default function InstanceSwitcherMenu({
                   onClick={() => removeInstance(instance.id)}
                 >
                   <div className="flex size-6 items-center justify-center border">
-                    <HugeiconsIcon icon={Delete02Icon} size={14} />
+                    <DynamicLucideIcon icon={Delete02Icon} size={14} />
                   </div>
                   Remove {instance.label}
                 </DropdownMenuItem>

@@ -1,12 +1,12 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { lazy, Suspense, useMemo, useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  Add01Icon,
-  ArrowRight01Icon,
-  Loading03Icon,
-  PlayIcon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  ArrowRight as ArrowRight01Icon,
+  LoaderCircle as Loading03Icon,
+  Play as PlayIcon,
+} from 'lucide-react'
 
 import type { RuntimeMode } from '@/lib/types'
 import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ItemGroup } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -196,7 +197,7 @@ function IndexPage() {
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
-                <HugeiconsIcon icon={Add01Icon} />
+                <DynamicLucideIcon icon={Add01Icon} />
                 Add instance
               </Button>
             </CardContent>
@@ -389,7 +390,7 @@ function ConfiguredDashboard({
               onFocus={() => void loadTriggerBuildDialog()}
               onClick={handleGlobalTrigger}
             >
-              <HugeiconsIcon icon={PlayIcon} />
+              <DynamicLucideIcon icon={PlayIcon} />
               Run build
             </Button>
           ) : undefined
@@ -410,7 +411,7 @@ function ConfiguredDashboard({
       {activeBuilds.length > 0 ? (
         <section className="space-y-2">
           <div className="flex items-center gap-2">
-            <HugeiconsIcon
+            <DynamicLucideIcon
               icon={Loading03Icon}
               size={14}
               className="animate-spin text-info"
@@ -420,11 +421,11 @@ function ConfiguredDashboard({
             </h2>
             <Badge variant="secondary">{activeBuilds.length}</Badge>
           </div>
-          <div className="space-y-1">
+          <ItemGroup>
             {activeBuilds.map((build) => (
               <ActiveBuildBanner key={build.id} build={build} />
             ))}
-          </div>
+          </ItemGroup>
         </section>
       ) : null}
 
@@ -441,7 +442,7 @@ function ConfiguredDashboard({
             nativeButton={false}
           >
             View all
-            <HugeiconsIcon icon={ArrowRight01Icon} />
+            <DynamicLucideIcon icon={ArrowRight01Icon} />
           </Button>
         </div>
 

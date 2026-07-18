@@ -1,6 +1,8 @@
 import { useNavigate, useRouter } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Tick02Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Check as Tick02Icon,
+} from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -52,7 +54,7 @@ export function SetupStepIndicator({
               >
                 {isCompleted ? (
                   <>
-                    <HugeiconsIcon
+                    <DynamicLucideIcon
                       icon={Tick02Icon}
                       size={12}
                       className="mr-0.5"

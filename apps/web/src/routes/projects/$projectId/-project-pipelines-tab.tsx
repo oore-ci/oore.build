@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Plus as Add01Icon,
+  Info as InformationCircleIcon,
+} from 'lucide-react'
 
 import type { Pipeline } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
@@ -129,7 +132,7 @@ export function ProjectPipelinesTab({
                 />
               }
             >
-              <HugeiconsIcon icon={Add01Icon} />
+              <DynamicLucideIcon icon={Add01Icon} />
               Add pipeline
             </Button>
           </div>
@@ -137,7 +140,7 @@ export function ProjectPipelinesTab({
 
         {error ? (
           <Alert variant="destructive">
-            <HugeiconsIcon icon={InformationCircleIcon} />
+            <DynamicLucideIcon icon={InformationCircleIcon} />
             <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span>Failed to load pipelines: {error}</span>
               <Button variant="outline" size="sm" onClick={onRetry}>
@@ -172,7 +175,7 @@ export function ProjectPipelinesTab({
                 {workflowDiscoveryLoading ? (
                   <Spinner className="size-5" />
                 ) : (
-                  <HugeiconsIcon icon={Add01Icon} />
+                  <DynamicLucideIcon icon={Add01Icon} />
                 )}
               </EmptyMedia>
               <EmptyTitle>
@@ -204,7 +207,7 @@ export function ProjectPipelinesTab({
                     />
                   }
                 >
-                  <HugeiconsIcon icon={Add01Icon} />
+                  <DynamicLucideIcon icon={Add01Icon} />
                   {hasValidRepositoryWorkflow
                     ? 'Use repository workflow'
                     : 'Set up a build'}

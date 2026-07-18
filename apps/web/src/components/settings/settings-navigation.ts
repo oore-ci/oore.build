@@ -1,15 +1,15 @@
 import {
-  Archive02Icon,
-  Audit01Icon,
-  CpuIcon,
-  Delete02Icon,
-  Key01Icon,
-  Link04Icon,
-  Notification03Icon,
-  Settings01Icon,
-  Sun03Icon,
-  UserMultiple02Icon,
-} from '@hugeicons/core-free-icons'
+  Archive as Archive02Icon,
+  ScrollText as Audit01Icon,
+  Cpu as CpuIcon,
+  Trash2 as Delete02Icon,
+  KeyRound as Key01Icon,
+  Link2 as Link04Icon,
+  Bell as Notification03Icon,
+  Settings as Settings01Icon,
+  Sun as Sun03Icon,
+  Users as UserMultiple02Icon,
+} from 'lucide-react'
 
 import type { UserRole } from '@/lib/types'
 

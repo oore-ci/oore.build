@@ -1,5 +1,7 @@
-import { Copy01Icon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+import {
+  Copy as Copy01Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { toast } from '@/lib/toast'
 import type { Integration } from '@/lib/types'
@@ -111,7 +113,7 @@ export function IntegrationConnectionDetails({
                               )
                           }}
                         >
-                          <HugeiconsIcon icon={Copy01Icon} />
+                          <DynamicLucideIcon icon={Copy01Icon} />
                         </Button>
                       </div>
                     ) : null}

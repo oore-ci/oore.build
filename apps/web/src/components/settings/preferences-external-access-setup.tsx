@@ -1,10 +1,10 @@
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  AlertCircleIcon,
-  ArrowDown01Icon,
-  ArrowRight01Icon,
-  CheckmarkCircle02Icon,
-} from '@hugeicons/core-free-icons'
+  CircleAlert as AlertCircleIcon,
+  ArrowDown as ArrowDown01Icon,
+  ArrowRight as ArrowRight01Icon,
+  CircleCheck as CheckmarkCircle02Icon,
+} from 'lucide-react'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import {
   authModeLabel,
@@ -110,7 +110,7 @@ export function ExternalAccessSetup({
             </p>
             <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Configure
-              <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+              <DynamicLucideIcon icon={ArrowRight01Icon} size={14} />
             </p>
           </Button>
 
@@ -206,7 +206,7 @@ export function ExternalAccessSetup({
             ) : null}
             <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               {identityReady ? 'Reconfigure' : 'Configure'}
-              <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
+              <DynamicLucideIcon icon={ArrowRight01Icon} size={14} />
             </p>
           </Button>
         </div>
@@ -286,7 +286,7 @@ export function ExternalAccessSetup({
             )}
           </div>
           <CollapsibleTrigger className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-            <HugeiconsIcon
+            <DynamicLucideIcon
               icon={readinessOpen ? ArrowDown01Icon : ArrowRight01Icon}
               size={14}
             />
@@ -318,7 +318,7 @@ export function ExternalAccessSetup({
                 <div key={check.id} className="border border-border/60 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-2">
-                      <HugeiconsIcon
+                      <DynamicLucideIcon
                         icon={
                           check.ok ? CheckmarkCircle02Icon : AlertCircleIcon
                         }

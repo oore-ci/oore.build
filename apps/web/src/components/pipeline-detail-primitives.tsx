@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowDown01Icon,
-  ArrowRight01Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowDown as ArrowDown01Icon,
+  ArrowRight as ArrowRight01Icon,
+} from 'lucide-react'
 
 import {
   Collapsible,
@@ -26,7 +26,7 @@ export function PipelineDetailSection({
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="flex w-full items-center gap-2 py-2 text-sm font-medium">
-        <HugeiconsIcon
+        <DynamicLucideIcon
           icon={open ? ArrowDown01Icon : ArrowRight01Icon}
           size={14}
         />

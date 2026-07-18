@@ -1,12 +1,12 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowLeft01Icon,
-  Copy01Icon,
-  Globe02Icon,
-  InformationCircleIcon,
-  SmartPhone01Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowLeft as ArrowLeft01Icon,
+  Copy as Copy01Icon,
+  Globe as Globe02Icon,
+  Info as InformationCircleIcon,
+  Smartphone as SmartPhone01Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import {
@@ -107,7 +107,7 @@ export default function OperatorArtifactInstallPage({
         nativeButton={false}
         className="hidden w-fit sm:inline-flex"
       >
-        <HugeiconsIcon icon={ArrowLeft01Icon} />
+        <DynamicLucideIcon icon={ArrowLeft01Icon} />
         Build #{build.build_number}
       </Button>
 
@@ -134,7 +134,7 @@ export default function OperatorArtifactInstallPage({
 
         {!readiness.ready ? (
           <Alert variant="destructive">
-            <HugeiconsIcon icon={InformationCircleIcon} />
+            <DynamicLucideIcon icon={InformationCircleIcon} />
             <AlertTitle>Not install-ready</AlertTitle>
             <AlertDescription>{readiness.reason}</AlertDescription>
           </Alert>
@@ -142,7 +142,7 @@ export default function OperatorArtifactInstallPage({
 
         {expired ? (
           <Alert variant="destructive">
-            <HugeiconsIcon icon={InformationCircleIcon} />
+            <DynamicLucideIcon icon={InformationCircleIcon} />
             <AlertTitle>Artifact expired</AlertTitle>
             <AlertDescription>
               Ask a developer to run a fresh build before installing.
@@ -152,7 +152,7 @@ export default function OperatorArtifactInstallPage({
 
         {needsSafari ? (
           <Alert>
-            <HugeiconsIcon icon={Globe02Icon} />
+            <DynamicLucideIcon icon={Globe02Icon} />
             <AlertTitle>Open this page in Safari</AlertTitle>
             <AlertDescription>
               iOS installation can only start from Safari on this iPhone.
@@ -162,7 +162,7 @@ export default function OperatorArtifactInstallPage({
 
         {isDesktopIos ? (
           <Alert>
-            <HugeiconsIcon icon={SmartPhone01Icon} />
+            <DynamicLucideIcon icon={SmartPhone01Icon} />
             <AlertTitle>Open this page on the registered iPhone</AlertTitle>
             <AlertDescription>
               Use Safari on a device included in this version’s provisioning
@@ -173,7 +173,7 @@ export default function OperatorArtifactInstallPage({
 
         {wrongPhone ? (
           <Alert>
-            <HugeiconsIcon icon={InformationCircleIcon} />
+            <DynamicLucideIcon icon={InformationCircleIcon} />
             <AlertTitle>Open this page on the right device</AlertTitle>
             <AlertDescription>
               This version is for {isIos ? 'iOS' : 'Android'}.
@@ -198,7 +198,7 @@ export default function OperatorArtifactInstallPage({
               aria-label="Back to build"
               className="min-h-11 sm:hidden"
             >
-              <HugeiconsIcon icon={ArrowLeft01Icon} />
+              <DynamicLucideIcon icon={ArrowLeft01Icon} />
             </Button>
             <Button
               size="lg"
@@ -209,7 +209,7 @@ export default function OperatorArtifactInstallPage({
               {installMutation.isPending ? (
                 <Spinner />
               ) : (
-                <HugeiconsIcon icon={SmartPhone01Icon} />
+                <DynamicLucideIcon icon={SmartPhone01Icon} />
               )}
               {primaryLabel}
             </Button>
@@ -219,7 +219,7 @@ export default function OperatorArtifactInstallPage({
             onClick={copyPageLink}
             className="mt-2 w-full"
           >
-            <HugeiconsIcon icon={Copy01Icon} />
+            <DynamicLucideIcon icon={Copy01Icon} />
             Copy install page link
           </Button>
         </div>

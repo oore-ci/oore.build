@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import {
-  InformationCircleIcon,
-  PlayIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  Info as InformationCircleIcon,
+  Play as PlayIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
@@ -58,7 +58,7 @@ function BranchSearch({
 
   return (
     <div className="relative w-full sm:max-w-sm">
-      <HugeiconsIcon
+      <DynamicLucideIcon
         icon={Search01Icon}
         className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
         aria-hidden
@@ -246,7 +246,7 @@ export function ProjectBuildsTab({
 
           {buildsQuery.error ? (
             <Alert variant="destructive">
-              <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+              <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
               <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <span>Failed to load builds: {buildsQuery.error.message}</span>
                 <Button
@@ -264,7 +264,7 @@ export function ProjectBuildsTab({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={PlayIcon} />
+                  <DynamicLucideIcon icon={PlayIcon} />
                 </EmptyMedia>
                 <EmptyTitle>No builds yet</EmptyTitle>
                 <EmptyDescription>
@@ -281,7 +281,7 @@ export function ProjectBuildsTab({
                     onFocus={onPreloadTriggerBuild}
                     onClick={onTriggerBuild}
                   >
-                    <HugeiconsIcon icon={PlayIcon} />
+                    <DynamicLucideIcon icon={PlayIcon} />
                     Run first build
                   </Button>
                 </EmptyContent>
@@ -293,7 +293,7 @@ export function ProjectBuildsTab({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={Search01Icon} />
+                  <DynamicLucideIcon icon={Search01Icon} />
                 </EmptyMedia>
                 <EmptyTitle>No matching builds</EmptyTitle>
                 <EmptyDescription>

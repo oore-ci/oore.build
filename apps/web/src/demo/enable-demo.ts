@@ -61,6 +61,7 @@ export async function enableDemoMode(): Promise<void> {
 
   const network = defineNetwork({
     handlers: allHandlers,
+    context: { quiet: true },
     sources: [
       new InterceptorSource({
         // MSW and its direct interceptor dependency expose structurally equal
@@ -77,18 +78,5 @@ export async function enableDemoMode(): Promise<void> {
       }
     },
   })
-  await network.enable()
-
-  // Remove the retired worker registration. A controlling legacy worker may
-  // live until navigation, but fetch interception above already owns requests.
-  if ('serviceWorker' in navigator) {
-    const registrations = await navigator.serviceWorker.getRegistrations()
-    await Promise.all(
-      registrations
-        .filter((registration) =>
-          registration.active?.scriptURL.endsWith('/mockServiceWorker.js'),
-        )
-        .map((registration) => registration.unregister()),
-    )
-  }
+  network.enable()
 }

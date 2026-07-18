@@ -1,6 +1,8 @@
 import { lazy, Suspense, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { UserAdd01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  UserPlus as UserAdd01Icon,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
@@ -16,7 +18,7 @@ export function InviteUserAction() {
         onFocus={() => void loadInviteUserDialog()}
         onClick={() => setOpen(true)}
       >
-        <HugeiconsIcon
+        <DynamicLucideIcon
           icon={UserAdd01Icon}
           data-icon="inline-start"
           aria-hidden

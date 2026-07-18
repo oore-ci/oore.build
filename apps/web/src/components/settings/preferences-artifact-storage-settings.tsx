@@ -1,5 +1,7 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Folder02Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Folder as Folder02Icon,
+} from 'lucide-react'
 import type { ArtifactStoragePageState } from '@/components/settings/use-artifact-storage-page-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -190,7 +192,7 @@ export function ArtifactStorageSettings({
                                   !canWrite || updateStorageMutation.isPending
                                 }
                               >
-                                <HugeiconsIcon icon={Folder02Icon} size={16} />
+                                <DynamicLucideIcon icon={Folder02Icon} size={16} />
                               </Button>
                             </div>
                           ) : null}

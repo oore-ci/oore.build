@@ -1,6 +1,6 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { addInstanceSchema } from '@/components/add-instance-schema'
 import type { AddInstanceForm } from '@/components/add-instance-schema'
 import { Button } from '@/components/ui/button'
@@ -162,7 +162,7 @@ export default function AddInstanceDialog({
                   aria-pressed={selectedIcon === entry.key}
                   title={entry.label}
                 >
-                  <HugeiconsIcon icon={entry.icon} />
+                  <DynamicLucideIcon icon={entry.icon} />
                 </Button>
               ))}
             </div>

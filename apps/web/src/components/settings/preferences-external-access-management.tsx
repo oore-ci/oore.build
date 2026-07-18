@@ -1,5 +1,7 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  ArrowRight as ArrowRight01Icon,
+} from 'lucide-react'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -53,7 +55,7 @@ export function ExternalAccessManagement({
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Edit
-              <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
+              <DynamicLucideIcon icon={ArrowRight01Icon} data-icon="inline-end" />
             </span>
           </span>
         </Button>
@@ -95,7 +97,7 @@ export function ExternalAccessManagement({
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Edit
-              <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
+              <DynamicLucideIcon icon={ArrowRight01Icon} data-icon="inline-end" />
             </span>
           </span>
         </Button>

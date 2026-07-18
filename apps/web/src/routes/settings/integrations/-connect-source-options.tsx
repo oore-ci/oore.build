@@ -1,6 +1,8 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Link04Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Link2 as Link04Icon,
+} from 'lucide-react'
 
 import { buttonVariants } from '@/components/ui/button-variants'
 
@@ -73,7 +75,7 @@ export function ConnectSourceOptions() {
                   className: 'w-full sm:w-auto',
                 })}
               >
-                <HugeiconsIcon
+                <DynamicLucideIcon
                   icon={Link04Icon}
                   data-icon="inline-start"
                   aria-hidden

@@ -1,5 +1,7 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Info as InformationCircleIcon,
+} from 'lucide-react'
 
 import { isTerminalStatus } from '@/hooks/use-builds'
 import type { BuildStatus } from '@/lib/types'
@@ -12,7 +14,7 @@ export default function QaArtifactUnavailableAlert({
 }) {
   return (
     <Alert variant={buildStatus === 'failed' ? 'destructive' : 'default'}>
-      <HugeiconsIcon icon={InformationCircleIcon} />
+      <DynamicLucideIcon icon={InformationCircleIcon} />
       <AlertTitle>
         {buildStatus === 'failed'
           ? 'Build failed'

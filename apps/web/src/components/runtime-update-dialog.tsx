@@ -1,9 +1,9 @@
 import {
-  ArrowRight01Icon,
-  ArrowUpRight01Icon,
-  Download04Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowRight as ArrowRight01Icon,
+  ArrowUpRight as ArrowUpRight01Icon,
+  Download as Download04Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { toast } from '@/lib/toast'
 import type { RuntimeReleaseStatus } from '@/lib/types'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
@@ -69,7 +69,7 @@ function RuntimeUpdateCard({
           <span className="font-mono text-xs text-muted-foreground">
             {release.version}
           </span>
-          <HugeiconsIcon
+          <DynamicLucideIcon
             icon={ArrowRight01Icon}
             size={14}
             className="shrink-0 text-muted-foreground"
@@ -94,7 +94,7 @@ function RuntimeUpdateCard({
           {busy ? (
             <Spinner />
           ) : (
-            <HugeiconsIcon icon={Download04Icon} data-icon="inline-start" />
+            <DynamicLucideIcon icon={Download04Icon} data-icon="inline-start" />
           )}
           {updateButtonLabel(phase, pending)}
         </Button>
@@ -209,7 +209,7 @@ export default function RuntimeUpdateDialog({
                     }
                   >
                     Full changelog
-                    <HugeiconsIcon
+                    <DynamicLucideIcon
                       icon={ArrowUpRight01Icon}
                       data-icon="inline-end"
                     />

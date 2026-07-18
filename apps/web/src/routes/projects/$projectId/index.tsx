@@ -1,13 +1,13 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowDown01Icon,
-  ArrowRight01Icon,
-  Delete02Icon,
-  InformationCircleIcon,
-  PlayIcon,
-} from '@hugeicons/core-free-icons'
+  ArrowDown as ArrowDown01Icon,
+  ArrowRight as ArrowRight01Icon,
+  Trash2 as Delete02Icon,
+  Info as InformationCircleIcon,
+  Play as PlayIcon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import {
@@ -387,7 +387,7 @@ function ProjectDetailPage() {
       <PageLayout width="wide">
         <PageMeta title={pageState.label} noindex />
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {pageState.notFound
@@ -512,7 +512,7 @@ function ProjectDetailPage() {
                     onClick={() => openTriggerBuild()}
                     disabled={pipelineCount === 0 || !projectHasSource}
                   >
-                    <HugeiconsIcon icon={PlayIcon} />
+                    <DynamicLucideIcon icon={PlayIcon} />
                     Run build
                   </Button>
                 </span>
@@ -522,7 +522,7 @@ function ProjectDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <HugeiconsIcon icon={Delete02Icon} />
+                  <DynamicLucideIcon icon={Delete02Icon} />
                   Delete
                 </Button>
               ) : null}
@@ -532,7 +532,7 @@ function ProjectDetailPage() {
       />
       {!projectHasSource ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             This project has no linked source repository. Link a repository
             before triggering builds.{' '}
@@ -553,7 +553,7 @@ function ProjectDetailPage() {
       ) : null}
       {projectHasSource && runnerPolicyBlockReason ? (
         <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             {runnerPolicyBlockReason === 'instance_disabled' ? (
               <>
@@ -733,7 +733,7 @@ function ProjectDetailPage() {
                   <CardContent>
                     <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-destructive">
                       Danger zone
-                      <HugeiconsIcon
+                      <DynamicLucideIcon
                         icon={dangerOpen ? ArrowDown01Icon : ArrowRight01Icon}
                         className="size-4 text-muted-foreground"
                         aria-hidden
@@ -749,7 +749,7 @@ function ProjectDetailPage() {
                           variant="destructive"
                           onClick={() => setDeleteOpen(true)}
                         >
-                          <HugeiconsIcon icon={Delete02Icon} />
+                          <DynamicLucideIcon icon={Delete02Icon} />
                           Delete project
                         </Button>
                       </div>

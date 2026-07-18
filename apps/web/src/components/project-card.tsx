@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { PlayIcon, Setting07Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Play as PlayIcon,
+  Settings as Setting07Icon,
+} from 'lucide-react'
 
 import type { Project } from '@/lib/types'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -71,7 +74,7 @@ export default function ProjectCard({
               onFocus={onPreloadTriggerBuild}
               onClick={() => onTriggerBuild(project.id)}
             >
-              <HugeiconsIcon icon={PlayIcon} />
+              <DynamicLucideIcon icon={PlayIcon} />
             </Button>
           ) : null}
           {canOpenSettings ? (
@@ -88,7 +91,7 @@ export default function ProjectCard({
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Setting07Icon} />
+              <DynamicLucideIcon icon={Setting07Icon} />
             </Button>
           ) : null}
         </div>
@@ -148,7 +151,7 @@ export default function ProjectCard({
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Setting07Icon} />
+              <DynamicLucideIcon icon={Setting07Icon} />
             </Button>
           ) : null}
         </div>
@@ -162,7 +165,7 @@ export default function ProjectCard({
             onFocus={onPreloadTriggerBuild}
             onClick={() => onTriggerBuild(project.id)}
           >
-            <HugeiconsIcon icon={PlayIcon} />
+            <DynamicLucideIcon icon={PlayIcon} />
             Run build
           </Button>
         ) : null}

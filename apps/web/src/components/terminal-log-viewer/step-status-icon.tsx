@@ -1,15 +1,15 @@
 import {
-  AlertCircleIcon,
-  CheckmarkCircle02Icon,
-  Loading03Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  CircleAlert as AlertCircleIcon,
+  CircleCheck as CheckmarkCircle02Icon,
+  LoaderCircle as Loading03Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 export function StepStatusIcon({ status }: { status: string }) {
   const normalized = status.trim().toLowerCase()
   if (normalized === 'running') {
     return (
-      <HugeiconsIcon
+      <DynamicLucideIcon
         icon={Loading03Icon}
         size={16}
         className="shrink-0 animate-spin text-info"
@@ -18,7 +18,7 @@ export function StepStatusIcon({ status }: { status: string }) {
   }
   if (normalized === 'succeeded') {
     return (
-      <HugeiconsIcon
+      <DynamicLucideIcon
         icon={CheckmarkCircle02Icon}
         size={16}
         className="shrink-0 text-success"
@@ -31,7 +31,7 @@ export function StepStatusIcon({ status }: { status: string }) {
     normalized === 'timed_out'
   ) {
     return (
-      <HugeiconsIcon
+      <DynamicLucideIcon
         icon={AlertCircleIcon}
         size={16}
         className="shrink-0 text-destructive"

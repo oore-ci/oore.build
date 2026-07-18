@@ -1,11 +1,11 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  Download04Icon,
-  File01Icon,
-  Share08Icon,
-} from '@hugeicons/core-free-icons'
+  Download as Download04Icon,
+  File as File01Icon,
+  Share2 as Share08Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type { Artifact, BuildStatus } from '@/lib/types'
@@ -68,7 +68,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
         setOpen(true)
       }}
     >
-      <HugeiconsIcon icon={Share08Icon} />
+      <DynamicLucideIcon icon={Share08Icon} />
     </Button>
   )
 
@@ -143,7 +143,7 @@ function ArtifactRow({
             aria-label={`Install ${artifact.name}`}
             title="Install"
           >
-            <HugeiconsIcon icon={Download04Icon} />
+            <DynamicLucideIcon icon={Download04Icon} />
           </Button>
         ) : (
           <Button
@@ -157,7 +157,7 @@ function ArtifactRow({
             {isDownloadPending ? (
               <Spinner />
             ) : (
-              <HugeiconsIcon icon={Download04Icon} />
+              <DynamicLucideIcon icon={Download04Icon} />
             )}
           </Button>
         )}
@@ -197,7 +197,7 @@ export function ArtifactsPanel({
     <Card size="sm">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <HugeiconsIcon icon={File01Icon} size={14} />
+          <DynamicLucideIcon icon={File01Icon} size={14} />
           Artifacts
           {artifacts.length > 0 ? (
             <Badge variant="secondary" className="text-[10px]">

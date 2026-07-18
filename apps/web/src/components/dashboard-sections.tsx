@@ -1,10 +1,10 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  Add01Icon,
-  ArrowRight01Icon,
-  Link04Icon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  ArrowRight as ArrowRight01Icon,
+  Link2 as Link04Icon,
+} from 'lucide-react'
 
 import type { Build, Project, RuntimeMode } from '@/lib/types'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -63,7 +63,7 @@ export function DashboardGettingStarted({
                     render={<Link to={integrationConnectTo} />}
                     nativeButton={false}
                   >
-                    <HugeiconsIcon icon={Link04Icon} />
+                    <DynamicLucideIcon icon={Link04Icon} />
                     Connect source
                   </Button>
                 ) : (
@@ -91,7 +91,7 @@ export function DashboardGettingStarted({
                   render={<Link to="/projects" search={{ openCreate: '1' }} />}
                   nativeButton={false}
                 >
-                  <HugeiconsIcon icon={Add01Icon} />
+                  <DynamicLucideIcon icon={Add01Icon} />
                   Create project
                 </Button>
               ) : (
@@ -161,7 +161,7 @@ export function DashboardRecentBuilds({
           nativeButton={false}
         >
           View all
-          <HugeiconsIcon icon={ArrowRight01Icon} />
+          <DynamicLucideIcon icon={ArrowRight01Icon} />
         </Button>
       </div>
 

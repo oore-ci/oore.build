@@ -1,6 +1,8 @@
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Download04Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Download as Download04Icon,
+} from 'lucide-react'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
 import { Button } from '@/components/ui/button'
@@ -55,7 +57,7 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                 })
               }
             >
-              <HugeiconsIcon icon={Download04Icon} />
+              <DynamicLucideIcon icon={Download04Icon} />
               {runtimeUpdates.startFrontendUpdate.isPending
                 ? 'Starting...'
                 : frontendUpdatePhase === 'restarting'
@@ -106,7 +108,7 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                 })
               }
             >
-              <HugeiconsIcon icon={Download04Icon} />
+              <DynamicLucideIcon icon={Download04Icon} />
               {runtimeUpdates.startBackendUpdate.isPending
                 ? 'Starting...'
                 : backendUpdatePhase === 'restarting'

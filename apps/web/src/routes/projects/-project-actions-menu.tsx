@@ -1,10 +1,10 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowRight01Icon,
-  MoreHorizontalCircle01Icon,
-  Settings01Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowRight as ArrowRight01Icon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+  Settings as Settings01Icon,
+} from 'lucide-react'
 
 import type { Project } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -38,7 +38,7 @@ export default function ProjectActionsMenu({
           />
         }
       >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem
@@ -49,7 +49,7 @@ export default function ProjectActionsMenu({
             />
           }
         >
-          <HugeiconsIcon icon={ArrowRight01Icon} />
+          <DynamicLucideIcon icon={ArrowRight01Icon} />
           Open project
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -73,7 +73,7 @@ export default function ProjectActionsMenu({
               />
             }
           >
-            <HugeiconsIcon icon={Settings01Icon} />
+            <DynamicLucideIcon icon={Settings01Icon} />
             Project settings
           </DropdownMenuItem>
         ) : null}

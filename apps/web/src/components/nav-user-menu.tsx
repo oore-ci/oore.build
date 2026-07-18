@@ -1,12 +1,12 @@
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowUp01Icon,
-  BookOpen01Icon,
-  Logout03Icon,
-  Moon02Icon,
-  SmartPhone01Icon,
-  Sun03Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowUp as ArrowUp01Icon,
+  BookOpen as BookOpen01Icon,
+  LogOut as Logout03Icon,
+  Moon as Moon02Icon,
+  Smartphone as SmartPhone01Icon,
+  Sun as Sun03Icon,
+} from 'lucide-react'
 import { useTheme } from 'next-themes'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -122,7 +122,7 @@ export default function NavUserMenu({
                 {authUser.role.replace('_', ' ')}
               </span>
             </div>
-            <HugeiconsIcon icon={ArrowUp01Icon} className="ml-auto size-4" />
+            <DynamicLucideIcon icon={ArrowUp01Icon} className="ml-auto size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="min-w-56"
@@ -217,21 +217,21 @@ export default function NavUserMenu({
                 Mode
               </DropdownMenuLabel>
               <DropdownMenuItem onClick={() => setTheme('light')}>
-                <HugeiconsIcon icon={Sun03Icon} size={16} />
+                <DynamicLucideIcon icon={Sun03Icon} size={16} />
                 Light
                 {theme === 'light' ? (
                   <span className="ml-auto text-xs text-primary">Active</span>
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setTheme('dark')}>
-                <HugeiconsIcon icon={Moon02Icon} size={16} />
+                <DynamicLucideIcon icon={Moon02Icon} size={16} />
                 Dark
                 {theme === 'dark' ? (
                   <span className="ml-auto text-xs text-primary">Active</span>
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setTheme('system')}>
-                <HugeiconsIcon icon={SmartPhone01Icon} size={16} />
+                <DynamicLucideIcon icon={SmartPhone01Icon} size={16} />
                 System
                 {theme === 'system' ? (
                   <span className="ml-auto text-xs text-primary">Active</span>
@@ -249,14 +249,14 @@ export default function NavUserMenu({
                 />
               }
             >
-              <HugeiconsIcon icon={BookOpen01Icon} size={16} />
+              <DynamicLucideIcon icon={BookOpen01Icon} size={16} />
               Documentation
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => logoutMutation.mutate()}
               disabled={logoutMutation.isPending}
             >
-              <HugeiconsIcon icon={Logout03Icon} size={16} />
+              <DynamicLucideIcon icon={Logout03Icon} size={16} />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

@@ -1,11 +1,11 @@
 import { Link } from '@tanstack/react-router'
 import {
-  ArrowRight01Icon,
-  Link04Icon,
-  PlayIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowRight as ArrowRight01Icon,
+  Link2 as Link04Icon,
+  Play as PlayIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -66,7 +66,7 @@ export function BuildsEmptyState({
             {capabilities.writeProjects ? (
               <Button render={<Link to="/projects" />} nativeButton={false}>
                 Go to projects
-                <HugeiconsIcon icon={ArrowRight01Icon} />
+                <DynamicLucideIcon icon={ArrowRight01Icon} />
               </Button>
             ) : (
               <p className="text-xs text-muted-foreground">
@@ -79,7 +79,7 @@ export function BuildsEmptyState({
                 render={<Link to="/settings/integrations" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={Link04Icon} />
+                <DynamicLucideIcon icon={Link04Icon} />
                 Connect source
               </Button>
             ) : null}
@@ -94,7 +94,7 @@ export function BuildsEmptyState({
       <Empty className="bg-card">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <HugeiconsIcon icon={PlayIcon} />
+            <DynamicLucideIcon icon={PlayIcon} />
           </EmptyMedia>
           <EmptyTitle>No builds yet</EmptyTitle>
           <EmptyDescription>
@@ -108,7 +108,7 @@ export function BuildsEmptyState({
               onFocus={onWarmBuildDialog}
               onClick={onRunBuild}
             >
-              <HugeiconsIcon icon={PlayIcon} />
+              <DynamicLucideIcon icon={PlayIcon} />
               Run first build
             </Button>
           </EmptyContent>
@@ -121,7 +121,7 @@ export function BuildsEmptyState({
     <Empty className="bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <HugeiconsIcon icon={Search01Icon} />
+          <DynamicLucideIcon icon={Search01Icon} />
         </EmptyMedia>
         <EmptyTitle>No matching builds</EmptyTitle>
         <EmptyDescription>

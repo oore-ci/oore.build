@@ -1,6 +1,8 @@
 import { Suspense, lazy, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowUp01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  ArrowUp as ArrowUp01Icon,
+} from 'lucide-react'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -60,7 +62,7 @@ function UserButton({
               {authUser.role.replace('_', ' ')}
             </span>
           </div>
-          <HugeiconsIcon icon={ArrowUp01Icon} className="ml-auto size-4" />
+          <DynamicLucideIcon icon={ArrowUp01Icon} className="ml-auto size-4" />
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

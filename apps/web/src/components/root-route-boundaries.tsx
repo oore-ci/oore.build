@@ -1,12 +1,12 @@
 import { Link, useRouter } from '@tanstack/react-router'
 import type { ErrorComponentProps } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  AlertCircleIcon,
-  ArrowLeft02Icon,
-  Home01Icon,
-  RotateClockwiseIcon,
-} from '@hugeicons/core-free-icons'
+  CircleAlert as AlertCircleIcon,
+  ArrowLeft as ArrowLeft02Icon,
+  House as Home01Icon,
+  RotateCw as RotateClockwiseIcon,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
@@ -23,7 +23,7 @@ export function RootNotFound() {
         </p>
       </div>
       <Button variant="outline" render={<Link to="/" />} nativeButton={false}>
-        <HugeiconsIcon icon={Home01Icon} size={16} />
+        <DynamicLucideIcon icon={Home01Icon} size={16} />
         Dashboard
       </Button>
     </div>
@@ -36,7 +36,7 @@ export function RootErrorBoundary({ error, reset }: ErrorComponentProps) {
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-6 text-center">
       <div className="flex size-12 items-center justify-center border border-destructive/30 bg-destructive/10">
-        <HugeiconsIcon
+        <DynamicLucideIcon
           icon={AlertCircleIcon}
           size={24}
           className="text-destructive"
@@ -63,11 +63,11 @@ export function RootErrorBoundary({ error, reset }: ErrorComponentProps) {
             void router.invalidate()
           }}
         >
-          <HugeiconsIcon icon={RotateClockwiseIcon} size={16} />
+          <DynamicLucideIcon icon={RotateClockwiseIcon} size={16} />
           Try again
         </Button>
         <Button variant="outline" onClick={() => window.history.back()}>
-          <HugeiconsIcon icon={ArrowLeft02Icon} size={16} />
+          <DynamicLucideIcon icon={ArrowLeft02Icon} size={16} />
           Go back
         </Button>
       </div>

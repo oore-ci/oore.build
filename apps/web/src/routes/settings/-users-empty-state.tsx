@@ -1,5 +1,8 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Search01Icon, UserMultiple02Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Search as Search01Icon,
+  Users as UserMultiple02Icon,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -24,7 +27,7 @@ export function UsersEmptyState({
     <Empty className="bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <HugeiconsIcon
+          <DynamicLucideIcon
             icon={state === 'empty' ? UserMultiple02Icon : Search01Icon}
           />
         </EmptyMedia>

@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import {
-  Calendar03Icon,
-  InformationCircleIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  CalendarDays as Calendar03Icon,
+  Info as InformationCircleIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
 import { format } from 'date-fns'
 import type { DateRange } from 'react-day-picker'
@@ -171,7 +171,7 @@ function AuditDateRangePicker({
           />
         }
       >
-        <HugeiconsIcon
+        <DynamicLucideIcon
           icon={Calendar03Icon}
           data-icon="inline-start"
           aria-hidden
@@ -359,7 +359,7 @@ function AuditLogPage() {
 
       {auditQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load audit log: {auditQuery.error.message}</span>
             <Button
@@ -377,7 +377,7 @@ function AuditLogPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <DynamicLucideIcon icon={Search01Icon} />
             </EmptyMedia>
             <EmptyTitle>No matching activity</EmptyTitle>
             <EmptyDescription>
@@ -396,7 +396,7 @@ function AuditLogPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={InformationCircleIcon} />
+              <DynamicLucideIcon icon={InformationCircleIcon} />
             </EmptyMedia>
             <EmptyTitle>No activity yet</EmptyTitle>
             <EmptyDescription>

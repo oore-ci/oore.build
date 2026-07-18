@@ -1,5 +1,8 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowDown01Icon, ArrowUp01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  ArrowDown as ArrowDown01Icon,
+  ArrowUp as ArrowUp01Icon,
+} from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { CardDescription, CardTitle } from '@/components/ui/card'
@@ -31,7 +34,7 @@ export function PipelineFormSectionHeader({
         {!open && summary ? (
           <CardDescription className="text-xs">{summary}</CardDescription>
         ) : null}
-        <HugeiconsIcon
+        <DynamicLucideIcon
           icon={open ? ArrowUp01Icon : ArrowDown01Icon}
           size={16}
           className="text-muted-foreground"

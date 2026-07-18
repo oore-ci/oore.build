@@ -1,10 +1,10 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  InformationCircleIcon,
-  Refresh01Icon,
-} from '@hugeicons/core-free-icons'
+  Info as InformationCircleIcon,
+  RefreshCw as Refresh01Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
@@ -134,7 +134,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
       <PageLayout width="full">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {notFound
@@ -234,7 +234,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 }}
                 disabled={rerunMutation.isPending}
               >
-                <HugeiconsIcon icon={Refresh01Icon} size={14} />
+                <DynamicLucideIcon icon={Refresh01Icon} size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
@@ -256,7 +256,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
 
       {build.runner_policy_block_reason ? (
         <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_disabled' ? (
               <>
@@ -302,7 +302,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
 
       {failureReason ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>{failureReason}</AlertDescription>
         </Alert>
       ) : null}

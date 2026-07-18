@@ -1,6 +1,8 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  ArrowRight as ArrowRight01Icon,
+} from 'lucide-react'
 
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -53,7 +55,7 @@ function SettingsHubPage() {
                   className="group grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset sm:px-4"
                 >
                   <span className="flex size-8 items-center justify-center border bg-background text-muted-foreground group-hover:text-foreground">
-                    <HugeiconsIcon icon={item.icon} aria-hidden />
+                    <DynamicLucideIcon icon={item.icon} aria-hidden />
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">
@@ -63,7 +65,7 @@ function SettingsHubPage() {
                       {item.description}
                     </span>
                   </span>
-                  <HugeiconsIcon
+                  <DynamicLucideIcon
                     icon={ArrowRight01Icon}
                     className="text-muted-foreground"
                     aria-hidden

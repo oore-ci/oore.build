@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Folder02Icon, Link04Icon } from '@hugeicons/core-free-icons'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
+import {
+  Folder as Folder02Icon,
+  Link2 as Link04Icon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
@@ -146,7 +149,7 @@ export default function CreateProjectDialog({
                             render={<Link to="/settings/integrations" />}
                             nativeButton={false}
                           >
-                            <HugeiconsIcon icon={Link04Icon} />
+                            <DynamicLucideIcon icon={Link04Icon} />
                             Connect source
                           </Button>
                         </div>
@@ -222,7 +225,7 @@ export default function CreateProjectDialog({
                               title="Browse"
                               onClick={handleOpenPicker}
                             >
-                              <HugeiconsIcon icon={Folder02Icon} />
+                              <DynamicLucideIcon icon={Folder02Icon} />
                             </Button>
                           </div>
                         ) : null}

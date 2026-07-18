@@ -1,11 +1,11 @@
 import {
-  AlertCircleIcon,
-  Cancel01Icon,
-  Download04Icon,
-  Search01Icon,
-  TextWrapIcon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  CircleAlert as AlertCircleIcon,
+  X as Cancel01Icon,
+  Download as Download04Icon,
+  Search as Search01Icon,
+  WrapText as TextWrapIcon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import type { RefObject } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -51,7 +51,7 @@ export function LogToolbar({
           className="font-mono text-xs"
         />
         <InputGroupAddon align="inline-start">
-          <HugeiconsIcon icon={Search01Icon} />
+          <DynamicLucideIcon icon={Search01Icon} />
         </InputGroupAddon>
         {searchQuery ? (
           <InputGroupAddon align="inline-end">
@@ -60,7 +60,7 @@ export function LogToolbar({
               aria-label="Clear log search"
               onClick={onSearchClear}
             >
-              <HugeiconsIcon icon={Cancel01Icon} />
+              <DynamicLucideIcon icon={Cancel01Icon} />
             </InputGroupButton>
           </InputGroupAddon>
         ) : null}
@@ -72,7 +72,7 @@ export function LogToolbar({
         disabled={!hasErrors}
         onClick={onJumpToError}
       >
-        <HugeiconsIcon icon={AlertCircleIcon} />
+        <DynamicLucideIcon icon={AlertCircleIcon} />
       </ToolbarButton>
       <ToolbarButton
         label="Toggle line wrapping"
@@ -81,14 +81,14 @@ export function LogToolbar({
         pressed={wrapLines}
         onClick={onToggleWrap}
       >
-        <HugeiconsIcon icon={TextWrapIcon} />
+        <DynamicLucideIcon icon={TextWrapIcon} />
       </ToolbarButton>
       <ToolbarButton
         label="Download raw logs"
         title="Download raw logs"
         onClick={onDownload}
       >
-        <HugeiconsIcon icon={Download04Icon} />
+        <DynamicLucideIcon icon={Download04Icon} />
       </ToolbarButton>
     </div>
   )

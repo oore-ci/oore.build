@@ -2,13 +2,13 @@ import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createLazyFileRoute } from '@tanstack/react-router'
 import { useTheme } from 'next-themes'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  Moon02Icon,
-  SmartPhone01Icon,
-  Sun03Icon,
-  Tick02Icon,
-} from '@hugeicons/core-free-icons'
+  Moon as Moon02Icon,
+  Smartphone as SmartPhone01Icon,
+  Sun as Sun03Icon,
+  Check as Tick02Icon,
+} from 'lucide-react'
 
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -102,7 +102,7 @@ function ThemeSettingsPage() {
                   </span>
                 </span>
                 {selected ? (
-                  <HugeiconsIcon
+                  <DynamicLucideIcon
                     icon={Tick02Icon}
                     className="ml-auto text-primary"
                     aria-hidden
@@ -162,7 +162,7 @@ function ThemeSettingsPage() {
                 />
                 <span>{option.title}</span>
                 {selected ? (
-                  <HugeiconsIcon
+                  <DynamicLucideIcon
                     icon={Tick02Icon}
                     className="ml-auto text-primary"
                     aria-hidden
@@ -207,7 +207,7 @@ function ThemeSettingsPage() {
                 onClick={() => setTheme(option.value)}
                 className="min-w-28 justify-start"
               >
-                <HugeiconsIcon icon={option.icon} aria-hidden />
+                <DynamicLucideIcon icon={option.icon} aria-hidden />
                 {option.label}
               </Button>
             )

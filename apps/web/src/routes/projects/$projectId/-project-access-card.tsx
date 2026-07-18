@@ -1,10 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Add01Icon,
-  Delete02Icon,
-  MoreHorizontalCircle01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  Plus as Add01Icon,
+  Trash2 as Delete02Icon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from '@/lib/toast'
@@ -198,7 +198,7 @@ function MemberActions({
           />
         }
       >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {!isQaViewer ? (
@@ -224,7 +224,7 @@ function MemberActions({
           </>
         ) : null}
         <DropdownMenuItem variant="destructive" onClick={onRemove}>
-          <HugeiconsIcon icon={Delete02Icon} />
+          <DynamicLucideIcon icon={Delete02Icon} />
           Remove access
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -287,7 +287,7 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
           />
         }
       >
-        <HugeiconsIcon icon={Add01Icon} aria-hidden />
+        <DynamicLucideIcon icon={Add01Icon} aria-hidden />
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

@@ -30,7 +30,7 @@ Treat those as the source of truth.
 - Use shadcn with Base UI primitives (not Radix).
 - Keep `apps/web` aligned with its checked-in shadcn registry configuration. Vega is the generator and runtime default; installed primitives must retain the neutral `cn-*` hooks required by the runtime style registry.
 - Supported browser-local component styles mirror shadcn Create exactly: Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea.
-- `iconLibrary: hugeicons`
+- `iconLibrary: lucide`
 - `baseColor: neutral`
 - `menuAccent: subtle`
 - `menuColor: default`
@@ -43,7 +43,7 @@ Treat those as the source of truth.
 - Read `DESIGN.md` before any frontend UI work.
 - Follow the shadcn-first component selection rule: check registry -> install -> use.
 - Never create custom dialogs, dropdowns, drawers, or tables when shadcn has equivalents.
-- Use Hugeicons for all icons. No inline SVG icons.
+- Use Lucide for all icons. No inline SVG icons.
 - Use shadcn Form component with react-hook-form + zod for all forms.
 - Use Skeleton/Spinner for loading states, Toast for transient feedback, Alert for persistent feedback.
 - Static colors must use the token system from `styles.css`. Runtime theme values live in `lib/color-theme.ts`, mirror shadcn Create, and are applied through one injected `:root`/`.dark` variable sheet. No hard-coded Tailwind color classes.

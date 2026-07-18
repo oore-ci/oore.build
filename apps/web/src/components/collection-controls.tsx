@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 import {
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  ArrowUpDownIcon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowDown as ArrowDown01Icon,
+  ArrowUp as ArrowUp01Icon,
+  ArrowUpDown as ArrowUpDownIcon,
+} from 'lucide-react'
+import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -60,7 +60,7 @@ export function SortableTableHead<TSort extends string>({
         onClick={() => onSortChange(sortKey, nextDirection)}
       >
         {children}
-        <HugeiconsIcon icon={icon} aria-hidden />
+        <DynamicLucideIcon icon={icon} aria-hidden />
       </Button>
     </TableHead>
   )
