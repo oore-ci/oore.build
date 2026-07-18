@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-19
 
+- **Nested application routes**:
+  - Builds, projects, project details, pipeline details, sources, and notifications now use TanStack Router layout routes with exact index children. Their nested screens inherit real parent matches for navigation and breadcrumbs instead of reconstructing parent relationships in page metadata.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 - **Lucide icons and dashboard active-build items**:
   - Replaced the remaining Hugeicons usage with Lucide and switched the dashboard active-build list to the default shadcn Item composition without local Item styling overrides.
   - Demo mode now suppresses MSW's handled request/response console dumps.

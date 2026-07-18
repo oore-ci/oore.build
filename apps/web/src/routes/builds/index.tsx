@@ -78,9 +78,6 @@ function parseSearch(search: Record<string, unknown>): BuildsSearch {
 }
 
 export const Route = createFileRoute('/builds/')({
-  staticData: { breadcrumb: {
-   title: 'Builds' ,
- },},
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

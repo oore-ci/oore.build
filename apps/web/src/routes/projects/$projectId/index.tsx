@@ -140,11 +140,6 @@ function validateProjectSearch(
 }
 
 export const Route = createFileRoute('/projects/$projectId/')({
-  staticData: {
-    breadcrumb: {
-      title: 'Details',
-    },
-  },
   validateSearch: validateProjectSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

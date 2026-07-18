@@ -57,7 +57,7 @@ import {
 import PipelineForm from '@/components/pipeline-form'
 
 export const Route = createFileRoute(
-  '/projects/$projectId/pipelines/$pipelineId_/edit',
+  '/projects/$projectId/pipelines/$pipelineId/edit',
 )({
   staticData: {
     breadcrumb: {

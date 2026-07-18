@@ -69,13 +69,8 @@ const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute(
-  '/projects/$projectId/pipelines/$pipelineId',
+  '/projects/$projectId/pipelines/$pipelineId/',
 )({
-  staticData: {
-    breadcrumb: {
-      title: 'Pipeline',
-    },
-  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
