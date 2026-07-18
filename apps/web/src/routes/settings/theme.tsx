@@ -6,7 +6,11 @@ import {
 } from '@/lib/instance-context'
 
 export const Route = createFileRoute('/settings/theme')({
-  staticData: { breadcrumbLabel: 'Theme' },
+  staticData: {
+    breadcrumb: {
+      title: 'Theme',
+    },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])

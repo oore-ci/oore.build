@@ -73,7 +73,9 @@ function parseSearch(search: Record<string, unknown>): IntegrationsSearch {
 }
 
 export const Route = createFileRoute('/settings/integrations/')({
-  staticData: { breadcrumbLabel: 'Sources' },
+  staticData: { breadcrumb: {
+   title: 'Sources' ,
+ },},
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

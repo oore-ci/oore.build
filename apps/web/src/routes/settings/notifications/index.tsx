@@ -86,7 +86,9 @@ function parseSearch(search: Record<string, unknown>): NotificationsSearch {
 }
 
 export const Route = createFileRoute('/settings/notifications/')({
-  staticData: { breadcrumbLabel: 'Notifications' },
+  staticData: { breadcrumb: {
+   title: 'Notifications' ,
+ },},
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

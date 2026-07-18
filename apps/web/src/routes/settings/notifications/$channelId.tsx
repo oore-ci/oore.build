@@ -7,10 +7,8 @@ import {
 
 export const Route = createFileRoute('/settings/notifications/$channelId')({
   staticData: {
-    breadcrumbLabel: 'Channel',
-    breadcrumbParent: {
-      label: 'Notifications',
-      to: '/settings/notifications',
+    breadcrumb: {
+      title: 'Channel',
     },
   },
   beforeLoad: () => {

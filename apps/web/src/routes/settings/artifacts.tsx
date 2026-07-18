@@ -18,7 +18,11 @@ import { useAuthStore } from '@/stores/auth-store'
 const ArtifactFolderPicker = lazy(preloadArtifactFolderPicker)
 
 export const Route = createFileRoute('/settings/artifacts')({
-  staticData: { breadcrumbLabel: 'Artifact storage' },
+  staticData: {
+    breadcrumb: {
+      title: 'Artifact storage',
+    },
+  },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)

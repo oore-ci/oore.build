@@ -60,10 +60,8 @@ export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId_/edit',
 )({
   staticData: {
-    breadcrumbLabel: 'Edit Pipeline',
-    breadcrumbParent: {
-      label: 'Pipeline',
-      to: '/projects/$projectId/pipelines/$pipelineId',
+    breadcrumb: {
+      title: 'Edit Pipeline',
     },
   },
   validateSearch: (

@@ -15,8 +15,9 @@ import PageLayout from '@/components/page-layout'
 
 export const Route = createFileRoute('/settings/integrations/local-git')({
   staticData: {
-    breadcrumbLabel: 'Local repositories',
-    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+    breadcrumb: {
+      title: 'Local repositories',
+    },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

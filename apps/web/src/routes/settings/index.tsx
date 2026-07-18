@@ -7,19 +7,10 @@ import {
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { settingsGroupsForRole } from '@/components/settings/settings-navigation'
-import {
-  getActiveInstanceOrRedirect,
-  requireInstanceRoleOrRedirect,
-} from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/settings/')({
-  staticData: { breadcrumbLabel: 'Settings' },
-  beforeLoad: () => {
-    const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
-  },
   component: SettingsHubPage,
 })
 

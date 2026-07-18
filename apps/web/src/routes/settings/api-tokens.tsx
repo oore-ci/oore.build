@@ -43,7 +43,9 @@ export function parseApiTokensSearch(
 }
 
 export const Route = createFileRoute('/settings/api-tokens')({
-  staticData: { breadcrumbLabel: 'API tokens' },
+  staticData: { breadcrumb: {
+   title: 'API tokens' ,
+ },},
   validateSearch: parseApiTokensSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

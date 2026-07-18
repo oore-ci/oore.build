@@ -9,8 +9,9 @@ import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: {
-    breadcrumbLabel: 'Details',
-    breadcrumbParent: { label: 'Builds', to: '/builds' },
+    breadcrumb: {
+      title: 'Details',
+    },
   },
   beforeLoad: ({ search }) => {
     const instance = getActiveInstanceOrRedirect()

@@ -37,6 +37,11 @@ import { isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
+  staticData: {
+    breadcrumb: {
+      title: "Login"
+    }
+  }
 })
 
 const lastAuthTimeFormatter = new Intl.DateTimeFormat(undefined, {

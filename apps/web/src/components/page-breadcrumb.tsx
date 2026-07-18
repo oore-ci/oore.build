@@ -1,125 +1,54 @@
-import { Link, useMatches } from '@tanstack/react-router'
+import { isMatch, Link, useMatches, useParentMatches } from '@tanstack/react-router'
 import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
-  BreadcrumbPage,
   BreadcrumbSeparator,
+  BreadcrumbPage,
 } from '@/components/ui/breadcrumb'
-import { resolveBreadcrumbPath } from '@/lib/breadcrumbs'
-import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 
-interface BreadcrumbEntry {
-  label: string
-  to?: string
-}
-
-function humanize(segment: string): string {
-  return segment.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
 
 export default function PageBreadcrumb() {
-  const matches = useMatches()
-  const dynamicLabels = useBreadcrumbStore((s) => s.labels)
+  const parentBreadcrumbs = useParentMatches({
+    select: (matches) => matches
+      .filter((m) => isMatch(m, 'staticData.breadcrumb'))
+      .map((match) => ({
+        href: match.pathname,
+        label: match.staticData?.breadcrumb?.title,
+        path: match.fullPath,
+      })),
+  })
 
-  const crumbs: Array<BreadcrumbEntry> = []
-  const params = Object.assign(
-    {},
-    ...matches.map((match) => match.params),
-  ) as Record<string, string>
+  const currBreadcrumbs = useMatches({
+    select: (matches) => matches
+      .filter((m) => isMatch(m, 'staticData.breadcrumb'))
+      .map((match) => ({
+        href: match.pathname,
+        label: match.staticData?.breadcrumb?.title,
+        path: match.fullPath,
+      })),
+  })
 
-  // Check if any match is under /settings — inject virtual "Settings" parent
-  const isSettingsRoute = matches.some((m) =>
-    m.fullPath.startsWith('/settings'),
-  )
-
-  for (const match of matches) {
-    // Skip root layout
-    if (match.id === '__root__') continue
-
-    // Dynamic label from store takes priority over static data
-    const staticData = match.staticData as
-      | {
-          breadcrumbLabel?: string
-          breadcrumbParent?: { label: string; to: string }
-        }
-      | undefined
-    const label =
-      dynamicLabels[match.fullPath] ||
-      dynamicLabels[match.id] ||
-      staticData?.breadcrumbLabel
-
-    if (label) {
-      const parent = staticData?.breadcrumbParent
-      const parentTo = parent
-        ? resolveBreadcrumbPath(parent.to, params)
-        : undefined
-      if (
-        parent &&
-        !crumbs.some(
-          (crumb) => crumb.label === parent.label && crumb.to === parentTo,
-        )
-      ) {
-        crumbs.push({ label: parent.label, to: parentTo })
-      }
-      crumbs.push({
-        label,
-        to: match.fullPath,
-      })
-    }
-  }
-
-  // If under settings and no "Settings" crumb exists, prepend it
-  if (isSettingsRoute && !crumbs.some((c) => c.label === 'Settings')) {
-    crumbs.unshift({ label: 'Settings', to: '/settings' })
-  }
-
-  // Fallback: if no crumbs were generated, humanize the last path segment
-  if (crumbs.length === 0) {
-    const lastMatch = matches[matches.length - 1]
-    const segments = lastMatch.fullPath.split('/').filter(Boolean)
-    const lastSegment = segments[segments.length - 1]
-    crumbs.push({
-      label: lastSegment ? humanize(lastSegment) : 'Dashboard',
-    })
-  }
-
-  // Last crumb is always the current page (no link)
-  const lastIndex = crumbs.length - 1
+  const breadcrumbs = [...parentBreadcrumbs, ...currBreadcrumbs];
 
   return (
     <Breadcrumb>
       <BreadcrumbList>
-        {crumbs.map((crumb, i) => {
-          const isLast = i === lastIndex
-
-          return (
-            <span
-              key={`${crumb.to ?? 'current'}:${crumb.label}`}
-              className="contents"
-            >
-              {i > 0 && (
-                <BreadcrumbSeparator
-                  className={i < lastIndex ? 'hidden md:block' : ''}
-                />
-              )}
-              <BreadcrumbItem
-                className={i < lastIndex - 1 ? 'hidden md:block' : ''}
-              >
-                {isLast ? (
-                  <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                ) : (
-                  <BreadcrumbLink
-                    render={crumb.to ? <Link to={crumb.to} /> : <span />}
-                  >
-                    {crumb.label}
-                  </BreadcrumbLink>
-                )}
-              </BreadcrumbItem>
-            </span>
-          )
-        })}
+        {breadcrumbs.map((item, index) => (
+          [
+            index !== breadcrumbs.length - 1 && <BreadcrumbItem key={item.href}>
+              <BreadcrumbLink render={<Link to={item.href} />}>
+                {item.label}
+              </BreadcrumbLink>
+            </BreadcrumbItem>,
+            index === breadcrumbs.length - 1 && <BreadcrumbPage key={item.href}>
+              <BreadcrumbLink render={<Link to={item.href} />}>
+                {item.label}
+              </BreadcrumbLink>
+            </BreadcrumbPage>,
+            index < breadcrumbs.length - 1 && <BreadcrumbSeparator key={item.href + "_separator"} />]
+        ))}
       </BreadcrumbList>
     </Breadcrumb>
   )

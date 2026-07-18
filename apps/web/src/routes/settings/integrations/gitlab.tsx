@@ -28,8 +28,9 @@ import { PageMeta } from '@/lib/seo'
 
 export const Route = createFileRoute('/settings/integrations/gitlab')({
   staticData: {
-    breadcrumbLabel: 'GitLab',
-    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+    breadcrumb: {
+      title: 'GitLab',
+    },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

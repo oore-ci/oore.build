@@ -72,8 +72,9 @@ export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId',
 )({
   staticData: {
-    breadcrumbLabel: 'Pipeline',
-    breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
+    breadcrumb: {
+      title: 'Pipeline',
+    },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

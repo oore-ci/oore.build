@@ -141,8 +141,9 @@ function validateProjectSearch(
 
 export const Route = createFileRoute('/projects/$projectId/')({
   staticData: {
-    breadcrumbLabel: 'Details',
-    breadcrumbParent: { label: 'Projects', to: '/projects' },
+    breadcrumb: {
+      title: 'Details',
+    },
   },
   validateSearch: validateProjectSearch,
   beforeLoad: () => {

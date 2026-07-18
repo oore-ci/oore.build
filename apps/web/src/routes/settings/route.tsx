@@ -1,18 +1,17 @@
-import { createFileRoute } from '@tanstack/react-router'
-
 import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
+import { createFileRoute } from '@tanstack/react-router'
 
-export const Route = createFileRoute('/settings/notifications/new')({
+export const Route = createFileRoute('/settings')({
   staticData: {
     breadcrumb: {
-      title: 'New channel',
+      title: 'Settings',
     },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
 })

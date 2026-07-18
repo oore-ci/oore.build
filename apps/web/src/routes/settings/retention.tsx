@@ -7,7 +7,9 @@ import {
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/settings/retention')({
-  staticData: { breadcrumbLabel: 'Retention' },
+  staticData: { breadcrumb: {
+   title: 'Retention' ,
+ },},
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)

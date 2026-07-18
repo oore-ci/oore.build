@@ -53,8 +53,9 @@ import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   staticData: {
-    breadcrumbLabel: 'New Pipeline',
-    breadcrumbParent: { label: 'Project', to: '/projects/$projectId' },
+    breadcrumb: {
+      title: 'New Pipeline',
+    },
   },
   beforeLoad: async ({ params }) => {
     const instance = getActiveInstanceOrRedirect()

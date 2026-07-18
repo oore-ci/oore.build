@@ -25,8 +25,9 @@ import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/github')({
   staticData: {
-    breadcrumbLabel: 'GitHub',
-    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+    breadcrumb: {
+      title: 'GitHub',
+    },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
