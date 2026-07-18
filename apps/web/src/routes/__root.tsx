@@ -149,7 +149,7 @@ function RootLayout() {
           <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
             <SidebarInset id="main-content" tabIndex={-1}>
-              <header className="sticky top-0 z-30 flex h-[calc(3rem+var(--safe-area-top))] shrink-0 items-center gap-2 border-b bg-background px-4 pt-[var(--safe-area-top)]">
+              <header className="sticky top-0 z-30 flex h-[calc(3rem+var(--safe-area-top))] shrink-0 items-center gap-2 border-b bg-background px-4 pt-(--safe-area-top)">
                 <SidebarTrigger className="-ml-1" />
                 <Separator
                   orientation="vertical"
@@ -183,7 +183,7 @@ function RootLayout() {
           <main
             id="main-content"
             tabIndex={-1}
-            className="flex min-h-dvh flex-col bg-surface pt-[var(--safe-area-top)] pb-[var(--safe-area-bottom)]"
+            className="flex min-h-dvh flex-col bg-surface pt-(--safe-area-top) pb-(--safe-area-bottom)"
           >
             <ConnectivityBanner />
             <div className="flex-1 flex flex-col">
