@@ -1,10 +1,11 @@
-import * as React from 'react'
-import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
+"use client"
 
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Cancel01Icon } from '@hugeicons/core-free-icons'
-import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
+import * as React from "react"
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
+
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { XIcon } from "lucide-react"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -29,7 +30,10 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
-      className={cn('cn-dialog-overlay fixed inset-0 isolate z-50', className)}
+      className={cn(
+        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        className
+      )}
       {...props}
     />
   )
@@ -49,8 +53,8 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          'cn-dialog-content fixed top-1/2 left-1/2 z-50 max-h-[calc(100dvh_-_2rem_-_var(--safe-area-top)_-_var(--safe-area-bottom))] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain outline-none',
-          className,
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-xl bg-popover p-6 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-md data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          className
         )}
         {...props}
       >
@@ -61,12 +65,13 @@ function DialogContent({
             render={
               <Button
                 variant="ghost"
-                className="cn-dialog-close"
+                className="absolute top-4 right-4"
                 size="icon-sm"
               />
             }
           >
-            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+            <XIcon
+            />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         )}
@@ -75,11 +80,11 @@ function DialogContent({
   )
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<'div'>) {
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn('cn-dialog-header flex flex-col', className)}
+      className={cn("flex flex-col gap-2", className)}
       {...props}
     />
   )
@@ -90,15 +95,15 @@ function DialogFooter({
   showCloseButton = false,
   children,
   ...props
-}: React.ComponentProps<'div'> & {
+}: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
-        'cn-dialog-footer sticky bottom-0 z-10 flex flex-col-reverse gap-2 bg-popover pb-[var(--safe-area-bottom)] sm:flex-row sm:justify-end',
-        className,
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        className
       )}
       {...props}
     >
@@ -116,7 +121,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('cn-dialog-title cn-font-heading', className)}
+      className={cn("font-heading leading-none font-medium", className)}
       {...props}
     />
   )
@@ -129,7 +134,10 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn('cn-dialog-description', className)}
+      className={cn(
+        "text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
+        className
+      )}
       {...props}
     />
   )

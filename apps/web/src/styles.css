@@ -1,7 +1,7 @@
 @import 'tailwindcss';
-@import 'tw-animate-css';
-@import 'shadcn/tailwind.css';
-@import '@fontsource-variable/inter';
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
 
 @font-face {
   font-family: 'JetBrains Mono Variable';
@@ -57,11 +57,11 @@
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --overlay: oklch(0.12 0.015 255 / 52%);
-  --chart-1: oklch(0.879 0.169 91.605);
-  --chart-2: oklch(0.769 0.188 70.08);
-  --chart-3: oklch(0.666 0.179 58.318);
-  --chart-4: oklch(0.555 0.163 48.998);
-  --chart-5: oklch(0.473 0.137 46.201);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
   --success: oklch(0.42 0.13 150);
   --success-foreground: oklch(0.985 0.004 255);
   --warning: oklch(0.43 0.11 75);
@@ -71,8 +71,8 @@
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-primary: oklch(0.666 0.179 58.318);
+  --sidebar-primary-foreground: oklch(0.987 0.022 95.277);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
@@ -102,11 +102,11 @@
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
   --overlay: oklch(0.06 0.012 255 / 72%);
-  --chart-1: oklch(0.879 0.169 91.605);
-  --chart-2: oklch(0.769 0.188 70.08);
-  --chart-3: oklch(0.666 0.179 58.318);
-  --chart-4: oklch(0.555 0.163 48.998);
-  --chart-5: oklch(0.473 0.137 46.201);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
   --success: oklch(0.72 0.13 150);
   --success-foreground: oklch(0.14 0.02 255);
   --warning: oklch(0.78 0.12 85);
@@ -115,8 +115,8 @@
   --info-foreground: oklch(0.14 0.02 255);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-primary: oklch(0.769 0.188 70.08);
+  --sidebar-primary-foreground: oklch(0.279 0.077 45.635);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
@@ -125,7 +125,7 @@
 }
 
 @theme inline {
-  --font-sans: 'Inter Variable', Inter, ui-sans-serif, sans-serif;
+  --font-sans: 'Inter Variable', sans-serif;
   --font-mono: 'JetBrains Mono Variable', monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -174,6 +174,7 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --font-heading: var(--font-sans);
 }
 
 @keyframes route-slide {
@@ -187,7 +188,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring;
+    @apply border-border outline-ring/50;
   }
 
   html,
@@ -208,7 +209,7 @@
   }
 
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply font-sans antialiased bg-background text-foreground;
     min-height: 100dvh;
     padding-right: var(--safe-area-right);
     padding-left: var(--safe-area-left);
