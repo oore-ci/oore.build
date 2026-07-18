@@ -6,14 +6,54 @@ const COMPONENT_STYLE_CLASS_PREFIX = 'style-'
 // Runtime switching follows Create: one managed style-* class on document.body.
 
 export const COMPONENT_STYLES = [
-  { name: 'vega', title: 'Vega', description: 'Clean and familiar' },
-  { name: 'nova', title: 'Nova', description: 'Reduced spacing' },
-  { name: 'maia', title: 'Maia', description: 'Soft and spacious' },
-  { name: 'lyra', title: 'Lyra', description: 'Boxy and sharp' },
-  { name: 'mira', title: 'Mira', description: 'Compact and dense' },
-  { name: 'luma', title: 'Luma', description: 'Fluid and soft' },
-  { name: 'sera', title: 'Sera', description: 'Editorial' },
-  { name: 'rhea', title: 'Rhea', description: 'Soft and compact' },
+  {
+    name: 'vega',
+    title: 'Vega',
+    description: 'Clean and familiar',
+    radius: '0.625rem',
+  },
+  {
+    name: 'nova',
+    title: 'Nova',
+    description: 'Reduced spacing',
+    radius: '0.625rem',
+  },
+  {
+    name: 'maia',
+    title: 'Maia',
+    description: 'Soft and spacious',
+    radius: '0.625rem',
+  },
+  {
+    name: 'lyra',
+    title: 'Lyra',
+    description: 'Boxy and sharp',
+    radius: '0rem',
+  },
+  {
+    name: 'mira',
+    title: 'Mira',
+    description: 'Compact and dense',
+    radius: '0.625rem',
+  },
+  {
+    name: 'luma',
+    title: 'Luma',
+    description: 'Fluid and soft',
+    radius: '0.625rem',
+  },
+  {
+    name: 'sera',
+    title: 'Sera',
+    description: 'Editorial',
+    radius: '0rem',
+  },
+  {
+    name: 'rhea',
+    title: 'Rhea',
+    description: 'Soft and compact',
+    radius: '0.625rem',
+  },
 ] as const
 
 export type ComponentStyle = (typeof COMPONENT_STYLES)[number]['name']
@@ -60,6 +100,11 @@ export function applyComponentStyle(
     }
   }
   targetDocument.body.classList.add(`${COMPONENT_STYLE_CLASS_PREFIX}${style}`)
+  targetDocument.documentElement.style.setProperty(
+    '--radius',
+    COMPONENT_STYLES.find((option) => option.name === style)?.radius ??
+      COMPONENT_STYLES[0].radius,
+  )
 }
 
 export async function loadComponentStyle(componentStyle: unknown) {

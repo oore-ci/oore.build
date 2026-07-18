@@ -42,13 +42,13 @@ Do not use wide letter spacing as a substitute for hierarchy. Do not make every 
 The product defaults to shadcn Create's Neutral base, Amber color theme, and Vega component style. Signed-in operators may choose any color theme or component style exposed by the Create route; Oore mirrors the upstream values instead of maintaining a parallel design registry.
 
 - `--primary` is for the primary action, selected navigation, links, and focus emphasis—not generic status decoration.
-- Runtime themes merge the upstream Neutral base with the selected Theme overlay, then replace one injected `:root`/`.dark` variable sheet, matching shadcn Create's application method. The copied registry data stays source-identical; Oore deliberately aliases sidebar emphasis to the app primary so a theme has one accent color everywhere. Radius and typography are deliberately outside this color-only v0.
-- Runtime component styles are Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea. Shared Base UI primitives expose shadcn's neutral `cn-*` hooks; the selected source-identical style sheet is loaded on demand and one validated `style-*` class is applied to `document.body`, matching shadcn Create's switching method.
+- Runtime themes merge the upstream Neutral base with the selected Theme overlay, then replace one injected `:root`/`.dark` variable sheet, matching shadcn Create's application method. The copied registry data stays source-identical; Oore deliberately aliases sidebar emphasis to the app primary so a theme has one accent color everywhere. Typography remains outside this color-only preference.
+- Runtime component styles are Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea. Shared Base UI primitives expose shadcn's neutral `cn-*` hooks; the selected source-identical style sheet is loaded on demand and one validated `style-*` class is applied to `document.body`, matching shadcn Create's switching method. Style selection also applies Create's default proportional radius scale; Lyra and Sera force a zero radius as they do upstream.
 - Oore-only success, warning, and info tokens retain their semantic meaning across themes.
 - `--background`, `--surface`, `--card`, and their foreground pairs create subtle depth without gradients.
 - `--success`, `--warning`, `--destructive`, and `--info` communicate semantic state with text or an icon; color alone is never sufficient.
 - Borders and dividers should remain visible in both themes without becoming the loudest element.
-- Corners remain square through the radius tokens.
+- Do not flatten the radius scale or override style-owned geometry in application components.
 
 Static application colors come from `apps/web/src/styles.css`. Runtime theme registry values live in `apps/web/src/lib/color-theme.ts` and must stay source-identical to shadcn Create; documented Oore token aliases are applied after that data rather than changing the copy. Add a light and dark value plus the `@theme inline` mapping when a new Oore-specific semantic token is genuinely required. Never use hard-coded Tailwind palette classes in application UI.
 
@@ -194,7 +194,7 @@ The authenticated shell uses the shared sidebar and breadcrumb header. Navigatio
 - Documentation navigation is task-first: Get started, Guides, Reference/OpenAPI, and Operations.
 - Load the interactive OpenAPI client only on OpenAPI routes.
 - Product screenshots must come from the current local demo with representative data, not hand-built facsimiles.
-- Keep the shared visual direction—Inter, the selected theme accent, cool neutrals, square geometry, dividers, and minimal motion—without forcing React/shadcn dependencies into VitePress or the static site.
+- Keep the shared visual direction—Inter, the selected theme accent, cool neutrals, dividers, and minimal motion—without forcing React/shadcn dependencies into VitePress or the static site.
 
 ## Review checklist
 

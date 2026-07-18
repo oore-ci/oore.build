@@ -12,6 +12,7 @@ import {
 describe('component style', () => {
   beforeEach(() => {
     document.body.className = 'app-shell style-vega'
+    document.documentElement.style.removeProperty('--radius')
   })
 
   it('matches the current shadcn Create style picker', () => {
@@ -45,10 +46,30 @@ describe('component style', () => {
     expect(document.body.classList.contains('style-vega')).toBe(false)
     expect(document.body.classList.contains('style-mira')).toBe(true)
     expect(document.body.classList.contains('app-shell')).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--radius')).toBe(
+      '0.625rem',
+    )
     expect(setItem).toHaveBeenCalledWith('oore_component_style', 'mira')
 
     applyComponentStyle('invalid', document)
     expect(document.body.classList.contains('style-vega')).toBe(true)
     expect(document.body.classList.contains('style-mira')).toBe(false)
+  })
+
+  it('applies the official Create radius constraints with the style', () => {
+    applyComponentStyle('lyra', document)
+    expect(document.documentElement.style.getPropertyValue('--radius')).toBe(
+      '0rem',
+    )
+
+    applyComponentStyle('sera', document)
+    expect(document.documentElement.style.getPropertyValue('--radius')).toBe(
+      '0rem',
+    )
+
+    applyComponentStyle('rhea', document)
+    expect(document.documentElement.style.getPropertyValue('--radius')).toBe(
+      '0.625rem',
+    )
   })
 })

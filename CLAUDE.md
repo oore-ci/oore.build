@@ -84,7 +84,7 @@ make validate
 
 ### shadcn Constraints (apps/web — shared preset applies)
 
-`style: base-vega`, `iconLibrary: hugeicons`, `theme: amber`, `baseColor: neutral`, `menuAccent: subtle`, `menuColor: default`, `radius: none`, `font: inter`
+`style: base-vega`, `iconLibrary: hugeicons`, `theme: amber`, `baseColor: neutral`, `menuAccent: subtle`, `menuColor: default`, `radius: default`, `font: inter`
 
 Vega is the generator and runtime default. The product supports the exact shadcn Create runtime component styles through neutral `cn-*` hooks and one managed `style-*` body class. Amber is the default browser-local color theme.
 

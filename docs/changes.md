@@ -16,6 +16,7 @@ Rules:
 
 - **Dynamic shadcn component styles**:
   - Theme settings now exposes every component style currently available in shadcn Create: Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea. Vega remains the browser-local default.
+  - Style selection now owns the complete shadcn geometry preset instead of inheriting Oore's former zero-radius override. Vega, Nova, Maia, Mira, Luma, and Rhea use Create's default proportional radius scale; Lyra and Sera remain square as required by their upstream styles.
   - The shared Base UI primitives now retain shadcn's neutral `cn-*` hooks, and Oore switches one validated `style-*` class on `document.body`, matching Create's runtime style mechanism. The eight checked-in style sheets are source-identical to shadcn/ui and load on demand so inactive styles do not inflate the initial application bundle.
   - The production budget now counts the default Vega style and its loader as initial work, so the gate measures the real first render instead of reporting a smaller static-entry-only total.
   - Focused preference tests and rendered Chromium acceptance verify persistence, all eight body classes, the complete picker, and the distinct button density and typography produced by every style.

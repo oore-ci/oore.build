@@ -1,1 +1,1 @@
-https://ui.shadcn.com/init?base=base&style=vega&baseColor=neutral&theme=amber&iconLibrary=hugeicons&font=inter&menuAccent=subtle&menuColor=default&radius=none&template=start&rtl=false
+https://ui.shadcn.com/init?base=base&style=vega&baseColor=neutral&theme=amber&iconLibrary=hugeicons&font=inter&menuAccent=subtle&menuColor=default&radius=default&template=start&rtl=false

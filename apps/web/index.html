@@ -206,9 +206,16 @@
         const savedComponentStyle = localStorage.getItem(
           'oore_component_style',
         )
-        if (componentStyles.includes(savedComponentStyle)) {
-          document.body.className = `style-${savedComponentStyle}`
-        }
+        const componentStyle = componentStyles.includes(savedComponentStyle)
+          ? savedComponentStyle
+          : 'vega'
+        document.body.className = `style-${componentStyle}`
+        document.documentElement.style.setProperty(
+          '--radius',
+          componentStyle === 'lyra' || componentStyle === 'sera'
+            ? '0rem'
+            : '0.625rem',
+        )
       } catch {
         // Vega remains the pre-paint default.
       }

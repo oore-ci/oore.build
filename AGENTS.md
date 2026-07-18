@@ -34,7 +34,7 @@ Treat those as the source of truth.
 - `baseColor: neutral`
 - `menuAccent: subtle`
 - `menuColor: default`
-- Use shadcn Create's Neutral base plus its exact Theme picker values for browser-local color themes. Amber is Oore's default; square corners, Inter for UI text, and JetBrains Mono for machine data remain product choices.
+- Use shadcn Create's Neutral base plus its exact Theme picker values for browser-local color themes. Amber is Oore's default; component geometry follows the selected Create style, while Inter for UI text and JetBrains Mono for machine data remain product choices.
 - Docs framework is VitePress under `apps/docs-site/docs`.
 - The public site is a static Vite application under `apps/site`; neither the docs site nor the public site should carry the React/shadcn application scaffold.
 

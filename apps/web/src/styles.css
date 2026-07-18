@@ -68,7 +68,7 @@
   --warning-foreground: oklch(0.985 0.004 255);
   --info: oklch(0.47 0.14 255);
   --info-foreground: oklch(0.985 0.004 255);
-  --radius: 0;
+  --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: var(--primary);
@@ -167,13 +167,13 @@
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-surface: var(--surface);
-  --radius-sm: var(--radius);
-  --radius-md: var(--radius);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --radius-xl: var(--radius);
-  --radius-2xl: var(--radius);
-  --radius-3xl: var(--radius);
-  --radius-4xl: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 @keyframes route-slide {
