@@ -8,7 +8,6 @@ import { ExternalAccessSetup } from '@/components/settings/preferences-external-
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 
 export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
@@ -22,20 +21,20 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
     updatePreferencesMutation,
   } = state
   return (
-    <Card>
-      <CardHeader>
+    <section className="border bg-card" aria-labelledby="external-access-title">
+      <div className="border-b px-4 py-3">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 id="external-access-title" className="text-sm font-semibold">
             External Access
-          </CardTitle>
+          </h2>
           <Badge variant={externalAccessEnabled ? 'secondary' : 'outline'}>
             {externalAccessEnabled
-              ? `External Access - ${authModeLabel(remoteAuthMode)}`
+              ? `External Access: ${authModeLabel(remoteAuthMode)}`
               : 'Local Only'}
           </Badge>
         </div>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-5">
+      </div>
+      <div className="flex flex-col gap-5 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
             <p className="text-sm font-medium">Current access</p>
@@ -80,7 +79,7 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
         ) : (
           <ExternalAccessSetup state={state} />
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

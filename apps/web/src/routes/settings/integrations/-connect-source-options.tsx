@@ -3,14 +3,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Link04Icon } from '@hugeicons/core-free-icons'
 
 import { buttonVariants } from '@/components/ui/button-variants'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 
 const providers = [
   {
@@ -45,10 +37,7 @@ export function ConnectSourceOptions() {
       aria-labelledby="connect-source-title"
     >
       <div>
-        <h2
-          id="connect-source-title"
-          className="text-sm font-medium uppercase tracking-wider text-muted-foreground"
-        >
+        <h2 id="connect-source-title" className="text-sm font-semibold">
           Connect a source
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -57,14 +46,16 @@ export function ConnectSourceOptions() {
       </div>
       <div className="grid items-stretch gap-4 md:grid-cols-2">
         {providers.map((provider) => (
-          <Card key={provider.name} size="sm">
-            <CardHeader>
-              <CardTitle>{provider.name}</CardTitle>
-              <CardDescription>{provider.description}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex-1">
+          <article key={provider.name} className="flex flex-col border bg-card">
+            <div className="border-b px-4 py-3">
+              <h3 className="text-sm font-semibold">{provider.name}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {provider.description}
+              </p>
+            </div>
+            <div className="flex-1 p-4">
               <div className="flex h-full flex-col gap-2 text-xs text-muted-foreground">
-                <p className="font-medium uppercase tracking-wider text-foreground">
+                <p className="font-medium text-foreground">
                   {provider.heading}
                 </p>
                 <ul className="flex list-disc flex-col gap-1 pl-4 leading-relaxed">
@@ -73,8 +64,8 @@ export function ConnectSourceOptions() {
                   ))}
                 </ul>
               </div>
-            </CardContent>
-            <CardFooter className="mt-auto">
+            </div>
+            <div className="mt-auto border-t px-4 py-3">
               <Link
                 to={provider.to}
                 className={buttonVariants({
@@ -89,8 +80,8 @@ export function ConnectSourceOptions() {
                 />
                 Connect {provider.name}
               </Link>
-            </CardFooter>
-          </Card>
+            </div>
+          </article>
         ))}
       </div>
     </section>

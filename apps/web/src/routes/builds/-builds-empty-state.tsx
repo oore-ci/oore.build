@@ -42,7 +42,7 @@ export function BuildsEmptyState({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <CardTitle className="text-sm font-medium text-muted-foreground">
             Create project first
           </CardTitle>
         </CardHeader>

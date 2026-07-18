@@ -13,6 +13,7 @@ import { getInstanceIcon } from '@/lib/instance-icons'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -94,38 +95,42 @@ export default function InstanceSwitcherMenu({
               sideOffset={4}
             >
               {instanceList.map((candidate) => (
-                <DropdownMenuItem
+                <DropdownMenuGroup
                   key={candidate.id}
-                  onClick={() => setActiveInstance(candidate.id)}
-                  className="group gap-2 p-2"
+                  className="grid grid-cols-[minmax(0,1fr)_auto]"
                 >
-                  <div className="flex size-6 items-center justify-center border">
-                    <HugeiconsIcon
-                      icon={getInstanceIcon(candidate.icon)}
-                      size={14}
-                    />
-                  </div>
-                  <span className="truncate flex-1">{candidate.label}</span>
-                  <button
-                    type="button"
-                    className="ml-auto text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
-                    onClick={(event) => {
-                      event.stopPropagation()
+                  <DropdownMenuItem
+                    onClick={() => setActiveInstance(candidate.id)}
+                    className="min-w-0 gap-2 rounded-r-none p-2"
+                  >
+                    <div className="flex size-6 items-center justify-center border">
+                      <HugeiconsIcon
+                        icon={getInstanceIcon(candidate.icon)}
+                        size={14}
+                      />
+                    </div>
+                    <span className="min-w-0 flex-1 truncate">
+                      {candidate.label}
+                    </span>
+                    {candidate.id === instance?.id ? (
+                      <HugeiconsIcon
+                        icon={Tick02Icon}
+                        size={14}
+                        className="text-primary"
+                      />
+                    ) : null}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    aria-label={`Edit ${candidate.label}`}
+                    title={`Edit ${candidate.label}`}
+                    className="min-h-9 min-w-9 justify-center rounded-l-none border-l p-2 text-muted-foreground focus:text-foreground"
+                    onClick={() => {
                       requestAnimationFrame(() => setEditingInstance(candidate))
                     }}
-                    title={`Edit ${candidate.label}`}
-                    aria-label={`Edit ${candidate.label}`}
                   >
                     <HugeiconsIcon icon={PencilEdit02Icon} size={14} />
-                  </button>
-                  {candidate.id === instance?.id ? (
-                    <HugeiconsIcon
-                      icon={Tick02Icon}
-                      size={14}
-                      className="text-primary"
-                    />
-                  ) : null}
-                </DropdownMenuItem>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
               ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem

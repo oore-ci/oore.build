@@ -16,6 +16,7 @@ import {
   createProject,
   deleteProject,
   getProject,
+  listAllProjects,
   listProjectMemberCandidates,
   listProjectMembers,
   listProjects,
@@ -99,6 +100,27 @@ export function useProjects(
   })
 }
 
+export function useAllProjects(
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'updated_at' | 'name'
+    direction?: 'asc' | 'desc'
+  },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
+
+  return useQuery({
+    queryKey: [instance?.id ?? '__none__', 'all-projects', params ?? {}],
+    queryFn: ({ signal }) =>
+      listAllProjects(baseUrl!, token!, params, { signal }),
+    enabled: enabled && !!baseUrl && !!token,
+  })
+}
+
 export function useProject(projectId: string) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
@@ -128,6 +150,12 @@ export function useCreateProject() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'projects'],
       })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'project-pages'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-projects'],
+      })
     },
   })
 }
@@ -155,6 +183,12 @@ export function useUpdateProject() {
         queryKey: [instance?.id ?? '__none__', 'projects'],
       })
       void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'project-pages'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-projects'],
+      })
+      void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'project', variables.projectId],
       })
     },
@@ -176,6 +210,12 @@ export function useDeleteProject() {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'projects'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'project-pages'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-projects'],
       })
     },
   })

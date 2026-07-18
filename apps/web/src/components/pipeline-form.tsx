@@ -1,11 +1,11 @@
-import { useReducer, useState } from 'react'
+import { useReducer, useRef, useState } from 'react'
+import { useBlocker } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { AlertCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
-import { useWindowEvent } from '@/hooks/use-window-event'
 import { Button } from '@/components/ui/button'
 import { Form } from '@/components/ui/form'
 import { Spinner } from '@/components/ui/spinner'
@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseEnvVars,
+  hasSigningFileChanges,
   parseMultiline,
   previewPlatformCommands,
   selectedPlatforms,
@@ -31,6 +32,16 @@ import {
 } from '@/components/pipeline-form-output-sections'
 import { PipelineAndroidSigningSection } from '@/components/pipeline-form-android-signing-section'
 import { PipelineIosSigningSection } from '@/components/pipeline-form-ios-signing-section'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface PipelineFormProps {
   initialValues: PipelineFormValues
@@ -245,13 +256,20 @@ export default function PipelineForm({
     { initialValues, retrySigning },
     initialPipelineSections,
   )
-  const isDirty = form.formState.isDirty || auxiliary.isDirty
+  const isSubmittingRef = useRef(false)
+  const signingFilesDirty = hasSigningFileChanges(
+    [releaseKeystoreFile, debugKeystoreFile, iosP12File, iosApiKeyFile],
+    iosProfileFiles,
+  )
+  const isDirty =
+    form.formState.isDirty || auxiliary.isDirty || signingFilesDirty
+  const blocker = useBlocker({
+    shouldBlockFn: () => isDirty && !isSubmittingRef.current,
+    enableBeforeUnload: () => isDirty && !isSubmittingRef.current,
+    withResolver: true,
+  })
   const setSectionOpen = (section: keyof typeof sections) => (open: boolean) =>
     dispatchSections({ type: 'set', section, open })
-
-  useWindowEvent('beforeunload', (event) => {
-    if (isDirty) event.preventDefault()
-  })
 
   function toggleEvent(event: string) {
     dispatchAuxiliary({ type: 'toggle_event', event })
@@ -269,18 +287,23 @@ export default function PipelineForm({
   }
 
   async function handleFormSubmit(data: PipelineFormValues) {
-    await onSubmit(
-      data,
-      auxiliary.selectedEvents,
-      auxiliary.cancelPrevious,
-      releaseKeystoreFile,
-      debugKeystoreFile,
-      {
-        p12File: iosP12File,
-        apiKeyFile: iosApiKeyFile,
-        profileFiles: iosProfileFiles,
-      },
-    )
+    isSubmittingRef.current = true
+    try {
+      await onSubmit(
+        data,
+        auxiliary.selectedEvents,
+        auxiliary.cancelPrevious,
+        releaseKeystoreFile,
+        debugKeystoreFile,
+        {
+          p12File: iosP12File,
+          apiKeyFile: iosApiKeyFile,
+          profileFiles: iosProfileFiles,
+        },
+      )
+    } finally {
+      isSubmittingRef.current = false
+    }
   }
 
   const values = form.watch()
@@ -426,6 +449,40 @@ export default function PipelineForm({
           </div>
         </div>
       </form>
+      <AlertDialog
+        open={blocker.status === 'blocked'}
+        onOpenChange={(open) => {
+          if (!open && blocker.status === 'blocked') blocker.reset()
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Discard unsaved pipeline changes?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Form values and selected signing files will be lost if you leave
+              this page.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                if (blocker.status === 'blocked') blocker.reset()
+              }}
+            >
+              Stay
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (blocker.status === 'blocked') blocker.proceed()
+              }}
+            >
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Form>
   )
 }

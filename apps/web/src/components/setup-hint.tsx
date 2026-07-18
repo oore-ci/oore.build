@@ -33,7 +33,7 @@ export default function SetupHint({
           size={14}
           className="shrink-0 text-muted-foreground"
         />
-        <p className="font-medium uppercase tracking-wider">{title}</p>
+        <p className="font-medium">{title}</p>
       </div>
       {children ? <div className="mt-2 leading-relaxed">{children}</div> : null}
       {items && items.length > 0 ? (

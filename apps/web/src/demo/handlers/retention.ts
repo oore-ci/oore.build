@@ -1,40 +1,36 @@
 import { HttpResponse, delay, http } from 'msw'
-import { demoLastCleanup, demoRetentionPolicy } from '../data/retention'
-import type {
-  ProjectRetentionOverride,
-  RetentionCleanupSummary,
-  RetentionPolicy,
-} from '@/lib/types'
+import type { ProjectRetentionOverride } from '@/lib/types'
 import { requireDemoInstancePermission } from '../authorization'
+import { demoState } from '../state'
 
 function now(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-let globalPolicy: RetentionPolicy = { ...demoRetentionPolicy }
-const lastCleanup: RetentionCleanupSummary = { ...demoLastCleanup }
-const projectOverrides = new Map<string, ProjectRetentionOverride>()
-
 function effectivePolicy(projectId: string) {
-  const override = projectOverrides.get(projectId)
+  const override = demoState.projectRetentionOverrides[projectId]
   if (!override) {
-    return { effective: { ...globalPolicy }, has_override: false }
+    return { effective: { ...demoState.retentionPolicy }, has_override: false }
   }
   return {
     effective: {
-      enabled: override.enabled ?? globalPolicy.enabled,
-      max_age_days: override.max_age_days ?? globalPolicy.max_age_days,
+      enabled: override.enabled ?? demoState.retentionPolicy.enabled,
+      max_age_days:
+        override.max_age_days ?? demoState.retentionPolicy.max_age_days,
       max_builds_per_project:
-        override.max_builds_per_project ?? globalPolicy.max_builds_per_project,
+        override.max_builds_per_project ??
+        demoState.retentionPolicy.max_builds_per_project,
       max_artifact_size_bytes:
         override.max_artifact_size_bytes ??
-        globalPolicy.max_artifact_size_bytes,
-      cleanup_target: override.cleanup_target ?? globalPolicy.cleanup_target,
-      keep_statuses: override.keep_statuses ?? globalPolicy.keep_statuses,
-      dry_run: globalPolicy.dry_run,
-      cleanup_interval_secs: globalPolicy.cleanup_interval_secs,
-      updated_at: override.updated_at ?? globalPolicy.updated_at,
-    } as RetentionPolicy,
+        demoState.retentionPolicy.max_artifact_size_bytes,
+      cleanup_target:
+        override.cleanup_target ?? demoState.retentionPolicy.cleanup_target,
+      keep_statuses:
+        override.keep_statuses ?? demoState.retentionPolicy.keep_statuses,
+      dry_run: demoState.retentionPolicy.dry_run,
+      cleanup_interval_secs: demoState.retentionPolicy.cleanup_interval_secs,
+      updated_at: override.updated_at ?? demoState.retentionPolicy.updated_at,
+    },
     has_override: true,
     override_fields: override,
   }
@@ -43,7 +39,7 @@ function effectivePolicy(projectId: string) {
 export const retentionHandlers = [
   http.get('/v1/settings/retention', async () => {
     await delay(150)
-    return HttpResponse.json({ policy: globalPolicy })
+    return HttpResponse.json({ policy: demoState.retentionPolicy })
   }),
 
   http.put('/v1/settings/retention', async ({ request }) => {
@@ -54,17 +50,17 @@ export const retentionHandlers = [
     )
     if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
-    globalPolicy = {
-      ...globalPolicy,
+    demoState.retentionPolicy = {
+      ...demoState.retentionPolicy,
       ...body,
       updated_at: now(),
     }
-    return HttpResponse.json({ policy: globalPolicy })
+    return HttpResponse.json({ policy: demoState.retentionPolicy })
   }),
 
   http.get('/v1/settings/retention/last-cleanup', async () => {
     await delay(150)
-    return HttpResponse.json({ last_cleanup: lastCleanup })
+    return HttpResponse.json({ last_cleanup: demoState.lastCleanup })
   }),
 
   http.get('/v1/projects/:id/retention', async ({ params }) => {
@@ -83,13 +79,15 @@ export const retentionHandlers = [
     const body = (await request.json()) as Record<string, unknown>
 
     const override: ProjectRetentionOverride = {
-      ...(projectOverrides.get(projectId) ?? { project_id: projectId }),
+      ...(demoState.projectRetentionOverrides[projectId] ?? {
+        project_id: projectId,
+      }),
       ...body,
       project_id: projectId,
       updated_at: now(),
     }
 
-    projectOverrides.set(projectId, override)
+    demoState.projectRetentionOverrides[projectId] = override
     return HttpResponse.json(effectivePolicy(projectId))
   }),
 
@@ -101,7 +99,7 @@ export const retentionHandlers = [
     )
     if (forbidden) return forbidden
     const projectId = params.id as string
-    projectOverrides.delete(projectId)
+    delete demoState.projectRetentionOverrides[projectId]
     return HttpResponse.json(effectivePolicy(projectId))
   }),
 ]

@@ -4,7 +4,7 @@ Canonical execution checklist for the frontend product-quality overhaul. Product
 
 ## Goal
 
-Make Oore CI reliable and coherent for developers, QA teams, and occasional non-technical users without replacing the existing stack or visual identity.
+Make Oore CI reliable and coherent for developers, QA teams, and occasional non-technical users without replacing the existing frontend stack. The approved visual direction is now a quiet technical system: shadcn Create's Neutral base, Amber as the default color theme, Vega as the default component style, the exact browser-local Create choices for both, Inter with JetBrains Mono for machine data, sentence-case copy, divider-led hierarchy, and minimal motion.
 
 ## Baseline
 
@@ -12,6 +12,30 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 - Production entry payload: about 241 kB gzip JavaScript + 20 kB gzip CSS
 - Largest initial chunk: `react-vendor`, about 170 kB gzip
 - Frontend validation: 111 tests, lint, and production build passing
+
+## 2026-07-18 coherence pass — execution record
+
+The approved whole-frontend redesign is implemented in the working tree. This is an execution record, not a new speculative design phase.
+
+Completed decisions:
+
+- Replaced the stale Google Sans/uppercase card-heavy contract with the quiet technical visual system documented in `DESIGN.md`.
+- Standardized route structure on the real `PageLayout` and `PageHeader` primitives, compact sentence-case hierarchy, and cards only where they communicate an independent boundary.
+- Standardized collection search, sorting, result context, pagination, compact phone rows, and destination-shaped loading/error/empty states using the shared collection controls instead of introducing a second generic table abstraction.
+- Added the role-aware `/settings` hub and consolidated administrative destinations under one shared navigation model.
+- Added a focused `/settings/theme` destination with all 18 Theme options from shadcn Create and the existing light, dark, and system modes. The browser-local choice is applied through the same injected `:root`/`.dark` variable-sheet method used by Create, including the initial loader, favicon, browser chrome, and a single shared app/sidebar primary accent.
+- Added all eight shadcn Create component styles—Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea—using the official neutral component hooks and managed `style-*` body-class mechanism. Style sheets load on demand, the choice persists on this browser, and rendered acceptance confirms each style changes real component geometry rather than only labels or colors.
+- Made Direct runner enablement and repository approval understandable without treating approval of every repository as the desired or required state; large source inventories now use search, filters, and pagination, while sensitive GitLab webhook-token work is opt-in and project-scoped.
+- Expanded the local demo into representative owner, admin, developer, and QA personas with small/large collections, runner-policy blocks, missing repositories, setup, degraded, empty, and active-build states so the product can be evaluated without production data.
+- Reworked the VitePress documentation information architecture and OpenAPI loading path, and rebuilt the public site around current Direct runner, managed-update, and alpha-product truth.
+
+Release evidence status:
+
+- [x] Captured the final Owner/operating Dashboard and Builds views at 1440×900, generated exact 1200×750 and 720×450 WebP derivatives, refreshed the docs copies, and rebuilt the shared 1200×630 social image and raster mark assets.
+- [x] Completed rendered Chromium acceptance at 1440×900 and 390×844 in both themes across Owner, Admin, Developer, and QA personas and the operating, blocked, degraded, empty, and setup demo scenarios. The app, docs, and public site showed no global overflow, broken images, or material hierarchy defects.
+- [x] Passed the full non-Playwright validation contract: docs/lint/format gates, 267 web tests, demo/docs/site and release/update/performance tests, the Rust workspace, strict Clippy, every production bundle budget, all production builds, cargo check, frozen lockfile, generated OpenAPI parity, and diff checks.
+- [ ] Complete the runtime Playwright browser matrix and physical iPhone Safari plus representative Android sweep. The current 69-test Playwright run stalled after preview startup, so it is explicitly not claimed green; the separate headless Chromium acceptance above is the bounded alternate evidence.
+- [ ] Manually sync the canonical Linear Frontend Quality feature, Product Trust feature, Platform Contract, and V1 Roadmap; Linear was unavailable during this implementation pass.
 
 ## Milestone 1 — Correctness and log truth
 
@@ -38,7 +62,7 @@ Make Oore CI reliable and coherent for developers, QA teams, and occasional non-
 
 - [x] Adopt one action grammar: create/add, connect/pair, navigate, retry, and destructive actions.
 - [x] Make Button own icon sizing instead of per-call numeric sizes.
-- [ ] Standardize page headers, primary-action placement, empty states, loading states, and persistent errors.
+- [x] Standardize page headers, primary-action placement, empty states, loading states, and persistent errors.
 - [x] Update installed shadcn components to the current v4 registry while preserving Oore-specific behavior and repeatable migration commands.
 - [ ] Break up only the high-churn giant components: pipeline form, preferences, build detail, and terminal viewer.
   - [ ] Pipeline form
@@ -154,31 +178,31 @@ This milestone is a release-readiness audit and correction pass across the whole
 - [x] Remove the obsolete “Explore as QA”/QA-preview feature end to end now that the demo environment can simulate roles. Remove its UI action, preview-session client state, child-instance behavior, backend endpoint, OpenAPI surface, and tests while preserving real QA accounts, permissions, and project-viewer enforcement.
 - [x] Redesign Project access. Replace the current dense inline form-plus-table card with one clear member-management flow: a searchable user picker, contextual project-role choice, one obvious confirmation action, compact existing-member rows, and an overflow menu for secondary or destructive actions. Explain the QA viewer ceiling only when relevant. Use a shadcn dialog on wide screens and an appropriate compact mobile presentation; do not expose the desktop table on a narrow phone.
 - [x] Fix the 768 px shell so navigation does not consume a desktop-width sidebar beside tablet-width content.
-- [ ] Remove divider and card nesting that does not communicate a real grouping, hierarchy, or interaction boundary.
+- [x] Remove divider and card nesting that does not communicate a real grouping, hierarchy, or interaction boundary.
 
 ### Shared collection and table contract
 
-- [ ] Inventory every collection screen—projects, builds, users, runners, sources, notifications, audit events, access lists, tokens, artifacts, and any embedded tables—and record its search, filter, sort, pagination, row-action, bulk-action, loading, empty, and error behavior before changing components.
+- [x] Inventory every collection screen—projects, builds, users, runners, sources, notifications, audit events, access lists, tokens, artifacts, and any embedded tables—and record its search, filter, sort, pagination, row-action, bulk-action, loading, empty, and error behavior before changing components.
 - [x] Adopt one desktop table toolbar pattern: search at the leading edge, related filters immediately after it, bulk actions in a stable conditional slot, and table-specific secondary actions at the trailing edge. Keep the page's primary create/add action in the page header rather than moving it between table toolbars.
 - [x] Add column sorting wherever the column is meaningful and the data source can return truthful results. Show the active direction, expose accessible labels, define a sensible default sort, and use server-side sorting for paginated data rather than sorting only the visible page.
-- [ ] Keep row actions in a rightmost actions column with the same overflow-menu treatment. Show a standalone row action only when it is the clear, frequent primary task for that row.
+- [x] Keep row actions in a rightmost actions column with the same overflow-menu treatment. Show a standalone row action only when it is the clear, frequent primary task for that row.
 - [x] Use one table footer pattern: result/count context at the leading edge and pagination at the trailing edge. Keep page size, previous/next behavior, disabled states, and labels consistent.
 - [x] Make search, filters, sorting, page, and page size URL-backed where restoration, sharing, or browser Back behavior is valuable.
 - [x] At 640–1023 px, prioritize columns, hide secondary detail behind row expansion or the action menu, and wrap the toolbar in a fixed order. Do not make horizontal scrolling the default tablet solution.
 - [x] Below 640 px, replace dense tables with compact list rows where comparison across columns is not essential. Put full-width search first, then consistently placed Filter and Sort controls; show identity, status, and the primary value before secondary metadata; keep actions predictable and touch-safe.
 - [x] Reserve horizontal table scrolling on mobile for genuinely comparative datasets, keep the identity column visible where practical, and make the scroll affordance obvious.
-- [ ] Standardize row density, cell padding, header treatment, selected/hover/focus states, long-text truncation, status placement, timestamps, and destructive-action confirmation.
+- [x] Standardize row density, cell padding, header treatment, selected/hover/focus states, long-text truncation, status placement, timestamps, and destructive-action confirmation.
 - [x] Match skeletons to the final rows, keep empty and error feedback inside the collection region, and avoid a page-level spinner for ordinary table refreshes.
 - [x] Build shared toolbar, pagination, and responsive-row primitives only after at least two migrated screens prove the exact repeated shape; continue using shadcn Table and TanStack Table rather than creating a parallel table system.
 
 ### Page layout and interaction grammar
 
-- [ ] Standardize page title, description, breadcrumb, and primary-action placement through the existing page-header/layout primitives. On mobile, place the primary action in one predictable location and avoid oversized full-viewport headers.
-- [ ] Define compact, standard, and immersive page-width/padding modes and assign every route to one of them. Remove one-off container widths and breakpoint padding unless the content requires them.
+- [x] Standardize page title, description, breadcrumb, and primary-action placement through the existing page-header/layout primitives. On mobile, place the primary action in one predictable location and avoid oversized full-viewport headers.
+- [x] Define compact, standard, and immersive page-width/padding modes and assign every route to one of them. Remove one-off container widths and breakpoint padding unless the content requires them.
 - [x] Standardize button hierarchy, size, icon placement, disabled/loading state, and touch target. One action must not change visual rank or wording between equivalent screens.
-- [ ] Standardize search-field width and placement, filter-control order, overflow menus, destructive confirmations, form submit/cancel placement, and sticky actions for genuinely long forms.
-- [ ] Standardize tabs, cards, dialogs/sheets, alerts, skeletons, empty states, and persistent errors, including spacing and when a border or divider is warranted.
-- [ ] Review UX copy across repeated controls so identical actions use identical verbs and role-specific restrictions are explained at the point of action.
+- [x] Standardize search-field width and placement, filter-control order, overflow menus, destructive confirmations, form submit/cancel placement, and sticky actions for genuinely long forms.
+- [x] Standardize tabs, cards, dialogs/sheets, alerts, skeletons, empty states, and persistent errors, including spacing and when a border or divider is warranted.
+- [x] Review UX copy across repeated controls so identical actions use identical verbs and role-specific restrictions are explained at the point of action.
 - [ ] Verify keyboard order, visible focus, screen-reader names, contrast, reduced motion, zoom at 200%, and minimum practical touch targets as part of each migrated pattern.
 
 ### Dashboard and mobile information density

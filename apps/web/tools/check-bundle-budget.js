@@ -12,6 +12,9 @@ const entryKey = Object.entries(manifest).find(
 )?.[0]
 if (!entryKey) throw new Error('Vite manifest has no entry chunk')
 
+const componentStyleEntry = 'src/lib/component-style.ts'
+const defaultStyleEntry = 'src/styles/shadcn/loaders/style-vega.css'
+
 function assetsFor(entryKeys) {
   const js = new Set()
   const css = new Set()
@@ -39,11 +42,17 @@ function gzipKiB(assetPaths) {
   return bytes / 1024
 }
 
-const assets = assetsFor([entryKey])
+const baselineEntries = [entryKey, componentStyleEntry]
+const assets = assetsFor(baselineEntries)
+const defaultStyleAsset = manifest[defaultStyleEntry]?.file
+if (!defaultStyleAsset) {
+  throw new Error('Vite manifest has no default Vega style asset')
+}
+assets.css.add(defaultStyleAsset)
 const jsKiB = gzipKiB(assets.js)
 const cssKiB = gzipKiB(assets.css)
 const jsBudgetKiB = Number(process.env.OORE_WEB_JS_BUDGET_KIB ?? 165)
-const cssBudgetKiB = Number(process.env.OORE_WEB_CSS_BUDGET_KIB ?? 22)
+const cssBudgetKiB = Number(process.env.OORE_WEB_CSS_BUDGET_KIB ?? 38)
 
 const profiles = [
   {
@@ -94,7 +103,7 @@ const profiles = [
       'src/routes/builds/$buildId.tsx?tsr-split=component',
       'src/components/build-details/artifact-install-page.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 175),
+    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 181),
   },
   {
     name: 'QA install with changelog',
@@ -103,7 +112,7 @@ const profiles = [
       'src/components/build-details/artifact-install-page.tsx',
       'src/components/build-details/changelog-markdown.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 210),
+    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 215),
   },
   {
     name: 'Projects cold route',
@@ -147,7 +156,7 @@ const profiles = [
       'src/components/build-details/artifact-install-page.tsx',
       'src/components/build-details/qa-build-logs.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_LOGS_BUDGET_KIB ?? 200),
+    budgetKiB: Number(process.env.OORE_WEB_QA_LOGS_BUDGET_KIB ?? 201),
   },
   {
     name: 'Preferences cold route',
@@ -203,7 +212,7 @@ console.log(
 let exceedsBudget = jsKiB > jsBudgetKiB || cssKiB > cssBudgetKiB
 
 for (const profile of profiles) {
-  const profileAssets = assetsFor([entryKey, ...profile.entries])
+  const profileAssets = assetsFor([...baselineEntries, ...profile.entries])
   if (profile.includeDynamic) {
     for (const profileEntry of profile.entries) {
       for (const dynamicEntry of manifest[profileEntry]?.dynamicImports ?? []) {

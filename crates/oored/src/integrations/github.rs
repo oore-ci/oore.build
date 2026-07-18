@@ -433,7 +433,7 @@ pub async fn github_create_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="{favicon}">
   <link rel="apple-touch-icon" href="{favicon}">
-  <meta name="theme-color" content="#dc7702">
+  <meta name="theme-color" content="#2457c5">
   <title>Creating GitHub App...</title>
   <style>
     body {{
@@ -743,7 +743,7 @@ pub async fn github_installed(
   <meta http-equiv="refresh" content="2;url={redirect_url}">
   <link rel="icon" href="{favicon}">
   <link rel="apple-touch-icon" href="{favicon}">
-  <meta name="theme-color" content="#dc7702">
+  <meta name="theme-color" content="#2457c5">
   <title>GitHub App Installed</title>
   <style>
     body {{

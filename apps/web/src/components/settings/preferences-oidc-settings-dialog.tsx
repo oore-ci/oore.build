@@ -56,7 +56,7 @@ export default function OidcSettingsDialog({
         <DialogHeader>
           <DialogTitle>
             {oidcConfig
-              ? 'Update OIDC Provider'
+              ? 'Update OIDC provider'
               : 'Configure OIDC for External Access'}
           </DialogTitle>
           <DialogDescription>
@@ -123,7 +123,7 @@ export default function OidcSettingsDialog({
               name="client_secret"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Client Secret (optional)</FormLabel>
+                  <FormLabel>Client secret (optional)</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
@@ -139,7 +139,7 @@ export default function OidcSettingsDialog({
                   <FormDescription>
                     {oidcConfig?.has_client_secret
                       ? 'Leave empty to keep the existing secret. Enter a new value to rotate.'
-                      : 'If omitted, any existing stored client secret is removed.'}
+                      : 'Leave empty when the provider uses a public client.'}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -151,7 +151,7 @@ export default function OidcSettingsDialog({
                 <HugeiconsIcon
                   icon={CheckmarkCircle02Icon}
                   size={16}
-                  className="text-emerald-500"
+                  className="text-success"
                 />
                 <AlertDescription>
                   Connection successful.{' '}

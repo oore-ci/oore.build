@@ -1,4 +1,7 @@
+import { lazy, Suspense, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { MoreHorizontalCircle01Icon } from '@hugeicons/core-free-icons'
 
 import type { Build, Project } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
@@ -7,6 +10,7 @@ import {
   SortableTableHead,
 } from '@/components/collection-controls'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -24,6 +28,9 @@ import {
 
 export type BuildSort =
   'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
+
+const loadBuildActionsMenu = () => import('./-build-actions-menu')
+const BuildActionsMenu = lazy(loadBuildActionsMenu)
 
 function projectName(build: Build, projects: Array<Project>) {
   return (
@@ -47,6 +54,36 @@ function BuildIdentity({ build }: { build: Build }) {
         {build.id.slice(0, 8)}
       </span>
     </Link>
+  )
+}
+
+function BuildActionsControl({ build }: { build: Build }) {
+  const [requested, setRequested] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  const trigger = (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={`Actions for build ${build.build_number}`}
+      title="Build actions"
+      onMouseEnter={() => void loadBuildActionsMenu()}
+      onFocus={() => void loadBuildActionsMenu()}
+      onClick={() => {
+        setRequested(true)
+        setOpen(true)
+      }}
+    >
+      <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+    </Button>
+  )
+
+  if (!requested) return trigger
+
+  return (
+    <Suspense fallback={trigger}>
+      <BuildActionsMenu build={build} open={open} onOpenChange={setOpen} />
+    </Suspense>
   )
 }
 
@@ -89,9 +126,12 @@ export function BuildInventory({
               <div key={build.id} className="space-y-2 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <BuildIdentity build={build} />
-                  <Badge variant={getStatusVariant(build.status)}>
-                    {build.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={getStatusVariant(build.status)}>
+                      {build.status}
+                    </Badge>
+                    <BuildActionsControl build={build} />
+                  </div>
                 </div>
                 {build.runner_policy_block_reason ? (
                   <p className="text-xs text-warning">
@@ -161,6 +201,9 @@ export function BuildInventory({
               >
                 Created
               </SortableTableHead>
+              <TableHead className="w-10">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -187,6 +230,9 @@ export function BuildInventory({
                     </TableCell>
                     <TableCell>
                       <Skeleton className="h-4 w-20" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="size-8" />
                     </TableCell>
                   </TableRow>
                 ))
@@ -226,6 +272,9 @@ export function BuildInventory({
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {relativeTime(build.created_at)}
+                    </TableCell>
+                    <TableCell>
+                      <BuildActionsControl build={build} />
                     </TableCell>
                   </TableRow>
                 ))}

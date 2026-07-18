@@ -1,6 +1,57 @@
 import { HttpResponse, delay, http } from 'msw'
 import { ago } from '../seed'
-import { getDemoPersonaFromRequest, getDemoSession } from '../personas'
+import {
+  DEMO_PERSONAS,
+  getDemoPersonaFromRequest,
+  getDemoSession,
+} from '../personas'
+import { READ_ONLY_REASON, isDemoMutationAllowed } from '@/lib/demo-mode'
+
+const UNAUTHENTICATED_PATHS = new Set([
+  '/v1/auth/oidc/start',
+  '/v1/auth/oidc/callback',
+  '/v1/auth/local/login',
+  '/v1/auth/trusted-proxy/login',
+])
+
+export const authGuardHandlers = [
+  http.all(/\/v1\/.*/, ({ request }) => {
+    const path = new URL(request.url).pathname
+    if (
+      path.startsWith('/v1/public/') ||
+      path.startsWith('/v1/setup/') ||
+      UNAUTHENTICATED_PATHS.has(path)
+    ) {
+      return
+    }
+    const authorization = request.headers.get('Authorization')
+    const token = authorization?.replace(/^Bearer\s+/i, '')
+    if (DEMO_PERSONAS.some((persona) => persona.token === token)) return
+    return HttpResponse.json(
+      { error: 'Authentication required.', code: 'unauthorized' },
+      { status: 401 },
+    )
+  }),
+]
+
+export const demoReadOnlyGuardHandlers = [
+  http.all(/\/(?:v1|__oore_).*/, ({ request }) => {
+    const url = new URL(request.url)
+    if (
+      isDemoMutationAllowed(
+        request.method.toUpperCase(),
+        url.pathname,
+        url.hostname,
+      )
+    ) {
+      return
+    }
+    return HttpResponse.json(
+      { error: READ_ONLY_REASON, code: 'demo_read_only' },
+      { status: 403 },
+    )
+  }),
+]
 
 function safeDemoRedirectUri(requestUrl: string): string {
   const request = new URL(requestUrl)
@@ -57,18 +108,29 @@ export const authHandlers = [
     })
   }),
 
-  http.post('/v1/auth/oidc/callback', async ({ request }) => {
+  http.post('/v1/auth/oidc/callback', async () => {
     await delay(300)
-    return HttpResponse.json(getDemoSession(getDemoPersonaFromRequest(request)))
+    return HttpResponse.json(getDemoSession(DEMO_PERSONAS[0]))
   }),
 
   http.post('/v1/auth/local/login', async ({ request }) => {
     await delay(150)
-    return HttpResponse.json(getDemoSession(getDemoPersonaFromRequest(request)))
+    const body = (await request.json().catch(() => ({}))) as { email?: string }
+    const persona = body.email
+      ? DEMO_PERSONAS.find(
+          (candidate) => candidate.email === body.email?.trim().toLowerCase(),
+        )
+      : DEMO_PERSONAS[0]
+    return persona
+      ? HttpResponse.json(getDemoSession(persona))
+      : HttpResponse.json(
+          { error: 'Invalid demo account.', code: 'unauthorized' },
+          { status: 401 },
+        )
   }),
 
-  http.post('/v1/auth/trusted-proxy/login', async ({ request }) => {
+  http.post('/v1/auth/trusted-proxy/login', async () => {
     await delay(150)
-    return HttpResponse.json(getDemoSession(getDemoPersonaFromRequest(request)))
+    return HttpResponse.json(getDemoSession(DEMO_PERSONAS[0]))
   }),
 ]

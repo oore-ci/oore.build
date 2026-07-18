@@ -429,14 +429,14 @@ function useNewPipelinePageState() {
         })
       }
       toast.success('Pipeline created')
-      void navigate({ to: '/projects/$projectId', params: { projectId } })
+      await navigate({ to: '/projects/$projectId', params: { projectId } })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       const signing = signingPayload ? 'android' : 'ios'
       toast.error(
         `Pipeline was created, but ${signing} signing failed: ${message}`,
       )
-      void navigate({
+      await navigate({
         to: '/projects/$projectId/pipelines/$pipelineId/edit',
         params: { projectId, pipelineId: created.pipeline.id },
         search: { signing, signingError: message },

@@ -9,7 +9,7 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
-import { useProjects } from '@/hooks/use-projects'
+import { useAllProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
@@ -103,13 +103,15 @@ function OperationsBuildsPage() {
     limit: pageSize,
     offset: (page - 1) * pageSize,
   })
-  const projectsQuery = useProjects({
-    limit: 200,
+  const projectsQuery = useAllProjects({
     sort: 'name',
     direction: 'asc',
   })
   const setupStatusQuery = useSetupStatus()
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canTriggerEveryProject =
+    instanceRole === 'owner' || instanceRole === 'admin'
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
@@ -125,8 +127,10 @@ function OperationsBuildsPage() {
   const total = buildsQuery.data?.total ?? 0
   const canTriggerBuild =
     canTriggerBuildGlobally &&
-    projects.some((project) =>
-      hasProjectPermission(project.current_user_role, 'builds', 'write'),
+    projects.some(
+      (project) =>
+        canTriggerEveryProject ||
+        hasProjectPermission(project.current_user_role, 'builds', 'write'),
     )
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const projectsResolved = !projectsQuery.isLoading && !projectsQuery.error

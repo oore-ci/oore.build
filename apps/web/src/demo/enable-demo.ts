@@ -6,6 +6,7 @@ import {
 } from './seed'
 import { clearAuthStorageForInstance, useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
+import { readDemoScenario, resetDemoState } from './state'
 
 function seedDemoStores() {
   // Use current origin so `!!baseUrl` checks pass in query hooks and
@@ -48,6 +49,7 @@ function seedDemoStores() {
 }
 
 export async function enableDemoMode(): Promise<void> {
+  resetDemoState(readDemoScenario(window.location.search))
   seedDemoStores()
 
   const [{ FetchInterceptor }, { defineNetwork, InterceptorSource }] =

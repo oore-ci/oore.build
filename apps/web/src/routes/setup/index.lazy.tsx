@@ -31,7 +31,7 @@ export const Route = createLazyFileRoute('/setup/')({
   errorComponent: SetupStepError,
 })
 
-function BootstrapTokenStep() {
+export function BootstrapTokenStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setSessionToken = useSetupStore((s) => s.setSessionToken)
@@ -43,7 +43,8 @@ function BootstrapTokenStep() {
   const form = useForm<BootstrapTokenForm>({
     resolver: zodResolver(bootstrapTokenSchema),
     defaultValues: { token: '' },
-    mode: 'onBlur',
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
   })
 
   useBootstrapStepTransition(status, sessionToken)

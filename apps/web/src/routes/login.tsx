@@ -464,7 +464,7 @@ function LoginPage() {
             </div>
 
             <div className="border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <p className="text-xs font-medium text-muted-foreground">
                 Sign-in method
               </p>
               <p className="mt-1 text-sm font-medium">
@@ -612,8 +612,8 @@ function LoginPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Saved Instances
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Saved instances
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">

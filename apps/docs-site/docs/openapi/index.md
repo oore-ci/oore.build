@@ -1,22 +1,25 @@
 ---
-title: OpenAPI Specification
-description: Interactive OpenAPI 3.1 reference for the Oore CI REST API — browse endpoints, download the spec, or generate client libraries.
-aside: false
-outline: false
+title: OpenAPI reference
+description: Generated operation reference for the Oore CI HTTP API.
 ---
 
-# OpenAPI Specification
+# OpenAPI reference
 
-The Oore CI API is described using the [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) specification. You can use this spec to generate client libraries in any language, explore the API interactively, or integrate with tools like Postman, Insomnia, or Swagger Editor.
+This reference is generated from the API contract and is the canonical source for paths, methods, request bodies, and response schemas.
 
-## Download
+<a class="VPButton medium brand" href="/openapi.json" download>Download openapi.json</a>
 
-<a href="/openapi.json" download>Download openapi.json</a>
+## Browse by area
 
-## Interactive Reference
+- [Authentication](/openapi/operations/oidc_start)
+- [Setup](/openapi/operations/get_setup_status)
+- [Projects](/openapi/operations/list_projects)
+- [Pipelines and signing](/openapi/operations/list_pipelines)
+- [Builds and logs](/openapi/operations/list_builds)
+- [Artifacts](/openapi/operations/list_artifacts)
+- [Sources and integrations](/openapi/operations/list_integrations)
+- [Runners](/openapi/operations/list_runners)
+- [Users and access](/openapi/operations/list_users)
+- [Instance settings](/openapi/operations/get_instance_preferences)
 
-Browse individual endpoints using the sidebar, or view the full spec below:
-
-<ClientOnly>
-  <OASpec hide-branding />
-</ClientOnly>
+Use the sidebar or search to open a specific operation. Human-oriented workflows remain in [Guides](/guides/).

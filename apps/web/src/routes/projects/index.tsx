@@ -20,7 +20,7 @@ import {
 } from '@/lib/instance-context'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useProjects } from '@/hooks/use-projects'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { useAuthStore } from '@/stores/auth-store'
@@ -114,6 +114,9 @@ function ProjectsListPage() {
   const integrationsQuery = useIntegrations()
   const setupStatusQuery = useSetupStatus()
   const canWriteProjects = useHasPermission('projects', 'write')
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canManageEveryProject =
+    instanceRole === 'owner' || instanceRole === 'admin'
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -312,6 +315,15 @@ function ProjectsListPage() {
 
       {!projectsQuery.error && (projectsQuery.isLoading || total > 0) ? (
         <ProjectInventory
+          canManageProject={(project) =>
+            canManageEveryProject ||
+            (canWriteProjects &&
+              hasProjectPermission(
+                project.current_user_role,
+                'projects',
+                'write',
+              ))
+          }
           direction={direction}
           isLoading={projectsQuery.isLoading}
           onPageChange={(nextPage) =>

@@ -18,7 +18,6 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import SetupHint from '@/components/setup-hint'
@@ -64,20 +63,18 @@ function GitHubSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitHub Source" noindex />
+      <PageMeta title="Connect GitHub source" noindex />
       <PageHeader
-        title="Connect GitHub Source"
+        title="Connect GitHub source"
         description="Generate and install a GitHub App source for repository access and webhook delivery."
       />
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Connection flow
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <section className="min-w-0 border bg-card">
+          <div className="border-b px-4 py-3">
+            <h2 className="text-sm font-semibold">Connection flow</h2>
+          </div>
+          <div className="space-y-3 p-4">
             <p className="text-sm text-muted-foreground">
               oore creates a GitHub App manifest, redirects you to GitHub, then
               returns here after install.
@@ -108,16 +105,14 @@ function GitHubSetupPage() {
                 <HugeiconsIcon icon={ArrowRight01Icon} />
               ) : null}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Generated endpoints
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <section className="min-w-0 border bg-card">
+          <div className="border-b px-4 py-3">
+            <h2 className="text-sm font-semibold">Generated endpoints</h2>
+          </div>
+          <div className="p-4">
             <Table>
               <TableBody>
                 <TableRow>
@@ -138,8 +133,8 @@ function GitHubSetupPage() {
                 </TableRow>
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </section>
 
       <Alert>

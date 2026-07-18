@@ -172,6 +172,16 @@ export async function fileToUtf8(file: File): Promise<string> {
   return await file.text()
 }
 
+export function hasSigningFileChanges(
+  files: Array<File | null>,
+  profiles: Record<string, File | null>,
+): boolean {
+  return (
+    files.some((file) => file !== null) ||
+    Object.values(profiles).some((file) => file !== null)
+  )
+}
+
 export function toMultiline(values: Array<string>): string {
   return values.join('\n')
 }

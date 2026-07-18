@@ -1,4 +1,4 @@
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { ArtifactStoragePageState } from '@/components/settings/use-artifact-storage-page-state'
 import {
   FormControl,
   FormDescription,
@@ -19,7 +19,7 @@ import {
 export function ArtifactObjectStorageFields({
   state,
 }: {
-  state: PreferencesPageState
+  state: ArtifactStoragePageState
 }) {
   const {
     canWrite,

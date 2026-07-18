@@ -55,7 +55,7 @@ Trigger a test:
 If the build stays in `queued`, read the policy reason shown on the build:
 
 - Navigate to **Settings > Runners** and verify a runner is online
-- In **Settings > Preferences**, verify Direct macOS runner is enabled
+- In **Settings > Runners**, verify Direct macOS runner is enabled
 - In **Settings > Sources**, verify the repository is approved
 
 ## What happens behind the scenes

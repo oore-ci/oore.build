@@ -98,8 +98,8 @@ function CompleteStep() {
           {/* Configuration review */}
           {status || summary ? (
             <div className="border p-3 space-y-2 text-sm">
-              <p className="font-medium text-xs uppercase tracking-wider text-muted-foreground">
-                Configuration Summary
+              <p className="text-xs font-medium text-muted-foreground">
+                Configuration summary
               </p>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">State</span>

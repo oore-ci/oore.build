@@ -183,8 +183,8 @@ function IndexPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Instance Registry
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                Instance registry
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -354,10 +354,7 @@ function ConfiguredDashboard({
       hasProjectPermission(project?.current_user_role, 'projects', 'write')
     )
   }
-  const canShowRunBuild =
-    hasProjects &&
-    !noOnlineRunners &&
-    projects.some((project) => canTriggerProject(project.id))
+  const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
 
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
@@ -418,8 +415,8 @@ function ConfiguredDashboard({
               size={14}
               className="animate-spin text-info"
             />
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Active Builds
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Active builds
             </h2>
             <Badge variant="secondary">{activeBuilds.length}</Badge>
           </div>
@@ -434,7 +431,7 @@ function ConfiguredDashboard({
       {/* Projects Grid */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-sm font-medium text-muted-foreground">
             Projects
           </h2>
           <Button

@@ -11,7 +11,6 @@ import { GitLabVerificationStep } from './-gitlab-verification-step'
 import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Form } from '@/components/ui/form'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -129,18 +128,16 @@ function GitLabSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitLab Source" noindex />
+      <PageMeta title="Connect GitLab source" noindex />
       <PageHeader
-        title="Connect GitLab Source"
+        title="Connect GitLab source"
         description="Connect GitLab.com or a self-managed GitLab host for repository discovery and webhook-triggered builds."
       />
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            GitLab connection
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      <section className="border bg-card">
+        <div className="border-b px-4 py-3">
+          <h2 className="text-sm font-semibold">GitLab connection</h2>
+        </div>
+        <div className="p-4">
           {!remoteEnabled ? (
             <Alert>
               <AlertDescription>
@@ -169,7 +166,7 @@ function GitLabSetupPage() {
               <GitLabVerificationStep authMode={authMode} />
               <section className="space-y-4 border-t border-border/60 pt-6">
                 <div>
-                  <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                  <p className="text-sm font-medium text-muted-foreground">
                     4. Finish repository setup
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
@@ -198,8 +195,8 @@ function GitLabSetupPage() {
               </Button>
             </form>
           </Form>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </PageLayout>
   )
 }

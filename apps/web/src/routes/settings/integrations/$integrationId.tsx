@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon } from '@hugeicons/core-free-icons'
@@ -6,6 +7,7 @@ import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { usePageClamp } from '@/hooks/use-page-clamp'
+import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
 import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,
@@ -22,19 +24,13 @@ import {
 } from '@/hooks/use-integrations'
 import { getIntegrationStatusVariant } from '@/lib/status-variants'
 import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
+import { listProjects } from '@/lib/api'
 import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
+import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { PageMeta } from '@/lib/seo'
+import { useAuthStore } from '@/stores/auth-store'
+import { useActiveInstance } from '@/stores/instance-store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PageHeader from '@/components/page-header'
@@ -53,6 +49,8 @@ import {
 import type { RepositoryRunnerFilter } from './-integration-inventory-utils'
 import { GitLabWebhookTokenDialogs } from './-gitlab-webhook-tokens'
 import { IntegrationConnectionDetails } from './-integration-connection-details'
+import { IntegrationDisconnectDialog } from './-integration-disconnect-dialog'
+import { loadAffectedProjects } from './-integration-disconnect-impact'
 import { IntegrationHeaderActions } from './-integration-header-actions'
 
 type IntegrationDetailTab = 'repositories' | 'accounts' | 'connection'
@@ -63,7 +61,7 @@ interface IntegrationDetailSearch {
   gitlab?: string
   installed?: string
   page?: number
-  pageSize?: 20 | 50 | 100
+  pageSize?: 10 | 20 | 50 | 100
   q?: string
   runner?: Exclude<RepositoryRunnerFilter, 'all'>
   tab?: Exclude<IntegrationDetailTab, 'repositories'>
@@ -84,7 +82,10 @@ function parseSearch(search: Record<string, unknown>): IntegrationDetailSearch {
     runner: runner === 'allowed' || runner === 'blocked' ? runner : undefined,
     tab: tab === 'accounts' || tab === 'connection' ? tab : undefined,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
-    pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
+    pageSize:
+      pageSize === 10 || pageSize === 20 || pageSize === 50 || pageSize === 100
+        ? pageSize
+        : undefined,
   }
 }
 
@@ -101,7 +102,10 @@ export const Route = createFileRoute('/settings/integrations/$integrationId')({
   component: IntegrationDetailPage,
 })
 
-function useIntegrationDetailPageState(canWrite: boolean) {
+function useIntegrationDetailPageState(
+  canWrite: boolean,
+  disconnectOpen: boolean,
+) {
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
   const navigate = Route.useNavigate()
@@ -109,6 +113,10 @@ function useIntegrationDetailPageState(canWrite: boolean) {
   const detailQuery = useIntegration(integrationId)
   const installationsQuery = useInstallations(integrationId)
   const repositoriesQuery = useIntegrationRepos(integrationId)
+  const isCompact = useIsBelowBreakpoint(640)
+  const instance = useActiveInstance()
+  const token = useAuthStore((state) => state.token)
+  const baseUrl = resolveInstanceApiBaseUrl(instance)
   const networkSettingsQuery = useExternalAccessNetworkSettings({
     enabled: canWrite,
   })
@@ -122,8 +130,41 @@ function useIntegrationDetailPageState(canWrite: boolean) {
     'Source Details'
   const repositories =
     repositoriesQuery.data?.repositories ?? EMPTY_REPOSITORIES
+  const repositoryIds = useMemo(
+    () => repositories.map((repository) => repository.id).sort(),
+    [repositories],
+  )
+  const disconnectPrerequisiteError =
+    disconnectOpen && (!baseUrl || !token)
+      ? new Error('Active instance authentication is unavailable.')
+      : null
+  const disconnectImpactQuery = useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'integration-disconnect-impact',
+      integrationId,
+      repositoryIds,
+    ],
+    queryFn: ({ signal }) =>
+      loadAffectedProjects(new Set(repositoryIds), (offset, limit) =>
+        listProjects(
+          baseUrl!,
+          token!,
+          { limit, offset, sort: 'name', direction: 'asc' },
+          { signal },
+        ),
+      ),
+    enabled:
+      disconnectOpen &&
+      canWrite &&
+      !!baseUrl &&
+      !!token &&
+      !repositoriesQuery.isLoading &&
+      !repositoriesQuery.error,
+  })
   const runnerFilter: RepositoryRunnerFilter = search.runner ?? 'all'
-  const pageSize = search.pageSize ?? 20
+  const defaultPageSize = isCompact ? 10 : 20
+  const pageSize = search.pageSize ?? defaultPageSize
   const filteredRepositories = useMemo(
     () => filterIntegrationRepositories(repositories, search.q, runnerFilter),
     [repositories, runnerFilter, search.q],
@@ -215,10 +256,11 @@ function useIntegrationDetailPageState(canWrite: boolean) {
       status: 'error' as const,
       label,
       message: detailQuery.error.message,
+      retry: detailQuery.refetch,
     }
   }
 
-  if (!detailQuery.data) return { status: 'missing' as const }
+  if (!detailQuery.data) return { status: 'missing' as const, label }
 
   const { integration } = detailQuery.data
   const installations = installationsQuery.data?.installations ?? []
@@ -263,6 +305,8 @@ function useIntegrationDetailPageState(canWrite: boolean) {
     canSyncInstallations,
     deleteMutation,
     detail: detailQuery.data,
+    disconnectImpactQuery,
+    disconnectPrerequisiteError,
     gitLabWebhookUrl,
     gitlabAuthorizeMutation,
     handleDisconnect,
@@ -276,6 +320,7 @@ function useIntegrationDetailPageState(canWrite: boolean) {
     networkSettingsQuery,
     page,
     pageSize,
+    defaultPageSize,
     providerLabel,
     repositories,
     repositoriesQuery,
@@ -295,7 +340,7 @@ function IntegrationDetailPage() {
   const [disconnectOpen, setDisconnectOpen] = useState(false)
   const [webhookTarget, setWebhookTarget] =
     useState<IntegrationRepository | null>(null)
-  const pageState = useIntegrationDetailPageState(canWrite)
+  const pageState = useIntegrationDetailPageState(canWrite, disconnectOpen)
 
   if (pageState.status === 'loading') {
     return (
@@ -315,22 +360,44 @@ function IntegrationDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            Failed to load source: {pageState.message}
+            <span>Failed to load source: {pageState.message}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => void pageState.retry()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       </PageLayout>
     )
   }
 
-  if (pageState.status === 'missing') return null
+  if (pageState.status === 'missing') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title="Source not found" noindex />
+        <PageHeader title="Source not found" />
+        <p className="text-sm text-muted-foreground">
+          This source connection does not exist or is no longer available.
+        </p>
+      </PageLayout>
+    )
+  }
 
   const {
     accountsEmptyDescription,
     allowedRepositoryCount,
     accountsTabLabel,
     canSyncInstallations,
+    defaultPageSize,
     deleteMutation,
     detail,
+    disconnectImpactQuery,
+    disconnectPrerequisiteError,
     gitLabWebhookUrl,
     gitlabAuthorizeMutation,
     handleDisconnect,
@@ -380,7 +447,7 @@ function IntegrationDetailPage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={integration.display_name ?? integration.provider}
-        description={`Connected to ${integration.host_url}`}
+        description={`${providerLabel} source at ${integration.host_url}`}
         meta={
           <>
             <Badge variant={getIntegrationStatusVariant(integration.status)}>
@@ -499,7 +566,9 @@ function IntegrationDetailPage() {
             onPageSizeChange={(nextPageSize) =>
               updateSearch({
                 pageSize:
-                  nextPageSize === 20 ? undefined : (nextPageSize as 50 | 100),
+                  nextPageSize === defaultPageSize
+                    ? undefined
+                    : (nextPageSize as 10 | 20 | 50 | 100),
                 page: undefined,
               })
             }
@@ -558,27 +627,34 @@ function IntegrationDetailPage() {
         </TabsContent>
       </Tabs>
 
-      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes credentials, installations, repository links, and
-              webhook behavior for{' '}
-              {integration.display_name ?? integration.provider}.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDisconnect}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? 'Disconnecting...' : 'Disconnect'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IntegrationDisconnectDialog
+        affectedProjects={disconnectImpactQuery.data ?? []}
+        error={
+          disconnectPrerequisiteError ??
+          repositoriesQuery.error ??
+          disconnectImpactQuery.error
+        }
+        integration={integration}
+        isLoading={
+          repositoriesQuery.isLoading || disconnectImpactQuery.isLoading
+        }
+        isPending={deleteMutation.isPending}
+        onConfirm={handleDisconnect}
+        onOpenChange={setDisconnectOpen}
+        onRetry={
+          disconnectPrerequisiteError
+            ? undefined
+            : () => {
+                if (repositoriesQuery.error) {
+                  void repositoriesQuery.refetch()
+                  return
+                }
+                void disconnectImpactQuery.refetch()
+              }
+        }
+        open={disconnectOpen}
+        repositoryCount={repositories.length}
+      />
 
       {integration.provider === 'gitlab' && canWrite && gitLabWebhookUrl ? (
         <GitLabWebhookTokenDialogs

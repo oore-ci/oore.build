@@ -38,7 +38,8 @@ macOS runner process. `OORED_RUNNER_MODE` may be omitted or set to `external`;
 legacy `embedded` and `hybrid` values are rejected.
 
 The runner claims a queued build only when Direct runner execution is enabled in
-instance Preferences and that build's source repository has been approved.
+**Settings > Runners** and that build's source repository has been approved in
+**Settings > Sources**.
 
 ## CORS configuration
 

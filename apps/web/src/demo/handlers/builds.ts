@@ -1,12 +1,8 @@
 import { HttpResponse, delay, http } from 'msw'
-import { demoBuildEvents, demoBuilds } from '../data/builds'
-import { demoBuildLogs } from '../data/build-logs'
-import { demoArtifacts } from '../data/artifacts'
-import { demoProjects } from '../data/projects'
-import { demoPipelines } from '../data/pipelines'
 import { ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
+import { demoState } from '../state'
 
 export const buildHandlers = [
   http.get(
@@ -36,7 +32,7 @@ export const buildHandlers = [
     await delay(150)
     const url = new URL(request.url)
     const persona = getDemoPersonaFromRequest(request)
-    let builds = demoBuilds.filter((build) =>
+    let builds = demoState.builds.filter((build) =>
       getDemoProjectRole(persona, build.project_id),
     )
 
@@ -73,19 +69,19 @@ export const buildHandlers = [
     const sort = url.searchParams.get('sort')
     const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
     builds.sort((left, right) => {
-      const value = (build: (typeof demoBuilds)[number]) => {
+      const value = (build: (typeof demoState.builds)[number]) => {
         if (sort === 'status') return build.status.toLowerCase()
         if (sort === 'branch') return build.branch?.toLowerCase() ?? ''
         if (sort === 'project_name') {
           return (
-            demoProjects
+            demoState.projects
               .find((project) => project.id === build.project_id)
               ?.name.toLowerCase() ?? ''
           )
         }
         if (sort === 'pipeline_name') {
           return (
-            demoPipelines
+            demoState.pipelines
               .find((pipeline) => pipeline.id === build.pipeline_id)
               ?.name.toLowerCase() ?? ''
           )
@@ -113,7 +109,7 @@ export const buildHandlers = [
   http.get('/v1/builds/:buildId', async ({ params, request }) => {
     await delay(150)
     const persona = getDemoPersonaFromRequest(request)
-    const build = demoBuilds.find((b) => b.id === params.buildId)
+    const build = demoState.builds.find((b) => b.id === params.buildId)
     if (!build || !getDemoProjectRole(persona, build.project_id)) {
       return HttpResponse.json(
         { error: 'Build not found', code: 'not_found' },
@@ -122,7 +118,7 @@ export const buildHandlers = [
     }
     return HttpResponse.json({
       build,
-      events: demoBuildEvents[build.id] ?? [
+      events: demoState.buildEvents[build.id] ?? [
         {
           id: `evt-auto-${build.id}`,
           build_id: build.id,
@@ -148,29 +144,55 @@ export const buildHandlers = [
       commit_sha?: string
       changelog?: string
     }
-    return HttpResponse.json({
-      build: {
-        id: `build-demo-new-${Date.now()}`,
-        project_id: params.projectId,
-        pipeline_id: body.pipeline_id,
-        build_number: 144,
-        status: 'queued',
-        trigger_type: 'manual',
-        trigger_actor: persona.userId,
-        branch: body.branch ?? 'main',
-        commit_sha: body.commit_sha,
-        changelog: body.changelog,
-        config_snapshot: {},
-        queued_at: ago(0),
-        created_at: ago(0),
-        updated_at: ago(0),
+    const projectId = String(params.projectId)
+    const pipeline = demoState.pipelines.find(
+      (candidate) =>
+        candidate.id === body.pipeline_id && candidate.project_id === projectId,
+    )
+    if (!pipeline) {
+      return HttpResponse.json(
+        { error: 'Pipeline not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const build = {
+      id: `build-demo-new-${crypto.randomUUID().slice(0, 8)}`,
+      project_id: projectId,
+      pipeline_id: body.pipeline_id,
+      build_number:
+        Math.max(
+          0,
+          ...demoState.builds
+            .filter((candidate) => candidate.project_id === projectId)
+            .map((candidate) => candidate.build_number),
+        ) + 1,
+      status: 'queued' as const,
+      trigger_type: 'manual' as const,
+      trigger_actor: persona.userId,
+      branch: body.branch ?? 'main',
+      commit_sha: body.commit_sha,
+      changelog: body.changelog,
+      config_snapshot: {},
+      queued_at: ago(0),
+      created_at: ago(0),
+      updated_at: ago(0),
+    }
+    demoState.builds.unshift(build)
+    demoState.buildEvents[build.id] = [
+      {
+        id: `evt-${build.id}-queued`,
+        build_id: build.id,
+        to_status: 'queued',
+        actor: persona.userId,
+        created_at: build.created_at,
       },
-    })
+    ]
+    return HttpResponse.json({ build })
   }),
 
   http.post('/v1/builds/:buildId/cancel', async ({ params, request }) => {
     await delay(300)
-    const build = demoBuilds.find((b) => b.id === params.buildId)
+    const build = demoState.builds.find((b) => b.id === params.buildId)
     if (!build) {
       return HttpResponse.json(
         { error: 'Build not found', code: 'not_found' },
@@ -183,19 +205,26 @@ export const buildHandlers = [
       'builds:cancel',
     )
     if (forbidden) return forbidden
-    return HttpResponse.json({
-      build: {
-        ...build,
-        status: 'canceled',
-        finished_at: ago(0),
-        updated_at: ago(0),
-      },
+    const persona = getDemoPersonaFromRequest(request)
+    const fromStatus = build.status
+    build.status = 'canceled'
+    build.finished_at = ago(0)
+    build.updated_at = ago(0)
+    const events = (demoState.buildEvents[build.id] ??= [])
+    events.push({
+      id: `evt-${build.id}-canceled-${Date.now()}`,
+      build_id: build.id,
+      from_status: fromStatus,
+      to_status: 'canceled',
+      actor: persona.userId,
+      created_at: build.updated_at,
     })
+    return HttpResponse.json({ build })
   }),
 
   http.post('/v1/builds/:buildId/rerun', async ({ params, request }) => {
     await delay(300)
-    const build = demoBuilds.find(
+    const build = demoState.builds.find(
       (candidate) => candidate.id === params.buildId,
     )
     if (!build) {
@@ -210,18 +239,36 @@ export const buildHandlers = [
       'builds:write',
     )
     if (forbidden) return forbidden
-    return HttpResponse.json({
-      build: {
-        ...build,
-        id: `build-demo-rerun-${Date.now()}`,
-        build_number: build.build_number + 1,
-        status: 'queued',
-        source_build_id: build.id,
-        queued_at: ago(0),
-        created_at: ago(0),
-        updated_at: ago(0),
+    const rerun = {
+      ...build,
+      id: `build-demo-rerun-${crypto.randomUUID().slice(0, 8)}`,
+      build_number:
+        Math.max(
+          build.build_number,
+          ...demoState.builds
+            .filter((candidate) => candidate.project_id === build.project_id)
+            .map((candidate) => candidate.build_number),
+        ) + 1,
+      status: 'queued' as const,
+      source_build_id: build.id,
+      runner_id: undefined,
+      started_at: undefined,
+      finished_at: undefined,
+      exit_code: undefined,
+      queued_at: ago(0),
+      created_at: ago(0),
+      updated_at: ago(0),
+    }
+    demoState.builds.unshift(rerun)
+    demoState.buildEvents[rerun.id] = [
+      {
+        id: `evt-${rerun.id}-queued`,
+        build_id: rerun.id,
+        to_status: 'queued',
+        created_at: rerun.created_at,
       },
-    })
+    ]
+    return HttpResponse.json({ build: rerun })
   }),
 
   // Stream token — return 503 to trigger polling fallback in useLogStream
@@ -237,14 +284,14 @@ export const buildHandlers = [
     await delay(200)
     const buildId = params.buildId as string
     const persona = getDemoPersonaFromRequest(request)
-    const build = demoBuilds.find((candidate) => candidate.id === buildId)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
     if (!build || !getDemoProjectRole(persona, build.project_id)) {
       return HttpResponse.json(
         { error: 'Build not found', code: 'not_found' },
         { status: 404 },
       )
     }
-    const allLogs = demoBuildLogs[buildId] ?? []
+    const allLogs = demoState.buildLogs[buildId] ?? []
 
     const url = new URL(request.url)
     const afterSequence = Number(url.searchParams.get('after_sequence') ?? -1)
@@ -261,7 +308,7 @@ export const buildHandlers = [
     await delay(150)
     const buildId = params.buildId as string
     const persona = getDemoPersonaFromRequest(request)
-    const build = demoBuilds.find((candidate) => candidate.id === buildId)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
     if (!build || !getDemoProjectRole(persona, build.project_id)) {
       return HttpResponse.json(
         { error: 'Build not found', code: 'not_found' },
@@ -269,7 +316,7 @@ export const buildHandlers = [
       )
     }
     return HttpResponse.json({
-      artifacts: demoArtifacts[buildId] ?? [],
+      artifacts: demoState.artifacts[buildId] ?? [],
     })
   }),
 
@@ -282,7 +329,7 @@ export const buildHandlers = [
         { status: 404 },
       )
     }
-    const projectBuildIds = demoBuilds
+    const projectBuildIds = demoState.builds
       .filter((build) => build.project_id === params.projectId)
       .map((build) => build.id)
     const url = new URL(request.url)
@@ -291,7 +338,7 @@ export const buildHandlers = [
       200,
     )
     const artifacts = projectBuildIds
-      .flatMap((buildId) => demoArtifacts[buildId] ?? [])
+      .flatMap((buildId) => demoState.artifacts[buildId] ?? [])
       .sort(
         (left, right) =>
           right.created_at - left.created_at || right.id.localeCompare(left.id),
@@ -305,7 +352,7 @@ export const buildHandlers = [
     const persona = getDemoPersonaFromRequest(request)
     const body = (await request.json()) as { build_ids: Array<string> }
     const visibleBuildIds = new Set(
-      demoBuilds
+      demoState.builds
         .filter(
           (build) =>
             body.build_ids.includes(build.id) &&
@@ -315,7 +362,7 @@ export const buildHandlers = [
     )
     return HttpResponse.json({
       artifacts: [...visibleBuildIds].flatMap(
-        (buildId) => demoArtifacts[buildId] ?? [],
+        (buildId) => demoState.artifacts[buildId] ?? [],
       ),
     })
   }),

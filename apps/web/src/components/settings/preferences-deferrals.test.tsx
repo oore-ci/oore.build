@@ -4,12 +4,19 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ArtifactStorageSettings } from './preferences-artifact-storage-settings'
 import { ExternalAccessManagement } from './preferences-external-access-management'
+import type { ArtifactStoragePageState } from './use-artifact-storage-page-state'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 
 function stateWith(
   values: Partial<PreferencesPageState>,
 ): PreferencesPageState {
   return values as PreferencesPageState
+}
+
+function artifactStateWith(
+  values: Partial<ArtifactStoragePageState>,
+): ArtifactStoragePageState {
+  return values as ArtifactStoragePageState
 }
 
 describe('Preferences deferred surfaces', () => {
@@ -23,7 +30,8 @@ describe('Preferences deferred surfaces', () => {
         state={stateWith({
           isOwner: true,
           networkSettings: undefined,
-          networkSettingsQuery: { isLoading: false } as never,
+          networkSettingsQuery: { isLoading: false, error: null } as never,
+          oidcConfigQuery: { isLoading: false, error: null } as never,
           preloadExternalAccessNetworkDialog: preloadNetwork,
           preloadOidcSettingsDialog: preloadOidc,
           preloadTrustedProxySettingsDialog: preloadTrustedProxy,
@@ -32,6 +40,7 @@ describe('Preferences deferred surfaces', () => {
           setOidcDialogOpen: vi.fn(),
           setTrustedProxyDialogOpen: vi.fn(),
           trustedProxySettings: undefined,
+          trustedProxyQuery: { isLoading: false, error: null } as never,
         })}
       />,
     )
@@ -50,7 +59,8 @@ describe('Preferences deferred surfaces', () => {
         state={stateWith({
           isOwner: true,
           networkSettings: undefined,
-          networkSettingsQuery: { isLoading: false } as never,
+          networkSettingsQuery: { isLoading: false, error: null } as never,
+          oidcConfigQuery: { isLoading: false, error: null } as never,
           preloadExternalAccessNetworkDialog: preloadNetwork,
           preloadOidcSettingsDialog: preloadOidc,
           preloadTrustedProxySettingsDialog: preloadTrustedProxy,
@@ -59,6 +69,7 @@ describe('Preferences deferred surfaces', () => {
           setOidcDialogOpen: vi.fn(),
           setTrustedProxyDialogOpen: vi.fn(),
           trustedProxySettings: undefined,
+          trustedProxyQuery: { isLoading: false, error: null } as never,
         })}
       />,
     )
@@ -80,13 +91,14 @@ describe('Preferences deferred surfaces', () => {
       })
       return (
         <ArtifactStorageSettings
-          state={stateWith({
+          state={artifactStateWith({
             backendKind: 'local',
             canBrowseLocalFs: true,
             canWrite: true,
             onSubmitStorage: vi.fn(),
             preloadArtifactFolderPicker: preloadFolderPicker,
             setArtifactDirPickerOpen: setFolderPickerOpen,
+            settings: {} as never,
             settingsQuery: { isLoading: false, error: null } as never,
             storageForm: storageForm as never,
             updateStorageMutation: { isPending: false } as never,
@@ -96,11 +108,33 @@ describe('Preferences deferred surfaces', () => {
     }
 
     render(<Harness />)
-    const trigger = screen.getByRole('button', { name: 'Browse' })
+    const trigger = screen.getByRole('button', {
+      name: 'Browse local base directory',
+    })
     fireEvent.mouseEnter(trigger)
     fireEvent.click(trigger)
 
     expect(preloadFolderPicker).toHaveBeenCalledOnce()
     expect(setFolderPickerOpen).toHaveBeenCalledWith(true)
+  })
+
+  it('does not render editable artifact defaults when settings are missing', () => {
+    render(
+      <ArtifactStorageSettings
+        state={artifactStateWith({
+          settings: undefined,
+          settingsQuery: {
+            error: null,
+            isLoading: false,
+            refetch: vi.fn(),
+          } as never,
+        })}
+      />,
+    )
+
+    expect(
+      screen.getByText(/did not include artifact storage settings/i),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
   })
 })

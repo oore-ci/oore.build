@@ -13,6 +13,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as BuildsIndexRouteImport } from './routes/builds/index'
 import { Route as SetupTrustedProxyRouteImport } from './routes/setup/trusted-proxy'
@@ -21,6 +22,7 @@ import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
 import { Route as SetupModeRouteImport } from './routes/setup/mode'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
+import { Route as SettingsThemeRouteImport } from './routes/settings/theme'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
 import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
@@ -62,6 +64,11 @@ const SetupIndexRoute = SetupIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SetupRoute,
 } as any).lazy(() => import('./routes/setup/index.lazy').then((d) => d.Route))
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/settings/',
+  path: '/settings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
   id: '/projects/',
   path: '/projects/',
@@ -104,6 +111,13 @@ const SettingsUsersRoute = SettingsUsersRouteImport.update({
   path: '/settings/users',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsThemeRoute = SettingsThemeRouteImport.update({
+  id: '/settings/theme',
+  path: '/settings/theme',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() =>
+  import('./routes/settings/theme.lazy').then((d) => d.Route),
+)
 const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   id: '/settings/runners',
   path: '/settings/runners',
@@ -242,6 +256,7 @@ export interface FileRoutesByFullPath {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/theme': typeof SettingsThemeRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -250,6 +265,7 @@ export interface FileRoutesByFullPath {
   '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds/': typeof BuildsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
@@ -275,6 +291,7 @@ export interface FileRoutesByTo {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/theme': typeof SettingsThemeRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -283,6 +300,7 @@ export interface FileRoutesByTo {
   '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds': typeof BuildsIndexRoute
   '/projects': typeof ProjectsIndexRoute
+  '/settings': typeof SettingsIndexRoute
   '/setup': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
@@ -310,6 +328,7 @@ export interface FileRoutesById {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/theme': typeof SettingsThemeRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -318,6 +337,7 @@ export interface FileRoutesById {
   '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds/': typeof BuildsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
@@ -346,6 +366,7 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/theme'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -354,6 +375,7 @@ export interface FileRouteTypes {
     | '/setup/trusted-proxy'
     | '/builds/'
     | '/projects/'
+    | '/settings/'
     | '/setup/'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
@@ -379,6 +401,7 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/theme'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -387,6 +410,7 @@ export interface FileRouteTypes {
     | '/setup/trusted-proxy'
     | '/builds'
     | '/projects'
+    | '/settings'
     | '/setup'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
@@ -413,6 +437,7 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/theme'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -421,6 +446,7 @@ export interface FileRouteTypes {
     | '/setup/trusted-proxy'
     | '/builds/'
     | '/projects/'
+    | '/settings/'
     | '/setup/'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
@@ -448,9 +474,11 @@ export interface RootRouteChildren {
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
   SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
+  SettingsThemeRoute: typeof SettingsThemeRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   BuildsIndexRoute: typeof BuildsIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
   SettingsIntegrationsIntegrationIdRoute: typeof SettingsIntegrationsIntegrationIdRoute
   SettingsIntegrationsGithubRoute: typeof SettingsIntegrationsGithubRoute
   SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
@@ -494,6 +522,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/setup/'
       preLoaderRoute: typeof SetupIndexRouteImport
       parentRoute: typeof SetupRoute
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/settings'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/projects/': {
       id: '/projects/'
@@ -549,6 +584,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/users'
       fullPath: '/settings/users'
       preLoaderRoute: typeof SettingsUsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/theme': {
+      id: '/settings/theme'
+      path: '/settings/theme'
+      fullPath: '/settings/theme'
+      preLoaderRoute: typeof SettingsThemeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/runners': {
@@ -726,9 +768,11 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsPreferencesRoute: SettingsPreferencesRoute,
   SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
+  SettingsThemeRoute: SettingsThemeRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   BuildsIndexRoute: BuildsIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
   SettingsIntegrationsIntegrationIdRoute:
     SettingsIntegrationsIntegrationIdRoute,
   SettingsIntegrationsGithubRoute: SettingsIntegrationsGithubRoute,

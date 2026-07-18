@@ -40,8 +40,8 @@ export function DashboardGettingStarted({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          Getting Started
+        <CardTitle className="text-sm font-medium text-muted-foreground">
+          Getting started
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -151,8 +151,8 @@ export function DashboardRecentBuilds({
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Recent Builds
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Recent builds
         </h2>
         <Button
           variant="ghost"

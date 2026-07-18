@@ -1,6 +1,7 @@
 import { HttpResponse, delay, http } from 'msw'
 import { DEMO_INSTANCE_ID, DEMO_USER_EMAIL } from '../seed'
 import { READ_ONLY_REASON } from '@/lib/demo-mode'
+import { demoState } from '../state'
 
 const demoRelease = {
   phase: 'idle',
@@ -44,18 +45,19 @@ export const setupHandlers = [
     ),
   ),
   http.get('/v1/system/update', () =>
-    HttpResponse.json({ phase: 'idle', managed_service: true }),
+    HttpResponse.json(
+      demoState.scenario === 'degraded'
+        ? {
+            phase: 'failed',
+            managed_service: true,
+            error: 'The last update health check failed.',
+          }
+        : { phase: 'idle', managed_service: true },
+    ),
   ),
   http.get('/v1/public/setup-status', async () => {
     await delay(100)
-    return HttpResponse.json({
-      instance_id: DEMO_INSTANCE_ID,
-      state: 'ready',
-      runtime_mode: 'remote',
-      remote_auth_mode: 'oidc',
-      setup_mode: false,
-      is_configured: true,
-    })
+    return HttpResponse.json(demoState.setupStatus)
   }),
 
   // Setup flow endpoints — return plausible responses in case someone navigates there
@@ -71,8 +73,8 @@ export const setupHandlers = [
     await delay(150)
     return HttpResponse.json({
       instance_id: DEMO_INSTANCE_ID,
-      state: 'ready',
-      issuer_url: 'https://accounts.google.com',
+      state: demoState.setupStatus.state,
+      issuer_url: demoState.oidc.issuer,
       owner_email: DEMO_USER_EMAIL,
     })
   }),
@@ -83,15 +85,19 @@ export const setupHandlers = [
       runtime_mode?: 'local' | 'remote'
       remote_auth_mode?: 'oidc' | 'trusted_proxy'
     }
+    demoState.setupStatus.runtime_mode = body.runtime_mode ?? 'local'
+    demoState.setupStatus.remote_auth_mode = body.remote_auth_mode ?? 'oidc'
     return HttpResponse.json({
-      runtime_mode: body.runtime_mode ?? 'local',
-      remote_auth_mode: body.remote_auth_mode ?? 'oidc',
+      runtime_mode: demoState.setupStatus.runtime_mode,
+      remote_auth_mode: demoState.setupStatus.remote_auth_mode,
       session_expires_at: 4102444800,
     })
   }),
 
   http.post('/v1/setup/oidc/configure', async () => {
     await delay(200)
+    demoState.setupStatus.state = 'idp_configured'
+    demoState.oidc.configured = true
     return HttpResponse.json({
       state: 'idp_configured',
       discovered_issuer: 'https://accounts.google.com',
@@ -105,6 +111,8 @@ export const setupHandlers = [
       setup_owner_email?: string
       shared_secret?: string
     }
+    demoState.setupStatus.state = 'idp_configured'
+    demoState.trustedProxy.has_shared_secret = !!body.shared_secret
     return HttpResponse.json({
       state: 'idp_configured',
       setup_owner_email: body.setup_owner_email,
@@ -124,6 +132,7 @@ export const setupHandlers = [
 
   http.post('/v1/setup/owner/verify-oidc', async () => {
     await delay(200)
+    demoState.setupStatus.state = 'owner_created'
     return HttpResponse.json({
       state: 'owner_created',
       owner_email: 'alex@oore.build',
@@ -134,6 +143,7 @@ export const setupHandlers = [
 
   http.post('/v1/setup/owner/claim-trusted-proxy', async () => {
     await delay(200)
+    demoState.setupStatus.state = 'owner_created'
     return HttpResponse.json({
       state: 'owner_created',
       owner_email: DEMO_USER_EMAIL,
@@ -144,6 +154,7 @@ export const setupHandlers = [
   http.post('/v1/setup/local-owner/create', async ({ request }) => {
     await delay(200)
     const body = (await request.json()) as { email?: string }
+    demoState.setupStatus.state = 'owner_created'
     return HttpResponse.json({
       state: 'owner_created',
       owner_email: body.email ?? 'owner@local',
@@ -153,6 +164,9 @@ export const setupHandlers = [
 
   http.post('/v1/setup/complete', async () => {
     await delay(200)
+    demoState.setupStatus.state = 'ready'
+    demoState.setupStatus.setup_mode = false
+    demoState.setupStatus.is_configured = true
     return HttpResponse.json({
       state: 'ready',
       instance_id: DEMO_INSTANCE_ID,

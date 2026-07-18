@@ -4,23 +4,23 @@ import { HugeiconsIcon } from '@hugeicons/react'
 
 import { cn } from '@/lib/utils'
 
-function NativeSelect({
-  className,
-  ...props
-}: React.ComponentProps<'select'>) {
+function NativeSelect({ className, ...props }: React.ComponentProps<'select'>) {
   return (
     <div
-      className={cn('relative w-fit', className)}
+      className={cn(
+        'cn-native-select-wrapper group/native-select relative w-fit has-[select:disabled]:opacity-50',
+        className,
+      )}
       data-slot="native-select-wrapper"
     >
       <select
         data-slot="native-select"
-        className="h-9 w-full appearance-none border border-input bg-background px-3 pr-8 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+        className="cn-native-select outline-none disabled:pointer-events-none disabled:cursor-not-allowed"
         {...props}
       />
       <HugeiconsIcon
         icon={UnfoldMoreIcon}
-        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground select-none"
+        className="cn-native-select-icon pointer-events-none absolute select-none"
         aria-hidden
         data-slot="native-select-icon"
       />
@@ -35,7 +35,7 @@ function NativeSelectOption({
   return (
     <option
       data-slot="native-select-option"
-      className={className}
+      className={cn('bg-[Canvas] text-[CanvasText]', className)}
       {...props}
     />
   )

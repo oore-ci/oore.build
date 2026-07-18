@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RetentionCleanupSummary } from '@/lib/types'
 
@@ -20,25 +21,43 @@ function formatRelativeTime(unixSecs: number): string {
 }
 
 export function RetentionSummaryCard({
+  error,
   isLoading,
   lastCleanup,
+  onRetry,
 }: {
+  error: Error | null
   isLoading: boolean
   lastCleanup: RetentionCleanupSummary | undefined
+  onRetry: () => void
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          Last Cleanup
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
+    <section className="border bg-card" aria-labelledby="last-cleanup-title">
+      <div className="border-b px-4 py-3">
+        <h2 id="last-cleanup-title" className="text-sm font-semibold">
+          Last cleanup
+        </h2>
+      </div>
+      <div className="p-4">
         {isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-4 w-64" />
             <Skeleton className="h-4 w-48" />
           </div>
+        ) : error ? (
+          <Alert variant="destructive">
+            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>Failed to load the last cleanup: {error.message}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+              >
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
         ) : lastCleanup ? (
           <div className="grid gap-4 sm:grid-cols-4">
             <div>
@@ -77,7 +96,7 @@ export function RetentionSummaryCard({
             next scheduled run.
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

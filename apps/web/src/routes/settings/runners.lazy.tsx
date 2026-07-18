@@ -19,6 +19,7 @@ import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { DirectRunnerPolicyPanel } from '@/components/settings/direct-runner-policy-panel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,6 @@ import {
 } from '@/components/ui/empty'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
-import { Card, CardContent } from '@/components/ui/card'
 import type { SortDirection } from '@/components/collection-controls'
 import type { RunnerSort, RunnersSearch } from './runners'
 import { RunnerInventory } from './-runner-inventory'
@@ -299,11 +299,13 @@ function RunnersSettingsPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Runner Management" noindex />
+      <PageMeta title="Runners" noindex />
       <PageHeader
         title="Runners"
-        description="Runner health and metadata management. Auto-refreshes every 15s."
+        description="Manage runner execution policy, health, and metadata. Health refreshes every 15 seconds."
       />
+
+      <DirectRunnerPolicyPanel />
 
       {!canWrite ? (
         <Alert>
@@ -313,57 +315,56 @@ function RunnersSettingsPage() {
         </Alert>
       ) : null}
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      {!runnersQuery.isLoading && !runnersQuery.error ? (
+        <section
+          aria-label="Runner summary"
+          className="grid border sm:grid-cols-3 sm:divide-x"
+        >
+          <div className="p-4">
+            <p className="text-xs font-medium text-muted-foreground">
               Total runners
             </p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
+            <p className="mt-2 text-xl font-semibold tracking-tight">
               {runners.length}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Embedded and external
             </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
+          </div>
+          <div className="border-t p-4 sm:border-t-0">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <p className="text-xs font-medium text-muted-foreground">
                 Online runners
               </p>
               {onlineCount > 0 ? (
                 <Badge variant="secondary">{onlineCount}</Badge>
               ) : null}
             </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
+            <p className="mt-2 text-xl font-semibold tracking-tight">
               {onlineCount}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Online or currently busy
             </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
+          </div>
+          <div className="border-t p-4 sm:border-t-0">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <p className="text-xs font-medium text-muted-foreground">
                 Offline runners
               </p>
               {offlineCount > 0 ? (
                 <Badge variant="destructive">{offlineCount}</Badge>
               ) : null}
             </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
+            <p className="mt-2 text-xl font-semibold tracking-tight">
               {offlineCount}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Unreachable or stopped
             </p>
-          </CardContent>
-        </Card>
-      </section>
+          </div>
+        </section>
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput

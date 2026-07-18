@@ -30,9 +30,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -53,6 +53,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { buildWebhookChannelUpdate } from './-notification-update'
 
 export const Route = createLazyFileRoute('/settings/notifications/$channelId')({
   component: NotificationChannelDetailPage,
@@ -62,9 +63,9 @@ const NOTIFICATION_EVENTS = [
   { value: 'succeeded', label: 'Succeeded' },
   { value: 'failed', label: 'Failed' },
   { value: 'canceled', label: 'Canceled' },
-  { value: 'timed_out', label: 'Timed Out' },
+  { value: 'timed_out', label: 'Timed out' },
   { value: 'expired', label: 'Expired' },
-  { value: 'runner_offline', label: 'Runner Offline' },
+  { value: 'runner_offline', label: 'Runner offline' },
 ] as const
 
 const schema = z.object({
@@ -72,8 +73,9 @@ const schema = z.object({
   enabled: z.boolean(),
   url: z.string().optional(),
   secret: z.string().optional(),
+  remove_secret: z.boolean(),
   events: z.array(z.string()),
-  // SMTP fields (all optional for edit — blank = keep existing)
+  // SMTP fields are optional during edits; blank keeps the existing value.
   smtp_host: z.string().optional(),
   smtp_port: z.string().optional(),
   smtp_username: z.string().optional(),
@@ -105,6 +107,8 @@ function NotificationChannelSettingsFields({
   channel: NotificationChannel
   form: UseFormReturn<FormValues>
 }) {
+  const removeSecret = form.watch('remove_secret')
+
   if (channel.channel_type !== 'email') {
     return (
       <>
@@ -133,18 +137,42 @@ function NotificationChannelSettingsFields({
             name="secret"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>
-                  New HMAC Secret (leave blank to keep existing)
-                </FormLabel>
+                <FormLabel>New HMAC secret</FormLabel>
                 <FormControl>
-                  <Input type="password" {...field} />
+                  <Input type="password" {...field} disabled={removeSecret} />
                 </FormControl>
                 <FormDescription>
                   {channel.has_secret
-                    ? 'A secret is configured. Enter a new one to replace it.'
+                    ? removeSecret
+                      ? 'The configured secret will be removed when you save.'
+                      : 'Leave blank to keep the configured secret.'
                     : 'No HMAC secret configured.'}
                 </FormDescription>
                 <FormMessage />
+              </FormItem>
+            )}
+          />
+        ) : null}
+
+        {channel.channel_type === 'webhook' && channel.has_secret ? (
+          <FormField
+            control={form.control}
+            name="remove_secret"
+            render={({ field }) => (
+              <FormItem className="flex items-start gap-3">
+                <FormControl>
+                  <Checkbox
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+                <div className="space-y-0.5">
+                  <FormLabel>Remove configured HMAC secret</FormLabel>
+                  <FormDescription>
+                    Future webhook deliveries will no longer include an HMAC
+                    signature.
+                  </FormDescription>
+                </div>
               </FormItem>
             )}
           />
@@ -172,7 +200,7 @@ function NotificationChannelSettingsFields({
           name="smtp_host"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>SMTP Host</FormLabel>
+              <FormLabel>SMTP host</FormLabel>
               <FormControl>
                 <Input placeholder="Leave blank to keep existing" {...field} />
               </FormControl>
@@ -237,7 +265,7 @@ function NotificationChannelSettingsFields({
         name="smtp_tls_mode"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>TLS Mode</FormLabel>
+            <FormLabel>TLS mode</FormLabel>
             <Select
               value={field.value}
               onValueChange={(value) => field.onChange(value)}
@@ -263,7 +291,7 @@ function NotificationChannelSettingsFields({
         name="smtp_from_address"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>From Address</FormLabel>
+            <FormLabel>From address</FormLabel>
             <FormControl>
               <Input
                 type="email"
@@ -305,8 +333,18 @@ function useNotificationChannelDetailPageState() {
   const { channelId } = Route.useParams()
   const navigate = useNavigate()
 
-  const { data: channelsData, isLoading } = useNotificationChannels()
-  const { data: deliveriesData } = useNotificationDeliveries(channelId)
+  const {
+    data: channelsData,
+    error: channelsError,
+    isLoading,
+    refetch: refetchChannels,
+  } = useNotificationChannels()
+  const {
+    data: deliveriesData,
+    error: deliveriesError,
+    isLoading: deliveriesLoading,
+    refetch: refetchDeliveries,
+  } = useNotificationDeliveries(channelId)
   const updateMutation = useUpdateNotificationChannel()
   const deleteMutation = useDeleteNotificationChannel()
   const testMutation = useTestNotificationChannel()
@@ -321,6 +359,7 @@ function useNotificationChannelDetailPageState() {
         enabled: channel.enabled,
         url: '',
         secret: '',
+        remove_secret: false,
         events: channel.events,
         smtp_host: '',
         smtp_port: '',
@@ -339,6 +378,7 @@ function useNotificationChannelDetailPageState() {
       enabled: true,
       url: '',
       secret: '',
+      remove_secret: false,
       events: [],
       smtp_host: '',
       smtp_port: '',
@@ -354,7 +394,7 @@ function useNotificationChannelDetailPageState() {
 
   function onSubmit(values: FormValues) {
     if (isEmail) {
-      // Build partial SMTP config — only include fields with actual values
+      // Build a partial SMTP config with only fields that have values.
       const smtp_config: UpdateSmtpConfig = {}
       if (values.smtp_host) smtp_config.host = values.smtp_host
       if (values.smtp_port) smtp_config.port = Number(values.smtp_port)
@@ -391,13 +431,14 @@ function useNotificationChannelDetailPageState() {
       updateMutation.mutate(
         {
           id: channelId,
-          data: {
-            name: values.name,
+          data: buildWebhookChannelUpdate({
             enabled: values.enabled,
             events: values.events,
-            url: values.url || undefined,
-            secret: values.secret || undefined,
-          },
+            name: values.name,
+            removeSecret: values.remove_secret,
+            secret: values.secret,
+            url: values.url,
+          }),
         },
         {
           onSuccess: () => toast.success('Channel updated'),
@@ -434,6 +475,14 @@ function useNotificationChannelDetailPageState() {
     return { status: 'loading' as const }
   }
 
+  if (channelsError) {
+    return {
+      status: 'error' as const,
+      message: channelsError.message,
+      retry: refetchChannels,
+    }
+  }
+
   if (!channel) {
     return { status: 'missing' as const }
   }
@@ -443,11 +492,14 @@ function useNotificationChannelDetailPageState() {
     channel,
     deleteMutation,
     deliveries,
+    deliveriesError,
+    deliveriesLoading,
     form,
     handleDelete,
     handleTest,
     isEmail,
     onSubmit,
+    refetchDeliveries,
     testMutation,
     updateMutation,
   }
@@ -460,12 +512,33 @@ function NotificationChannelDetailPage() {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
+        <div className="space-y-3 border p-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageHeader title="Notification channel" />
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load notification channels: {pageState.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void pageState.retry()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
       </PageLayout>
     )
   }
@@ -473,7 +546,7 @@ function NotificationChannelDetailPage() {
   if (pageState.status === 'missing') {
     return (
       <PageLayout width="wide">
-        <PageHeader title="Channel Not Found" />
+        <PageHeader title="Channel not found" />
         <p className="text-sm text-muted-foreground">
           This notification channel does not exist or has been deleted.
         </p>
@@ -485,17 +558,20 @@ function NotificationChannelDetailPage() {
     channel,
     deleteMutation,
     deliveries,
+    deliveriesError,
+    deliveriesLoading,
     form,
     handleDelete,
     handleTest,
     onSubmit,
+    refetchDeliveries,
     testMutation,
     updateMutation,
   } = pageState
 
   return (
     <PageLayout width="wide">
-      <PageMeta title={`${channel.name} — Notifications`} noindex />
+      <PageMeta title={`${channel.name} notifications`} noindex />
       <PageHeader
         title={channel.name}
         description={`${channelTypeLabel(channel.channel_type)} notification channel`}
@@ -543,13 +619,16 @@ function NotificationChannelDetailPage() {
         }
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+      <section
+        className="border bg-card"
+        aria-labelledby="channel-settings-title"
+      >
+        <div className="border-b px-4 py-3">
+          <h2 id="channel-settings-title" className="text-sm font-semibold">
             Settings
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+          </h2>
+        </div>
+        <div className="p-4">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
@@ -594,7 +673,7 @@ function NotificationChannelDetailPage() {
                 name="events"
                 render={() => (
                   <FormItem>
-                    <FormLabel>Event Filter</FormLabel>
+                    <FormLabel>Event filter</FormLabel>
                     <FormDescription>
                       Leave all unchecked to receive all events.
                     </FormDescription>
@@ -641,17 +720,41 @@ function NotificationChannelDetailPage() {
               </Button>
             </form>
           </Form>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Delivery History
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {deliveries.length === 0 ? (
+      <section
+        className="border bg-card"
+        aria-labelledby="delivery-history-title"
+      >
+        <div className="border-b px-4 py-3">
+          <h2 id="delivery-history-title" className="text-sm font-semibold">
+            Delivery history
+          </h2>
+        </div>
+        <div className="p-4">
+          {deliveriesLoading ? (
+            <div className="space-y-2" aria-label="Loading delivery history">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : deliveriesError ? (
+            <Alert variant="destructive">
+              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Failed to load delivery history: {deliveriesError.message}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void refetchDeliveries()}
+                >
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : deliveries.length === 0 ? (
             <p className="text-sm text-muted-foreground">No deliveries yet.</p>
           ) : (
             <div className="space-y-2">
@@ -690,8 +793,8 @@ function NotificationChannelDetailPage() {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </PageLayout>
   )
 }

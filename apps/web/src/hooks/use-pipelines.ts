@@ -14,6 +14,7 @@ import {
   getPipeline,
   getPipelineAndroidSigning,
   getPipelineIosSigning,
+  listAllPipelines,
   listPipelineIosDevices,
   listPipelines,
   registerPipelineIosDevice,
@@ -42,7 +43,13 @@ function useBaseUrl(): string | null {
 
 export function usePipelines(
   projectId: string,
-  params?: { limit?: number; offset?: number },
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'name'
+    direction?: 'asc' | 'desc'
+    limit?: number
+    offset?: number
+  },
   options?: { enabled?: boolean },
 ) {
   const baseUrl = useBaseUrl()
@@ -59,6 +66,33 @@ export function usePipelines(
     ],
     queryFn: ({ signal }) =>
       listPipelines(baseUrl!, token!, projectId, params, { signal }),
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+  })
+}
+
+export function useAllPipelines(
+  projectId: string,
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'name'
+    direction?: 'asc' | 'desc'
+  },
+  options?: { enabled?: boolean },
+) {
+  const baseUrl = useBaseUrl()
+  const token = useAuthToken()
+  const instance = useActiveInstance()
+  const enabled = options?.enabled ?? true
+
+  return useQuery({
+    queryKey: [
+      instance?.id ?? '__none__',
+      'all-pipelines',
+      projectId,
+      params ?? {},
+    ],
+    queryFn: ({ signal }) =>
+      listAllPipelines(baseUrl!, token!, projectId, params, { signal }),
     enabled: enabled && !!baseUrl && !!token && !!projectId,
   })
 }
@@ -124,6 +158,9 @@ export function useCreatePipeline() {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'pipelines'],
       })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-pipelines'],
+      })
     },
   })
 }
@@ -151,6 +188,9 @@ export function useUpdatePipeline() {
         queryKey: [instance?.id ?? '__none__', 'pipelines'],
       })
       void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-pipelines'],
+      })
+      void queryClient.invalidateQueries({
         queryKey: [
           instance?.id ?? '__none__',
           'pipeline',
@@ -176,6 +216,9 @@ export function useDeletePipeline() {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instance?.id ?? '__none__', 'pipelines'],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [instance?.id ?? '__none__', 'all-pipelines'],
       })
     },
   })

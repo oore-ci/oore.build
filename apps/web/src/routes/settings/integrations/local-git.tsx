@@ -8,13 +8,12 @@ import {
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { PageMeta } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 
 export const Route = createFileRoute('/settings/integrations/local-git')({
   staticData: {
-    breadcrumbLabel: 'Local Repositories',
+    breadcrumbLabel: 'Local repositories',
     breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
   },
   beforeLoad: () => {
@@ -30,19 +29,19 @@ function LocalGitPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Local Repositories" noindex />
+      <PageMeta title="Local repositories" noindex />
       <PageHeader
-        title="Local Repositories"
+        title="Local repositories"
         description="Local repository selection now happens directly during project creation."
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Use Project Creation
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <section className="border bg-card" aria-labelledby="local-project-title">
+        <div className="border-b px-4 py-3">
+          <h2 id="local-project-title" className="text-sm font-semibold">
+            Use project creation
+          </h2>
+        </div>
+        <div className="space-y-3 p-4">
           <p className="text-sm text-muted-foreground">
             Local repository selection happens directly during project creation.
             Enter an absolute path (or browse folders when available).
@@ -64,8 +63,8 @@ function LocalGitPage() {
             <HugeiconsIcon icon={Add01Icon} />
             Create project
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </PageLayout>
   )
 }

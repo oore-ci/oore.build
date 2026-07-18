@@ -58,7 +58,7 @@ chmod 600 ~/Library/Application\ Support/oore/encryption.key 2>/dev/null || true
 
 The queued build page reports one of three policy reasons:
 
-- **Instance disabled** — an Owner or Admin must enable Direct runner execution in **Settings > Preferences**.
+- **Instance disabled** — an Owner or Admin must enable Direct runner execution in **Settings > Runners**.
 - **Repository not approved** — an Owner or Admin must approve the source in **Settings > Sources**. Approval applies to every project linked to that repository.
 - **Repository unavailable** — reconnect or rediscover the source repository before retrying.
 

@@ -10,7 +10,7 @@ describe('Oore shadcn registry extensions', () => {
     render(<AlertDialogAction>Delete</AlertDialogAction>)
 
     expect(screen.getByRole('button', { name: 'Delete' }).className).toContain(
-      'text-destructive',
+      'cn-button-variant-destructive',
     )
   })
 

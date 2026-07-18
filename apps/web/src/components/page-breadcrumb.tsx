@@ -72,7 +72,7 @@ export default function PageBreadcrumb() {
 
   // If under settings and no "Settings" crumb exists, prepend it
   if (isSettingsRoute && !crumbs.some((c) => c.label === 'Settings')) {
-    crumbs.unshift({ label: 'Settings' })
+    crumbs.unshift({ label: 'Settings', to: '/settings' })
   }
 
   // Fallback: if no crumbs were generated, humanize the last path segment

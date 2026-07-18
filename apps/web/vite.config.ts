@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { URL, fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { devtools } from '@tanstack/devtools-vite'
@@ -43,44 +43,6 @@ function sitemapPlugin(): Plugin {
   }
 }
 
-/**
- * Post-build plugin that optimises the production HTML:
- * 1. Preloads the primary font (Google Sans Flex latin) to eliminate FOUT.
- */
-function htmlOptimisePlugin(): Plugin {
-  return {
-    name: 'html-optimise',
-    apply: 'build',
-    enforce: 'post',
-    closeBundle() {
-      const outDir = 'dist'
-      const htmlPath = `${outDir}/index.html`
-
-      let html: string
-      try {
-        html = readFileSync(htmlPath, 'utf-8')
-      } catch {
-        return
-      }
-
-      // Find the hashed font filename and inject a preload hint
-      const assetFiles = readdirSync(`${outDir}/assets`)
-      const fontFile = assetFiles.find(
-        (f) =>
-          f.startsWith('google-sans-flex-latin-') &&
-          f.endsWith('.woff2') &&
-          !f.includes('ext'),
-      )
-      if (fontFile) {
-        const preload = `    <link rel="preload" href="/assets/${fontFile}" as="font" type="font/woff2" crossorigin>\n`
-        html = html.replace(/(\s*<link rel="stylesheet")/, `\n${preload}$1`)
-      }
-
-      writeFileSync(htmlPath, html)
-    },
-  }
-}
-
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
@@ -106,7 +68,6 @@ export default defineConfig({
     }),
     viteReact(),
     tailwindcss(),
-    htmlOptimisePlugin(),
     sitemapPlugin(),
   ],
   build: {

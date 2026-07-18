@@ -13,9 +13,9 @@ import {
 } from '@/hooks/use-retention'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import {
@@ -38,6 +38,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { RetentionSummaryCard } from './-retention-summary-card'
+import { resolveRetentionPolicyLoadState } from './-retention-state'
 
 export const Route = createLazyFileRoute('/settings/retention')({
   component: RetentionPage,
@@ -47,7 +48,7 @@ const TERMINAL_STATUSES = [
   { value: 'succeeded', label: 'Succeeded' },
   { value: 'failed', label: 'Failed' },
   { value: 'canceled', label: 'Canceled' },
-  { value: 'timed_out', label: 'Timed Out' },
+  { value: 'timed_out', label: 'Timed out' },
 ] as const
 
 const CLEANUP_INTERVALS = [
@@ -58,8 +59,8 @@ const CLEANUP_INTERVALS = [
 ] as const
 
 const CLEANUP_TARGETS = {
-  artifacts_only: 'Artifacts only — keep build history',
-  full: 'Full delete — remove everything',
+  artifacts_only: 'Artifacts only, keep build history',
+  full: 'Full delete, remove everything',
 } as const
 
 const CLEANUP_INTERVAL_OPTIONS = Object.fromEntries(
@@ -87,7 +88,7 @@ function EnabledRetentionFields({
   return (
     <>
       <div className="border-t pt-6">
-        <h4 className="text-sm font-medium mb-4">Retention Criteria</h4>
+        <h4 className="mb-4 text-sm font-medium">Retention criteria</h4>
         <p className="text-muted-foreground text-sm mb-4">
           Builds matching any of the criteria below will be cleaned up. Leave a
           field empty to disable that criterion.
@@ -157,7 +158,7 @@ function EnabledRetentionFields({
       </div>
 
       <div className="border-t pt-6">
-        <h4 className="text-sm font-medium mb-4">Cleanup Behavior</h4>
+        <h4 className="mb-4 text-sm font-medium">Cleanup behavior</h4>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
@@ -178,10 +179,10 @@ function EnabledRetentionFields({
                   </FormControl>
                   <SelectContent>
                     <SelectItem value="artifacts_only">
-                      Artifacts only — keep build history
+                      Artifacts only, keep build history
                     </SelectItem>
                     <SelectItem value="full">
-                      Full delete — remove everything
+                      Full delete, remove everything
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -229,7 +230,7 @@ function EnabledRetentionFields({
       </div>
 
       <div className="border-t pt-6">
-        <h4 className="text-sm font-medium mb-4">Protected Statuses</h4>
+        <h4 className="mb-4 text-sm font-medium">Protected statuses</h4>
         <p className="text-muted-foreground text-sm mb-4">
           Builds with these statuses will never be cleaned up, regardless of
           other criteria.
@@ -296,9 +297,18 @@ function EnabledRetentionFields({
 }
 
 function useRetentionPageState() {
-  const { data: policyData, isLoading: policyLoading } = useRetentionPolicy()
-  const { data: cleanupData, isLoading: cleanupLoading } =
-    useRetentionLastCleanup()
+  const {
+    data: policyData,
+    error: policyError,
+    isLoading: policyLoading,
+    refetch: refetchPolicy,
+  } = useRetentionPolicy()
+  const {
+    data: cleanupData,
+    error: cleanupError,
+    isLoading: cleanupLoading,
+    refetch: refetchCleanup,
+  } = useRetentionLastCleanup()
   const updateMutation = useUpdateRetentionPolicy()
 
   const policy = policyData?.policy
@@ -382,17 +392,37 @@ function useRetentionPageState() {
     )
   }
 
-  if (policyLoading) {
+  const loadState = resolveRetentionPolicyLoadState(policyLoading, policyError)
+
+  if (loadState === 'loading') {
     return { status: 'loading' as const }
+  }
+
+  if (loadState === 'error' && policyError) {
+    return {
+      status: 'error' as const,
+      message: policyError.message,
+      retry: refetchPolicy,
+    }
+  }
+
+  if (!policy) {
+    return {
+      status: 'error' as const,
+      message: 'The response did not include a retention policy.',
+      retry: refetchPolicy,
+    }
   }
 
   return {
     status: 'ready' as const,
+    cleanupError,
     cleanupLoading,
     enabled,
     form,
     lastCleanup,
     onSubmit,
+    refetchCleanup,
     updateMutation,
   }
 }
@@ -405,28 +435,53 @@ function RetentionPage() {
       <PageLayout width="wide">
         <PageMeta title="Retention" />
         <PageHeader
-          title="Retention Policy"
-          description="Configure automatic cleanup of old builds and artifacts"
+          title="Retention"
+          description="Configure automatic cleanup of old builds and artifacts."
         />
-        <Card>
-          <CardContent>
-            <div className="space-y-4 py-4">
-              <Skeleton className="h-4 w-48" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-4 border p-4">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      </PageLayout>
+    )
+  }
+
+  if (pageState.status === 'error') {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title="Retention" />
+        <PageHeader
+          title="Retention"
+          description="Configure automatic cleanup of old builds and artifacts."
+        />
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load the retention policy: {pageState.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void pageState.retry()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
       </PageLayout>
     )
   }
 
   const {
+    cleanupError,
     cleanupLoading,
     enabled,
     form,
     lastCleanup,
     onSubmit,
+    refetchCleanup,
     updateMutation,
   } = pageState
 
@@ -434,28 +489,27 @@ function RetentionPage() {
     <PageLayout width="wide">
       <PageMeta title="Retention" />
       <PageHeader
-        title="Retention Policy"
-        description="Configure automatic cleanup of old builds and artifacts to manage disk usage"
+        title="Retention"
+        description="Configure automatic cleanup of old builds and artifacts to manage disk usage."
       />
 
       <RetentionSummaryCard
+        error={cleanupError}
         isLoading={cleanupLoading}
         lastCleanup={lastCleanup}
+        onRetry={() => void refetchCleanup()}
       />
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* Enable/Disable */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                <span>Global Retention Policy</span>
-                <Badge variant={enabled ? 'secondary' : 'outline'}>
-                  {enabled ? 'Active' : 'Disabled'}
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
+          <section className="border bg-card">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h2 className="text-sm font-semibold">Global retention policy</h2>
+              <Badge variant={enabled ? 'secondary' : 'outline'}>
+                {enabled ? 'Active' : 'Disabled'}
+              </Badge>
+            </div>
+            <div className="space-y-6 p-4">
               <FormField
                 control={form.control}
                 name="enabled"
@@ -486,8 +540,8 @@ function RetentionPage() {
                   Save policy
                 </Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </form>
       </Form>
     </PageLayout>

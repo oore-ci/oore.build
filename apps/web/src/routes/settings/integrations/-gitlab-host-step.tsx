@@ -36,7 +36,7 @@ export function GitLabHostStep({
   return (
     <section className="space-y-4">
       <div>
-        <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           1. Choose GitLab host
         </p>
         <p className="mt-1 text-sm text-muted-foreground">

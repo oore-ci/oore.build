@@ -33,7 +33,6 @@ export function ConnectedSourcesSection({
   collection,
   direction,
   onClearSearch,
-  onDisconnect,
   onPageChange,
   onPageSizeChange,
   onRetry,
@@ -51,7 +50,6 @@ export function ConnectedSourcesSection({
   }
   direction: SortDirection
   onClearSearch: () => void
-  onDisconnect: (integration: Integration) => void
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
   onRetry: () => void
@@ -139,11 +137,9 @@ export function ConnectedSourcesSection({
       ) : null}
       {!query.error && (query.isLoading || collection.total > 0) ? (
         <SourceInventory
-          canWrite={collection.canWrite}
           direction={direction}
           integrations={collection.integrations}
           isLoading={query.isLoading}
-          onDisconnect={onDisconnect}
           onPageChange={onPageChange}
           onPageSizeChange={onPageSizeChange}
           onSortChange={onSortChange}

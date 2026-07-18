@@ -212,13 +212,13 @@ function OidcConfigStep() {
 
       {/* Provider selector */}
       <div className="space-y-2">
-        <Label>Identity Provider</Label>
+        <Label htmlFor="identity-provider">Identity provider</Label>
         <Select
           value={selectedProvider}
           onValueChange={(v) => handleProviderChange(v as ProviderId)}
           disabled={isFormDisabled}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger id="identity-provider" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

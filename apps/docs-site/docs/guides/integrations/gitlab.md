@@ -37,7 +37,7 @@ Open the source details page and choose **Sync GitLab projects**. Oore follows G
 
 Go to **Projects**, create a project, and confirm the repository picker identifies the GitLab host as well as the project path.
 
-Before running builds, approve the repository in the source details and enable Direct macOS runner under **Settings > Preferences**. Approval applies to every Oore project linked to that GitLab repository.
+Before running builds, approve the repository in **Settings > Sources** and enable Direct macOS runner under **Settings > Runners**. Approval applies to every Oore project linked to that GitLab repository.
 
 ## Webhook configuration
 

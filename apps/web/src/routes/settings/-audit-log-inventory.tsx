@@ -177,10 +177,12 @@ export function AuditLogInventory({
                       <Badge variant="secondary">{entry.resource_type}</Badge>
                     </TableCell>
                     <TableCell className="hidden font-mono text-[11px] text-muted-foreground lg:table-cell">
-                      {entry.resource_id ? entry.resource_id.slice(0, 8) : '—'}
+                      {entry.resource_id
+                        ? entry.resource_id.slice(0, 8)
+                        : 'Not available'}
                     </TableCell>
                     <TableCell className="hidden max-w-xs truncate text-xs text-muted-foreground lg:table-cell">
-                      {entry.details ?? '—'}
+                      {entry.details ?? 'Not available'}
                     </TableCell>
                   </TableRow>
                 ))}

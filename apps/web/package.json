@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@hookform/resolvers": "^5.4.0",
     "@mswjs/interceptors": "^0.41.9",

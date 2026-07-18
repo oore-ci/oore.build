@@ -4,17 +4,16 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { toast } from '@/lib/toast'
 import type { Integration } from '@/lib/types'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 function humanizeAuthMode(mode: string): string {
   const labels: Record<string, string> = {
-    github_app_manifest: 'GitHub App (Manifest)',
+    github_app_manifest: 'GitHub App manifest',
     github_app: 'GitHub App',
-    oauth_app: 'OAuth App',
-    pat: 'Personal Access Token',
-    personal_token: 'Personal Access Token',
+    oauth_app: 'OAuth app',
+    pat: 'Personal access token',
+    personal_token: 'Personal access token',
   }
   return (
     labels[mode] ??
@@ -22,6 +21,12 @@ function humanizeAuthMode(mode: string): string {
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (character) => character.toUpperCase())
   )
+}
+
+function providerLabel(provider: Integration['provider']): string {
+  if (provider === 'github') return 'GitHub'
+  if (provider === 'gitlab') return 'GitLab'
+  return 'Local Git'
 }
 
 export function IntegrationConnectionDetails({
@@ -42,18 +47,20 @@ export function IntegrationConnectionDetails({
   onRetryNetworkSettings: () => void
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Connection</CardTitle>
-      </CardHeader>
-      <CardContent className="overflow-x-auto">
+    <section className="border bg-card" aria-labelledby="connection-title">
+      <div className="border-b px-4 py-3">
+        <h2 id="connection-title" className="text-sm font-semibold">
+          Connection
+        </h2>
+      </div>
+      <div className="overflow-x-auto p-4">
         <Table>
           <TableBody>
             <TableRow>
               <TableCell className="w-56 text-muted-foreground">
                 Provider
               </TableCell>
-              <TableCell>{integration.provider}</TableCell>
+              <TableCell>{providerLabel(integration.provider)}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell className="text-muted-foreground">Host URL</TableCell>
@@ -138,7 +145,7 @@ export function IntegrationConnectionDetails({
             </TableRow>
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

@@ -72,7 +72,7 @@ The separate service keeps runner lifecycle and updates independent from the dae
 
 ## 3. Verify
 
-1. Go to **Settings > Preferences** and enable **Direct macOS runner**
+1. Go to **Settings > Runners** and enable **Direct macOS runner**
 2. Go to **Settings > Sources**, open the source, and approve the repository
 3. Go to **Settings > Runners** and confirm the runner is `online`
 4. Trigger a test build and verify it is picked up

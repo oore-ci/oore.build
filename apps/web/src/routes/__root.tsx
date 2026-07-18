@@ -7,7 +7,6 @@ import { Search01Icon } from '@hugeicons/core-free-icons'
 
 import AppSidebar from '@/components/app-sidebar'
 import ConnectivityBanner from '@/components/connectivity-banner'
-import DirectRunnerPolicyBanner from '@/components/direct-runner-policy-banner'
 import DeferredToaster from '@/components/deferred-toaster'
 import PageBreadcrumb from '@/components/page-breadcrumb'
 import QaAppHeader from '@/components/qa-app-header'
@@ -20,13 +19,13 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Kbd } from '@/components/ui/kbd'
+import { Button } from '@/components/ui/button'
 import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { useUiStore } from '@/stores/ui-store'
 import { useInstanceStore } from '@/stores/instance-store'
-import { isDemoMode } from '@/lib/demo-mode'
 import { useWindowEvent } from '@/hooks/use-window-event'
 import {
   RootErrorBoundary,
@@ -156,24 +155,23 @@ function RootLayout() {
                 />
                 <PageBreadcrumb />
                 <div className="ml-auto">
-                  <button
+                  <Button
                     type="button"
-                    data-slot="button"
-                    data-size="icon-sm"
+                    variant="outline"
+                    size="sm"
                     aria-label="Search"
                     onMouseEnter={() => void loadCommandPalette()}
                     onFocus={() => void loadCommandPalette()}
                     onClick={() => openCommandPalette(true)}
-                    className="inline-flex h-8 w-8 items-center justify-center gap-2 rounded-sm border bg-muted/50 px-0 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:w-48 sm:justify-between sm:px-3"
+                    className="w-10 justify-center bg-background px-0 text-xs text-muted-foreground sm:w-52 sm:justify-between sm:px-3"
                   >
                     <HugeiconsIcon icon={Search01Icon} size={14} />
                     <span className="hidden sm:inline">Search</span>
                     <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
-                  </button>
+                  </Button>
                 </div>
               </header>
               <ConnectivityBanner />
-              <DirectRunnerPolicyBanner />
               <div className="flex flex-1 flex-col bg-surface">
                 <Outlet />
               </div>
@@ -197,21 +195,6 @@ function RootLayout() {
             <CommandPalette />
           </Suspense>
         ) : null}
-        {isDemoMode && (
-          <div className="fixed right-[calc(var(--safe-area-right)+1rem)] bottom-[calc(var(--safe-area-bottom)+1rem)] z-50 flex items-center gap-2 border bg-background px-3 py-1.5 text-xs text-muted-foreground shadow-md">
-            <span className="size-1.5 animate-pulse bg-primary" />
-            Demo Mode
-            <span className="hidden text-muted-foreground/50 sm:inline">—</span>
-            <a
-              href="https://oore.build"
-              className="hidden text-primary underline underline-offset-2 sm:inline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              View Oore product details
-            </a>
-          </div>
-        )}
         <Suspense>
           <DevTools />
         </Suspense>

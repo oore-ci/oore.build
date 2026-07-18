@@ -93,8 +93,7 @@ function usePipelineDetailPageState() {
   const canWriteGlobally = useHasPermission('pipelines', 'write')
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const { data: projectData } = useProject(projectId)
-  const projectRole =
-    projectData?.current_user_role ?? projectData?.project.current_user_role
+  const projectRole = projectData?.project.current_user_role
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines', 'write')
   const canDelete = hasProjectPermission(projectRole, 'pipelines', 'delete')

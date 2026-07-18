@@ -1,12 +1,14 @@
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export function ApiTokenStats({
   active,
+  isLoading,
   revoked,
   total,
 }: {
   active: number
+  isLoading: boolean
   revoked: number
   total: number
 }) {
@@ -16,22 +18,40 @@ export function ApiTokenStats({
     ['Revoked tokens', revoked, 'No longer valid'],
   ] as const
   return (
-    <section className="grid gap-4 md:grid-cols-3">
+    <section
+      aria-label="API token summary"
+      className="grid border md:grid-cols-3 md:divide-x"
+    >
       {metrics.map(([label, value, description]) => (
-        <Card key={label}>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                {label}
-              </p>
-              {label === 'Active tokens' && value > 0 ? (
-                <Badge variant="secondary">{value}</Badge>
-              ) : null}
+        <div
+          key={label}
+          className="border-t p-4 first:border-t-0 md:border-t-0"
+        >
+          {isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-6 w-10" />
+              <Skeleton className="h-3 w-32" />
             </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">{value}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-          </CardContent>
-        </Card>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {label}
+                </p>
+                {label === 'Active tokens' && value > 0 ? (
+                  <Badge variant="secondary">{value}</Badge>
+                ) : null}
+              </div>
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {value}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {description}
+              </p>
+            </>
+          )}
+        </div>
       ))}
     </section>
   )

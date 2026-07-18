@@ -1782,6 +1782,7 @@ pub struct Project {
     pub created_by: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub current_user_role: ProjectRole,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1822,8 +1823,7 @@ pub struct ProjectDetailResponse {
     pub project: Project,
     pub pipeline_count: i64,
     pub build_count: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_user_role: Option<String>,
+    pub current_user_role: ProjectRole,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

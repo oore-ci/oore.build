@@ -5,7 +5,7 @@ pub mod webhooks;
 
 use std::sync::Arc;
 
-const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPGRlZnM+CiAgICA8Y2lyY2xlIGlkPSJjdXQiIGN4PSIxNiIgY3k9IjE2IiByPSI3IiAvPgogICAgPG1hc2sgaWQ9ImhvbGUiPgogICAgICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IndoaXRlIiAvPgogICAgICA8dXNlIGhyZWY9IiNjdXQiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogICAgPGNsaXBQYXRoIGlkPSJsZWZ0Ij4KICAgICAgPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICAgIDxjbGlwUGF0aCBpZD0icmlnaHQiPgogICAgICA8cmVjdCB4PSIxNyIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICA8L2RlZnM+CiAgPHJlY3QKICAgIHg9IjIiCiAgICB5PSIyIgogICAgd2lkdGg9IjI4IgogICAgaGVpZ2h0PSIyOCIKICAgIHJ4PSI2IgogICAgZmlsbD0iI2Y0OWYxZSIKICAgIGNsaXAtcGF0aD0idXJsKCNsZWZ0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBmaWxsPSIjZjQ5ZjFlIgogICAgY2xpcC1wYXRoPSJ1cmwoI3JpZ2h0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KPC9zdmc+Cg==";
+const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPHN0eWxlPgogICAgLmZpbGwtYnJhbmQgeyBmaWxsOiAjMjQ1N2M1OyB9CiAgPC9zdHlsZT4KICA8ZGVmcz4KICAgIDxjaXJjbGUgaWQ9ImN1dCIgY3g9IjE2IiBjeT0iMTYiIHI9IjciIC8+CiAgICA8bWFzayBpZD0iaG9sZSI+CiAgICAgIDxyZWN0IHg9IjAiIHk9IjAiIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgZmlsbD0id2hpdGUiIC8+CiAgICAgIDx1c2UgaHJlZj0iI2N1dCIgZmlsbD0iYmxhY2siIC8+CiAgICA8L21hc2s+CiAgICA8Y2xpcFBhdGggaWQ9ImxlZnQiPgogICAgICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTUiIGhlaWdodD0iMzIiIC8+CiAgICA8L2NsaXBQYXRoPgogICAgPGNsaXBQYXRoIGlkPSJyaWdodCI+CiAgICAgIDxyZWN0IHg9IjE3IiB5PSIwIiB3aWR0aD0iMTUiIGhlaWdodD0iMzIiIC8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBjbGFzcz0iZmlsbC1icmFuZCIKICAgIGNsaXAtcGF0aD0idXJsKCNsZWZ0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBjbGFzcz0iZmlsbC1icmFuZCIKICAgIGNsaXAtcGF0aD0idXJsKCNyaWdodCkiCiAgICBtYXNrPSJ1cmwoI2hvbGUpIgogIC8+Cjwvc3ZnPgo=";
 
 // ── Shared HTML helpers ──────────────────────────────────────────
 
@@ -32,7 +32,7 @@ pub(crate) fn error_page(title: &str, message: &str) -> String {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="{favicon}">
   <link rel="apple-touch-icon" href="{favicon}">
-  <meta name="theme-color" content="#dc7702">
+  <meta name="theme-color" content="#2457c5">
   <title>{title}</title>
   <style>
     body {{

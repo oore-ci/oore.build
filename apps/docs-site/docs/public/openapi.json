@@ -3672,6 +3672,33 @@
             }
           },
           {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive pipeline name search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort by created_at or name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "description": "Sort direction: asc or desc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Page size",
@@ -3699,6 +3726,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListPipelinesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid sort or direction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -10083,7 +10120,8 @@
           "settings",
           "created_by",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "current_user_role"
         ],
         "properties": {
           "created_at": {
@@ -10092,6 +10130,9 @@
           },
           "created_by": {
             "type": "string"
+          },
+          "current_user_role": {
+            "$ref": "#/components/schemas/ProjectRole"
           },
           "default_branch": {
             "type": [
@@ -10149,7 +10190,8 @@
         "required": [
           "project",
           "pipeline_count",
-          "build_count"
+          "build_count",
+          "current_user_role"
         ],
         "properties": {
           "build_count": {
@@ -10157,10 +10199,7 @@
             "format": "int64"
           },
           "current_user_role": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/components/schemas/ProjectRole"
           },
           "pipeline_count": {
             "type": "integer",

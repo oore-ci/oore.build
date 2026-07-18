@@ -14,10 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  isHostedUiOrigin,
-  isLocalLauncherOrigin,
-} from '@/lib/connectivity'
+import { isHostedUiOrigin, isLocalLauncherOrigin } from '@/lib/connectivity'
 import { useInstanceStore } from '@/stores/instance-store'
 import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
 
@@ -72,7 +69,7 @@ export default function AddInstanceDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add Instance</DialogTitle>
+          <DialogTitle>Add instance</DialogTitle>
           <DialogDescription>
             {hostedUi
               ? 'Connect to an HTTPS-reachable Oore backend (tunnel or reverse proxy).'
@@ -90,10 +87,16 @@ export default function AddInstanceDialog({
               type="text"
               placeholder="My CI Server"
               {...register('label')}
+              aria-invalid={Boolean(errors.label)}
+              aria-describedby={
+                errors.label ? 'instance-label-error' : undefined
+              }
               autoFocus
             />
             {errors.label ? (
-              <p className="text-sm text-destructive">{errors.label.message}</p>
+              <p id="instance-label-error" className="text-sm text-destructive">
+                {errors.label.message}
+              </p>
             ) : null}
           </div>
 
@@ -111,26 +114,37 @@ export default function AddInstanceDialog({
               type="text"
               placeholder="https://ci.example.com"
               {...register('url')}
+              aria-invalid={Boolean(errors.url)}
+              aria-describedby={
+                errors.url
+                  ? 'instance-url-guidance instance-url-error'
+                  : 'instance-url-guidance'
+              }
             />
-            {hostedUi ? (
-              <p className="text-xs text-muted-foreground">
-                `https://ci.oore.build` requires an explicit HTTPS backend URL
-                and cannot connect to localhost `http://` backends directly.
-              </p>
-            ) : null}
-            {localLauncher ? (
-              <p className="text-xs text-muted-foreground">
-                For local oore-web, keep this empty for localhost daemons to use
-                the built-in proxy.
-              </p>
-            ) : null}
+            <div id="instance-url-guidance">
+              {hostedUi ? (
+                <p className="text-xs text-muted-foreground">
+                  <code>https://ci.oore.build</code> requires an explicit HTTPS
+                  backend URL and cannot connect to localhost{' '}
+                  <code>http://</code> backends directly.
+                </p>
+              ) : null}
+              {localLauncher ? (
+                <p className="text-xs text-muted-foreground">
+                  For local oore-web, keep this empty for localhost daemons to
+                  use the built-in proxy.
+                </p>
+              ) : null}
+            </div>
             {errors.url ? (
-              <p className="text-sm text-destructive">{errors.url.message}</p>
+              <p id="instance-url-error" className="text-sm text-destructive">
+                {errors.url.message}
+              </p>
             ) : null}
           </div>
 
-          <div className="space-y-2">
-            <Label>Icon</Label>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Icon</legend>
             <div className="flex flex-wrap gap-2">
               {INSTANCE_ICONS.map((entry) => (
                 <Button
@@ -152,7 +166,7 @@ export default function AddInstanceDialog({
                 </Button>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <DialogFooter>
             <Button

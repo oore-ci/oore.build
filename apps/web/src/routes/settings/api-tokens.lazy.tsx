@@ -191,7 +191,7 @@ function CreateTokenDialog({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create API Token</DialogTitle>
+          <DialogTitle>Create API token</DialogTitle>
           <DialogDescription>
             Create a new API token for programmatic access to this instance.
           </DialogDescription>
@@ -440,9 +440,9 @@ function ApiTokensPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="API Tokens" noindex />
+      <PageMeta title="API tokens" noindex />
       <PageHeader
-        title="API Tokens"
+        title="API tokens"
         description="Create and manage API tokens for programmatic access to your CI instance."
         actions={
           canWrite ? (
@@ -454,11 +454,14 @@ function ApiTokensPage() {
         }
       />
 
-      <ApiTokenStats
-        active={activeCount}
-        revoked={tokens.filter((token) => token.is_revoked).length}
-        total={tokens.length}
-      />
+      {!tokensQuery.error ? (
+        <ApiTokenStats
+          active={activeCount}
+          isLoading={tokensQuery.isLoading}
+          revoked={tokens.filter((token) => token.is_revoked).length}
+          total={tokens.length}
+        />
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
@@ -598,7 +601,7 @@ function ApiTokensPage() {
         onOpenChange={(open) => {
           if (!open) setRevokeTarget(null)
         }}
-        title="Revoke API Token"
+        title="Revoke API token"
         description="Are you sure you want to revoke this token? Any applications using this token will lose access immediately."
         confirmLabel="Revoke"
         confirmVariant="destructive"

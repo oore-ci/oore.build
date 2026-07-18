@@ -1,82 +1,99 @@
 import DefaultTheme from 'vitepress/theme'
-import { theme, useOpenapi } from 'vitepress-openapi/client'
-import 'vitepress-openapi/dist/style.css'
 import { useData, useRoute } from 'vitepress'
 import { h, onMounted, onUnmounted, watchEffect } from 'vue'
-import spec from '../../public/openapi.json' with { type: 'json' }
+import type { EnhanceAppContext, Theme } from 'vitepress'
 import './custom.css'
-import type { Theme } from 'vitepress'
 
-function injectStructuredData() {
+const openApiApps = new WeakSet<EnhanceAppContext['app']>()
+
+function isOpenApiPath(path: string) {
+  return path === '/openapi' || path.startsWith('/openapi/')
+}
+
+async function enableOpenApi(context: EnhanceAppContext) {
+  if (openApiApps.has(context.app)) return
+
+  const [{ theme, useOpenapi }, { default: spec }] = await Promise.all([
+    import('vitepress-openapi/client'),
+    import('../../public/openapi.json'),
+    import('vitepress-openapi/dist/style.css'),
+  ])
+
+  const openapi = useOpenapi({
+    spec,
+    config: {
+      server: { allowCustomServer: true },
+    },
+  })
+
+  theme.enhanceApp({ ...context, openapi })
+  openApiApps.add(context.app)
+}
+
+function StructuredData() {
   const route = useRoute()
   const { title, description } = useData()
 
   onMounted(() => {
     const update = () => {
-      // Remove any existing structured data we injected
       document
         .querySelectorAll('script[data-seo="oore"]')
-        .forEach((el) => el.remove())
+        .forEach((element) => element.remove())
 
-      const path = route.path
-      const segments = path.split('/').filter(Boolean)
-      const hostname = 'https://docs.oore.build'
-
-      // BreadcrumbList
+      const segments = route.path.split('/').filter(Boolean)
+      const origin = 'https://docs.oore.build'
       const breadcrumbs = [
-        { name: 'Docs', url: hostname + '/' },
-        ...segments.map((seg, i) => ({
-          name: seg
+        { name: 'Docs', url: `${origin}/` },
+        ...segments.map((segment, index) => ({
+          name: segment
             .split('-')
-            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' '),
-          url: hostname + '/' + segments.slice(0, i + 1).join('/'),
+          url: `${origin}/${segments.slice(0, index + 1).join('/')}`,
         })),
       ]
 
-      const breadcrumbLd = {
-        '@context': 'https://schema.org',
-        '@type': 'BreadcrumbList',
-        itemListElement: breadcrumbs.map((bc, i) => ({
-          '@type': 'ListItem',
-          position: i + 1,
-          name: bc.name,
-          item: bc.url,
-        })),
-      }
+      const scripts: Array<Record<string, unknown>> = [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: breadcrumbs.map((breadcrumb, index) => ({
+            '@type': 'ListItem',
+            position: index + 1,
+            name: breadcrumb.name,
+            item: breadcrumb.url,
+          })),
+        },
+      ]
 
-      // TechArticle for content pages (not the home page)
-      const scripts: Array<Record<string, unknown>> = [breadcrumbLd]
       if (segments.length > 0) {
         scripts.push({
           '@context': 'https://schema.org',
           '@type': 'TechArticle',
-          headline: title.value || 'Oore CI Docs',
+          headline: title.value || 'Oore CI docs',
           description:
             description.value ||
-            'Documentation for oore.build, a self-hosted Flutter-first mobile CI platform.',
-          url: hostname + path,
+            'Documentation for installing, operating, and integrating Oore CI.',
+          url: `${origin}${route.path}`,
           author: {
-            '@type': 'Person',
-            name: 'Aryakumar Jha',
-            url: 'https://aryak.dev',
-            sameAs: 'https://github.com/devaryakjha',
+            '@type': 'Organization',
+            name: 'oore.build',
+            url: 'https://oore.build',
           },
         })
       }
 
-      scripts.forEach((data) => {
+      for (const data of scripts) {
         const script = document.createElement('script')
         script.type = 'application/ld+json'
         script.dataset.seo = 'oore'
         script.textContent = JSON.stringify(data)
         document.head.appendChild(script)
-      })
+      }
     }
 
-    // Watch for route changes
     const stop = watchEffect(update)
-    onUnmounted(() => stop())
+    onUnmounted(stop)
   })
 
   return null
@@ -84,20 +101,22 @@ function injectStructuredData() {
 
 export default {
   extends: DefaultTheme,
-  enhanceApp(context) {
-    const openapi = useOpenapi({
-      spec,
-      config: {
-        server: {
-          allowCustomServer: true,
-        },
-      },
-    })
-    theme.enhanceApp({ ...context, openapi })
+
+  async enhanceApp(context) {
+    if (isOpenApiPath(context.router.route.path)) {
+      await enableOpenApi(context)
+    }
+
+    const previousBeforePageLoad = context.router.onBeforePageLoad
+    context.router.onBeforePageLoad = async (to) => {
+      if (isOpenApiPath(to)) await enableOpenApi(context)
+      return previousBeforePageLoad?.(to)
+    }
   },
+
   Layout() {
     return h(DefaultTheme.Layout, null, {
-      'layout-top': () => h(injectStructuredData),
+      'layout-top': () => h(StructuredData),
     })
   },
 } satisfies Theme

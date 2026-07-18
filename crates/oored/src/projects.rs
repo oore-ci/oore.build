@@ -7,7 +7,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, CreateProjectRequest, CreateProjectResponse, ListProjectsResponse, Project,
-    ProjectDetailResponse, RuntimeMode, UpdateProjectRequest,
+    ProjectDetailResponse, ProjectRole, RuntimeMode, UpdateProjectRequest,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -17,10 +17,11 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{
-    ProjectPermission, effective_role_string, require_project_permission,
+    EffectiveProjectRole, ProjectPermission, require_project_permission,
     resolve_effective_project_role,
 };
 use crate::rbac::check_permission;
+use crate::session::AuthSource;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -32,9 +33,16 @@ const PROJECT_SELECT: &str = "SELECT p.*, r.full_name AS repository_full_name, r
     LEFT JOIN integration_installations inst ON inst.id = r.installation_id \
     LEFT JOIN integrations i ON i.id = inst.integration_id";
 
+const PROJECT_SELECT_WITH_MEMBER_ROLE: &str = "SELECT p.*, r.full_name AS repository_full_name, r.avatar_url AS repository_avatar_url, \
+    i.provider AS repository_provider, pm.role AS project_member_role FROM projects p \
+    LEFT JOIN integration_repositories r ON r.id = p.repository_id \
+    LEFT JOIN integration_installations inst ON inst.id = r.installation_id \
+    LEFT JOIN integrations i ON i.id = inst.integration_id \
+    INNER JOIN project_members pm ON pm.project_id = p.id";
+
 // ── Row conversion ──────────────────────────────────────────────
 
-fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
+fn row_to_project(row: &sqlx::sqlite::SqliteRow, current_user_role: ProjectRole) -> Project {
     let settings_str: String = row.get("settings");
     let settings: serde_json::Value =
         serde_json::from_str(&settings_str).unwrap_or(serde_json::json!({}));
@@ -52,6 +60,58 @@ fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
         created_by: row.get("created_by"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        current_user_role,
+    }
+}
+
+fn project_role_level(role: ProjectRole) -> u8 {
+    match role {
+        ProjectRole::Maintainer => 3,
+        ProjectRole::Developer => 2,
+        ProjectRole::Viewer => 1,
+    }
+}
+
+fn lesser_project_role(left: ProjectRole, right: ProjectRole) -> ProjectRole {
+    if project_role_level(left) <= project_role_level(right) {
+        left
+    } else {
+        right
+    }
+}
+
+fn effective_member_role_for_response(
+    stored_role: ProjectRole,
+    instance_role: &str,
+    auth_source: &AuthSource,
+) -> ProjectRole {
+    if instance_role == "qa_viewer" {
+        return ProjectRole::Viewer;
+    }
+
+    if *auth_source == AuthSource::ApiToken {
+        let cap = if instance_role == "developer" {
+            ProjectRole::Developer
+        } else {
+            ProjectRole::Viewer
+        };
+        return lesser_project_role(stored_role, cap);
+    }
+
+    stored_role
+}
+
+fn project_role_for_response(
+    effective_role: &EffectiveProjectRole,
+) -> Result<ProjectRole, (StatusCode, Json<ApiError>)> {
+    match effective_role {
+        EffectiveProjectRole::InstanceAdmin => Ok(ProjectRole::Maintainer),
+        EffectiveProjectRole::Member(role) => Ok(*role),
+        EffectiveProjectRole::None => Err(api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "authorization_error",
+            "Project response is missing an effective role",
+        )),
     }
 }
 
@@ -533,6 +593,16 @@ pub async fn create_project(
         })?;
     }
 
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    let current_user_role = project_role_for_response(&effective)?;
+
     info!(project_id = %project_id, name = %name, "project created");
 
     let project = Project {
@@ -548,6 +618,7 @@ pub async fn create_project(
         created_by: auth.0.user_id,
         created_at: now,
         updated_at: now,
+        current_user_role,
     };
 
     Ok(Json(CreateProjectResponse { project }))
@@ -643,8 +714,7 @@ pub async fn list_projects(
             .unwrap_or(0);
 
             let rows = sqlx::query(&format!(
-                "{PROJECT_SELECT} \
-                 INNER JOIN project_members pm ON pm.project_id = p.id \
+                "{PROJECT_SELECT_WITH_MEMBER_ROLE} \
                  WHERE pm.user_id = ?1 AND (p.name LIKE ?2 OR p.description LIKE ?2) \
                  ORDER BY {order_by} LIMIT ?3 OFFSET ?4"
             ))
@@ -676,8 +746,7 @@ pub async fn list_projects(
             .unwrap_or(0);
 
             let rows = sqlx::query(&format!(
-                "{PROJECT_SELECT} \
-                 INNER JOIN project_members pm ON pm.project_id = p.id \
+                "{PROJECT_SELECT_WITH_MEMBER_ROLE} \
                  WHERE pm.user_id = ?1 \
                  ORDER BY {order_by} LIMIT ?2 OFFSET ?3"
             ))
@@ -699,7 +768,30 @@ pub async fn list_projects(
         }
     };
 
-    let projects = rows.iter().map(row_to_project).collect();
+    let projects = if is_admin {
+        rows.iter()
+            .map(|row| row_to_project(row, ProjectRole::Maintainer))
+            .collect()
+    } else {
+        rows.iter()
+            .map(|row| {
+                let stored_role: String = row.get("project_member_role");
+                let stored_role: ProjectRole = stored_role.parse().map_err(|_| {
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "data_error",
+                        "Invalid project role in database",
+                    )
+                })?;
+                let current_user_role = effective_member_role_for_response(
+                    stored_role,
+                    &auth.0.role,
+                    &auth.0.auth_source,
+                );
+                Ok(row_to_project(row, current_user_role))
+            })
+            .collect::<Result<Vec<_>, (StatusCode, Json<ApiError>)>>()?
+    };
 
     Ok(Json(ListProjectsResponse { projects, total }))
 }
@@ -739,7 +831,8 @@ pub async fn get_project(
         })?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"))?;
 
-    let project = row_to_project(&project_row);
+    let current_user_role = project_role_for_response(&effective)?;
+    let project = row_to_project(&project_row, current_user_role);
 
     let pipeline_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pipelines WHERE project_id = ?1")
@@ -758,7 +851,7 @@ pub async fn get_project(
         project,
         pipeline_count,
         build_count,
-        current_user_role: effective_role_string(&effective),
+        current_user_role,
     }))
 }
 
@@ -783,6 +876,7 @@ pub async fn update_project(
     )
     .await?;
     require_project_permission(&effective, ProjectPermission::Write)?;
+    let current_user_role = project_role_for_response(&effective)?;
 
     // Verify project exists
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM projects WHERE id = ?1")
@@ -856,7 +950,7 @@ pub async fn update_project(
                 )
             })?;
         return Ok(Json(CreateProjectResponse {
-            project: row_to_project(&row),
+            project: row_to_project(&row, current_user_role),
         }));
     }
 
@@ -915,7 +1009,7 @@ pub async fn update_project(
         })?;
 
     Ok(Json(CreateProjectResponse {
-        project: row_to_project(&row),
+        project: row_to_project(&row, current_user_role),
     }))
 }
 

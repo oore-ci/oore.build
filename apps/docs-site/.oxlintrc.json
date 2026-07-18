@@ -24,9 +24,7 @@
   ],
   "overrides": [
     {
-      "files": [
-        "**/*.{js,ts,tsx}"
-      ],
+      "files": ["**/*.{js,ts,tsx}"],
       "rules": {
         "for-direction": "error",
         "no-async-promise-executor": "error",
@@ -71,10 +69,7 @@
         "require-yield": "error",
         "use-isnan": "error",
         "valid-typeof": "error",
-        "import/consistent-type-specifier-style": [
-          "error",
-          "prefer-top-level"
-        ],
+        "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
         "import/first": "error",
         "import/newline-after-import": "error",
         "import/no-commonjs": "error",
@@ -99,10 +94,7 @@
             "prefer": "type-imports"
           }
         ],
-        "typescript/method-signature-style": [
-          "error",
-          "property"
-        ],
+        "typescript/method-signature-style": ["error", "property"],
         "typescript/no-duplicate-enum-values": "error",
         "typescript/no-extra-non-null-assertion": "error",
         "typescript/no-for-in-array": "error",
@@ -128,15 +120,10 @@
         "es2020": true,
         "browser": true
       },
-      "plugins": [
-        "typescript",
-        "import"
-      ]
+      "plugins": ["typescript", "import"]
     },
     {
-      "files": [
-        "**/*.vue"
-      ],
+      "files": ["**/*.vue"],
       "rules": {
         "for-direction": "error",
         "no-async-promise-executor": "error",
@@ -181,10 +168,7 @@
         "require-yield": "error",
         "use-isnan": "error",
         "valid-typeof": "error",
-        "import/consistent-type-specifier-style": [
-          "error",
-          "prefer-top-level"
-        ],
+        "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
         "import/first": "error",
         "import/newline-after-import": "error",
         "import/no-commonjs": "error",
@@ -209,10 +193,7 @@
             "prefer": "type-imports"
           }
         ],
-        "typescript/method-signature-style": [
-          "error",
-          "property"
-        ],
+        "typescript/method-signature-style": ["error", "property"],
         "typescript/no-duplicate-enum-values": "error",
         "typescript/no-extra-non-null-assertion": "error",
         "typescript/no-for-in-array": "error",
@@ -234,10 +215,7 @@
         "typescript/require-await": "warn",
         "typescript/triple-slash-reference": "error"
       },
-      "plugins": [
-        "typescript",
-        "import"
-      ],
+      "plugins": ["typescript", "import"],
       "env": {
         "browser": true
       }

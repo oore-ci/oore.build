@@ -16,7 +16,12 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -27,6 +32,27 @@ import {
 } from '@/components/ui/sidebar'
 import { useAuthStore } from '@/stores/auth-store'
 import { useLogout } from '@/hooks/use-auth'
+import { isDemoMode } from '@/lib/demo-mode'
+import type { UserRole } from '@/lib/types'
+import type { DemoScenario } from '@/demo/state'
+
+const PERSONA_OPTIONS: ReadonlyArray<{ value: UserRole; label: string }> = [
+  { value: 'owner', label: 'Owner' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'developer', label: 'Developer' },
+  { value: 'qa_viewer', label: 'QA viewer' },
+]
+
+const SCENARIO_OPTIONS: ReadonlyArray<{
+  value: DemoScenario
+  label: string
+}> = [
+  { value: 'operating', label: 'Operating' },
+  { value: 'blocked', label: 'Blocked' },
+  { value: 'degraded', label: 'Degraded' },
+  { value: 'empty', label: 'Empty' },
+  { value: 'setup', label: 'Setup' },
+]
 
 function getInitials(email: string): string {
   const parts = email.split('@')[0].split(/[._-]/)
@@ -49,6 +75,24 @@ export default function NavUserMenu({
   const authUser = useAuthStore((state) => state.user)
   const logoutMutation = useLogout()
   const { theme, setTheme } = useTheme()
+  const currentScenario =
+    SCENARIO_OPTIONS.find(
+      ({ value }) =>
+        value ===
+        new URLSearchParams(window.location.search).get('demoScenario'),
+    ) ?? SCENARIO_OPTIONS[0]
+
+  const changePersona = (role: UserRole) => {
+    void import('@/demo/controls').then(({ activateDemoPersona }) => {
+      if (activateDemoPersona(role)) window.location.reload()
+    })
+  }
+
+  const changeScenario = (scenario: DemoScenario) => {
+    void import('@/demo/controls').then(({ demoScenarioUrl }) => {
+      window.location.assign(demoScenarioUrl(window.location.href, scenario))
+    })
+  }
 
   if (!authUser) return null
 
@@ -112,9 +156,65 @@ export default function NavUserMenu({
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            {isDemoMode ? (
+              <>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Demo tools</DropdownMenuLabel>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger
+                      aria-label={`Persona: ${PERSONA_OPTIONS.find(({ value }) => value === authUser.role)?.label ?? authUser.role}`}
+                    >
+                      Persona
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        {PERSONA_OPTIONS.find(
+                          ({ value }) => value === authUser.role,
+                        )?.label ?? authUser.role}
+                      </span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <DropdownMenuRadioGroup value={authUser.role}>
+                        {PERSONA_OPTIONS.map((option) => (
+                          <DropdownMenuRadioItem
+                            key={option.value}
+                            value={option.value}
+                            onClick={() => changePersona(option.value)}
+                          >
+                            {option.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger
+                      aria-label={`Scenario: ${currentScenario.label}`}
+                    >
+                      Scenario
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        {currentScenario.label}
+                      </span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <DropdownMenuRadioGroup value={currentScenario.value}>
+                        {SCENARIO_OPTIONS.map((option) => (
+                          <DropdownMenuRadioItem
+                            key={option.value}
+                            value={option.value}
+                            onClick={() => changeScenario(option.value)}
+                          >
+                            {option.label}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Theme
+                Mode
               </DropdownMenuLabel>
               <DropdownMenuItem onClick={() => setTheme('light')}>
                 <HugeiconsIcon icon={Sun03Icon} size={16} />

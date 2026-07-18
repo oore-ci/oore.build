@@ -95,7 +95,7 @@ export default function LocalFolderPickerDialog({
 
           {quickJumps.length ? (
             <div className="flex flex-wrap items-center gap-2">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <p className="text-xs font-medium text-muted-foreground">
                 Jump to
               </p>
               {quickJumps.map((suggestion) => (

@@ -15,12 +15,14 @@ import {
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
+import { usePageClamp } from '@/hooks/use-page-clamp'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
 import { useSourceRepositories } from '@/hooks/use-source-repositories'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { relativeTime } from '@/lib/format-utils'
+import { ApiClientError } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
 import type { SortDirection } from '@/components/collection-controls'
@@ -83,6 +85,11 @@ interface ProjectDetailSearch {
   sort?: ProjectBuildSort
   status?: string
   tab?: TabValue
+  pipelineDirection?: SortDirection
+  pipelinePage?: number
+  pipelinePageSize?: 20 | 50 | 100
+  pipelineQ?: string
+  pipelineSort?: 'created_at' | 'name'
 }
 
 const PROJECT_BUILD_SORT_VALUES = new Set<ProjectBuildSort>(
@@ -102,6 +109,10 @@ function validateProjectSearch(
       ? search.status
       : ''
   const sort = search.sort as ProjectBuildSort
+  const pipelinePage = Number(search.pipelinePage)
+  const pipelinePageSize = Number(search.pipelinePageSize)
+  const pipelineQ =
+    typeof search.pipelineQ === 'string' ? search.pipelineQ.trim() : ''
 
   return {
     tab:
@@ -114,6 +125,17 @@ function validateProjectSearch(
     direction: search.direction === 'asc' ? 'asc' : undefined,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
+    pipelineQ: pipelineQ || undefined,
+    pipelineSort: search.pipelineSort === 'name' ? 'name' : undefined,
+    pipelineDirection: search.pipelineDirection === 'asc' ? 'asc' : undefined,
+    pipelinePage:
+      Number.isInteger(pipelinePage) && pipelinePage > 1
+        ? pipelinePage
+        : undefined,
+    pipelinePageSize:
+      pipelinePageSize === 50 || pipelinePageSize === 100
+        ? pipelinePageSize
+        : undefined,
   }
 }
 
@@ -132,10 +154,23 @@ export const Route = createFileRoute('/projects/$projectId/')({
 
 function useProjectDetailPageState() {
   const { projectId } = Route.useParams()
-  const { tab } = Route.useSearch()
+  const search = Route.useSearch()
+  const { tab } = search
   const navigate = Route.useNavigate()
-  const { data, isLoading, error } = useProject(projectId)
-  const { data: pipelinesData } = usePipelines(projectId)
+  const projectQuery = useProject(projectId)
+  const { data, isLoading, error } = projectQuery
+  const pipelinePage = search.pipelinePage ?? 1
+  const pipelinePageSize = search.pipelinePageSize ?? 20
+  const pipelineSort = search.pipelineSort ?? 'created_at'
+  const pipelineDirection = search.pipelineDirection ?? 'desc'
+  const pipelinesQuery = usePipelines(projectId, {
+    search: search.pipelineQ,
+    sort: pipelineSort,
+    direction: pipelineDirection,
+    limit: pipelinePageSize,
+    offset: (pipelinePage - 1) * pipelinePageSize,
+  })
+  const { data: pipelinesData } = pipelinesQuery
   const { data: summaryBuildsData } = useBuilds(
     { project_id: projectId, limit: 20 },
     { refetchInterval: 15_000 },
@@ -144,8 +179,11 @@ function useProjectDetailPageState() {
   const canWriteProjectsGlobally = useHasPermission('projects', 'write')
   const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
-  const canWriteInstanceSettings = useHasPermission('instance_settings', 'write')
-  const projectRole = data?.current_user_role ?? data?.project.current_user_role
+  const canWriteInstanceSettings = useHasPermission(
+    'instance_settings',
+    'write',
+  )
+  const projectRole = data?.project.current_user_role
   const canWriteProjects =
     canWriteProjectsGlobally &&
     hasProjectPermission(projectRole, 'projects', 'write')
@@ -161,10 +199,11 @@ function useProjectDetailPageState() {
     canTriggerBuildGlobally &&
     hasProjectPermission(projectRole, 'builds', 'write')
   const canManageAccess = projectRole === 'maintainer'
+  const pipelineCount = search.pipelineQ
+    ? (data?.pipeline_count ?? 0)
+    : (pipelinesData?.total ?? data?.pipeline_count ?? 0)
   const shouldDiscoverWorkflows =
-    canWritePipelines &&
-    !!data?.project.repository_id &&
-    (pipelinesData?.pipelines.length ?? 0) === 0
+    canWritePipelines && !!data?.project.repository_id && pipelineCount === 0
   const repositoryWorkflowsQuery = useRepositoryWorkflows(
     projectId,
     undefined,
@@ -174,7 +213,7 @@ function useProjectDetailPageState() {
     !!data?.project.repository_id,
   )
   const preferencesQuery = useInstancePreferences({
-    enabled: !!data?.project.repository_id,
+    enabled: canWriteInstanceSettings && !!data?.project.repository_id,
   })
 
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -204,6 +243,23 @@ function useProjectDetailPageState() {
   }, [summaryBuilds])
   const buildCount = summaryBuildsData?.total ?? data?.build_count ?? 0
 
+  function updatePipelineSearch(updates: Partial<ProjectDetailSearch>) {
+    void navigate({
+      search: (previous) => ({ ...previous, ...updates }),
+      replace: true,
+    })
+  }
+
+  usePageClamp(
+    pipelinePage,
+    pipelinePageSize,
+    pipelinesData?.total,
+    (nextPage) =>
+      updatePipelineSearch({
+        pipelinePage: nextPage === 1 ? undefined : nextPage,
+      }),
+  )
+
   const activeTab: TabValue = tab ?? 'pipelines'
 
   const label = data?.project.name ?? 'Project Details'
@@ -213,7 +269,13 @@ function useProjectDetailPageState() {
   }
 
   if (error) {
-    return { status: 'error' as const, label, message: error.message }
+    return {
+      status: 'error' as const,
+      label,
+      message: error.message,
+      notFound: error instanceof ApiClientError && error.status === 404,
+      retry: projectQuery.refetch,
+    }
   }
 
   if (!data) return { status: 'missing' as const }
@@ -282,6 +344,13 @@ function useProjectDetailPageState() {
     navigate,
     openTriggerBuild,
     pipelines,
+    pipelinesQuery,
+    pipelineDirection,
+    pipelineCount,
+    pipelinePage,
+    pipelinePageSize,
+    pipelineQuery: search.pipelineQ ?? '',
+    pipelineSort,
     project,
     projectHasSource,
     projectId,
@@ -295,6 +364,7 @@ function useProjectDetailPageState() {
     sourceRepository,
     triggerBuildOpen,
     triggerPipelineId,
+    updatePipelineSearch,
   }
 }
 
@@ -318,8 +388,30 @@ function ProjectDetailPage() {
         <PageMeta title={pageState.label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load project: {pageState.message}
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {pageState.notFound
+                ? 'This project was not found or is no longer available.'
+                : `Failed to load project: ${pageState.message}`}
+            </span>
+            <span className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link to="/projects" />}
+              >
+                Back to projects
+              </Button>
+              {!pageState.notFound ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void pageState.retry()}
+                >
+                  Retry
+                </Button>
+              ) : null}
+            </span>
           </AlertDescription>
         </Alert>
       </PageLayout>
@@ -346,6 +438,13 @@ function ProjectDetailPage() {
     navigate,
     openTriggerBuild,
     pipelines,
+    pipelinesQuery,
+    pipelineDirection,
+    pipelineCount,
+    pipelinePage,
+    pipelinePageSize,
+    pipelineQuery,
+    pipelineSort,
     project,
     projectHasSource,
     projectId,
@@ -359,6 +458,7 @@ function ProjectDetailPage() {
     sourceRepository,
     triggerBuildOpen,
     triggerPipelineId,
+    updatePipelineSearch,
   } = pageState
 
   function preloadProjectSettings() {
@@ -399,7 +499,7 @@ function ProjectDetailPage() {
               {canTriggerBuild ? (
                 <span
                   title={
-                    pipelines.length === 0
+                    pipelineCount === 0
                       ? 'Add a pipeline first before running builds'
                       : !projectHasSource
                         ? 'Connect a source repository first'
@@ -410,7 +510,7 @@ function ProjectDetailPage() {
                     onMouseEnter={() => void loadTriggerBuildDialog()}
                     onFocus={() => void loadTriggerBuildDialog()}
                     onClick={() => openTriggerBuild()}
-                    disabled={pipelines.length === 0 || !projectHasSource}
+                    disabled={pipelineCount === 0 || !projectHasSource}
                   >
                     <HugeiconsIcon icon={PlayIcon} />
                     Run build
@@ -435,7 +535,19 @@ function ProjectDetailPage() {
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             This project has no linked source repository. Link a repository
-            before triggering builds.
+            before triggering builds.{' '}
+            {canWriteProjects ? (
+              <Link
+                to="/projects/$projectId"
+                params={{ projectId }}
+                search={{ tab: 'settings' }}
+                className="font-medium underline underline-offset-4"
+              >
+                Open project settings
+              </Link>
+            ) : (
+              'Ask a project maintainer to relink it.'
+            )}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -451,10 +563,10 @@ function ProjectDetailPage() {
                   <>
                     {' in '}
                     <Link
-                      to="/settings/preferences"
+                      to="/settings/runners"
                       className="font-medium underline underline-offset-4"
                     >
-                      Preferences
+                      Runners
                     </Link>
                   </>
                 ) : null}
@@ -462,14 +574,16 @@ function ProjectDetailPage() {
               </>
             ) : runnerPolicyBlockReason === 'repository_not_approved' ? (
               <>
-                This repository is not approved for Direct runner builds.
-                Builds will remain queued until an owner or admin approves it
+                This repository is not approved for Direct runner builds. Builds
+                will remain queued until an owner or admin approves it
                 {sourceRepository ? (
                   <>
                     {' in '}
                     <Link
                       to="/settings/integrations/$integrationId"
-                      params={{ integrationId: sourceRepository.integration_id }}
+                      params={{
+                        integrationId: sourceRepository.integration_id,
+                      }}
                       className="font-medium underline underline-offset-4"
                     >
                       Sources
@@ -498,7 +612,8 @@ function ProjectDetailPage() {
       <Tabs value={activeTab} onValueChange={(val) => setTab(val as TabValue)}>
         <TabsList variant="line">
           <TabsTrigger value="pipelines">
-            Pipelines{pipelines.length > 0 ? ` (${pipelines.length})` : ''}
+            Pipelines
+            {pipelineCount > 0 ? ` (${pipelineCount})` : ''}
           </TabsTrigger>
           <TabsTrigger value="builds">
             Builds{buildCount > 0 ? ` (${buildCount})` : ''}
@@ -525,8 +640,46 @@ function ProjectDetailPage() {
           onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
           onTriggerBuild={openTriggerBuild}
           pipelines={pipelines}
+          direction={pipelineDirection}
+          error={pipelinesQuery.error?.message}
+          isLoading={pipelinesQuery.isLoading}
+          onDirectionChange={(direction) =>
+            updatePipelineSearch({
+              pipelineDirection: direction === 'desc' ? undefined : direction,
+              pipelinePage: undefined,
+            })
+          }
+          onPageChange={(page) =>
+            updatePipelineSearch({
+              pipelinePage: page === 1 ? undefined : page,
+            })
+          }
+          onPageSizeChange={(pageSize) =>
+            updatePipelineSearch({
+              pipelinePage: undefined,
+              pipelinePageSize: pageSize === 20 ? undefined : pageSize,
+            })
+          }
+          onQueryChange={(query) =>
+            updatePipelineSearch({
+              pipelineQ: query.trim() || undefined,
+              pipelinePage: undefined,
+            })
+          }
+          onRetry={() => void pipelinesQuery.refetch()}
+          onSortChange={(sort) =>
+            updatePipelineSearch({
+              pipelineSort: sort === 'created_at' ? undefined : sort,
+              pipelinePage: undefined,
+            })
+          }
+          page={pipelinePage}
+          pageSize={pipelinePageSize}
           projectHasSource={projectHasSource}
           projectId={projectId}
+          query={pipelineQuery}
+          sort={pipelineSort}
+          total={pipelinesQuery.data?.total ?? 0}
           workflowDiscoveryFailed={!!repositoryWorkflowsQuery.error}
           workflowDiscoveryLoading={repositoryWorkflowsQuery.isLoading}
         />
@@ -538,7 +691,7 @@ function ProjectDetailPage() {
               canTriggerBuild={canTriggerBuild}
               onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}
               onTriggerBuild={() => openTriggerBuild()}
-              pipelineCount={pipelines.length}
+              pipelineCount={pipelineCount}
               projectHasSource={projectHasSource}
               projectId={projectId}
             />
@@ -560,6 +713,8 @@ function ProjectDetailPage() {
                       name: project.name,
                       description: project.description,
                       default_branch: project.default_branch,
+                      repository_id: project.repository_id,
+                      repository_full_name: project.repository_full_name,
                     }}
                   />
                 ) : (

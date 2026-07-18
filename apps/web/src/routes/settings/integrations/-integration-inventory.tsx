@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+  Cancel01Icon,
   GitBranchIcon,
   InformationCircleIcon,
   MoreHorizontalCircle01Icon,
   Refresh01Icon,
   Search01Icon,
+  Tick02Icon,
 } from '@hugeicons/core-free-icons'
 
 import RepositoryAvatar from '@/components/repository-avatar'
@@ -102,44 +106,30 @@ function RepositoryIdentity({
 }
 
 function RepositoryRunnerPolicy({
-  canWrite,
-  onChange,
-  pending,
   repository,
 }: {
-  canWrite: boolean
-  onChange: () => void
-  pending: boolean
   repository: IntegrationRepository
 }) {
   const allowed = repository.allow_direct_macos_runner
   return (
-    <div className="flex items-center justify-end gap-2">
-      <Badge variant={allowed ? 'success' : 'outline'}>
-        {allowed ? 'Allowed' : 'Blocked'}
-      </Badge>
-      {canWrite ? (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={pending}
-          className="min-h-11 sm:min-h-8"
-          onClick={onChange}
-        >
-          {pending ? 'Saving...' : allowed ? 'Block' : 'Allow'}
-        </Button>
-      ) : null}
-    </div>
+    <Badge variant={allowed ? 'success' : 'outline'}>
+      {allowed ? 'Allowed' : 'Blocked'}
+    </Badge>
   )
 }
 
-function RepositoryWebhookAction({
-  onSelect,
+function RepositoryActions({
+  onPolicySelect,
+  onWebhookSelect,
+  pending,
   repository,
 }: {
-  onSelect: () => void
+  onPolicySelect: () => void
+  onWebhookSelect?: () => void
+  pending: boolean
   repository: IntegrationRepository
 }) {
+  const allowed = repository.allow_direct_macos_runner
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -147,17 +137,27 @@ function RepositoryWebhookAction({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={`Webhook actions for ${repository.full_name}`}
+            aria-label={`Actions for ${repository.full_name}`}
           />
         }
       >
         <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
-        <DropdownMenuItem onClick={onSelect}>
-          <HugeiconsIcon icon={Refresh01Icon} />
-          Create webhook token
+        <DropdownMenuItem onClick={onPolicySelect} disabled={pending}>
+          <HugeiconsIcon icon={allowed ? Cancel01Icon : Tick02Icon} />
+          {pending
+            ? 'Saving runner access...'
+            : allowed
+              ? 'Block new builds'
+              : 'Allow builds'}
         </DropdownMenuItem>
+        {onWebhookSelect ? (
+          <DropdownMenuItem onClick={onWebhookSelect}>
+            <HugeiconsIcon icon={Refresh01Icon} />
+            Create webhook token
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -178,8 +178,11 @@ function RepositoryRows({
   pendingRepositoryId?: string
   repositories: Array<IntegrationRepository>
 }) {
-  const showWebhookActions =
-    integration.provider === 'gitlab' && canWrite && !!onWebhookSelect
+  const showActions = canWrite
+  const webhookAction =
+    integration.provider === 'gitlab' && onWebhookSelect
+      ? onWebhookSelect
+      : undefined
   return (
     <>
       <div className="divide-y sm:hidden">
@@ -190,10 +193,14 @@ function RepositoryRows({
                 integration={integration}
                 repository={repository}
               />
-              {showWebhookActions ? (
-                <RepositoryWebhookAction
+              {showActions ? (
+                <RepositoryActions
                   repository={repository}
-                  onSelect={() => onWebhookSelect(repository)}
+                  pending={pendingRepositoryId === repository.id}
+                  onPolicySelect={() => onPolicySelect(repository)}
+                  onWebhookSelect={
+                    webhookAction ? () => webhookAction(repository) : undefined
+                  }
                 />
               ) : null}
             </div>
@@ -205,12 +212,9 @@ function RepositoryRows({
                 {repository.is_private ? 'Private' : 'Public'}
               </Badge>
             </div>
-            <RepositoryRunnerPolicy
-              canWrite={canWrite}
-              onChange={() => onPolicySelect(repository)}
-              pending={pendingRepositoryId === repository.id}
-              repository={repository}
-            />
+            <div className="flex items-center justify-end">
+              <RepositoryRunnerPolicy repository={repository} />
+            </div>
           </article>
         ))}
       </div>
@@ -223,9 +227,9 @@ function RepositoryRows({
               <TableHead>Default branch</TableHead>
               <TableHead className="hidden lg:table-cell">Visibility</TableHead>
               <TableHead className="text-right">Direct runner</TableHead>
-              {showWebhookActions ? (
+              {showActions ? (
                 <TableHead className="w-10">
-                  <span className="sr-only">Webhook actions</span>
+                  <span className="sr-only">Actions</span>
                 </TableHead>
               ) : null}
             </TableRow>
@@ -250,18 +254,21 @@ function RepositoryRows({
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <RepositoryRunnerPolicy
-                    canWrite={canWrite}
-                    onChange={() => onPolicySelect(repository)}
-                    pending={pendingRepositoryId === repository.id}
-                    repository={repository}
-                  />
+                  <div className="flex justify-end">
+                    <RepositoryRunnerPolicy repository={repository} />
+                  </div>
                 </TableCell>
-                {showWebhookActions ? (
+                {showActions ? (
                   <TableCell>
-                    <RepositoryWebhookAction
+                    <RepositoryActions
                       repository={repository}
-                      onSelect={() => onWebhookSelect(repository)}
+                      pending={pendingRepositoryId === repository.id}
+                      onPolicySelect={() => onPolicySelect(repository)}
+                      onWebhookSelect={
+                        webhookAction
+                          ? () => webhookAction(repository)
+                          : undefined
+                      }
                     />
                   </TableCell>
                 ) : null}
@@ -271,6 +278,69 @@ function RepositoryRows({
         </Table>
       </div>
     </>
+  )
+}
+
+function RepositoryPagination({
+  onPageChange,
+  onPageSizeChange,
+  page,
+  pageSize,
+  total,
+}: {
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
+  page: number
+  pageSize: number
+  total: number
+}) {
+  if (pageSize !== 10) {
+    return (
+      <CollectionPagination
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    )
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1
+  const end = Math.min(page * pageSize, total)
+
+  return (
+    <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-muted-foreground" aria-live="polite">
+        Showing {start}-{end} of {total} repositories
+      </p>
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          <HugeiconsIcon icon={ArrowLeft01Icon} aria-hidden />
+          Previous
+        </Button>
+        <span className="min-w-20 text-center text-xs text-muted-foreground">
+          Page {page} of {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+          <HugeiconsIcon icon={ArrowRight01Icon} aria-hidden />
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -349,8 +419,7 @@ export function IntegrationRepositoryInventory({
   return (
     <section aria-label="Repository access" className="min-w-0 space-y-4">
       <p className="text-sm text-muted-foreground">
-        Only allowed repositories can run builds on this Mac. Leaving the rest
-        blocked is expected.
+        Runner access is granted per repository. Blocked is the safe default.
       </p>
 
       {showControls ? (
@@ -449,7 +518,7 @@ export function IntegrationRepositoryInventory({
       ) : null}
 
       {showPagination ? (
-        <CollectionPagination
+        <RepositoryPagination
           page={page}
           pageSize={pageSize}
           total={total}
@@ -468,8 +537,8 @@ export function IntegrationRepositoryInventory({
           <AlertDialogHeader>
             <AlertDialogTitle>
               {policyTarget?.allow_direct_macos_runner
-                ? 'Block new builds?'
-                : 'Allow builds on this Mac?'}
+                ? `Block ${policyTarget.full_name}?`
+                : `Allow ${policyTarget?.full_name ?? 'this repository'}?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {policyTarget?.allow_direct_macos_runner
@@ -482,7 +551,7 @@ export function IntegrationRepositoryInventory({
             <AlertDialogAction onClick={updateRunnerPolicy}>
               {policyTarget?.allow_direct_macos_runner
                 ? 'Block new builds'
-                : 'Allow builds'}
+                : 'Allow this repository'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

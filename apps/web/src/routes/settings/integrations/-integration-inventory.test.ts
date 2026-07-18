@@ -41,6 +41,18 @@ describe('integration repository inventory', () => {
     expect(secondPage[0]?.full_name).toBe('group/repository-21')
   })
 
+  it('uses compact ten-row pages without dropping repositories', () => {
+    const filtered = filterIntegrationRepositories(
+      repositories,
+      undefined,
+      'all',
+    )
+
+    expect(paginateIntegrationRepositories(filtered, 1, 10)).toHaveLength(10)
+    expect(paginateIntegrationRepositories(filtered, 3, 10)).toHaveLength(10)
+    expect(paginateIntegrationRepositories(filtered, 4, 10)).toHaveLength(1)
+  })
+
   it('combines search and runner access filters', () => {
     expect(
       filterIntegrationRepositories(

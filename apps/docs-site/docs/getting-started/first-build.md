@@ -13,7 +13,7 @@ This tutorial walks you through creating a project, configuring a pipeline, and 
 - A [GitHub](/getting-started/connect-github) or GitLab integration connected
 - A Flutter project repository accessible through your integration
 - A registered Direct macOS runner running as a separate login-session service
-- Direct runner execution enabled in **Settings > Preferences** and the repository approved in **Settings > Sources**
+- Direct runner execution enabled in **Settings > Runners** and the repository approved in **Settings > Sources**
 
 ## 1. Create a project
 
@@ -126,7 +126,7 @@ For the full state machine, see [Build States](/reference/build-states).
 
 ### Build stuck in "queued"
 
-- Read the waiting reason on the build page. Enable Direct runner execution in **Settings > Preferences** or approve the repository in **Settings > Sources** when prompted.
+- Read the waiting reason on the build page. Enable Direct runner execution in **Settings > Runners** or approve the repository in **Settings > Sources** when prompted.
 - Check **Settings > Runners** for an active runner.
 - For a foreground diagnostic run, start it with `oore runner start`. Normal installations should use `oore runner install-service`.
 

@@ -9,7 +9,7 @@ export function GitLabVerificationStep({
   return (
     <section className="space-y-3 border-t border-border/60 pt-6">
       <div>
-        <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           3. Verify source connection
         </p>
         <p className="mt-1 text-sm text-muted-foreground">

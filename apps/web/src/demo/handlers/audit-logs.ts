@@ -1,5 +1,5 @@
 import { HttpResponse, delay, http } from 'msw'
-import { demoAuditLogs } from '../data/audit-logs'
+import { demoState } from '../state'
 
 export const auditLogHandlers = [
   http.get('/v1/audit-logs', async ({ request }) => {
@@ -14,7 +14,7 @@ export const auditLogHandlers = [
     const fromTs = url.searchParams.get('from_ts')
     const toTs = url.searchParams.get('to_ts')
 
-    let filtered = [...demoAuditLogs]
+    let filtered = [...demoState.auditLogs]
 
     if (actorId) {
       filtered = filtered.filter((e) => e.actor_id === actorId)
@@ -39,7 +39,7 @@ export const auditLogHandlers = [
     const sort = url.searchParams.get('sort')
     const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
     filtered.sort((left, right) => {
-      const value = (entry: (typeof demoAuditLogs)[number]) => {
+      const value = (entry: (typeof demoState.auditLogs)[number]) => {
         if (sort === 'actor_email')
           return entry.actor_email?.toLowerCase() ?? ''
         if (sort === 'action') return entry.action.toLowerCase()

@@ -38,7 +38,7 @@ export default function ExternalAccessNetworkDialog({
     <Dialog open={networkEditorOpen} onOpenChange={setNetworkEditorOpen}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>External Access Network Settings</DialogTitle>
+          <DialogTitle>External Access network settings</DialogTitle>
           <DialogDescription>
             Configure the public endpoint and allowed frontend origins.
           </DialogDescription>

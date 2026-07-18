@@ -119,7 +119,7 @@ function parseSearch(search: Record<string, unknown>): AuditLogSearch {
 }
 
 export const Route = createFileRoute('/settings/audit-log')({
-  staticData: { breadcrumbLabel: 'Audit Log' },
+  staticData: { breadcrumbLabel: 'Audit log' },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -153,7 +153,7 @@ function AuditDateRangePicker({
     fromDate || toDate ? { from: fromDate, to: toDate } : undefined
   const label = fromDate
     ? toDate
-      ? `${format(fromDate, 'MMM d, yyyy')} – ${format(toDate, 'MMM d, yyyy')}`
+      ? `${format(fromDate, 'MMM d, yyyy')} to ${format(toDate, 'MMM d, yyyy')}`
       : `From ${format(fromDate, 'MMM d, yyyy')}`
     : toDate
       ? `Through ${format(toDate, 'MMM d, yyyy')}`
@@ -258,9 +258,9 @@ function AuditLogPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Audit Log" noindex />
+      <PageMeta title="Audit log" noindex />
       <PageHeader
-        title="Audit Log"
+        title="Audit log"
         description="Activity trail of user and system actions for compliance and security auditing."
       />
 

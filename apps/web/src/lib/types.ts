@@ -761,7 +761,6 @@ export interface Project {
   created_by: string
   created_at: number
   updated_at: number
-  current_user_role?: ProjectRole
 }
 
 export interface CreateProjectRequest {
@@ -779,23 +778,32 @@ export interface UpdateProjectRequest {
   default_branch?: string
 }
 
+export type ProjectRole = 'maintainer' | 'developer' | 'viewer'
+
+export interface AuthorizedProject extends Project {
+  current_user_role: ProjectRole
+}
+
 export interface CreateProjectResponse {
-  project: Project
+  project: AuthorizedProject
 }
 
 export interface ProjectDetailResponse {
-  project: Project
+  project: AuthorizedProject
   pipeline_count: number
   build_count: number
-  current_user_role?: ProjectRole
+  current_user_role: ProjectRole
 }
 
-export interface ListProjectsResponse {
-  projects: Array<Project>
+export interface ListProjectsResponse<
+  TProject extends Project = Project,
+> {
+  projects: Array<TProject>
   total: number
 }
 
-export type ProjectRole = 'maintainer' | 'developer' | 'viewer'
+export type AuthorizedListProjectsResponse =
+  ListProjectsResponse<AuthorizedProject>
 
 export interface ProjectMember {
   id: string

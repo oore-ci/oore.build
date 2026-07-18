@@ -14,6 +14,34 @@ Rules:
 
 ## 2026-07-18
 
+- **Dynamic shadcn component styles**:
+  - Theme settings now exposes every component style currently available in shadcn Create: Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea. Vega remains the browser-local default.
+  - The shared Base UI primitives now retain shadcn's neutral `cn-*` hooks, and Oore switches one validated `style-*` class on `document.body`, matching Create's runtime style mechanism. The eight checked-in style sheets are source-identical to shadcn/ui and load on demand so inactive styles do not inflate the initial application bundle.
+  - The production budget now counts the default Vega style and its loader as initial work, so the gate measures the real first render instead of reporting a smaller static-entry-only total.
+  - Focused preference tests and rendered Chromium acceptance verify persistence, all eight body classes, the complete picker, and the distinct button density and typography produced by every style.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
+- **Personal color themes**:
+  - Settings now includes a focused Theme page with the exact Theme picker options from shadcn's Create route: Neutral, Amber, Blue, Cyan, Emerald, Fuchsia, Green, Indigo, Lime, Orange, Pink, Purple, Red, Rose, Sky, Teal, Violet, and Yellow, plus the existing light, dark, and system modes. Changes apply immediately and persist on the current browser without a save form or instance-wide policy.
+  - Oore merges shadcn's Neutral base with the selected light and dark Theme overlay, then replaces one injected `:root`/`.dark` variable sheet just as the Create route does. The initial loader, favicon, browser chrome, and sidebar emphasis now share the active primary color instead of exposing shadcn's separate sidebar accent. Radius and typography remain unchanged; Oore-only success, warning, and info colors keep their semantic meaning.
+  - Settings parent breadcrumbs now link to the Settings hub instead of rendering as inert text on child pages.
+  - Amber is the default. The preference is validated before use and applied before React renders; invalid stored values fail back to Amber, the 3.03 KiB gzip registry remains lazy, and the default shell stays at 155.41 KiB gzip.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
+- **Frontend, demo, documentation, and public-site coherence overhaul**:
+  - The signed-in product now uses one quiet technical visual and interaction system: cool-neutral surfaces, a theme-selected action accent, Inter with JetBrains Mono for machine data, sentence-case copy, compact responsive spacing, and divider-led hierarchy. `PageLayout`, `PageHeader`, collection search/sort/pagination controls, the role-aware Settings hub, and shared shadcn/Base UI primitives replace route-local header, card, and collection conventions; dark-mode tokens, Hugeicons, accessible focus, and reduced-motion behavior remain mandatory.
+  - GitHub source setup cards now shrink within the phone grid while their endpoint table scrolls locally, removing document-level horizontal overflow at 390 px.
+  - Query-backed screens now distinguish initial loading, background refresh, request errors with Retry, empty data, and filtered-empty results. Collection pages preserve useful data during safe transitions, use consistent result context and pagination, and switch to compact phone rows when column comparison is not essential.
+  - Direct runner policy remains deliberately opt-in at both the instance and repository level. Settings and Sources explain the runner account boundary without nudging operators to approve every repository, surface exact queued-build block reasons, paginate large repository inventories, and reveal GitLab webhook-token controls only for a selected project action.
+  - Local demo mode now provides representative owner, admin, developer, and QA personas plus large collections, Direct runner policy combinations, active and historical builds, missing-source, degraded, empty, and setup scenarios. This data is the source for product evaluation and future screenshots rather than one-off facsimiles.
+  - The VitePress docs now use a task-first Get started, Guides, Reference/OpenAPI, and Operations structure, load the interactive OpenAPI client only for OpenAPI routes, and point legacy hand-written API pages to the generated contract. The public site now describes the current trusted-repository Direct runner, managed updates, and alpha limits with the same restrained visual direction; obsolete React/TanStack/Tailwind/shadcn starter dependencies are removed from the docs workspace.
+  - Current Dashboard and Builds screenshots, responsive WebP derivatives, shared brand rasters, and the 1200x630 social image now come from the final Owner/operating demo. Rendered Chromium acceptance covered Owner, Admin, Developer, and QA personas across operating, blocked, degraded, empty, and setup scenarios at desktop and phone widths in both themes. All automated validation stages pass, including 274 web tests, demo/docs/site tests, the Rust workspace, strict Clippy, production builds, every bundle profile, and the configured Chromium/WebKit/Firefox Playwright matrix. Physical Safari remains release evidence rather than an automated claim.
+  - Linear was unavailable during this pass. These canonical documents require manual synchronization; no remote update is implied by this ledger entry:
+    - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+    - Product Trust: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+    - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
+    - V1 Roadmap: https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+
 - **Source trust controls at repository scale**:
   - Source details now open on one searchable, runner-state-filtered repository inventory with 20/50/100 pagination. Accounts and connection metadata live in separate tabs, while sync and provider actions stay in the page header.
   - Direct runner access uses neutral Allowed/Blocked controls and states that leaving repositories blocked is expected. The global trust notice is acknowledged once per user and instance; it no longer treats approval of every discovered repository as setup completion.

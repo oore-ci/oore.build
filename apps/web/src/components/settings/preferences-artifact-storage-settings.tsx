@@ -1,9 +1,8 @@
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Folder02Icon } from '@hugeicons/core-free-icons'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { ArtifactStoragePageState } from '@/components/settings/use-artifact-storage-page-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Form,
   FormControl,
@@ -28,7 +27,7 @@ import { ArtifactObjectStorageFields } from '@/components/settings/preferences-a
 export function ArtifactStorageSettings({
   state,
 }: {
-  state: PreferencesPageState
+  state: ArtifactStoragePageState
 }) {
   const {
     backendKind,
@@ -37,38 +36,64 @@ export function ArtifactStorageSettings({
     onSubmitStorage,
     preloadArtifactFolderPicker,
     setArtifactDirPickerOpen,
+    settings,
     settingsQuery,
     storageForm,
     updateStorageMutation,
   } = state
   return (
-    <>
+    <section aria-label="Artifact storage configuration" className="space-y-4">
       {settingsQuery.isLoading ? (
-        <Card>
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
+        <div className="space-y-3 border bg-card p-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
       ) : null}
 
       {settingsQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load artifact settings: {settingsQuery.error.message}
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load artifact settings: {settingsQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void settingsQuery.refetch()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
-      {!settingsQuery.isLoading && !settingsQuery.error ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Artifact Storage
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+      {!settingsQuery.isLoading && !settingsQuery.error && !settings ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>The response did not include artifact storage settings.</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void settingsQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {!settingsQuery.isLoading && !settingsQuery.error && settings ? (
+        <div className="border bg-card">
+          <div className="border-b px-4 py-3">
+            <h2 className="text-sm font-semibold">Storage provider</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Files remain unavailable when storage is disabled.
+            </p>
+          </div>
+          <div className="space-y-4 p-4">
             {!canWrite ? (
               <Alert>
                 <AlertDescription>
@@ -150,8 +175,8 @@ export function ArtifactStorageSettings({
                                 type="button"
                                 variant="outline"
                                 size="icon"
-                                aria-label="Browse"
-                                title="Browse"
+                                aria-label="Browse local base directory"
+                                title="Browse local base directory"
                                 onMouseEnter={() =>
                                   void preloadArtifactFolderPicker()
                                 }
@@ -208,9 +233,9 @@ export function ArtifactStorageSettings({
                 </div>
               </form>
             </Form>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       ) : null}
-    </>
+    </section>
   )
 }

@@ -1,6 +1,9 @@
+import { lazy, Suspense, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { MoreHorizontalCircle01Icon } from '@hugeicons/core-free-icons'
 
-import type { Project } from '@/lib/types'
+import type { AuthorizedProject, Project } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
 import {
   CollectionPagination,
@@ -8,6 +11,7 @@ import {
 } from '@/components/collection-controls'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
 import {
   Table,
   TableBody,
@@ -19,6 +23,9 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 
 export type ProjectSort = 'created_at' | 'updated_at' | 'name'
+
+const loadProjectActionsMenu = () => import('./-project-actions-menu')
+const ProjectActionsMenu = lazy(loadProjectActionsMenu)
 
 function ProjectIdentity({ project }: { project: Project }) {
   return (
@@ -47,7 +54,49 @@ function ProjectIdentity({ project }: { project: Project }) {
   )
 }
 
+function ProjectActionsControl({
+  canManage,
+  project,
+}: {
+  canManage: boolean
+  project: Project
+}) {
+  const [requested, setRequested] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  const trigger = (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={`Actions for ${project.name}`}
+      title="Project actions"
+      onMouseEnter={() => void loadProjectActionsMenu()}
+      onFocus={() => void loadProjectActionsMenu()}
+      onClick={() => {
+        setRequested(true)
+        setOpen(true)
+      }}
+    >
+      <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+    </Button>
+  )
+
+  if (!requested) return trigger
+
+  return (
+    <Suspense fallback={trigger}>
+      <ProjectActionsMenu
+        canManage={canManage}
+        open={open}
+        onOpenChange={setOpen}
+        project={project}
+      />
+    </Suspense>
+  )
+}
+
 export function ProjectInventory({
+  canManageProject,
   direction,
   isLoading,
   onPageChange,
@@ -59,6 +108,7 @@ export function ProjectInventory({
   sort,
   total,
 }: {
+  canManageProject: (project: AuthorizedProject) => boolean
   direction: SortDirection
   isLoading: boolean
   onPageChange: (page: number) => void
@@ -66,7 +116,7 @@ export function ProjectInventory({
   onSortChange: (sort: ProjectSort, direction: SortDirection) => void
   page: number
   pageSize: number
-  projects: Array<Project>
+  projects: Array<AuthorizedProject>
   sort: ProjectSort
   total: number
 }) {
@@ -82,7 +132,13 @@ export function ProjectInventory({
             ))
           : projects.map((project) => (
               <div key={project.id} className="space-y-2 py-4">
-                <ProjectIdentity project={project} />
+                <div className="flex items-start justify-between gap-3">
+                  <ProjectIdentity project={project} />
+                  <ProjectActionsControl
+                    canManage={canManageProject(project)}
+                    project={project}
+                  />
+                </div>
                 <div className="flex items-center justify-between gap-4 pl-11 text-xs text-muted-foreground">
                   <span className="truncate font-mono">
                     {project.default_branch ?? 'Branch not set'}
@@ -119,6 +175,9 @@ export function ProjectInventory({
               >
                 Updated
               </SortableTableHead>
+              <TableHead className="w-10">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -137,6 +196,9 @@ export function ProjectInventory({
                     <TableCell>
                       <Skeleton className="h-4 w-20" />
                     </TableCell>
+                    <TableCell>
+                      <Skeleton className="size-8" />
+                    </TableCell>
                   </TableRow>
                 ))
               : projects.map((project) => (
@@ -152,6 +214,12 @@ export function ProjectInventory({
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {relativeTime(project.updated_at)}
+                    </TableCell>
+                    <TableCell>
+                      <ProjectActionsControl
+                        canManage={canManageProject(project)}
+                        project={project}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}

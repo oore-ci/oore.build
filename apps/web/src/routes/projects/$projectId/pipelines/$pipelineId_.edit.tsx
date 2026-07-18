@@ -281,7 +281,7 @@ function useEditPipelinePageState() {
         })
       }
       toast.success(retrySigning ? 'Signing updated' : 'Pipeline updated')
-      void navigate({
+      await navigate({
         to: '/projects/$projectId/pipelines/$pipelineId',
         params: { projectId, pipelineId },
       })

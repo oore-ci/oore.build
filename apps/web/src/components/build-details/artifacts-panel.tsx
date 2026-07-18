@@ -196,7 +196,7 @@ export function ArtifactsPanel({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <HugeiconsIcon icon={File01Icon} size={14} />
           Artifacts
           {artifacts.length > 0 ? (

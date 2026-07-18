@@ -28,16 +28,15 @@ Treat those as the source of truth.
 - Use Bun as package manager/runtime for frontend toolchain.
 - Use TanStack Query for server state and Zustand for UI-local state.
 - Use shadcn with Base UI primitives (not Radix).
-- Keep `apps/web` and `apps/docs-site` aligned on shared shadcn constraints:
-- `style: base-vega`
+- Keep `apps/web` aligned with its checked-in shadcn registry configuration. Vega is the generator and runtime default; installed primitives must retain the neutral `cn-*` hooks required by the runtime style registry.
+- Supported browser-local component styles mirror shadcn Create exactly: Vega, Nova, Maia, Lyra, Mira, Luma, Sera, and Rhea.
 - `iconLibrary: hugeicons`
-- `theme: amber`
 - `baseColor: neutral`
 - `menuAccent: subtle`
 - `menuColor: default`
-- `radius: none`
-- `font: inter`
+- Use shadcn Create's Neutral base plus its exact Theme picker values for browser-local color themes. Amber is Oore's default; square corners, Inter for UI text, and JetBrains Mono for machine data remain product choices.
 - Docs framework is VitePress under `apps/docs-site/docs`.
+- The public site is a static Vite application under `apps/site`; neither the docs site nor the public site should carry the React/shadcn application scaffold.
 
 ## Frontend Design System (Mandatory)
 
@@ -47,8 +46,14 @@ Treat those as the source of truth.
 - Use Hugeicons for all icons. No inline SVG icons.
 - Use shadcn Form component with react-hook-form + zod for all forms.
 - Use Skeleton/Spinner for loading states, Toast for transient feedback, Alert for persistent feedback.
-- All colors must use the token system from `styles.css`. No hard-coded Tailwind color classes.
+- Static colors must use the token system from `styles.css`. Runtime theme values live in `lib/color-theme.ts`, mirror shadcn Create, and are applied through one injected `:root`/`.dark` variable sheet. No hard-coded Tailwind color classes.
+- Runtime component styles use the source-identical shadcn style sheets in `styles/shadcn`, neutral `cn-*` hooks in shared primitives, and exactly one managed `style-*` class on `document.body`. Do not bake a single style's geometry back into shared primitives.
+- Browser-local themes may change shadcn surface, action, focus, chart, and sidebar tokens. Sidebar emphasis aliases to the app primary so one selected theme never produces two competing accent colors. Oore-only success, warning, and info tokens keep their semantic meaning.
 - Support dark mode using token-based styling only.
+- Use sentence case. Prefer compact type, dividers, and whitespace over decorative card stacks or uppercase tracking.
+- Use the shared `PageLayout`, `PageHeader`, collection controls, and Settings navigation contracts documented in `DESIGN.md`.
+- Query-backed screens must distinguish initial loading, refresh, empty, filtered-empty, and error states; never present a failed request as an empty collection.
+- Motion must be short and functional, respect reduced-motion preferences, and never become the primary source of hierarchy.
 
 ## Documentation and Governance Rules
 

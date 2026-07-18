@@ -76,7 +76,7 @@ When the daemon binds a specific NetBird address, it also opens the same port on
 
 After backend setup, register the Mac once with `oore runner register`, then run
 `oore runner install-service` in the macOS account that will execute builds. In
-the web UI, enable Direct runner execution in **Settings > Preferences** and
+the web UI, enable Direct runner execution in **Settings > Runners** and
 approve each source in **Settings > Sources**. A dedicated non-admin account is
 recommended hardening, but Direct mode is not hostile-code isolation.
 

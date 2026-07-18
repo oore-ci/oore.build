@@ -359,7 +359,7 @@ function UsersSettingsPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="User Management" noindex />
+      <PageMeta title="Users" noindex />
       <PageHeader
         title="Users"
         description="Manage instance roles and assign project access from each project’s Settings tab."

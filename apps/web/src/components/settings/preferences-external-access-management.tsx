@@ -2,6 +2,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export function ExternalAccessManagement({
   state,
@@ -12,6 +13,7 @@ export function ExternalAccessManagement({
     isOwner,
     networkSettings,
     networkSettingsQuery,
+    oidcConfigQuery,
     preloadExternalAccessNetworkDialog,
     preloadOidcSettingsDialog,
     preloadTrustedProxySettingsDialog,
@@ -20,12 +22,15 @@ export function ExternalAccessManagement({
     setOidcDialogOpen,
     setTrustedProxyDialogOpen,
     trustedProxySettings,
+    trustedProxyQuery,
   } = state
+  const identityQuery =
+    remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <h3 className="text-sm font-medium text-muted-foreground">
         Manage External Access
-      </p>
+      </h3>
       <div className="grid gap-1 md:grid-cols-2">
         <Button
           type="button"
@@ -33,7 +38,11 @@ export function ExternalAccessManagement({
           onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
           onFocus={() => void preloadExternalAccessNetworkDialog()}
           onClick={() => setNetworkEditorOpen(true)}
-          disabled={!isOwner || networkSettingsQuery.isLoading}
+          disabled={
+            !isOwner ||
+            networkSettingsQuery.isLoading ||
+            !!networkSettingsQuery.error
+          }
           className="group h-auto w-full justify-start whitespace-normal px-0 py-2 text-left"
         >
           <span className="min-w-0 flex-1">
@@ -67,7 +76,9 @@ export function ExternalAccessManagement({
               ? setTrustedProxyDialogOpen(true)
               : setOidcDialogOpen(true)
           }
-          disabled={!isOwner}
+          disabled={
+            !isOwner || identityQuery.isLoading || !!identityQuery.error
+          }
           className="group h-auto w-full justify-start whitespace-normal px-0 py-2 text-left"
         >
           <span className="min-w-0 flex-1">
@@ -89,6 +100,41 @@ export function ExternalAccessManagement({
           </span>
         </Button>
       </div>
+      {networkSettingsQuery.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load network settings:{' '}
+              {networkSettingsQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void networkSettingsQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {identityQuery.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load identity settings: {identityQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void identityQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
     </div>
   )
 }

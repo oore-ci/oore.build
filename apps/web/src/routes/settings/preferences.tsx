@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth-store'
 export type { PreferencesPageState } from './preferences.lazy'
 
 export const Route = createFileRoute('/settings/preferences')({
-  staticData: { breadcrumbLabel: 'Preferences' },
+  staticData: { breadcrumbLabel: 'General' },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireAuthOrRedirect(instance.id)

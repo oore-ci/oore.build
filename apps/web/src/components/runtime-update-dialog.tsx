@@ -56,7 +56,7 @@ function RuntimeUpdateCard({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
           {name}
         </CardTitle>
         <CardDescription>{release.channel} channel</CardDescription>

@@ -1,18 +1,16 @@
 import { HttpResponse, delay, http } from 'msw'
-import { demoPipelines } from '../data/pipelines'
-import { demoBuilds } from '../data/builds'
-import { demoProjects } from '../data/projects'
-import { INTEGRATION_IDS, PIPELINE_IDS, ago } from '../seed'
+import { PIPELINE_IDS, ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import {
   requireDemoInstancePermission,
   requireDemoProjectPermission,
 } from '../authorization'
+import { demoState } from '../state'
 
 function pipelineProjectId(pipelineId: string): string | null {
   return (
-    demoPipelines.find((pipeline) => pipeline.id === pipelineId)?.project_id ??
-    null
+    demoState.pipelines.find((pipeline) => pipeline.id === pipelineId)
+      ?.project_id ?? null
   )
 }
 
@@ -29,6 +27,19 @@ function requirePipelinePermission(
     )
   }
   return requireDemoProjectPermission(request, projectId, permission)
+}
+
+function invalidListQuery(message: string): Response {
+  return HttpResponse.json(
+    { error: message, code: 'invalid_input' },
+    { status: 400 },
+  )
+}
+
+function parseIntegerQuery(value: string | null): number | null {
+  if (value === null) return null
+  if (!/^-?\d+$/.test(value)) return Number.NaN
+  return Number(value)
 }
 
 const iosSigningByPipeline: Partial<Record<string, Record<string, unknown>>> = {
@@ -133,10 +144,46 @@ export const pipelineHandlers = [
         { status: 404 },
       )
     }
-    const pipelines = demoPipelines.filter(
+    const url = new URL(request.url)
+    const sort = url.searchParams.get('sort') ?? 'created_at'
+    if (sort !== 'created_at' && sort !== 'name') {
+      return invalidListQuery('sort must be created_at or name')
+    }
+    const direction = url.searchParams.get('direction') ?? 'desc'
+    if (direction !== 'asc' && direction !== 'desc') {
+      return invalidListQuery('direction must be asc or desc')
+    }
+    const requestedLimit = parseIntegerQuery(url.searchParams.get('limit'))
+    const requestedOffset = parseIntegerQuery(url.searchParams.get('offset'))
+    if (Number.isNaN(requestedLimit) || Number.isNaN(requestedOffset)) {
+      return invalidListQuery('limit and offset must be integers')
+    }
+
+    const search = url.searchParams.get('search')?.trim().toLowerCase()
+    const pipelines = demoState.pipelines.filter(
       (p) => p.project_id === params.projectId,
     )
-    return HttpResponse.json({ pipelines, total: pipelines.length })
+    const filtered = search
+      ? pipelines.filter((pipeline) =>
+          pipeline.name.toLowerCase().includes(search),
+        )
+      : pipelines
+    const directionFactor = direction === 'asc' ? 1 : -1
+    const sorted = [...filtered].sort((left, right) => {
+      const primary =
+        sort === 'name'
+          ? left.name.localeCompare(right.name, undefined, {
+              sensitivity: 'base',
+            })
+          : left.created_at - right.created_at
+      return (primary || left.id.localeCompare(right.id)) * directionFactor
+    })
+    const offset = Math.max(0, requestedOffset ?? 0)
+    const limit = Math.min(requestedLimit ?? 50, 200)
+    const page =
+      limit < 0 ? sorted.slice(offset) : sorted.slice(offset, offset + limit)
+
+    return HttpResponse.json({ pipelines: page, total: filtered.length })
   }),
 
   http.get(
@@ -145,7 +192,7 @@ export const pipelineHandlers = [
       await delay(150)
       const projectId = String(params.projectId)
       const persona = getDemoPersonaFromRequest(request)
-      const project = demoProjects.find((item) => item.id === projectId)
+      const project = demoState.projects.find((item) => item.id === projectId)
       if (!project || !getDemoProjectRole(persona, projectId)) {
         return HttpResponse.json(
           { error: 'Project not found', code: 'not_found' },
@@ -155,36 +202,23 @@ export const pipelineHandlers = [
 
       const url = new URL(request.url)
       const requestedPath = url.searchParams.get('path')
-      const workflows = demoPipelines
-        .filter(
-          (pipeline) =>
-            pipeline.project_id === projectId &&
-            (!requestedPath || pipeline.config_path === requestedPath),
-        )
-        .map((pipeline) => ({
-          path: pipeline.config_path,
-          valid: true,
-          errors: [],
-          execution: {
-            platforms: pipeline.execution_config.platforms,
-            flutter_version: pipeline.execution_config.flutter_version,
-            commands: pipeline.execution_config.commands,
-            platform_build_args:
-              pipeline.execution_config.platform_build_args ?? {},
-            platform_commands:
-              pipeline.execution_config.platform_commands ?? {},
-            env_keys:
-              pipeline.execution_config.env?.map((variable) => variable.key) ??
-              [],
-            artifact_patterns: pipeline.execution_config.artifact_patterns,
-          },
-        }))
+      const discovered = demoState.repositoryWorkflows[projectId]
+      const workflows = (discovered ?? []).filter(
+        (workflow) => !requestedPath || workflow.path === requestedPath,
+      )
+      const integrationId = Object.entries(demoState.repositories).find(
+        ([, repositories]) =>
+          repositories?.some(
+            (repository) => repository.id === project.repository_id,
+          ),
+      )?.[0]
+      const provider = demoState.integrations.find(
+        (integration) => integration.id === integrationId,
+      )?.provider
 
       return HttpResponse.json({
         project_id: projectId,
-        provider: project.repository_id?.startsWith(INTEGRATION_IDS.gitlab)
-          ? 'gitlab'
-          : 'github',
+        provider: provider === 'gitlab' ? 'gitlab' : 'github',
         reference:
           url.searchParams.get('ref') ?? project.default_branch ?? 'main',
         workflows,
@@ -196,7 +230,7 @@ export const pipelineHandlers = [
   http.get('/v1/pipelines/:pipelineId', async ({ params, request }) => {
     await delay(150)
     const persona = getDemoPersonaFromRequest(request)
-    const pipeline = demoPipelines.find((p) => p.id === params.pipelineId)
+    const pipeline = demoState.pipelines.find((p) => p.id === params.pipelineId)
     if (!pipeline || !getDemoProjectRole(persona, pipeline.project_id)) {
       return HttpResponse.json(
         { error: 'Pipeline not found', code: 'not_found' },
@@ -205,7 +239,7 @@ export const pipelineHandlers = [
     }
     return HttpResponse.json({
       pipeline,
-      build_count: demoBuilds.filter((b) => b.pipeline_id === pipeline.id)
+      build_count: demoState.builds.filter((b) => b.pipeline_id === pipeline.id)
         .length,
     })
   }),
@@ -221,18 +255,18 @@ export const pipelineHandlers = [
       )
       if (forbidden) return forbidden
       const body = (await request.json()) as Record<string, unknown>
-      return HttpResponse.json({
-        pipeline: {
-          id: `pipe-demo-new-${Date.now()}`,
-          project_id: params.projectId,
-          config_path: '.oore/pipeline.yaml',
-          config_path_explicit: false,
-          enabled: true,
-          created_at: ago(0),
-          updated_at: ago(0),
-          ...body,
-        },
-      })
+      const pipeline = {
+        id: `pipe-demo-new-${crypto.randomUUID().slice(0, 8)}`,
+        project_id: String(params.projectId),
+        config_path: '.oore/pipeline.yaml',
+        config_path_explicit: false,
+        enabled: true,
+        created_at: ago(0),
+        updated_at: ago(0),
+        ...body,
+      } as (typeof demoState.pipelines)[number]
+      demoState.pipelines.unshift(pipeline)
+      return HttpResponse.json({ pipeline })
     },
   ),
 
@@ -245,12 +279,15 @@ export const pipelineHandlers = [
     )
     if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
-    const pipeline = demoPipelines.find((p) => p.id === params.pipelineId)
-    return HttpResponse.json({
-      pipeline: pipeline
-        ? { ...pipeline, ...body, updated_at: ago(0) }
-        : { id: params.pipelineId, ...body, updated_at: ago(0) },
-    })
+    const pipeline = demoState.pipelines.find((p) => p.id === params.pipelineId)
+    if (!pipeline) {
+      return HttpResponse.json(
+        { error: 'Pipeline not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    Object.assign(pipeline, body, { updated_at: ago(0) })
+    return HttpResponse.json({ pipeline })
   }),
 
   http.delete('/v1/pipelines/:pipelineId', async ({ params, request }) => {
@@ -261,6 +298,26 @@ export const pipelineHandlers = [
       'pipelines:delete',
     )
     if (forbidden) return forbidden
+    const pipelineId = String(params.pipelineId)
+    const buildIds = new Set(
+      demoState.builds
+        .filter((build) => build.pipeline_id === pipelineId)
+        .map((build) => build.id),
+    )
+    demoState.pipelines = demoState.pipelines.filter(
+      (pipeline) => pipeline.id !== pipelineId,
+    )
+    demoState.builds = demoState.builds.filter(
+      (build) => build.pipeline_id !== pipelineId,
+    )
+    for (const buildId of buildIds) {
+      delete demoState.buildEvents[buildId]
+      delete demoState.buildLogs[buildId]
+      delete demoState.artifacts[buildId]
+    }
+    delete demoState.androidSigning[pipelineId]
+    delete demoState.iosSigning[pipelineId]
+    delete demoState.iosDevices[pipelineId]
     return new HttpResponse(null, { status: 204 })
   }),
 
@@ -273,7 +330,8 @@ export const pipelineHandlers = [
 
   http.get('/v1/pipelines/:pipelineId/android-signing', async ({ params }) => {
     await delay(150)
-    return HttpResponse.json({
+    const id = String(params.pipelineId)
+    demoState.androidSigning[id] ??= {
       pipeline_id: params.pipelineId,
       debug: {
         build_type: 'debug',
@@ -293,7 +351,8 @@ export const pipelineHandlers = [
         has_key_password: true,
         updated_at: ago(86400 * 10),
       },
-    })
+    }
+    return HttpResponse.json(demoState.androidSigning[id])
   }),
 
   http.put(
@@ -310,7 +369,8 @@ export const pipelineHandlers = [
         debug?: Record<string, unknown>
         release?: Record<string, unknown>
       }
-      return HttpResponse.json({
+      const existing = demoState.androidSigning[String(params.pipelineId)] ?? {}
+      const signing = {
         pipeline_id: params.pipelineId,
         debug: {
           build_type: 'debug',
@@ -328,17 +388,25 @@ export const pipelineHandlers = [
           has_store_password: true,
           has_key_password: true,
           updated_at: ago(0),
+          ...((existing.release as Record<string, unknown> | undefined) ?? {}),
           ...(body.release ?? {}),
         },
-      })
+      }
+      demoState.androidSigning[String(params.pipelineId)] = signing
+      return HttpResponse.json(signing)
     },
   ),
 
   http.get('/v1/pipelines/:pipelineId/ios-signing', async ({ params }) => {
     await delay(150)
     const id = params.pipelineId as string
-    const data = iosSigningByPipeline[id]
+    const data =
+      demoState.iosSigning[id] ??
+      (iosSigningByPipeline[id]
+        ? structuredClone(iosSigningByPipeline[id])
+        : undefined)
     if (data) {
+      demoState.iosSigning[id] = data
       return HttpResponse.json({ pipeline_id: id, ...data })
     }
     return HttpResponse.json({
@@ -368,14 +436,15 @@ export const pipelineHandlers = [
       )
       if (forbidden) return forbidden
       const body = (await request.json()) as Record<string, unknown>
-      const existing = iosSigningByPipeline[id] ?? {}
+      const existing =
+        demoState.iosSigning[id] ?? iosSigningByPipeline[id] ?? {}
       const merged = {
         pipeline_id: id,
         ...existing,
         ...body,
         updated_at: ago(0),
       }
-      iosSigningByPipeline[id] = merged
+      demoState.iosSigning[id] = merged
       return HttpResponse.json(merged)
     },
   ),
@@ -402,7 +471,11 @@ export const pipelineHandlers = [
     '/v1/pipelines/:pipelineId/ios-signing/devices',
     async ({ params }) => {
       await delay(150)
-      const devices = iosDevicesByPipeline[params.pipelineId as string] ?? []
+      const id = params.pipelineId as string
+      demoState.iosDevices[id] ??= structuredClone(
+        iosDevicesByPipeline[id] ?? [],
+      )
+      const devices = demoState.iosDevices[id]
       return HttpResponse.json({ devices })
     },
   ),
@@ -431,8 +504,10 @@ export const pipelineHandlers = [
         added_at: ago(0),
       }
       const id = params.pipelineId as string
-      if (!iosDevicesByPipeline[id]) iosDevicesByPipeline[id] = []
-      iosDevicesByPipeline[id].push(newDevice)
+      demoState.iosDevices[id] ??= structuredClone(
+        iosDevicesByPipeline[id] ?? [],
+      )
+      demoState.iosDevices[id].push(newDevice)
       return HttpResponse.json({
         device: newDevice,
         profile_sync_triggered: true,

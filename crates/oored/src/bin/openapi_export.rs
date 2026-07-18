@@ -1452,12 +1452,16 @@ mod paths {
     #[utoipa::path(get, path = "/v1/projects/{project_id}/pipelines", tag = "Pipelines",
         params(
             ("project_id" = String, Path, description = "Project ID"),
+            ("search" = Option<String>, Query, description = "Case-insensitive pipeline name search"),
+            ("sort" = Option<String>, Query, description = "Sort by created_at or name"),
+            ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
             ("limit" = Option<i64>, Query, description = "Page size"),
             ("offset" = Option<i64>, Query, description = "Page offset"),
         ),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Pipeline list", body = ListPipelinesResponse),
+            (status = 400, description = "Invalid sort or direction", body = ApiError),
         )
     )]
     pub(super) async fn list_pipelines() {}

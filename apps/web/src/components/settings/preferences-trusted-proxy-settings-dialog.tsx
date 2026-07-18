@@ -54,7 +54,7 @@ export default function TrustedProxySettingsDialog({
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Trusted Proxy Identity Settings</DialogTitle>
+          <DialogTitle>Trusted Proxy identity settings</DialogTitle>
           <DialogDescription>
             Configure the backend trust contract used when an upstream proxy
             provides the signed-in user email.

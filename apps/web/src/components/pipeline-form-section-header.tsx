@@ -18,7 +18,7 @@ export function PipelineFormSectionHeader({
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-2">
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
           {title}
         </CardTitle>
         {errorCount && errorCount > 0 ? (

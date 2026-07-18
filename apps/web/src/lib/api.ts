@@ -3,6 +3,7 @@ import type {
   ArtifactDownloadLinkResponse,
   ArtifactInstallLinkResponse,
   ArtifactStorageSettingsResponse,
+  AuthorizedListProjectsResponse,
   AddProjectMemberRequest,
   AddProjectMemberResponse,
   BootstrapTokenVerifyResponse,
@@ -53,7 +54,6 @@ import type {
   ListPipelinesResponse,
   ListProjectMemberCandidatesResponse,
   ListProjectMembersResponse,
-  ListProjectsResponse,
   ListRepositoriesResponse,
   ListRunnersResponse,
   ListUsersResponse,
@@ -1187,7 +1187,7 @@ export function listProjects(
     offset?: number
   },
   options?: RequestOptions,
-): Promise<ListProjectsResponse> {
+): Promise<AuthorizedListProjectsResponse> {
   const query = new URLSearchParams()
   if (params?.search) query.set('search', params.search)
   if (params?.sort) query.set('sort', params.sort)
@@ -1195,11 +1195,39 @@ export function listProjects(
   if (params?.limit) query.set('limit', String(params.limit))
   if (params?.offset) query.set('offset', String(params.offset))
   const qs = query.toString()
-  return request<ListProjectsResponse>(
+  return request<AuthorizedListProjectsResponse>(
     baseUrl,
     `/v1/projects${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(token), signal: options?.signal },
   )
+}
+
+export async function listAllProjects(
+  baseUrl: string,
+  token: string,
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'updated_at' | 'name'
+    direction?: 'asc' | 'desc'
+  },
+  options?: RequestOptions,
+): Promise<AuthorizedListProjectsResponse> {
+  const projects: AuthorizedListProjectsResponse['projects'] = []
+  let total = 0
+
+  do {
+    const page = await listProjects(
+      baseUrl,
+      token,
+      { ...params, limit: 200, offset: projects.length },
+      options,
+    )
+    projects.push(...page.projects)
+    total = page.total
+    if (page.projects.length === 0) break
+  } while (projects.length < total)
+
+  return { projects, total }
 }
 
 export function getProject(
@@ -1354,10 +1382,19 @@ export function listPipelines(
   baseUrl: string,
   token: string,
   projectId: string,
-  params?: { limit?: number; offset?: number },
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'name'
+    direction?: 'asc' | 'desc'
+    limit?: number
+    offset?: number
+  },
   options?: RequestOptions,
 ): Promise<ListPipelinesResponse> {
   const query = new URLSearchParams()
+  if (params?.search) query.set('search', params.search)
+  if (params?.sort) query.set('sort', params.sort)
+  if (params?.direction) query.set('direction', params.direction)
   if (params?.limit) query.set('limit', String(params.limit))
   if (params?.offset) query.set('offset', String(params.offset))
   const qs = query.toString()
@@ -1366,6 +1403,36 @@ export function listPipelines(
     `/v1/projects/${projectId}/pipelines${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(token), signal: options?.signal },
   )
+}
+
+export async function listAllPipelines(
+  baseUrl: string,
+  token: string,
+  projectId: string,
+  params?: {
+    search?: string
+    sort?: 'created_at' | 'name'
+    direction?: 'asc' | 'desc'
+  },
+  options?: RequestOptions,
+): Promise<ListPipelinesResponse> {
+  const pipelines: ListPipelinesResponse['pipelines'] = []
+  let total = 0
+
+  do {
+    const page = await listPipelines(
+      baseUrl,
+      token,
+      projectId,
+      { ...params, limit: 200, offset: pipelines.length },
+      options,
+    )
+    pipelines.push(...page.pipelines)
+    total = page.total
+    if (page.pipelines.length === 0) break
+  } while (pipelines.length < total)
+
+  return { pipelines, total }
 }
 
 export function discoverRepositoryWorkflows(

@@ -32,6 +32,32 @@ const modeSchema = z.object({
 
 type ModeForm = z.infer<typeof modeSchema>
 
+const MODE_COMPARISON: Array<{
+  value: ModeForm['mode']
+  label: string
+  access: string
+  identity: string
+}> = [
+  {
+    value: 'local',
+    label: 'Local Only',
+    access: 'This Mac only',
+    identity: 'Loopback login',
+  },
+  {
+    value: 'remote_oidc',
+    label: 'Remote (OIDC)',
+    access: 'Network users',
+    identity: 'Your identity provider',
+  },
+  {
+    value: 'remote_trusted',
+    label: 'Remote (Trusted Proxy)',
+    access: 'Behind your proxy',
+    identity: 'Upstream headers',
+  },
+]
+
 export const Route = createLazyFileRoute('/setup/mode')({
   component: SetupModeStep,
   errorComponent: SetupStepError,
@@ -130,7 +156,7 @@ function SetupModeStep() {
             name="mode"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Authentication mode</FormLabel>
+                <FormLabel>Access and authentication</FormLabel>
                 <FormControl>
                   <Select
                     value={field.value}
@@ -151,17 +177,46 @@ function SetupModeStep() {
                     </SelectContent>
                   </Select>
                 </FormControl>
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  {field.value === 'local'
-                    ? 'Best for solo developers. Only accessible from this machine \u2014 no external auth needed.'
-                    : field.value === 'remote_oidc'
-                      ? 'Best for teams. Users authenticate via an identity provider (Google, Okta, etc.).'
-                      : 'Best when an upstream authentication proxy handles identity.'}
-                </p>
                 <FormMessage />
               </FormItem>
             )}
           />
+
+          <div
+            role="group"
+            className="divide-y border"
+            aria-label="Mode comparison"
+          >
+            {MODE_COMPARISON.map((mode) => {
+              const selected = form.watch('mode') === mode.value
+              return (
+                <dl
+                  key={mode.value}
+                  className={`grid gap-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_1fr_1fr] sm:gap-4 ${selected ? 'bg-muted' : ''}`}
+                >
+                  <div>
+                    <dt className="sr-only">Mode</dt>
+                    <dd className="font-medium">
+                      {mode.label}
+                      {selected ? (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          Selected
+                        </span>
+                      ) : null}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Access</dt>
+                    <dd>{mode.access}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">Identity</dt>
+                    <dd>{mode.identity}</dd>
+                  </div>
+                </dl>
+              )
+            })}
+          </div>
 
           {errorMessage ? (
             <Alert variant="destructive">

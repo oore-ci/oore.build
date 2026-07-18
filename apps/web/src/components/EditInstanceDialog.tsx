@@ -94,7 +94,7 @@ export default function EditInstanceDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Edit Instance</DialogTitle>
+          <DialogTitle>Edit instance</DialogTitle>
           <DialogDescription>
             Update the details for this backend instance.
           </DialogDescription>
@@ -108,10 +108,19 @@ export default function EditInstanceDialog({
               type="text"
               placeholder="My CI Server"
               {...register('label')}
+              aria-invalid={Boolean(errors.label)}
+              aria-describedby={
+                errors.label ? 'edit-instance-label-error' : undefined
+              }
               autoFocus
             />
             {errors.label ? (
-              <p className="text-sm text-destructive">{errors.label.message}</p>
+              <p
+                id="edit-instance-label-error"
+                className="text-sm text-destructive"
+              >
+                {errors.label.message}
+              </p>
             ) : null}
           </div>
 
@@ -127,14 +136,23 @@ export default function EditInstanceDialog({
               type="text"
               placeholder="https://ci.example.com"
               {...register('url')}
+              aria-invalid={Boolean(errors.url)}
+              aria-describedby={
+                errors.url ? 'edit-instance-url-error' : undefined
+              }
             />
             {errors.url ? (
-              <p className="text-sm text-destructive">{errors.url.message}</p>
+              <p
+                id="edit-instance-url-error"
+                className="text-sm text-destructive"
+              >
+                {errors.url.message}
+              </p>
             ) : null}
           </div>
 
-          <div className="space-y-2">
-            <Label>Icon</Label>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Icon</legend>
             <div className="flex flex-wrap gap-2">
               {INSTANCE_ICONS.map((entry) => (
                 <Button
@@ -156,7 +174,7 @@ export default function EditInstanceDialog({
                 </Button>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <DialogFooter>
             <Button

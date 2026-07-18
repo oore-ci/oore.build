@@ -110,7 +110,7 @@ export default function DemoLoginForm() {
         </Form>
 
         <div className="space-y-2 border-t pt-4">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="text-xs font-medium text-muted-foreground">
             Demo accounts
           </p>
           <div className="grid grid-cols-2 gap-2">

@@ -12,6 +12,7 @@ import {
 } from '@/components/settings/preferences-utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Collapsible,
   CollapsibleContent,
@@ -32,6 +33,7 @@ export function ExternalAccessSetup({
     networkSettings,
     networkSettingsQuery,
     oidcConfig,
+    oidcConfigQuery,
     preflightQuery,
     preloadExternalAccessNetworkDialog,
     preloadOidcSettingsDialog,
@@ -47,14 +49,17 @@ export function ExternalAccessSetup({
     setupStepCount,
     setupStepsComplete,
     trustedProxySettings,
+    trustedProxyQuery,
   } = state
+  const identityQuery =
+    remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
   return (
     <>
       <div className="space-y-3 border p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Setup Steps
+            <p className="text-sm font-medium text-muted-foreground">
+              Setup steps
             </p>
             {preflightQuery.isLoading ? (
               <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
@@ -75,13 +80,18 @@ export function ExternalAccessSetup({
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          <button
+          <Button
             type="button"
+            variant="outline"
             onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
             onFocus={() => void preloadExternalAccessNetworkDialog()}
             onClick={() => setNetworkEditorOpen(true)}
-            disabled={!isOwner || networkSettingsQuery.isLoading}
-            className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={
+              !isOwner ||
+              networkSettingsQuery.isLoading ||
+              !!networkSettingsQuery.error
+            }
+            className="group h-auto w-full flex-col items-stretch justify-start whitespace-normal border-border/60 bg-card p-4 text-left hover:border-primary/40 hover:bg-primary/5"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -102,10 +112,11 @@ export function ExternalAccessSetup({
               Configure
               <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
             </p>
-          </button>
+          </Button>
 
-          <button
+          <Button
             type="button"
+            variant="outline"
             onMouseEnter={() =>
               void (remoteAuthMode === 'trusted_proxy'
                 ? preloadTrustedProxySettingsDialog()
@@ -121,8 +132,10 @@ export function ExternalAccessSetup({
                 ? setTrustedProxyDialogOpen(true)
                 : setOidcDialogOpen(true)
             }
-            disabled={!isOwner}
-            className="group w-full border border-border/60 bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={
+              !isOwner || identityQuery.isLoading || !!identityQuery.error
+            }
+            className="group h-auto w-full flex-col items-stretch justify-start whitespace-normal border-border/60 bg-card p-4 text-left hover:border-primary/40 hover:bg-primary/5"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -195,7 +208,7 @@ export function ExternalAccessSetup({
               {identityReady ? 'Reconfigure' : 'Configure'}
               <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
             </p>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -209,9 +222,37 @@ export function ExternalAccessSetup({
 
       {networkSettingsQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load network settings:{' '}
-            {networkSettingsQuery.error.message}
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load network settings:{' '}
+              {networkSettingsQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void networkSettingsQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {identityQuery.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load identity settings: {identityQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void identityQuery.refetch()}
+            >
+              Retry
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -223,7 +264,7 @@ export function ExternalAccessSetup({
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <p className="text-sm font-medium text-muted-foreground">
               Technical checks
             </p>
             {preflightQuery.isLoading ? (
@@ -255,8 +296,18 @@ export function ExternalAccessSetup({
 
         {preflightQuery.error ? (
           <Alert variant="destructive">
-            <AlertDescription>
-              Failed to run readiness checks: {preflightQuery.error.message}
+            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Failed to run readiness checks: {preflightQuery.error.message}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void preflightQuery.refetch()}
+              >
+                Retry
+              </Button>
             </AlertDescription>
           </Alert>
         ) : null}

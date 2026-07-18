@@ -6,8 +6,8 @@ export function EventTimeline({ events }: { events: Array<BuildEvent> }) {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          Event Timeline
+        <CardTitle className="text-sm font-medium text-muted-foreground">
+          Event timeline
         </CardTitle>
       </CardHeader>
       <CardContent>
