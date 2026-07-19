@@ -29,23 +29,6 @@ bun run format
 bun run lint:fix
 ```
 
-## Architecture Notes
-
-The project has two main stacks:
-
-- **Frontend:** React 19, TanStack Router (file-based routing), TanStack Query, Tailwind v4, shadcn (Base UI primitives)
-- **Backend:** Rust, Axum 0.8, Tokio, SQLite (via sqlx), OIDC auth
-
-Read `docs/README.md` for internal docs pointers and the Linear docs index:
-
-- https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
-
-## Feature Documentation
-
-Internal technical docs are Linear-first (see `docs/README.md`). Every user-facing feature needs a Linear feature doc using the template:
-
-- https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
-
 ## What We're Looking For
 
 - Bug fixes

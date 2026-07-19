@@ -38,14 +38,12 @@ jobs:
               - 'apps/docs-site/**'
               - 'docs/**'
               - 'scripts/**'
-              - 'tools/release-smoke.sh'
               - 'tools/autotag.sh'
               - '.github/workflows/**'
             rust:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'tools/release-smoke.sh'
               - 'tools/autotag.sh'
               - '.github/workflows/**'
 

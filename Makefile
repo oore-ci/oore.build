@@ -5,9 +5,8 @@
 		       format-oxc format-oxc-check fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-		       install-local validate validate-ci gen-openapi release-smoke \
+		       install-local validate gen-openapi \
 		       direct-runner-upgrade-smoke \
-		       release-local release-cut \
 		       portless-proxy portless-alias-api portless-list
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
@@ -205,15 +204,6 @@ test-rust-workspace:
 	cargo test --workspace
 
 # Release automation lives in GitHub Actions (tag -> GitHub release).
-release-local:
-	@echo "Use GitHub Actions tag pipeline to publish releases."
-	@echo "If you need a manual release, create/push a semver tag like v0.2.0."
-	@exit 1
-
-release-cut:
-	@echo "Push to alpha/beta/stable to auto-cut tags via GitHub Actions (or push a tag manually)."
-	@exit 1
-
 # ── OpenAPI Spec Generation ───────────────────────────────────────
 gen-openapi:
 	cargo run -p oored --bin openapi-export > apps/docs-site/docs/public/openapi.json
@@ -248,12 +238,6 @@ lint: format-oxc-check lint-web lint-docs lint-site fmt-rust-check
 test: test-web test-demo test-docs test-release-index test-direct-runner-upgrade-smoke test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
 validate: lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
-
-validate-ci:
-	bash tools/validate-ci.sh
-
-release-smoke:
-	bash tools/release-smoke.sh
 
 direct-runner-upgrade-smoke:
 	@test -n "$$OORE_UPGRADE_SMOKE_SESSION_TOKEN" || (echo "OORE_UPGRADE_SMOKE_SESSION_TOKEN is required"; exit 1)

@@ -15,5 +15,3 @@ Production output is written to `docs/.vitepress/dist`.
 - Theme tokens and layout adjustments: `docs/.vitepress/theme/`
 - Public guides and reference: `docs/`
 - Generated API contract: `docs/public/openapi.json`
-
-Internal architecture and product decisions remain Linear-first; see the repository `docs/README.md`.

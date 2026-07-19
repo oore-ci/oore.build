@@ -6,7 +6,6 @@ This file guides future coding sessions for `oore.build`.
 
 Before making any code or architecture change, read:
 
-- `docs/README.md` (explains Linear-first docs + pointers)
 - Docs Index (Linear): https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
 Treat those as the source of truth.
@@ -57,7 +56,7 @@ Treat those as the source of truth.
 
 ## Documentation and Governance Rules
 
-- Internal technical docs and ADRs are **Linear-first** (see `docs/README.md`).
+- Internal technical docs and ADRs are **Linear-first**.
 - Every user-facing feature MUST add/update a Linear feature doc using:
   - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
 - If code changes platform decisions or strict rules:
@@ -94,7 +93,7 @@ https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woo
 
 ## Validation Checklist (Before Handoff)
 
-- Run `make validate` (runs docs-check, build-web, build-docs, cargo-check).
+- Run `make validate`.
 
 ## V1 Roadmap
 
