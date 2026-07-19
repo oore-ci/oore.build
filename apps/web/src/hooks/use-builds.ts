@@ -86,7 +86,7 @@ export function useBuilds(
   })
 }
 
-export function isTerminalStatus(status: BuildStatus | string): boolean {
+export function isTerminalStatus(status: BuildStatus): boolean {
   return TERMINAL_STATUSES.has(status)
 }
 

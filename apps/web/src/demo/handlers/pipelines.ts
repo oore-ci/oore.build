@@ -378,7 +378,7 @@ export const pipelineHandlers = [
           has_keystore: false,
           has_store_password: false,
           has_key_password: false,
-          ...(body.debug ?? {}),
+          ...body.debug,
         },
         release: {
           build_type: 'release',
@@ -388,8 +388,8 @@ export const pipelineHandlers = [
           has_store_password: true,
           has_key_password: true,
           updated_at: ago(0),
-          ...((existing.release as Record<string, unknown> | undefined) ?? {}),
-          ...(body.release ?? {}),
+          ...(existing.release as Record<string, unknown> | undefined),
+          ...body.release,
         },
       }
       demoState.androidSigning[String(params.pipelineId)] = signing

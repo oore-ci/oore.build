@@ -12,12 +12,12 @@ export function useBuildNotification(
 ) {
   const prevStatusRef = useRef<string | undefined>(undefined)
 
-  useEffect(() => {
+  useEffect( () => {
     if (
       typeof Notification !== 'undefined' &&
       Notification.permission === 'default'
     ) {
-      Notification.requestPermission()
+      void Notification.requestPermission()
     }
     return () => {
       document.title = 'Oore CI'

@@ -20,7 +20,7 @@ describe('useDebouncedCallback', () => {
     })
     expect(callback).not.toHaveBeenCalled()
 
-    act(() => vi.advanceTimersByTime(1))
+    void act(() => vi.advanceTimersByTime(1))
     expect(callback).toHaveBeenCalledOnce()
     expect(callback).toHaveBeenCalledWith('second')
   })

@@ -385,7 +385,7 @@ export type RunnerStatus = 'online' | 'offline' | 'busy' | 'draining'
 export interface Runner {
   id: string
   name: string
-  status: RunnerStatus | string
+  status: RunnerStatus
   capabilities: Record<string, unknown>
   last_heartbeat_at?: number
   registered_by?: string
