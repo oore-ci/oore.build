@@ -182,7 +182,9 @@ export const projectHandlers = [
     }
     demoState.projectRoles[projectId] ??= {}
     demoState.projectRoles[projectId][user.id] = body.role as
-      'maintainer' | 'developer' | 'viewer'
+      | 'maintainer'
+      | 'developer'
+      | 'viewer'
     return HttpResponse.json({
       member: {
         id: `pm-demo-${projectId}-${user.id}`,
@@ -230,7 +232,9 @@ export const projectHandlers = [
       }
       demoState.projectRoles[projectId] ??= {}
       demoState.projectRoles[projectId][userId] = body.role as
-        'maintainer' | 'developer' | 'viewer'
+        | 'maintainer'
+        | 'developer'
+        | 'viewer'
       return HttpResponse.json({
         member: {
           id: `pm-demo-${projectId}-${user.id}`,

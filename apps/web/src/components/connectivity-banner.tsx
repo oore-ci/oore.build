@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  WifiOff as WifiDisconnected04Icon,
-} from 'lucide-react'
+import { WifiOff as WifiDisconnected04Icon } from 'lucide-react'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 

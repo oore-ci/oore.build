@@ -7,7 +7,11 @@ import {
 import { useAuthStore } from '@/stores/auth-store'
 
 export type ApiTokenSort =
-  'created_at' | 'last_used_at' | 'name' | 'role' | 'status'
+  | 'created_at'
+  | 'last_used_at'
+  | 'name'
+  | 'role'
+  | 'status'
 
 export interface ApiTokensSearch {
   direction?: 'asc' | 'desc'
@@ -43,9 +47,11 @@ export function parseApiTokensSearch(
 }
 
 export const Route = createFileRoute('/settings/api-tokens')({
-  staticData: { breadcrumb: {
-   title: 'API tokens' ,
- },},
+  staticData: {
+    breadcrumb: {
+      title: 'API tokens',
+    },
+  },
   validateSearch: parseApiTokensSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

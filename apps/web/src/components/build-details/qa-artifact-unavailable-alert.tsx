@@ -1,7 +1,5 @@
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Info as InformationCircleIcon,
-} from 'lucide-react'
+import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { isTerminalStatus } from '@/hooks/use-builds'
 import type { BuildStatus } from '@/lib/types'

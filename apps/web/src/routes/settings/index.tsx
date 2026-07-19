@@ -1,8 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  ArrowRight as ArrowRight01Icon,
-} from 'lucide-react'
+import { ArrowRight as ArrowRight01Icon } from 'lucide-react'
 
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'

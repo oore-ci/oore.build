@@ -1,10 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Info as InformationCircleIcon,
-  Play as PlayIcon,
-} from 'lucide-react'
+import { Info as InformationCircleIcon, Play as PlayIcon } from 'lucide-react'
 
 import {
   getActiveInstanceOrRedirect,

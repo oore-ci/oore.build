@@ -1,9 +1,6 @@
 import { useCallback, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Copy as Copy01Icon,
-  Check as Tick02Icon,
-} from 'lucide-react'
+import { Copy as Copy01Icon, Check as Tick02Icon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
@@ -29,7 +26,11 @@ export function CopyableOidcRedirectUri({ uri }: { uri: string }) {
         aria-label="Copy redirect URI"
       >
         {copied ? (
-          <DynamicLucideIcon icon={Tick02Icon} size={14} className="text-primary" />
+          <DynamicLucideIcon
+            icon={Tick02Icon}
+            size={14}
+            className="text-primary"
+          />
         ) : (
           <DynamicLucideIcon icon={Copy01Icon} size={14} />
         )}

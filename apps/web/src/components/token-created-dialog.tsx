@@ -1,10 +1,7 @@
 import { useState } from 'react'
 import { toast } from '@/lib/toast'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Copy as Copy01Icon,
-  Check as Tick02Icon,
-} from 'lucide-react'
+import { Copy as Copy01Icon, Check as Tick02Icon } from 'lucide-react'
 
 import type { CreateApiTokenResponse } from '@/lib/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'

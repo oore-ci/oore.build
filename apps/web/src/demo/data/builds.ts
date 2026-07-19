@@ -494,11 +494,7 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
   for (let index = 0; index < 24; index += 1) {
     const age = 259_200 + index * 14_400 + projectIndex * 600
     const status =
-      index % 6 === 4
-        ? 'failed'
-        : index % 6 === 5
-          ? 'canceled'
-          : 'succeeded'
+      index % 6 === 4 ? 'failed' : index % 6 === 5 ? 'canceled' : 'succeeded'
     demoBuilds.push({
       id: `build-demo-history-${projectIndex + 1}-${String(index + 1).padStart(2, '0')}`,
       project_id: app.projectId,

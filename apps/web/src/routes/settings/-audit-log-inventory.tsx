@@ -17,7 +17,10 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 
 export type AuditSort =
-  'created_at' | 'actor_email' | 'action' | 'resource_type'
+  | 'created_at'
+  | 'actor_email'
+  | 'action'
+  | 'resource_type'
 
 export function AuditLogInventory({
   direction,

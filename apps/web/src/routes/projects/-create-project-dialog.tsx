@@ -1,9 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Folder as Folder02Icon,
-  Link2 as Link04Icon,
-} from 'lucide-react'
+import { Folder as Folder02Icon, Link2 as Link04Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
@@ -45,10 +42,7 @@ export default function CreateProjectDialog({
   open: requestedOpen,
   onOpenChange,
 }: CreateProjectDialogProps) {
-  const dialogState = useCreateProjectDialogState(
-    requestedOpen,
-    onOpenChange,
-  )
+  const dialogState = useCreateProjectDialogState(requestedOpen, onOpenChange)
   const {
     canBrowseLocalFs,
     createMutation,

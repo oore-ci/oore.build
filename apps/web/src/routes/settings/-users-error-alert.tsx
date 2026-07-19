@@ -1,7 +1,5 @@
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Info as InformationCircleIcon,
-} from 'lucide-react'
+import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'

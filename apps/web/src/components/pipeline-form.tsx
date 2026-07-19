@@ -3,9 +3,7 @@ import { useBlocker } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  CircleAlert as AlertCircleIcon,
-} from 'lucide-react'
+import { CircleAlert as AlertCircleIcon } from 'lucide-react'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { Button } from '@/components/ui/button'

@@ -122,7 +122,10 @@ export default function NavUserMenu({
                 {authUser.role.replace('_', ' ')}
               </span>
             </div>
-            <DynamicLucideIcon icon={ArrowUp01Icon} className="ml-auto size-4" />
+            <DynamicLucideIcon
+              icon={ArrowUp01Icon}
+              className="ml-auto size-4"
+            />
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="min-w-56"

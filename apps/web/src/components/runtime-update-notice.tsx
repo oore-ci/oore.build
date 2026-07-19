@@ -1,7 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
-import {
-  BriefcaseBusiness as WorkUpdateIcon,
-} from 'lucide-react'
+import { BriefcaseBusiness as WorkUpdateIcon } from 'lucide-react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import {

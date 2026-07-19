@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Copy as Copy01Icon,
-  RefreshCw as Refresh01Icon,
-} from 'lucide-react'
+import { Copy as Copy01Icon, RefreshCw as Refresh01Icon } from 'lucide-react'
 
 import {
   AlertDialog,

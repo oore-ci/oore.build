@@ -86,9 +86,11 @@ export function parseUsersSearch(search: Record<string, unknown>): UsersSearch {
 }
 
 export const Route = createFileRoute('/settings/users')({
-  staticData: { breadcrumb: {
-   title: 'Users' ,
- },},
+  staticData: {
+    breadcrumb: {
+      title: 'Users',
+    },
+  },
   validateSearch: parseUsersSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

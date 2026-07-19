@@ -1,6 +1,4 @@
-import {
-  TriangleAlert as Alert02Icon,
-} from 'lucide-react'
+import { TriangleAlert as Alert02Icon } from 'lucide-react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import {
@@ -102,7 +100,7 @@ function DirectRunnerPolicyControl() {
             Global execution gate for repositories approved under Sources.
           </p>
         </div>
-        <Badge variant={enabled ? 'success' : 'outline'}>
+        <Badge variant={enabled ? 'default' : 'outline'}>
           {enabled ? 'Enabled' : 'Paused'}
         </Badge>
       </div>

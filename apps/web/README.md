@@ -31,7 +31,7 @@ This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
 
 ## Linting & Formatting
 
-This project uses [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) with type-aware TypeScript rules and [Prettier](https://prettier.io/) for formatting. The following scripts are available:
+This project uses the [Oxc](https://oxc.rs/) toolchain: Oxlint for type-aware TypeScript linting and Oxfmt for formatting. The following scripts are available:
 
 ```bash
 bun --bun run lint

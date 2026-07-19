@@ -143,7 +143,8 @@ function reportVital(metric: Metric) {
 
 function reportNavigationTiming() {
   const navigation = performance.getEntriesByType('navigation')[0] as
-    PerformanceNavigationTiming | undefined
+    | PerformanceNavigationTiming
+    | undefined
   if (!navigation) return
   queue({
     metric: 'dom_content_loaded',

@@ -257,7 +257,9 @@ test.describe('role and direct-route policy', () => {
 
       await page.goto(`/projects/${PROJECT_IDS.nativePayments}?tab=settings`)
       await waitForStableUi(page)
-      await expect(page.getByRole('button', { name: 'Add member' })).toHaveCount(0)
+      await expect(
+        page.getByRole('button', { name: 'Add member' }),
+      ).toHaveCount(0)
 
       await page.goto(`/builds/${BUILD_IDS.succeeded1}`)
       await waitForStableUi(page)

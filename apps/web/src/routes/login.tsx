@@ -1,10 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Plus as Add01Icon,
-  Check as Tick02Icon,
-} from 'lucide-react'
+import { Plus as Add01Icon, Check as Tick02Icon } from 'lucide-react'
 import type { ConnectivityIssue } from '@/lib/connectivity'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useSetupStatus } from '@/hooks/use-setup'
@@ -39,9 +36,9 @@ export const Route = createFileRoute('/login')({
   component: LoginPage,
   staticData: {
     breadcrumb: {
-      title: "Login"
-    }
-  }
+      title: 'Login',
+    },
+  },
 })
 
 const lastAuthTimeFormatter = new Intl.DateTimeFormat(undefined, {

@@ -1,8 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Link2 as Link04Icon,
-} from 'lucide-react'
+import { Link2 as Link04Icon } from 'lucide-react'
 
 import { buttonVariants } from '@/components/ui/button-variants'
 

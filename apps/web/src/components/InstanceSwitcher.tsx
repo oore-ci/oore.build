@@ -1,8 +1,6 @@
 import { Suspense, lazy, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  ArrowUpDown as ArrowUpDownIcon,
-} from 'lucide-react'
+import { ArrowUpDown as ArrowUpDownIcon } from 'lucide-react'
 
 import { getInstanceIcon } from '@/lib/instance-icons'
 import {
@@ -49,7 +47,10 @@ function InstanceButton({
           onMouseEnter={onMouseEnter}
         >
           <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center">
-            <DynamicLucideIcon icon={getInstanceIcon(instance?.icon)} size={16} />
+            <DynamicLucideIcon
+              icon={getInstanceIcon(instance?.icon)}
+              size={16}
+            />
           </div>
           <div className="grid flex-1 text-left text-sm leading-tight">
             <span className="truncate font-medium">
@@ -59,7 +60,11 @@ function InstanceButton({
               {hostname}
             </span>
           </div>
-          <DynamicLucideIcon icon={ArrowUpDownIcon} className="ml-auto" size={16} />
+          <DynamicLucideIcon
+            icon={ArrowUpDownIcon}
+            className="ml-auto"
+            size={16}
+          />
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

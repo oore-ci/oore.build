@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Copy as Copy01Icon,
-  Share2 as Share08Icon,
-} from 'lucide-react'
+import { Copy as Copy01Icon, Share2 as Share08Icon } from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type { Artifact, CreateScopedDownloadTokenResponse } from '@/lib/types'

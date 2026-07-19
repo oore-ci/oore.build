@@ -1,8 +1,6 @@
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Check as Tick02Icon,
-} from 'lucide-react'
+import { Check as Tick02Icon } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'

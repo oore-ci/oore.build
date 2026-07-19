@@ -1,8 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  UserPlus as UserAdd01Icon,
-} from 'lucide-react'
+import { UserPlus as UserAdd01Icon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 

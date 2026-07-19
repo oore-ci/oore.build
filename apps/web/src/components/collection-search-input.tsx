@@ -1,7 +1,5 @@
 import { useState } from 'react'
-import {
-  Search as Search01Icon,
-} from 'lucide-react'
+import { Search as Search01Icon } from 'lucide-react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'

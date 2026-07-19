@@ -46,9 +46,11 @@ const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute('/')({
-  staticData: { breadcrumb: {
-   title: 'Dashboard' ,
- },},
+  staticData: {
+    breadcrumb: {
+      title: 'Dashboard',
+    },
+  },
   component: IndexPage,
 })
 

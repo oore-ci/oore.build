@@ -1,6 +1,4 @@
-import {
-  Copy as Copy01Icon,
-} from 'lucide-react'
+import { Copy as Copy01Icon } from 'lucide-react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { toast } from '@/lib/toast'

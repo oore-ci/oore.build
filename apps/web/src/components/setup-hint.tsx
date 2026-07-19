@@ -1,6 +1,4 @@
-import {
-  Info as InformationCircleIcon,
-} from 'lucide-react'
+import { Info as InformationCircleIcon } from 'lucide-react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Children } from 'react'
 import type { ReactNode } from 'react'

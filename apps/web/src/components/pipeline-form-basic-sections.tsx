@@ -1,8 +1,6 @@
 import { useFormContext } from 'react-hook-form'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  CircleAlert as AlertCircleIcon,
-} from 'lucide-react'
+import { CircleAlert as AlertCircleIcon } from 'lucide-react'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { TRIGGER_EVENTS } from '@/lib/pipeline-schema'

@@ -1,9 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Play as PlayIcon,
-  Settings as Setting07Icon,
-} from 'lucide-react'
+import { Play as PlayIcon, Settings as Setting07Icon } from 'lucide-react'
 
 import type { Project } from '@/lib/types'
 import { getStatusVariant } from '@/lib/status-variants'

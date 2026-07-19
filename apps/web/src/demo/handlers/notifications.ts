@@ -34,7 +34,8 @@ export const notificationHandlers = [
       has_url: !!(body.url as string),
       has_secret: !!(body.secret as string),
       has_smtp_config: !!(body.smtp_config as
-        Record<string, unknown> | undefined),
+        | Record<string, unknown>
+        | undefined),
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),

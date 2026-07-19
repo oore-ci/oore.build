@@ -11,9 +11,11 @@
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs --port 4173",
     "test": "vitest run --passWithNoTests",
-    "lint": "oxlint .",
-    "format": "prettier",
-    "check": "prettier --check . && oxlint ."
+    "lint": "oxlint --type-aware .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "check": "oxfmt --check . && oxlint --type-aware .",
+    "fix": "oxfmt . && oxlint --type-aware --fix ."
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
@@ -22,9 +24,6 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "oxlint": "1.73.0",
-    "oxlint-tsgolint": "0.24.0",
-    "prettier": "^3.9.5",
     "typescript": "7.0.2",
     "vite": "^8.1.4",
     "vitepress": "^1.6.4",

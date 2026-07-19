@@ -29,13 +29,13 @@ make ui-update    # interactively apply selected shadcn registry updates
 make validate
 ```
 
-The frontend workspaces use Oxlint's type-aware rules on TypeScript 7. To
-refresh a legacy ESLint flat config, run the official migration command from
-that workspace, review skipped rules, then remove ESLint rather than keeping
-both linters:
+The frontend workspaces use the Oxc toolchain: Oxlint with type-aware rules on
+TypeScript 7 and Oxfmt for formatting. Both are installed once at the monorepo
+root. Use the root commands so nested workspace configuration is discovered:
 
 ```sh
-bunx @oxlint/migrate@latest eslint.config.js --type-aware --js-plugins=false --details
+bun run check
+bun run fix
 ```
 
 `make ui-update` intentionally remains interactive because Oore extends a small
@@ -74,6 +74,7 @@ Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry to `d
 ## Reporting Issues
 
 Open an issue on GitHub. Include:
+
 - What you expected vs what happened
 - Steps to reproduce
 - OS and toolchain versions (`rustc --version`, `bun --version`)

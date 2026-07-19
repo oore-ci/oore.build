@@ -33,7 +33,7 @@ declare module '@tanstack/react-router' {
   }
   interface StaticDataRouteOption {
     breadcrumb?: {
-      title: string;
+      title: string
     }
   }
 }

@@ -8,7 +8,10 @@ export interface IosAppMetadata {
 }
 
 export type InstallDevice =
-  'iphone-safari' | 'iphone-other' | 'android' | 'other'
+  | 'iphone-safari'
+  | 'iphone-other'
+  | 'android'
+  | 'other'
 
 export function selectInstallArtifact(
   artifacts: Array<Artifact>,

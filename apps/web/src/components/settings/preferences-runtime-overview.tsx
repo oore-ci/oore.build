@@ -1,8 +1,6 @@
 import { toast } from '@/lib/toast'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Download as Download04Icon,
-} from 'lucide-react'
+import { Download as Download04Icon } from 'lucide-react'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
 import { Button } from '@/components/ui/button'

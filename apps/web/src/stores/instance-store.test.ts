@@ -200,7 +200,8 @@ describe('useInstanceStore', () => {
     queryClient.setQueryData([id, 'users'], { users: ['prior-backend'] })
 
     let stateWhenUrlChanged:
-      { authToken: string | null; setupToken: string | null } | undefined
+      | { authToken: string | null; setupToken: string | null }
+      | undefined
     const unsubscribe = useInstanceStore.subscribe((state, previous) => {
       if (state.instances[id]?.url !== previous.instances[id]?.url) {
         stateWhenUrlChanged = {

@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-19
 
+- **Unified Oxc frontend tooling**:
+  - The monorepo now owns Oxlint and Oxfmt at the workspace root, with shared root discovery, type-aware linting, per-app commands, and explicit-save VS Code integration. Direct Prettier configuration and dependencies have been removed from every workspace.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 - **Richer active-build summary**:
   - Dashboard active-build items now present project identity, project avatar, build number, branch, status, current stage, and elapsed time in aligned compact columns while removing ornamental activity icons. Demo build responses now include project, pipeline, runner, and repository display context, with GitHub and GitLab marks standing in for unavailable repository avatars.
   - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5

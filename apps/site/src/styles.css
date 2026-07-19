@@ -1,17 +1,17 @@
 @font-face {
-  font-family: "Inter Variable";
+  font-family: 'Inter Variable';
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
-  src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2");
+  src: url('/fonts/inter-latin-wght-normal.woff2') format('woff2');
 }
 
 @font-face {
-  font-family: "JetBrains Mono Variable";
+  font-family: 'JetBrains Mono Variable';
   font-style: normal;
   font-weight: 100 800;
   font-display: swap;
-  src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  src: url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
 }
 
 :root {
@@ -38,7 +38,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme='light']) {
     color-scheme: dark;
     --background: #0c131e;
     --surface: #111b2a;
@@ -58,7 +58,7 @@
   }
 }
 
-:root[data-theme="dark"] {
+:root[data-theme='dark'] {
   color-scheme: dark;
   --background: #0c131e;
   --surface: #111b2a;
@@ -77,7 +77,7 @@
   --shadow: rgb(0 0 0 / 24%);
 }
 
-:root[data-theme="light"] {
+:root[data-theme='light'] {
   color-scheme: light;
 }
 
@@ -98,13 +98,13 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family:
-    "Inter Variable",
+    'Inter Variable',
     Inter,
     ui-sans-serif,
     system-ui,
     -apple-system,
     BlinkMacSystemFont,
-    "Segoe UI",
+    'Segoe UI',
     sans-serif;
   font-size: 1rem;
   line-height: 1.6;
@@ -145,7 +145,7 @@ code,
 .footer-meta,
 figcaption,
 dt {
-  font-family: "JetBrains Mono Variable", "SFMono-Regular", Consolas, monospace;
+  font-family: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
 }
 
 :focus-visible {
@@ -450,7 +450,7 @@ dt {
   background: var(--primary-soft);
 }
 
-.command button[data-state="success"] {
+.command button[data-state='success'] {
   color: var(--primary);
 }
 
@@ -801,7 +801,7 @@ dt {
     border-top: 1px solid var(--border);
   }
 
-  .js .site-nav[data-open="true"] {
+  .js .site-nav[data-open='true'] {
     display: grid;
   }
 

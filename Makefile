@@ -1,8 +1,8 @@
 .PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index web-performance-baseline test-web-performance-baseline test-web-runtime-performance build check \
-		       test-web test-web-ui test-demo lint-web fix-web \
+		       test-web test-web-ui test-demo lint-web fix-web lint-site fix-site \
 		       test-direct-runner-upgrade-smoke \
 		       test-docs lint-docs fix-docs test-rust test-install \
-		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
+		       format-oxc format-oxc-check fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
 		       docs-check ui-init install-local validate validate-ci gen-openapi release-smoke \
@@ -86,7 +86,7 @@ lint-web:
 	cd apps/web && bun run lint
 
 fix-web:
-	cd apps/web && bun run check
+	cd apps/web && bun run fix
 
 # ── Frontend: Docs Site (VitePress) ───────────────────────────────
 dev-docs:
@@ -142,7 +142,13 @@ lint-docs:
 	cd apps/docs-site && bun run lint
 
 fix-docs:
-	cd apps/docs-site && bun run check
+	cd apps/docs-site && bun run fix
+
+lint-site:
+	cd apps/site && bun run lint
+
+fix-site:
+	cd apps/site && bun run fix
 
 # ── Backend (Rust) ────────────────────────────────────────────────
 cargo-check:
@@ -243,11 +249,17 @@ portless-list:
 	portless list
 
 # ── Aggregate Targets ─────────────────────────────────────────────
+format-oxc:
+	bun run format
+
+format-oxc-check:
+	bun run format:check
+
 build: build-web build-docs build-site cargo-check
 
-check: lint-web cargo-check
+check: format-oxc-check lint-web lint-docs lint-site cargo-check
 
-lint: lint-web lint-docs fmt-rust-check
+lint: format-oxc-check lint-web lint-docs lint-site fmt-rust-check
 
 test: test-web test-demo test-docs test-release-index test-direct-runner-upgrade-smoke test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 

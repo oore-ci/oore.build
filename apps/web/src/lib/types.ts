@@ -230,7 +230,10 @@ export interface ApiError {
 export type ScmProvider = 'github' | 'gitlab' | 'local_git'
 
 export type IntegrationAuthMode =
-  'github_app' | 'oauth_app' | 'personal_token' | 'local_path'
+  | 'github_app'
+  | 'oauth_app'
+  | 'personal_token'
+  | 'local_path'
 
 export type IntegrationStatus = 'active' | 'inactive' | 'error'
 
@@ -455,7 +458,9 @@ export interface Build {
 }
 
 export type RunnerPolicyBlockReason =
-  'instance_disabled' | 'repository_not_approved' | 'repository_unavailable'
+  | 'instance_disabled'
+  | 'repository_not_approved'
+  | 'repository_unavailable'
 
 export interface BuildContext {
   project_name?: string
@@ -797,9 +802,7 @@ export interface ProjectDetailResponse {
   current_user_role: ProjectRole
 }
 
-export interface ListProjectsResponse<
-  TProject extends Project = Project,
-> {
+export interface ListProjectsResponse<TProject extends Project = Project> {
   projects: Array<TProject>
   total: number
 }

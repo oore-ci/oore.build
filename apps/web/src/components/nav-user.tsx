@@ -1,8 +1,6 @@
 import { Suspense, lazy, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  ArrowUp as ArrowUp01Icon,
-} from 'lucide-react'
+import { ArrowUp as ArrowUp01Icon } from 'lucide-react'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {

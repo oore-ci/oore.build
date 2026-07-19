@@ -1,9 +1,7 @@
 import { lazy, Suspense, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  CircleEllipsis as MoreHorizontalCircle01Icon,
-} from 'lucide-react'
+import { CircleEllipsis as MoreHorizontalCircle01Icon } from 'lucide-react'
 
 import type { Build, Project } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
@@ -29,7 +27,11 @@ import {
 } from '@/lib/status-variants'
 
 export type BuildSort =
-  'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
+  | 'created_at'
+  | 'status'
+  | 'project_name'
+  | 'pipeline_name'
+  | 'branch'
 
 const loadBuildActionsMenu = () => import('./-build-actions-menu')
 const BuildActionsMenu = lazy(loadBuildActionsMenu)

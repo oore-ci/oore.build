@@ -64,7 +64,11 @@ import {
 } from './seed'
 
 export type DemoScenario =
-  'operating' | 'blocked' | 'degraded' | 'empty' | 'setup'
+  | 'operating'
+  | 'blocked'
+  | 'degraded'
+  | 'empty'
+  | 'setup'
 
 export interface DemoPersona {
   userId: string
@@ -229,9 +233,7 @@ function makeGeneratedProjects(): Array<Project> {
         ? `acme-corp/mobile-service-${suffix}`
         : undefined,
       repository_avatar_url:
-        number % 2 === 0
-          ? GITHUB_DEMO_AVATAR_URL
-          : GITLAB_DEMO_AVATAR_URL,
+        number % 2 === 0 ? GITHUB_DEMO_AVATAR_URL : GITLAB_DEMO_AVATAR_URL,
       default_branch: number % 3 === 0 ? 'develop' : 'main',
       settings: {},
       created_by: USER_IDS.owner,

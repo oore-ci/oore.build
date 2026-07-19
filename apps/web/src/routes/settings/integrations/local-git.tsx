@@ -1,8 +1,6 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Plus as Add01Icon,
-} from 'lucide-react'
+import { Plus as Add01Icon } from 'lucide-react'
 import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,

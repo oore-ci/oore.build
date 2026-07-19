@@ -1,9 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Plus as Add01Icon,
-  Info as InformationCircleIcon,
-} from 'lucide-react'
+import { Plus as Add01Icon, Info as InformationCircleIcon } from 'lucide-react'
 
 import type { Pipeline } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'

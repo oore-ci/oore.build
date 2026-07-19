@@ -2,9 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  Info as InformationCircleIcon,
-} from 'lucide-react'
+import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { toast } from '@/lib/toast'
 import { useMountEffect } from '@/hooks/use-mount-effect'

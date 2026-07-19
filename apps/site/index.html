@@ -82,14 +82,14 @@
       }
     </script>
     <script>
-      (() => {
-        document.documentElement.classList.add("js");
+      ;(() => {
+        document.documentElement.classList.add('js')
         try {
-          const theme = localStorage.getItem("oore-site-theme");
-          if (theme === "light" || theme === "dark")
-            document.documentElement.dataset.theme = theme;
+          const theme = localStorage.getItem('oore-site-theme')
+          if (theme === 'light' || theme === 'dark')
+            document.documentElement.dataset.theme = theme
         } catch {}
-      })();
+      })()
     </script>
     <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/main.js"></script>

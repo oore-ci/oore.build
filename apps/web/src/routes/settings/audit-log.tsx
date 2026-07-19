@@ -119,9 +119,11 @@ function parseSearch(search: Record<string, unknown>): AuditLogSearch {
 }
 
 export const Route = createFileRoute('/settings/audit-log')({
-  staticData: { breadcrumb: {
-   title: 'Audit log' ,
- },},
+  staticData: {
+    breadcrumb: {
+      title: 'Audit log',
+    },
+  },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
