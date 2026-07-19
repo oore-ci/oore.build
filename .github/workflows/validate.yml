@@ -38,7 +38,6 @@ jobs:
               - 'apps/docs-site/**'
               - 'docs/**'
               - 'scripts/**'
-              - 'tools/docs-check.sh'
               - 'tools/release-smoke.sh'
               - 'tools/autotag.sh'
               - '.github/workflows/**'
@@ -133,9 +132,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Docs check
-        run: make docs-check
 
       - name: Lint
         run: make lint-docs

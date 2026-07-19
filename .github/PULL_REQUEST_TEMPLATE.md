@@ -12,6 +12,4 @@
 
 ## Docs
 
-<!-- If you changed code under apps/, crates/, scripts/, etc.: -->
-<!-- - Add an entry to docs/changes.md -->
-<!-- - Link the relevant Linear doc(s)/ADR(s) if behavior/contract changed -->
+<!-- Link the relevant Linear doc(s)/ADR(s) if behavior or contracts changed. -->

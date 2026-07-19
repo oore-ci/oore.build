@@ -1,6 +1,6 @@
 {
   "editor.defaultFormatter": "oxc.oxc-vscode",
-  "editor.formatOnSave": false,
+  "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
     "source.format.oxc": "explicit",
     "source.fixAll.oxc": "explicit"

@@ -60,13 +60,10 @@ Treat those as the source of truth.
 - Internal technical docs and ADRs are **Linear-first** (see `docs/README.md`).
 - Every user-facing feature MUST add/update a Linear feature doc using:
   - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
-- Any code change under `apps/`, `crates/`, `tools/`, etc. MUST add an entry to `docs/changes.md`.
 - If code changes platform decisions or strict rules:
 - update the Platform Contract (Linear)
 - add/update a Linear feature doc
 - add/update a Linear ADR if changing a `MUST`-level rule
-- Run docs gate locally before finalizing:
-- `bun run docs:check`
 
 ## Release Channels (Alpha/Beta/Stable)
 

@@ -122,7 +122,7 @@ crates/oored/       Daemon — Axum HTTP server
 crates/oore/        Operator CLI — Clap
 crates/oore-runner/ Build runner agent
 crates/oore-contract/ Shared data types (Serde structs)
-docs/               Internal docs pointers + change ledger (canonical docs live in Linear)
+docs/               Internal docs pointer (canonical docs live in Linear)
 ```
 
 ## Common Commands

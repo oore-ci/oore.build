@@ -5,7 +5,7 @@
 		       format-oxc format-oxc-check fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-		       docs-check ui-init install-local validate validate-ci gen-openapi release-smoke \
+		       install-local validate validate-ci gen-openapi release-smoke \
 		       direct-runner-upgrade-smoke \
 		       release-local release-cut \
 		       portless-proxy portless-alias-api portless-list
@@ -219,22 +219,6 @@ gen-openapi:
 	cargo run -p oored --bin openapi-export > apps/docs-site/docs/public/openapi.json
 	@echo "OpenAPI spec generated → apps/docs-site/docs/public/openapi.json"
 
-# ── Documentation & Validation ────────────────────────────────────
-docs-check:
-	bun run docs:check
-
-ui-init:
-	bun run ui:init
-
-ui-diff:
-	bun run ui:diff
-
-ui-update:
-	bun run ui:update
-
-deps-update:
-	bun run deps:update
-
 # ── Portless (named .localhost URLs for dev) ─────────────────────
 # Start the portless reverse proxy (run once, stays in background)
 portless-proxy:
@@ -263,7 +247,7 @@ lint: format-oxc-check lint-web lint-docs lint-site fmt-rust-check
 
 test: test-web test-demo test-docs test-release-index test-direct-runner-upgrade-smoke test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
-validate: docs-check lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
+validate: lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
 
 validate-ci:
 	bash tools/validate-ci.sh

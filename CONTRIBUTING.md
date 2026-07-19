@@ -17,17 +17,7 @@ Oore CI is in alpha. Contributions are welcome, but expect things to move fast a
 - Run `make test-web` and `make test-rust` for tests
 - Open a PR against `master`
 
-## Dependency and shadcn migrations
-
-Use the checked-in maintenance commands instead of updating individual packages
-or copying component source by hand:
-
-```sh
-make deps-update  # update Bun dependencies and the Rust lockfile
-make ui-diff      # compare every installed web component with shadcn latest
-make ui-update    # interactively apply selected shadcn registry updates
-make validate
-```
+## Frontend checks
 
 The frontend workspaces use the Oxc toolchain: Oxlint with type-aware rules on
 TypeScript 7 and Oxfmt for formatting. Both are installed once at the monorepo
@@ -35,15 +25,9 @@ root. Use the root commands so nested workspace configuration is discovered:
 
 ```sh
 bun run check
-bun run fix
+bun run format
+bun run lint:fix
 ```
-
-`make ui-update` intentionally remains interactive because Oore extends a small
-set of registry components for semantic statuses, destructive confirmations,
-responsive containment, and the horizontally scrollable log viewer. Preserve
-those extensions when accepting an upstream change; the command prints the
-affected component list as a reminder. `make ui-init` is only for bootstrapping
-a fresh checkout and is not a migration command.
 
 ## Architecture Notes
 
@@ -61,8 +45,6 @@ Read `docs/README.md` for internal docs pointers and the Linear docs index:
 Internal technical docs are Linear-first (see `docs/README.md`). Every user-facing feature needs a Linear feature doc using the template:
 
 - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
-
-Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry to `docs/changes.md`. CI runs `make docs-check` to enforce the change-ledger rule.
 
 ## What We're Looking For
 

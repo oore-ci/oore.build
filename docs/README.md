@@ -2,8 +2,7 @@
 
 Oore CI internal technical docs (contracts, ADRs, audits, and feature docs) are now **stored in Linear**.
 
-This repository keeps only a small index and change ledger under `docs/` to avoid ballooning the repo and to
-keep project tracking + documentation in one place.
+This repository keeps only a small pointer under `docs/`; project tracking and internal documentation live in Linear.
 
 ## Canonical Docs Home
 
@@ -12,8 +11,7 @@ keep project tracking + documentation in one place.
 - Docs Index (start here):
   - https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
 
-## Repo Requirements
+## Repo Docs
 
-- If you change product behavior (apps/, crates/, tools/, etc.), update `docs/changes.md` in the same PR.
 - Public documentation stays in-repo under `apps/docs-site/docs/`.
 - The canonical execution checklist for the active frontend overhaul is [`FRONTEND_PRODUCT_PLAN.md`](../FRONTEND_PRODUCT_PLAN.md); its product intent is mirrored in Linear.
