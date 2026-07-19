@@ -4,7 +4,7 @@
 
 ## Why
 
-<!-- Motivation / Linear issue link -->
+<!-- Motivation / GitHub issue link (for example, Closes #123) -->
 
 ## Testing
 

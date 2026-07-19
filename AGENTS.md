@@ -4,11 +4,14 @@ This file guides future coding sessions for `oore.build`.
 
 ## Read First (Mandatory)
 
-Before making any code or architecture change, read:
+Before making any code or architecture change, read the private docs index with
+the Obsidian CLI:
 
-- Docs Index (Linear): https://linear.app/oorebuild/document/docs-index-linear-first-457d9edc9cda
+```sh
+obsidian vault="oore.build" read file="Oore Docs Index"
+```
 
-Treat those as the source of truth.
+Treat that index and its linked notes as the source of truth.
 
 ## Non-Negotiable Rules
 
@@ -56,13 +59,14 @@ Treat those as the source of truth.
 
 ## Documentation and Governance Rules
 
-- Internal technical docs and ADRs are **Linear-first**.
-- Every user-facing feature MUST add/update a Linear feature doc using:
-  - https://linear.app/oorebuild/document/feature-doc-template-9f1845da4b46
+- Internal technical docs and ADRs live in the private `oore.build` Obsidian vault.
+- Every user-facing feature MUST add or update a feature note using `Feature Doc Template` in that vault.
 - If code changes platform decisions or strict rules:
-- update the Platform Contract (Linear)
-- add/update a Linear feature doc
-- add/update a Linear ADR if changing a `MUST`-level rule
+  - update `Platform Contract (V1)`
+  - add or update the relevant feature note
+  - add or update an ADR if changing a `MUST`-level rule
+- GitHub Issues is the canonical tracker for bugs, features, roadmap work, and follow-ups.
+- Do not commit private notes or add links or pointers to them elsewhere in the repository.
 
 ## Release Channels (Alpha/Beta/Stable)
 
@@ -73,8 +77,7 @@ Release automation is branch + tag driven via GitHub Actions:
 - Merge to `stable` -> cuts `vX.Y.Z` production tags
 - `master` is a playground branch (validated but not auto-tagged)
 
-Source of truth doc (Linear-first):
-https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+Before changing release automation, read `Release Channels (alpha / beta / stable) via GitHub Actions` in the private docs vault.
 
 ## Backend Bootstrap Direction
 
@@ -97,8 +100,7 @@ https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woo
 
 ## V1 Roadmap
 
-- Implementation roadmap is tracked in Linear:
-  - https://linear.app/oorebuild/document/v1-implementation-roadmap-5e4fa12cdb04
+- The implementation roadmap is `V1 Implementation Roadmap` in the private docs vault.
 - Check off completed items and update gap summary after each phase.
-- When adding new work items, add them to the appropriate phase or create a new phase.
+- Track new work in GitHub Issues and add it to the appropriate roadmap phase or create a new phase.
 - Roadmap does NOT override the Platform Contract — it sequences existing commitments.
