@@ -280,10 +280,7 @@ pub async fn github_webhook(
         )
     })?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     let secrets =
@@ -526,10 +523,7 @@ pub async fn gitlab_webhook(
         )
     })?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     let payload_repository_id = payload

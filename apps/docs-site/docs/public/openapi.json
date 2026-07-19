@@ -3163,7 +3163,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Maximum artifacts to return (max 200)",
+            "description": "Maximum artifacts to return (defaults to 200, max 200)",
             "required": false,
             "schema": {
               "type": "integer",

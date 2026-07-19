@@ -2121,10 +2121,7 @@ pub async fn get_pipeline_ios_signing(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<PipelineIosSigningResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -2172,10 +2169,7 @@ pub async fn update_pipeline_ios_signing(
     Path(pipeline_id): Path<String>,
     Json(req): Json<UpdatePipelineIosSigningRequest>,
 ) -> ApiResult<PipelineIosSigningResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -2812,10 +2806,7 @@ pub async fn list_pipeline_ios_devices(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<ListPipelineIosDevicesResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -2882,10 +2873,7 @@ pub async fn register_pipeline_ios_device(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -3109,10 +3097,7 @@ pub async fn sync_pipeline_ios_signing(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<SyncPipelineIosSigningResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -3221,10 +3206,7 @@ pub async fn get_job_ios_signing(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let pipeline_id =
         require_active_job_signing_grant(&pool, &job_id, &runner_id, &headers).await?;

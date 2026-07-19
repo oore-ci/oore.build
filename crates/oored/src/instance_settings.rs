@@ -677,7 +677,7 @@ async fn evaluate_external_access_preflight(
     state: &Arc<AppState>,
     remote_auth_mode_override: Option<RemoteAuthMode>,
 ) -> Result<ExternalAccessPreflightResponse, (StatusCode, Json<ApiError>)> {
-    let (setup_state, pool) = {
+    let setup_state = {
         let store = state.store.lock().await;
         let sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state for external access preflight");
@@ -687,13 +687,13 @@ async fn evaluate_external_access_preflight(
                 "Failed to load setup state",
             )
         })?;
-        (sf.setup_state, store.pool().clone())
+        sf.setup_state
     };
 
     let remote_auth_mode = if let Some(mode) = remote_auth_mode_override {
         mode
     } else {
-        load_remote_auth_mode(&pool).await.map_err(|e| {
+        load_remote_auth_mode(&state.db).await.map_err(|e| {
             error!(error = %e, "failed to load remote auth mode for external access preflight");
             api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -738,17 +738,16 @@ async fn evaluate_external_access_preflight(
             checks.push(oidc_check);
         }
         RemoteAuthMode::TrustedProxy => {
-            let proxy_settings =
-                load_effective_trusted_proxy_settings(&pool)
-                    .await
-                    .map_err(|e| {
-                        error!(error = %e, "failed to load trusted proxy settings for preflight");
-                        api_err(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "store_error",
-                            "Failed to load trusted proxy settings",
-                        )
-                    })?;
+            let proxy_settings = load_effective_trusted_proxy_settings(&state.db)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to load trusted proxy settings for preflight");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to load trusted proxy settings",
+                    )
+                })?;
 
             let configured = proxy_settings.configured
                 && proxy_settings.has_shared_secret
@@ -897,10 +896,7 @@ pub async fn get_artifact_storage_settings(
 ) -> ApiResult<ArtifactStorageSettingsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let cfg = storage::load_effective_config(&pool, &state.encryption_key)
         .await
@@ -935,10 +931,7 @@ pub async fn update_artifact_storage_settings(
     let access_key_id = trim_opt(req.access_key_id);
     let secret_access_key = trim_opt(req.secret_access_key);
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let existing = sqlx::query(
         "SELECT s3_access_key_encrypted, s3_secret_key_encrypted FROM artifact_storage_settings WHERE id = 1",
@@ -1139,10 +1132,7 @@ pub async fn get_instance_preferences(
 ) -> ApiResult<InstancePreferencesResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let row = sqlx::query(
         "SELECT runtime_mode, remote_auth_mode, direct_macos_runner_enabled, updated_at \
@@ -1201,10 +1191,7 @@ pub async fn get_external_access_network_settings(
 ) -> ApiResult<ExternalAccessNetworkSettingsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let settings = load_effective_external_access_network_settings(&pool)
         .await
@@ -1226,10 +1213,7 @@ pub async fn get_external_access_trusted_proxy_settings(
 ) -> ApiResult<TrustedProxySettingsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let settings = load_effective_trusted_proxy_settings(&pool)
         .await
@@ -1262,10 +1246,7 @@ pub async fn update_external_access_trusted_proxy_settings(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let runtime_mode = load_runtime_mode(&pool).await.map_err(|e| {
         error!(error = %e, "failed to load runtime mode for trusted proxy update");
@@ -1477,10 +1458,7 @@ pub async fn update_external_access_network_settings(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let runtime_mode = load_runtime_mode(&pool).await.map_err(|e| {
         error!(error = %e, "failed to load runtime mode for external access network update");
@@ -1647,10 +1625,7 @@ pub async fn get_external_access_preflight(
 
     let result = evaluate_external_access_preflight(&state, None).await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let details = serde_json::json!({
         "ready": result.ready,
         "failed_checks": preflight_failure_summary(&result),
@@ -1675,15 +1650,17 @@ pub async fn get_external_access_oidc(
 ) -> ApiResult<GetExternalAccessOidcResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "read").await?;
 
-    let store = state.store.lock().await;
-    let sf = store.load().await.map_err(|e| {
-        error!(error = %e, "failed to load setup state for External Access OIDC read");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to load setup state",
-        )
-    })?;
+    let sf = {
+        let store = state.store.lock().await;
+        store.load().await.map_err(|e| {
+            error!(error = %e, "failed to load setup state for External Access OIDC read");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load setup state",
+            )
+        })?
+    };
 
     if sf.setup_state != SetupState::Ready {
         return Err(api_err(
@@ -1916,10 +1893,7 @@ pub async fn configure_external_access_oidc(
         }
     };
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let has_client_secret;
     {
@@ -2031,10 +2005,7 @@ pub async fn update_instance_preferences(
 ) -> ApiResult<InstancePreferencesResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "write").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let now = now_unix();
 
     if req.key_storage_mode != KeyStorageMode::File {

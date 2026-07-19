@@ -3,7 +3,26 @@ pub mod gitlab;
 pub mod local_git;
 pub mod webhooks;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
+
+/// One connection-pooled client for GitHub and GitLab API and smart-HTTP traffic.
+/// Notification delivery deliberately uses its own per-destination clients so
+/// its DNS validation remains part of the SSRF boundary.
+static SCM_HTTP_CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| error.to_string())
+});
+
+pub(crate) fn scm_http_client() -> Result<&'static reqwest::Client, &'static str> {
+    match &*SCM_HTTP_CLIENT {
+        Ok(client) => Ok(client),
+        Err(error) => Err(error.as_str()),
+    }
+}
 
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPHN0eWxlPgogICAgLmZpbGwtYnJhbmQgeyBmaWxsOiAjMjQ1N2M1OyB9CiAgPC9zdHlsZT4KICA8ZGVmcz4KICAgIDxjaXJjbGUgaWQ9ImN1dCIgY3g9IjE2IiBjeT0iMTYiIHI9IjciIC8+CiAgICA8bWFzayBpZD0iaG9sZSI+CiAgICAgIDxyZWN0IHg9IjAiIHk9IjAiIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgZmlsbD0id2hpdGUiIC8+CiAgICAgIDx1c2UgaHJlZj0iI2N1dCIgZmlsbD0iYmxhY2siIC8+CiAgICA8L21hc2s+CiAgICA8Y2xpcFBhdGggaWQ9ImxlZnQiPgogICAgICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMTUiIGhlaWdodD0iMzIiIC8+CiAgICA8L2NsaXBQYXRoPgogICAgPGNsaXBQYXRoIGlkPSJyaWdodCI+CiAgICAgIDxyZWN0IHg9IjE3IiB5PSIwIiB3aWR0aD0iMTUiIGhlaWdodD0iMzIiIC8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBjbGFzcz0iZmlsbC1icmFuZCIKICAgIGNsaXAtcGF0aD0idXJsKCNsZWZ0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBjbGFzcz0iZmlsbC1icmFuZCIKICAgIGNsaXAtcGF0aD0idXJsKCNyaWdodCkiCiAgICBtYXNrPSJ1cmwoI2hvbGUpIgogIC8+Cjwvc3ZnPgo=";
 
@@ -355,8 +374,7 @@ pub async fn list_integrations(
 ) -> ApiResult<ListIntegrationsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
@@ -437,8 +455,7 @@ pub async fn get_integration(
 ) -> ApiResult<IntegrationDetailResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let row = sqlx::query("SELECT * FROM integrations WHERE id = ?1")
         .bind(&id)
@@ -522,8 +539,7 @@ pub async fn delete_integration(
 ) -> ApiResult<serde_json::Value> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "delete").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Verify it exists
     let row = sqlx::query("SELECT provider, display_name FROM integrations WHERE id = ?1")
@@ -583,8 +599,7 @@ pub async fn list_repositories(
 ) -> ApiResult<ListRepositoriesResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Verify integration exists
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM integrations WHERE id = ?1")
@@ -640,10 +655,7 @@ pub async fn update_repository_runner_policy(
 ) -> ApiResult<UpdateRepositoryRunnerPolicyResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let existing = sqlx::query("SELECT * FROM integration_repositories WHERE id = ?1")
         .bind(&id)
         .fetch_optional(&pool)
@@ -729,10 +741,7 @@ pub async fn repository_avatar(
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let row = sqlx::query(
         "SELECT i.id AS integration_id, i.host_url, i.auth_mode, r.external_id, r.avatar_url \
          FROM integration_repositories r \
@@ -803,8 +812,7 @@ pub async fn list_installations(
 ) -> ApiResult<ListInstallationsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Verify integration exists
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM integrations WHERE id = ?1")
@@ -849,10 +857,7 @@ pub async fn sync_installations(
 ) -> ApiResult<SyncInstallationsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     let provider: Option<String> =
@@ -890,4 +895,15 @@ pub async fn sync_installations(
     };
 
     Ok(Json(SyncInstallationsResponse { installations }))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn scm_http_client_is_reused() {
+        let first = super::scm_http_client().expect("SCM HTTP client should build");
+        let second = super::scm_http_client().expect("SCM HTTP client should be reusable");
+
+        assert!(std::ptr::eq(first, second));
+    }
 }

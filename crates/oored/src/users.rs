@@ -38,8 +38,7 @@ async fn fetch_user_by_id(
     state: &AppState,
     user_id: &str,
 ) -> Result<User, (StatusCode, Json<ApiError>)> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let row = sqlx::query(
         "SELECT id, email, display_name, role, status, avatar_url, created_at, updated_at \
@@ -79,8 +78,7 @@ pub async fn list_users(
 ) -> ApiResult<ListUsersResponse> {
     check_permission(&state.enforcer, &auth.0.role, "users", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let rows = sqlx::query(
         "SELECT id, email, display_name, role, status, avatar_url, created_at, updated_at \
@@ -129,8 +127,7 @@ pub async fn invite_user(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Check for duplicate email
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE email = ?1")
@@ -230,8 +227,7 @@ pub async fn update_user_role(
         auth.require_owner()?;
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Check target user exists and isn't the owner
     let target_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
@@ -296,8 +292,6 @@ pub async fn update_user_role(
     .await;
 
     info!(user_id = %user_id, from = %current_role, to = %role, "user role changed");
-    drop(store);
-
     let user = fetch_user_by_id(&state, &user_id).await?;
     Ok(Json(UpdateUserRoleResponse { user }))
 }
@@ -319,8 +313,7 @@ pub async fn delete_user(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Check target user exists and isn't the owner
     let target_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?1")
@@ -453,8 +446,7 @@ pub async fn re_enable_user(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Check target user exists, get role and status
     let row = sqlx::query("SELECT role, status FROM users WHERE id = ?1")
@@ -527,8 +519,6 @@ pub async fn re_enable_user(
     .await;
 
     info!(user_id = %user_id, enabled_by = %auth.0.email, "user re-enabled");
-    drop(store);
-
     let user = fetch_user_by_id(&state, &user_id).await?;
     Ok(Json(ReEnableUserResponse { user }))
 }

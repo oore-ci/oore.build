@@ -151,7 +151,7 @@ fix-site:
 
 # ── Backend (Rust) ────────────────────────────────────────────────
 cargo-check:
-	cargo check --workspace
+	cargo check --workspace --locked
 
 run-daemon:
 	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=$(OORED_LOG_LEVEL) cargo run -p oored --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
@@ -160,7 +160,7 @@ run-daemon-debug:
 	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=debug cargo run -p oored --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-daemon-release:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release --bin oored --locked -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-runner:
 	cargo run -p oore -- runner start --daemon-url $(RUNNER_DAEMON_URL) --config $(RUNNER_CONFIG)
@@ -185,7 +185,7 @@ install-local:
 	bash scripts/install.sh
 
 test-rust:
-	cargo test -p oored --features test-support
+	cargo test -p oored --features test-support --locked
 
 test-install:
 	bash scripts/install-acceptance.sh
@@ -198,15 +198,15 @@ fmt-rust-check:
 	cargo fmt --check
 
 clippy-rust:
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::redundant_clone
 
 test-rust-workspace:
-	cargo test --workspace
+	cargo test --workspace --locked
 
 # Release automation lives in GitHub Actions (tag -> GitHub release).
 # ── OpenAPI Spec Generation ───────────────────────────────────────
 gen-openapi:
-	cargo run -p oored --bin openapi-export > apps/docs-site/docs/public/openapi.json
+	cargo run -p oored --bin openapi-export --locked > apps/docs-site/docs/public/openapi.json
 	@echo "OpenAPI spec generated → apps/docs-site/docs/public/openapi.json"
 
 # ── Portless (named .localhost URLs for dev) ─────────────────────

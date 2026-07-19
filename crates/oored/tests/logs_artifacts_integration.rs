@@ -4,6 +4,8 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
@@ -11,6 +13,7 @@ use common::{
     seed_github_integration, seed_project_chain, seed_test_user,
 };
 use http_body_util::BodyExt;
+use oored::AppState;
 use tower::ServiceExt;
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -120,6 +123,41 @@ async fn assert_stream_ends_before_log(response: http::Response<Body>, marker: &
     let body = String::from_utf8_lossy(&bytes);
     assert!(body.contains("authorization_ended"), "stream body: {body}");
     assert!(!body.contains(marker), "stream body: {body}");
+}
+
+fn collect_stream(
+    response: http::Response<Body>,
+) -> (
+    tokio::sync::watch::Receiver<String>,
+    tokio::task::JoinHandle<String>,
+) {
+    let (updates, receiver) = tokio::sync::watch::channel(String::new());
+    let task = tokio::spawn(async move {
+        let mut body = response.into_body();
+        let mut collected = String::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.expect("SSE body frame");
+            if let Ok(bytes) = frame.into_data() {
+                collected.push_str(&String::from_utf8_lossy(&bytes));
+                updates.send_replace(collected.clone());
+            }
+        }
+        collected
+    });
+    (receiver, task)
+}
+
+async fn wait_for_stream_marker(stream: &mut tokio::sync::watch::Receiver<String>, marker: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if stream.borrow().contains(marker) {
+                break;
+            }
+            stream.changed().await.expect("SSE stream closed early");
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("SSE stream did not deliver {marker:?} from a wakeup"));
 }
 
 async fn insert_log_marker(pool: &sqlx::SqlitePool, build_id: &str, sequence: i64, marker: &str) {
@@ -265,6 +303,45 @@ async fn full_scaffold_with_network_urls(
     let build_id = seed_running_build(&pool, &project_id, &pipeline_id, &runner_id).await;
 
     (app, pool, session_token, runner_id, runner_token, build_id)
+}
+
+async fn full_scaffold_with_state() -> (
+    axum::Router,
+    sqlx::SqlitePool,
+    String,
+    String,
+    String,
+    String,
+    Arc<AppState>,
+) {
+    let tmp = Box::leak(Box::new(tempfile::TempDir::new().unwrap()));
+    let store = oored::store::SetupStore::connect(tmp.path().join("test.db"))
+        .await
+        .expect("failed to connect to test database");
+    store
+        .init_if_missing()
+        .await
+        .expect("failed to init test database");
+    let (app, state) =
+        oored::build_test_router_with_state(store, common::TEST_ENCRYPTION_KEY.to_vec()).await;
+    let pool = state.db.clone();
+    let user_id = seed_test_user(&pool).await;
+    let session_token = create_session_token(&pool, &user_id).await;
+    let integration_id = seed_github_integration(&pool, &user_id, "test-secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "test/log-wakeups").await;
+    let (runner_id, runner_token) = register_runner(&app, &session_token, "test-runner").await;
+    let build_id = seed_running_build(&pool, &project_id, &pipeline_id, &runner_id).await;
+
+    (
+        app,
+        pool,
+        session_token,
+        runner_id,
+        runner_token,
+        build_id,
+        state,
+    )
 }
 
 async fn seed_project_member(
@@ -1258,8 +1335,8 @@ async fn test_open_api_token_stream_stops_after_project_membership_removal() {
 }
 
 #[tokio::test]
-async fn test_authorized_stream_still_delivers_logs_and_terminal_event() {
-    let (app, pool, session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+async fn test_authorized_stream_delivers_event_driven_logs_and_terminal_event() {
+    let (app, _pool, session_token, runner_id, runner_token, build_id) = full_scaffold().await;
     let (status, json) = json_request(
         &app,
         "POST",
@@ -1279,33 +1356,159 @@ async fn test_authorized_stream_still_delivers_logs_and_terminal_event() {
         .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let (mut stream, collector) = collect_stream(response);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    sqlx::query(
-        "INSERT INTO build_logs (id, build_id, sequence, content, stream, created_at) \
-         VALUES (?1, ?2, 0, 'legitimate-log', 'stdout', ?3)",
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"),
+        &runner_token,
+        Some(serde_json::json!({
+            "chunks": [{ "sequence": 0, "content": "event-driven-log", "stream": "stdout" }]
+        })),
     )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(&build_id)
-    .bind(common::now_unix())
-    .execute(&pool)
-    .await
-    .unwrap();
+    .await;
+    assert_eq!(status, StatusCode::OK, "append response: {json}");
+    wait_for_stream_marker(&mut stream, "event-driven-log").await;
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/runners/{runner_id}/jobs/{build_id}/status"),
+        &runner_token,
+        Some(serde_json::json!({ "status": "succeeded", "exit_code": 0, "steps": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "status response: {json}");
+
+    let body = tokio::time::timeout(std::time::Duration::from_secs(2), collector)
+        .await
+        .expect("build-state event must close the terminal stream promptly")
+        .expect("stream collector task");
+    assert!(body.contains("event-driven-log"), "stream body: {body}");
+    assert!(body.contains("build_finished"), "stream body: {body}");
+}
+
+#[tokio::test]
+async fn test_lagged_log_event_receiver_recovers_from_sqlite() {
+    let (app, pool, session_token, runner_id, runner_token, build_id, state) =
+        full_scaffold_with_state().await;
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/builds/{build_id}/stream-token"),
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stream_token = json["token"].as_str().unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/builds/{build_id}/logs/stream?token={stream_token}"
+                ))
+                .method("GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (mut stream, collector) = collect_stream(response);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/runners/{runner_id}/jobs/{build_id}/logs"),
+        &runner_token,
+        Some(serde_json::json!({
+            "chunks": [{ "sequence": 0, "content": "receiver-ready", "stream": "stdout" }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "append response: {json}");
+    wait_for_stream_marker(&mut stream, "receiver-ready").await;
+
+    insert_log_marker(&pool, &build_id, 1, "recovered-after-lag").await;
+    // Tokio rounds the requested 1,000-slot broadcast capacity to 1,024.
+    for sequence in 0..=2_048 {
+        state
+            .scheduler
+            .publish_log_event(oored::scheduler::BuildLogEvent {
+                build_id: "unrelated-build".to_string(),
+                latest_sequence: sequence,
+            });
+    }
+    wait_for_stream_marker(&mut stream, "recovered-after-lag").await;
+
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/runners/{runner_id}/jobs/{build_id}/status"),
+        &runner_token,
+        Some(serde_json::json!({ "status": "succeeded", "steps": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "status response: {json}");
+    let body = tokio::time::timeout(std::time::Duration::from_secs(2), collector)
+        .await
+        .expect("terminal stream must close")
+        .expect("stream collector task");
+    assert!(body.contains("recovered-after-lag"), "stream body: {body}");
+    assert!(body.contains("build_finished"), "stream body: {body}");
+}
+
+#[tokio::test]
+async fn test_stream_reconnects_from_last_event_id() {
+    let (app, pool, session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+    insert_log_marker(&pool, &build_id, 0, "before-reconnect").await;
+    insert_log_marker(&pool, &build_id, 1, "after-reconnect").await;
+    let (status, json) = json_request(
+        &app,
+        "POST",
+        &format!("/v1/builds/{build_id}/stream-token"),
+        &session_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = ?1")
         .bind(&build_id)
         .execute(&pool)
         .await
         .unwrap();
 
-    let bytes = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/builds/{build_id}/logs/stream?token={}",
+                    json["token"].as_str().unwrap()
+                ))
+                .header("Last-Event-ID", "0")
+                .method("GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
         response.into_body().collect(),
     )
     .await
-    .expect("terminal stream must close")
+    .expect("terminal reconnect stream must close")
     .unwrap()
     .to_bytes();
-    let body = String::from_utf8_lossy(&bytes);
-    assert!(body.contains("legitimate-log"), "stream body: {body}");
+    let body = String::from_utf8_lossy(&body);
+    assert!(!body.contains("before-reconnect"), "stream body: {body}");
+    assert!(body.contains("after-reconnect"), "stream body: {body}");
     assert!(body.contains("build_finished"), "stream body: {body}");
 }
 
@@ -1628,6 +1831,45 @@ async fn test_list_artifacts_empty() {
     let json = body_json(resp.into_body()).await;
     let artifacts = json["artifacts"].as_array().unwrap();
     assert_eq!(artifacts.len(), 0);
+}
+
+#[tokio::test]
+async fn test_project_artifact_history_uses_the_default_limit() {
+    let (app, pool, session_token, _runner_id, _runner_token, build_id) = full_scaffold().await;
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "WITH RECURSIVE sequence(value) AS (\
+             SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 201\
+         ) \
+         INSERT INTO artifacts \
+             (id, build_id, name, artifact_type, file_path, metadata, created_at, state) \
+         SELECT 'history-' || value, ?1, 'artifact-' || value, 'generic', \
+                'history/' || value, '{}', value, 'available' \
+         FROM sequence",
+    )
+    .bind(&build_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = Request::builder()
+        .uri(format!("/v1/projects/{project_id}/artifacts"))
+        .method("GET")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {session_token}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+
+    assert_eq!(json["artifacts"].as_array().unwrap().len(), 200);
 }
 
 #[tokio::test]

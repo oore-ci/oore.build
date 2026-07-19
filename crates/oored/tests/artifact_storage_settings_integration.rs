@@ -2,6 +2,11 @@
 
 mod common;
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use axum::body::Body;
 use axum::http::{self, Request, StatusCode};
 use common::{
@@ -148,6 +153,21 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
     let json = body_json(resp.into_body()).await;
     assert_eq!(json["settings"]["provider"].as_str().unwrap(), "local");
 
+    let body_polled = Arc::new(AtomicBool::new(false));
+    let stream_polled = Arc::clone(&body_polled);
+    let body = Body::from_stream(async_stream::stream! {
+        stream_polled.store(true, Ordering::SeqCst);
+        yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"must not be read"));
+    });
+    let req = Request::builder()
+        .uri("/v1/artifacts/local-upload/invalid")
+        .method("PUT")
+        .body(body)
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(!body_polled.load(Ordering::SeqCst));
+
     let artifact_body = serde_json::json!({
         "name": "app-release.apk",
         "artifact_type": "apk",
@@ -173,13 +193,44 @@ async fn test_owner_can_configure_local_storage_and_download_artifact() {
     assert!(upload_url.contains("/v1/artifacts/local-upload/"));
 
     let upload_path = url::Url::parse(upload_url).unwrap().path().to_string();
+    let first_chunk_written = Arc::new(tokio::sync::Notify::new());
+    let release_last_chunk = Arc::new(tokio::sync::Notify::new());
+    let stream_first_chunk_written = Arc::clone(&first_chunk_written);
+    let stream_release_last_chunk = Arc::clone(&release_last_chunk);
+    let body = Body::from_stream(async_stream::stream! {
+        yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(&[1, 2]));
+        stream_first_chunk_written.notify_one();
+        stream_release_last_chunk.notified().await;
+        yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(&[3, 4]));
+    });
     let req = Request::builder()
         .uri(upload_path)
         .method("PUT")
-        .body(Body::from(vec![1u8, 2, 3, 4]))
+        .body(body)
         .unwrap();
+    let upload_app = app.clone();
+    let upload = tokio::spawn(async move { upload_app.oneshot(req).await.unwrap() });
 
-    let resp = app.clone().oneshot(req).await.unwrap();
+    first_chunk_written.notified().await;
+    let req = Request::builder()
+        .uri("/v1/settings/artifact-storage")
+        .method("PUT")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::from(serde_json::to_string(&update_body).unwrap()))
+        .unwrap();
+    let settings_resp =
+        tokio::time::timeout(std::time::Duration::from_secs(1), app.clone().oneshot(req))
+            .await
+            .expect("storage settings update must not wait for upload body")
+            .unwrap();
+    assert_eq!(settings_resp.status(), StatusCode::OK);
+
+    release_last_chunk.notify_one();
+    let resp = upload.await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let artifact_id = create_json["artifact"]["id"].as_str().unwrap();

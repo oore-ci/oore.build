@@ -472,10 +472,7 @@ pub async fn create_project(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     if req.repository_id.is_some() && req.local_repository_path.is_some() {
         return Err(api_err(
@@ -634,8 +631,7 @@ pub async fn list_projects(
     Query(params): Query<ListProjectsQuery>,
 ) -> ApiResult<ListProjectsResponse> {
     // All authenticated users can call this endpoint; filtering is role-based.
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
@@ -802,10 +798,7 @@ pub async fn get_project(
     auth: AuthUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<ProjectDetailResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -862,10 +855,7 @@ pub async fn update_project(
     AxumPath(project_id): AxumPath<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> ApiResult<CreateProjectResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -1019,10 +1009,7 @@ pub async fn delete_project(
     auth: AuthUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<serde_json::Value> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,

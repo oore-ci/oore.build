@@ -10,9 +10,11 @@ use aws_sdk_s3::presigning::PresigningConfig;
 use axum::body::{Body, Bytes};
 use oore_contract::{ArtifactStorageProvider, ArtifactStorageSettings, ArtifactStorageSource};
 use sqlx::Row;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, Semaphore};
+use tokio_stream::StreamExt;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use crate::crypto;
 use crate::token::{generate_token, hash_token};
@@ -257,6 +259,13 @@ pub struct LocalStorageClient {
     download_slots: Arc<Semaphore>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalUploadOutcome {
+    Stored,
+    InvalidToken,
+    TooLarge,
+}
+
 impl LocalStorageClient {
     pub fn new(base_dir: PathBuf, public_base_url: Option<String>) -> anyhow::Result<Self> {
         Self::new_with_limits(
@@ -377,7 +386,12 @@ impl LocalStorageClient {
         url
     }
 
-    pub async fn handle_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
+    pub async fn handle_upload(
+        &self,
+        token: &str,
+        body: Body,
+        max_bytes: usize,
+    ) -> anyhow::Result<LocalUploadOutcome> {
         let token_hash = hash_token(token);
         let now = now_unix();
         let entry = {
@@ -386,7 +400,7 @@ impl LocalStorageClient {
         };
 
         let Some(entry) = entry else {
-            return Ok(false);
+            return Ok(LocalUploadOutcome::InvalidToken);
         };
 
         let path = self.full_path_for_key(&entry.key)?;
@@ -396,11 +410,69 @@ impl LocalStorageClient {
             })?;
         }
 
-        tokio::fs::write(&path, bytes)
+        let temp_path = path.with_extension(format!("oore-upload-{}.tmp", Uuid::new_v4()));
+        let file = tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
             .await
-            .with_context(|| format!("failed to write artifact file: {}", path.display()))?;
+            .with_context(|| format!("failed to create upload file: {}", temp_path.display()))?;
+        let result = Self::write_upload(file, &temp_path, &path, body, max_bytes).await;
+        if !matches!(result, Ok(LocalUploadOutcome::Stored)) {
+            match tokio::fs::remove_file(&temp_path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(cleanup_error) => {
+                    return match result {
+                        Err(error) => Err(error.context(format!(
+                            "failed to remove partial upload {}: {cleanup_error}",
+                            temp_path.display()
+                        ))),
+                        Ok(_) => Err(cleanup_error).with_context(|| {
+                            format!("failed to remove partial upload: {}", temp_path.display())
+                        }),
+                    };
+                }
+            }
+        }
 
-        Ok(true)
+        result
+    }
+
+    async fn write_upload(
+        mut file: tokio::fs::File,
+        temp_path: &Path,
+        path: &Path,
+        body: Body,
+        max_bytes: usize,
+    ) -> anyhow::Result<LocalUploadOutcome> {
+        let mut bytes_read = 0usize;
+        let mut stream = body.into_data_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("failed to read artifact upload body")?;
+            bytes_read = match bytes_read.checked_add(chunk.len()) {
+                Some(total) if total <= max_bytes => total,
+                _ => return Ok(LocalUploadOutcome::TooLarge),
+            };
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("failed to write upload file: {}", temp_path.display()))?;
+        }
+
+        file.flush()
+            .await
+            .with_context(|| format!("failed to flush upload file: {}", temp_path.display()))?;
+        drop(file);
+        tokio::fs::rename(temp_path, path).await.with_context(|| {
+            format!(
+                "failed to publish artifact {} from {}",
+                path.display(),
+                temp_path.display()
+            )
+        })?;
+
+        Ok(LocalUploadOutcome::Stored)
     }
 
     pub async fn handle_download(
@@ -531,10 +603,10 @@ impl StorageBackend {
         }
     }
 
-    pub async fn handle_local_upload(&self, token: &str, bytes: &[u8]) -> anyhow::Result<bool> {
+    pub fn local_client(&self) -> Option<Arc<LocalStorageClient>> {
         match self {
-            Self::Local(client) => client.handle_upload(token, bytes).await,
-            _ => Ok(false),
+            Self::Local(client) => Some(Arc::clone(client)),
+            _ => None,
         }
     }
 
@@ -750,6 +822,178 @@ pub async fn load_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    async fn local_upload_token(client: &LocalStorageClient, key: &str) -> String {
+        client
+            .generate_upload_url(key, 900)
+            .await
+            .rsplit('/')
+            .next()
+            .expect("upload token")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn invalid_upload_token_is_rejected_before_polling_the_body() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client =
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage");
+        let polled = Arc::new(AtomicBool::new(false));
+        let stream_polled = Arc::clone(&polled);
+        let body = Body::from_stream(async_stream::stream! {
+            stream_polled.store(true, Ordering::SeqCst);
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"must not be read"));
+        });
+
+        let outcome = client
+            .handle_upload("invalid", body, 1)
+            .await
+            .expect("invalid token response");
+
+        assert_eq!(outcome, LocalUploadOutcome::InvalidToken);
+        assert!(!polled.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn exact_limit_upload_accepts_multiple_chunks() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client =
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage");
+        let token = local_upload_token(&client, "builds/app.apk").await;
+        let body = Body::from_stream(async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"abc"));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"def"));
+        });
+
+        let outcome = client.handle_upload(&token, body, 6).await.expect("upload");
+
+        assert_eq!(outcome, LocalUploadOutcome::Stored);
+        assert_eq!(
+            tokio::fs::read(temp.path().join("builds/app.apk"))
+                .await
+                .expect("artifact"),
+            b"abcdef"
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_upload_removes_its_partial_file() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client =
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage");
+        let token = local_upload_token(&client, "builds/app.apk").await;
+        let body = Body::from_stream(async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"abcd"));
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"e"));
+        });
+
+        let outcome = client
+            .handle_upload(&token, body, 4)
+            .await
+            .expect("oversized upload response");
+        let mut entries = tokio::fs::read_dir(temp.path().join("builds"))
+            .await
+            .expect("artifact directory");
+
+        assert_eq!(outcome, LocalUploadOutcome::TooLarge);
+        assert!(
+            entries
+                .next_entry()
+                .await
+                .expect("directory entry")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_body_stream_removes_its_partial_file() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client =
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage");
+        let token = local_upload_token(&client, "builds/app.apk").await;
+        let body = Body::from_stream(async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"partial"));
+            yield Err(std::io::Error::other("synthetic body failure"));
+        });
+
+        client
+            .handle_upload(&token, body, 64)
+            .await
+            .expect_err("body failure");
+        let mut entries = tokio::fs::read_dir(temp.path().join("builds"))
+            .await
+            .expect("artifact directory");
+
+        assert!(
+            entries
+                .next_entry()
+                .await
+                .expect("directory entry")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_is_not_visible_until_the_stream_completes() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client = Arc::new(
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage"),
+        );
+        let token = local_upload_token(&client, "builds/app.apk").await;
+        let first_chunk_written = Arc::new(tokio::sync::Notify::new());
+        let release_last_chunk = Arc::new(tokio::sync::Notify::new());
+        let stream_first_chunk_written = Arc::clone(&first_chunk_written);
+        let stream_release_last_chunk = Arc::clone(&release_last_chunk);
+        let body = Body::from_stream(async_stream::stream! {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"first"));
+            stream_first_chunk_written.notify_one();
+            stream_release_last_chunk.notified().await;
+            yield Ok::<Bytes, std::io::Error>(Bytes::from_static(b"last"));
+        });
+        let upload_client = Arc::clone(&client);
+        let upload =
+            tokio::spawn(async move { upload_client.handle_upload(&token, body, 9).await });
+
+        first_chunk_written.notified().await;
+        assert!(!temp.path().join("builds/app.apk").exists());
+        release_last_chunk.notify_one();
+        let outcome = upload.await.expect("upload task").expect("upload");
+
+        assert_eq!(outcome, LocalUploadOutcome::Stored);
+        assert_eq!(
+            tokio::fs::read(temp.path().join("builds/app.apk"))
+                .await
+                .expect("artifact"),
+            b"firstlast"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_upload_token_is_single_use() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let client =
+            LocalStorageClient::new(temp.path().to_path_buf(), None).expect("local storage");
+        let token = local_upload_token(&client, "builds/app.apk").await;
+
+        let first = client
+            .handle_upload(&token, Body::from("first"), 16)
+            .await
+            .expect("first upload");
+        let second = client
+            .handle_upload(&token, Body::from("second"), 16)
+            .await
+            .expect("second upload");
+
+        assert_eq!(first, LocalUploadOutcome::Stored);
+        assert_eq!(second, LocalUploadOutcome::InvalidToken);
+        assert_eq!(
+            tokio::fs::read(temp.path().join("builds/app.apk"))
+                .await
+                .expect("artifact"),
+            b"first"
+        );
+    }
 
     #[tokio::test]
     async fn local_download_can_use_artifact_delivery_origin() {

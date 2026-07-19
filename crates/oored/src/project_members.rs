@@ -50,10 +50,7 @@ pub async fn list_project_members(
     auth: AuthUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<ListProjectMembersResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -100,10 +97,7 @@ pub async fn list_project_member_candidates(
     auth: AuthUser,
     AxumPath(project_id): AxumPath<String>,
 ) -> ApiResult<ListProjectMemberCandidatesResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -173,10 +167,7 @@ pub async fn add_project_member(
     AxumPath(project_id): AxumPath<String>,
     Json(req): Json<AddProjectMemberRequest>,
 ) -> ApiResult<AddProjectMemberResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -311,10 +302,7 @@ pub async fn update_project_member(
     AxumPath((project_id, user_id)): AxumPath<(String, String)>,
     Json(req): Json<UpdateProjectMemberRequest>,
 ) -> ApiResult<UpdateProjectMemberResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -465,10 +453,7 @@ pub async fn remove_project_member(
     auth: AuthUser,
     AxumPath((project_id, user_id)): AxumPath<(String, String)>,
 ) -> ApiResult<serde_json::Value> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,

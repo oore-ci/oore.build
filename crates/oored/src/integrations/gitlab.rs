@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use axum::Json;
 use axum::body::Body;
@@ -129,11 +128,8 @@ fn sniff_avatar_content_type(body: &[u8]) -> Option<&'static str> {
     }
 }
 
-fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+fn build_http_client() -> Result<&'static reqwest::Client, &'static str> {
+    super::scm_http_client()
 }
 
 async fn access_token(
@@ -622,7 +618,7 @@ pub(crate) async fn perform_sync_installations(
     for inst in &installations {
         // Refresh project list for each installation/user.
         sync_gitlab_projects(
-            &http_client,
+            http_client,
             pool,
             &host_url,
             &token,
@@ -648,10 +644,7 @@ pub async fn gitlab_start(
     Json(req): Json<GitLabStartRequest>,
 ) -> ApiResult<GitLabCompleteResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     let host_url = normalize_gitlab_host_url(&req.host_url)?;
@@ -914,7 +907,7 @@ pub async fn gitlab_start(
         // Fetch accessible projects via GitLab API
         let token = req.access_token.as_ref().unwrap();
         if let Err(e) =
-            sync_gitlab_projects(&client, &pool, &host_url, token, &inst_id, false, now).await
+            sync_gitlab_projects(client, &pool, &host_url, token, &inst_id, false, now).await
         {
             error!(error = ?e, "failed to sync GitLab projects (non-fatal)");
         }
@@ -1138,10 +1131,7 @@ pub async fn rotate_repository_webhook_secret(
     Path(repository_id): Path<String>,
 ) -> ApiResult<GitLabRepositoryWebhookSecretResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     let repository = sqlx::query(
@@ -1294,10 +1284,7 @@ pub async fn proxy_git_checkout(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let row = sqlx::query(
         "SELECT i.host_url, r.full_name, c.encrypted_value \
          FROM builds b \
@@ -1548,10 +1535,7 @@ pub async fn gitlab_authorize(
     let allowed_origins = state.allowed_origins.read().await.clone();
     validate_redirect_origin(&req.redirect_url, &allowed_origins)?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     // Load the integration
@@ -1680,10 +1664,7 @@ pub async fn gitlab_callback(
     State(state): State<Arc<AppState>>,
     Query(params): Query<GitLabCallbackQuery>,
 ) -> Response {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     if require_remote_mode(&pool).await.is_err() {
         return Html(error_page(
             "Remote mode required",
@@ -1817,18 +1798,15 @@ pub async fn gitlab_callback(
 /// Stores both tokens encrypted, activates the integration, creates an
 /// installation entry, and syncs projects.
 ///
-/// The store mutex is held only for short DB-read/write windows; all outbound
-/// HTTP calls to GitLab happen with the mutex released.
 async fn exchange_gitlab_code(
     app_state: &Arc<AppState>,
     code: &str,
     integration_id: &str,
     callback_url: &str,
 ) -> Result<(), String> {
-    // ── Phase 1: Read credentials from DB (short lock) ──────────
+    // ── Phase 1: Read credentials from DB ───────────────────────
     let (host_url, client_id, client_secret, pool) = {
-        let store = app_state.store.lock().await;
-        let pool = store.pool().clone();
+        let pool = app_state.db.clone();
 
         let row = sqlx::query("SELECT host_url, auth_mode, status FROM integrations WHERE id = ?1")
             .bind(integration_id)
@@ -2028,7 +2006,7 @@ async fn exchange_gitlab_code(
 
     // Sync projects with bearer auth (non-fatal)
     if let Err(e) = sync_gitlab_projects(
-        &http_client,
+        http_client,
         &pool,
         &host_url,
         &tokens.access_token,
@@ -2301,7 +2279,7 @@ mod tests {
             .unwrap();
 
         sync_gitlab_projects(
-            &build_http_client().unwrap(),
+            build_http_client().unwrap(),
             &pool,
             &host,
             "token",
@@ -2357,7 +2335,7 @@ mod tests {
             .await
             .unwrap();
         sync_gitlab_projects(
-            &build_http_client().unwrap(),
+            build_http_client().unwrap(),
             &pool,
             &host,
             "token",

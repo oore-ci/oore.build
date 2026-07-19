@@ -1,7 +1,7 @@
 //! Standalone binary that prints the Oore CI OpenAPI 3.1 specification to stdout.
 //!
 //! Usage:
-//!   cargo run --bin openapi-export > apps/docs-site/docs/public/openapi.json
+//!   cargo run --bin openapi-export --locked > apps/docs-site/docs/public/openapi.json
 //!
 //! This is used in CI (`make gen-openapi`) to generate a static spec file that
 //! the VitePress docs site bundles and serves.
@@ -1952,7 +1952,7 @@ mod paths {
     #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",
         params(
             ("project_id" = String, Path, description = "Project ID"),
-            ("limit" = Option<i64>, Query, description = "Maximum artifacts to return (max 200)"),
+            ("limit" = Option<i64>, Query, description = "Maximum artifacts to return (defaults to 200, max 200)"),
         ),
         security(("bearer_auth" = [])),
         responses(

@@ -640,10 +640,7 @@ pub async fn preview_build_changelog(
     Path(project_id): Path<String>,
     Query(params): Query<BuildChangelogPreviewQuery>,
 ) -> ApiResult<BuildChangelogPreviewResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let effective = resolve_effective_project_role(
         &pool,
         &auth.0.user_id,
@@ -757,10 +754,7 @@ pub async fn create_build(
     Path(project_id): Path<String>,
     Json(req): Json<CreateBuildRequest>,
 ) -> ApiResult<CreateBuildResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -1041,8 +1035,7 @@ pub async fn list_builds(
     auth: AuthUser,
     Query(params): Query<ListBuildsQuery>,
 ) -> ApiResult<ListBuildsResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let requested_limit = params.limit.unwrap_or(50);
     if requested_limit <= 0 {
@@ -1175,8 +1168,7 @@ pub async fn get_build(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<BuildDetailResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let build_row = sqlx::query(
         "SELECT builds.*, projects.name AS project_name, pipelines.name AS pipeline_name, runners.name AS runner_name, \
@@ -1246,8 +1238,7 @@ pub async fn cancel_build(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<CancelBuildResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
         .bind(&build_id)
@@ -1320,8 +1311,7 @@ pub async fn rerun_build(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> ApiResult<RerunBuildResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Fetch source build
     let source_row = sqlx::query(

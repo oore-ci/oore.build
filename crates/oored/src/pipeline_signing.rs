@@ -409,10 +409,7 @@ pub async fn get_pipeline_android_signing(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<PipelineAndroidSigningResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -498,10 +495,7 @@ pub async fn update_pipeline_android_signing(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_pipeline_project_permission(
         &pool,
         &auth.0.user_id,
@@ -596,10 +590,7 @@ pub async fn get_job_android_signing(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let pipeline_id =
         require_active_job_signing_grant(&pool, &job_id, &runner_id, &headers).await?;

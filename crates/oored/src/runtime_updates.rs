@@ -74,18 +74,15 @@ pub async fn start_update(
         status.error = None;
     }
 
-    {
-        let store = state.store.lock().await;
-        let _ = write_audit_log(
-            store.pool(),
-            Some(&auth.0.user_id),
-            "runtime_update_started",
-            "system",
-            Some("backend"),
-            None,
-        )
-        .await;
-    }
+    let _ = write_audit_log(
+        &state.db,
+        Some(&auth.0.user_id),
+        "runtime_update_started",
+        "system",
+        Some("backend"),
+        None,
+    )
+    .await;
 
     let update_state = state.runtime_update.clone();
     tokio::spawn(async move {

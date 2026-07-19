@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
@@ -506,9 +506,13 @@ fn recovery_socket_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> 
         .join(LOCAL_RECOVERY_SOCKET_FILE))
 }
 
+fn current_effective_uid() -> u32 {
+    // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
+    unsafe { libc::geteuid() }
+}
+
 fn validate_recovery_socket(path: &Path) -> anyhow::Result<()> {
-    // SAFETY: geteuid has no preconditions and does not dereference memory.
-    let expected_uid = unsafe { libc::geteuid() };
+    let expected_uid = current_effective_uid();
     let parent = path
         .parent()
         .context("management socket path has no parent directory")?;
@@ -2521,12 +2525,12 @@ async fn handle_status(args: StatusArgs) -> anyhow::Result<()> {
         match fetch_user_profile(&client, &daemon_url, token).await {
             Ok(_) => {
                 summary.authenticated = true;
-                let queued =
-                    fetch_build_list(&client, &daemon_url, token, Some("queued"), Some(1)).await?;
-                let running =
-                    fetch_build_list(&client, &daemon_url, token, Some("running"), Some(1)).await?;
-                let recent = fetch_build_list(&client, &daemon_url, token, None, Some(5)).await?;
-                let runners = fetch_runner_list(&client, &daemon_url, token).await?;
+                let (queued, running, recent, runners) = tokio::try_join!(
+                    fetch_build_list(&client, &daemon_url, token, Some("queued"), Some(1)),
+                    fetch_build_list(&client, &daemon_url, token, Some("running"), Some(1)),
+                    fetch_build_list(&client, &daemon_url, token, None, Some(5)),
+                    fetch_runner_list(&client, &daemon_url, token),
+                )?;
                 summary.queue_depth = Some(queued.total);
                 summary.active_builds = Some(queued.total + running.total);
                 summary.recent_builds = Some(recent.builds);
@@ -3307,6 +3311,85 @@ fn parse_checksum(text: &str, filename: &str) -> anyhow::Result<String> {
     anyhow::bail!("checksum not found for {filename} in checksums.txt")
 }
 
+fn sha256_file(path: &Path) -> anyhow::Result<String> {
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("failed to open {} for hashing", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .with_context(|| format!("failed to read {} for hashing", path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+async fn download_file_and_hash(
+    mut response: reqwest::Response,
+    destination: &Path,
+) -> anyhow::Result<String> {
+    let mut file = tokio::fs::File::create(destination)
+        .await
+        .with_context(|| format!("failed to create {}", destination.display()))?;
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .context("failed to read archive download")?
+    {
+        file.write_all(&chunk)
+            .await
+            .with_context(|| format!("failed to write {}", destination.display()))?;
+        hasher.update(&chunk);
+    }
+    file.flush()
+        .await
+        .with_context(|| format!("failed to flush {}", destination.display()))?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+async fn download_verified_archive(
+    client: &reqwest::Client,
+    archive_url: &str,
+    checksums_url: &str,
+    archive_filename: &str,
+    destination: &Path,
+) -> anyhow::Result<()> {
+    let (actual_hash, checksums_text) = tokio::try_join!(
+        async {
+            let response = client
+                .get(archive_url)
+                .send()
+                .await
+                .context("failed to download archive")?
+                .error_for_status()
+                .context("archive download failed")?;
+            download_file_and_hash(response, destination).await
+        },
+        async {
+            client
+                .get(checksums_url)
+                .send()
+                .await
+                .context("failed to download checksums")?
+                .error_for_status()
+                .context("checksums download failed")?
+                .text()
+                .await
+                .context("failed to read checksums text")
+        }
+    )?;
+    let expected_hash = parse_checksum(&checksums_text, archive_filename)?;
+    if actual_hash != expected_hash {
+        anyhow::bail!("Checksum mismatch!\n  Expected: {expected_hash}\n  Actual:   {actual_hash}");
+    }
+    Ok(())
+}
+
 fn endpoint_url(base_url: &str, path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
@@ -3606,10 +3689,7 @@ fn unpack_backup(input: &Path, destination: &Path) -> anyhow::Result<BackupManif
             .files
             .get(name)
             .with_context(|| format!("backup manifest is missing checksum for {name}"))?;
-        let actual = hex::encode(Sha256::digest(
-            fs::read(destination.join(name))
-                .with_context(|| format!("failed to read backup {name}"))?,
-        ));
+        let actual = sha256_file(&destination.join(name))?;
         if expected != &actual {
             anyhow::bail!("backup checksum mismatch for {name}");
         }
@@ -3655,10 +3735,7 @@ fn backup_create(args: BackupCreateArgs) -> anyhow::Result<()> {
 
     let mut files = HashMap::new();
     for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE] {
-        files.insert(
-            name.to_string(),
-            hex::encode(Sha256::digest(fs::read(stage.path().join(name))?)),
-        );
+        files.insert(name.to_string(), sha256_file(&stage.path().join(name))?);
     }
     let manifest = BackupManifest {
         format: "oore-backup-v1".to_string(),
@@ -3895,17 +3972,7 @@ fn render_runner_launch_agent(
 }
 
 fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
-    let output = std::process::Command::new("id")
-        .arg("-u")
-        .output()
-        .context("failed to determine current user id")?;
-    if !output.status.success() {
-        anyhow::bail!("failed to determine current user id");
-    }
-    let uid = String::from_utf8(output.stdout)
-        .context("current user id was not valid UTF-8")?
-        .trim()
-        .to_string();
+    let uid = current_effective_uid();
     Ok((
         format!("gui/{uid}"),
         format!("gui/{uid}/{RUNNER_SERVICE_LABEL}"),
@@ -4131,10 +4198,7 @@ fn launchd_service_loaded(label: &str) -> bool {
     let service = if system {
         format!("system/{label}")
     } else {
-        let Ok(uid) = std::process::Command::new("id").arg("-u").output() else {
-            return false;
-        };
-        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        let uid = current_effective_uid();
         format!("gui/{uid}/{label}")
     };
     std::process::Command::new("launchctl")
@@ -4155,11 +4219,7 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
     let (service, domain) = if system {
         (format!("system/{label}"), "system".to_string())
     } else {
-        let uid = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .context("failed to determine current user id")?;
-        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        let uid = current_effective_uid();
         (format!("gui/{uid}/{label}"), format!("gui/{uid}"))
     };
     let command = if system { "sudo" } else { "launchctl" };
@@ -4587,59 +4647,37 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
 
     println!("Downloading {archive_filename}...");
 
-    // 5. Download archive + checksums in parallel
-    let (archive_resp, checksums_resp) = tokio::try_join!(
-        async {
-            client
-                .get(&archive_url)
-                .send()
-                .await
-                .context("failed to download archive")?
-                .error_for_status()
-                .context("archive download failed")
-        },
-        async {
-            client
-                .get(&checksums_url)
-                .send()
-                .await
-                .context("failed to download checksums")?
-                .error_for_status()
-                .context("checksums download failed")
-        }
-    )?;
-
-    let archive_bytes = archive_resp
-        .bytes()
-        .await
-        .context("failed to read archive bytes")?;
-    let checksums_text = checksums_resp
-        .text()
-        .await
-        .context("failed to read checksums text")?;
+    // 5. Download archive + checksums in parallel without buffering the archive.
+    let tmpdir = tempfile::tempdir().context("failed to create temporary directory")?;
+    let archive_path = tmpdir.path().join(&archive_filename);
+    download_verified_archive(
+        &client,
+        &archive_url,
+        &checksums_url,
+        &archive_filename,
+        &archive_path,
+    )
+    .await?;
 
     // 6. Verify SHA-256 checksum
-    let expected_hash = parse_checksum(&checksums_text, &archive_filename)?;
-    let actual_hash = hex::encode(Sha256::digest(&archive_bytes));
-
-    if actual_hash != expected_hash {
-        anyhow::bail!("Checksum mismatch!\n  Expected: {expected_hash}\n  Actual:   {actual_hash}");
-    }
     println!("Checksum verified (SHA-256).");
 
     // 7. Extract outside the install then stage the verified release inside it.
-    let tmpdir = tempfile::tempdir().context("failed to create temporary directory")?;
-    let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
+    let extracted_release = tmpdir.path().join("release");
+    fs::create_dir(&extracted_release).context("failed to create release extraction directory")?;
+    let archive_file =
+        fs::File::open(&archive_path).context("failed to open downloaded archive")?;
+    let decoder = flate2::read::GzDecoder::new(archive_file);
     let mut archive = tar::Archive::new(decoder);
     archive
-        .unpack(tmpdir.path())
+        .unpack(&extracted_release)
         .context("failed to extract archive")?;
 
     // 8. Verify expected files exist.
-    let extracted_bin = tmpdir.path().join("bin");
+    let extracted_bin = extracted_release.join("bin");
     let extracted_oore = extracted_bin.join("oore");
     let extracted_oored = extracted_bin.join("oored");
-    let extracted_version = tmpdir.path().join("VERSION");
+    let extracted_version = extracted_release.join("VERSION");
 
     if !extracted_oore.exists() {
         anyhow::bail!("archive missing bin/oore");
@@ -4661,7 +4699,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         .tempdir_in(&install_root)
         .context("failed to create update staging directory")?;
     let staged_release = update_stage.path().join("release");
-    copy_dir_recursive(tmpdir.path(), &staged_release)?;
+    copy_dir_recursive(&extracted_release, &staged_release)?;
     let previous_release = update_stage.path().join("previous");
     copy_release_snapshot(&install_root, &previous_release)?;
 
@@ -4887,6 +4925,125 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spawn_update_asset_server(
+        archive: Vec<u8>,
+        checksum: String,
+        archive_filename: &str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let checksum_body = format!("{checksum}  {archive_filename}\n");
+        let handle = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4096];
+                let request_len = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..request_len]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+
+                if path == "/archive" {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                        )
+                        .unwrap();
+                    for chunk in archive.chunks(8 * 1024) {
+                        write!(stream, "{:x}\r\n", chunk.len()).unwrap();
+                        stream.write_all(chunk).unwrap();
+                        stream.write_all(b"\r\n").unwrap();
+                    }
+                    stream.write_all(b"0\r\n\r\n").unwrap();
+                } else if path == "/checksums" {
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        checksum_body.len(),
+                        checksum_body
+                    )
+                    .unwrap();
+                } else {
+                    panic!("unexpected update test request: {path}");
+                }
+            }
+        });
+        (format!("http://{address}"), handle)
+    }
+
+    #[test]
+    fn sha256_file_hashes_multiple_chunks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("large.bin");
+        let contents = vec![0x5au8; 64 * 1024 + 17];
+        fs::write(&path, &contents).unwrap();
+
+        assert_eq!(
+            sha256_file(&path).unwrap(),
+            hex::encode(Sha256::digest(&contents))
+        );
+    }
+
+    #[test]
+    fn update_download_streams_and_verifies_multiple_chunks() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("release.tar.gz");
+        let archive = vec![0x5au8; 128 * 1024 + 17];
+        let expected_hash = hex::encode(Sha256::digest(&archive));
+        let (base_url, server) =
+            spawn_update_asset_server(archive.clone(), expected_hash, "release.tar.gz");
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(download_verified_archive(
+                &reqwest::Client::new(),
+                &format!("{base_url}/archive"),
+                &format!("{base_url}/checksums"),
+                "release.tar.gz",
+                &destination,
+            ))
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(fs::read(destination).unwrap(), archive);
+    }
+
+    #[test]
+    fn update_checksum_mismatch_leaves_installation_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_root = temp.path().join("install");
+        fs::create_dir_all(install_root.join("bin")).unwrap();
+        fs::write(install_root.join("bin/oore"), b"installed-binary").unwrap();
+        fs::write(install_root.join("VERSION"), b"1.0.0").unwrap();
+        let destination = temp.path().join("release.tar.gz");
+        let (base_url, server) = spawn_update_asset_server(
+            vec![0x5au8; 128 * 1024 + 17],
+            "0".repeat(64),
+            "release.tar.gz",
+        );
+
+        let error = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(download_verified_archive(
+                &reqwest::Client::new(),
+                &format!("{base_url}/archive"),
+                &format!("{base_url}/checksums"),
+                "release.tar.gz",
+                &destination,
+            ))
+            .unwrap_err();
+        server.join().unwrap();
+
+        assert!(error.to_string().contains("Checksum mismatch"));
+        assert_eq!(
+            fs::read(install_root.join("bin/oore")).unwrap(),
+            b"installed-binary"
+        );
+        assert_eq!(fs::read(install_root.join("VERSION")).unwrap(), b"1.0.0");
+    }
 
     #[test]
     fn backup_output_is_private_before_first_write() {

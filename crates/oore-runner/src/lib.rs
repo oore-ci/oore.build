@@ -23,7 +23,7 @@ use oore_contract::{
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
@@ -885,10 +885,9 @@ fn cleanup_ios_signing_state(journal: &IosCleanupJournal) -> anyhow::Result<()> 
     }
 
     if journal.keychain_path.exists() {
-        if let Err(error) = run_security_command_with_strings(&[
-            "delete-keychain".to_string(),
-            keychain_path.clone(),
-        ]) {
+        if let Err(error) =
+            run_security_command_with_strings(&["delete-keychain".to_string(), keychain_path])
+        {
             errors.push(format!("failed to delete build keychain: {error:#}"));
         }
         match fs::remove_file(&journal.keychain_path) {
@@ -1967,12 +1966,8 @@ fn ensure_legacy_workspace_has_no_residue(path: &Path) -> anyhow::Result<()> {
 
 #[cfg(unix)]
 fn current_uid() -> anyhow::Result<u32> {
-    let output = Command::new("/usr/bin/id").arg("-u").output()?;
-    anyhow::ensure!(output.status.success(), "failed to determine runner uid");
-    String::from_utf8(output.stdout)?
-        .trim()
-        .parse()
-        .context("invalid uid returned by /usr/bin/id")
+    // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
+    Ok(unsafe { libc::geteuid() })
 }
 
 #[cfg(unix)]
@@ -2846,9 +2841,8 @@ fn resolve_execution_plan(
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
         let file_config = apply_run_platform_selection(file_config, snapshot)?;
-        let resolved_flutter_version = fvmrc_version
-            .clone()
-            .or_else(|| file_config.flutter_version.clone());
+        let resolved_flutter_version =
+            fvmrc_version.or_else(|| file_config.flutter_version.clone());
         let include_defaults = file_config.commands.build.is_empty();
         let mut stage_commands = materialize_stage_commands(&file_config, include_defaults);
         if let Some(version) = resolved_flutter_version {
@@ -4121,20 +4115,39 @@ fn walk_artifact_candidates(dir: &Path) -> Vec<PathBuf> {
     result
 }
 
-fn compute_file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
-    use std::io::Read;
-    let file = fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(file);
+const ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
+
+async fn compute_file_sha256(path: &std::path::Path) -> anyhow::Result<String> {
+    let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
+    let mut buffer = vec![0u8; ARTIFACT_UPLOAD_CHUNK_BYTES];
     loop {
-        let n = reader.read(&mut buffer)?;
+        let n = file.read(&mut buffer).await?;
         if n == 0 {
             break;
         }
         hasher.update(&buffer[..n]);
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+fn artifact_upload_body(mut file: tokio::fs::File) -> reqwest::Body {
+    reqwest::Body::wrap_stream(async_stream::stream! {
+        loop {
+            let mut chunk = vec![0u8; ARTIFACT_UPLOAD_CHUNK_BYTES];
+            match file.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(read) => {
+                    chunk.truncate(read);
+                    yield Ok::<Vec<u8>, std::io::Error>(chunk);
+                }
+                Err(error) => {
+                    yield Err(error);
+                    break;
+                }
+            }
+        }
+    })
 }
 
 fn runner_artifact_upload_url(daemon_url: &str, upload_url: &str) -> String {
@@ -4227,8 +4240,9 @@ async fn scan_and_upload_artifacts(
     println!("Found {} artifact(s) to upload", artifacts.len());
 
     for (path, artifact_type, name) in &artifacts {
-        let file_size = fs::metadata(path).map(|m| m.len() as i64).ok();
-        let checksum = Some(compute_file_sha256(path)?);
+        let file_size = i64::try_from(tokio::fs::metadata(path).await?.len())
+            .context("artifact size exceeds the supported range")?;
+        let checksum = Some(compute_file_sha256(path).await?);
 
         let metadata = match ios_metadata {
             Some(value) if artifact_type == "ipa" => value.clone(),
@@ -4238,7 +4252,7 @@ async fn scan_and_upload_artifacts(
         let body = serde_json::json!({
             "name": name,
             "artifact_type": artifact_type,
-            "file_size": file_size,
+            "file_size": Some(file_size),
             "checksum": checksum,
             "metadata": metadata,
         });
@@ -4279,8 +4293,15 @@ async fn scan_and_upload_artifacts(
         }
 
         let upload = async {
-            let bytes = tokio::fs::read(path).await?;
-            let response = client.put(&upload_url).body(bytes).send().await?;
+            let file = tokio::fs::File::open(path)
+                .await
+                .with_context(|| format!("failed to open artifact {name}"))?;
+            let response = client
+                .put(&upload_url)
+                .header(reqwest::header::CONTENT_LENGTH, file_size.to_string())
+                .body(artifact_upload_body(file))
+                .send()
+                .await?;
             if !response.status().is_success() {
                 anyhow::bail!("upload returned HTTP {}", response.status());
             }
@@ -4528,6 +4549,177 @@ async fn run_and_stream(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Debug)]
+    struct RecordedHttpRequest {
+        method: String,
+        path: String,
+        content_length: Option<usize>,
+        transfer_encoding: Option<String>,
+        body_read_chunks: usize,
+        body: Vec<u8>,
+    }
+
+    struct MockHttpResponse {
+        status: u16,
+        body: String,
+    }
+
+    fn spawn_mock_http_server(
+        responses: impl FnOnce(&str) -> Vec<MockHttpResponse>,
+    ) -> (String, std::thread::JoinHandle<Vec<RecordedHttpRequest>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        listener
+            .set_nonblocking(true)
+            .expect("configure mock listener");
+        let base_url = format!("http://{}", listener.local_addr().expect("mock address"));
+        let responses = responses(&base_url);
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::with_capacity(responses.len());
+            for response in responses {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(connection) => break connection,
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "timed out waiting for mock request"
+                            );
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("mock accept failed: {error}"),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .expect("configure blocking mock connection");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .expect("mock read timeout");
+                requests.push(read_mock_http_request(&mut stream));
+
+                let reason = match response.status {
+                    200 => "OK",
+                    500 => "Internal Server Error",
+                    _ => "Response",
+                };
+                let bytes = response.body.as_bytes();
+                write!(
+                    stream,
+                    "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response.status,
+                    reason,
+                    bytes.len()
+                )
+                .expect("write mock response headers");
+                stream.write_all(bytes).expect("write mock response body");
+            }
+            requests
+        });
+        (base_url, server)
+    }
+
+    fn read_mock_http_request(stream: &mut std::net::TcpStream) -> RecordedHttpRequest {
+        let mut header = Vec::new();
+        while !header.ends_with(b"\r\n\r\n") {
+            let mut byte = [0u8; 1];
+            stream.read_exact(&mut byte).expect("read mock headers");
+            header.push(byte[0]);
+            assert!(header.len() <= 64 * 1024, "mock request headers too large");
+        }
+        let header = String::from_utf8(header).expect("UTF-8 mock headers");
+        let mut lines = header.lines();
+        let mut request_line = lines.next().expect("mock request line").split_whitespace();
+        let method = request_line
+            .next()
+            .expect("mock request method")
+            .to_string();
+        let path = request_line.next().expect("mock request path").to_string();
+        let mut content_length = None;
+        let mut transfer_encoding = None;
+        for line in lines {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = Some(value.trim().parse().expect("content length"));
+            } else if name.eq_ignore_ascii_case("transfer-encoding") {
+                transfer_encoding = Some(value.trim().to_string());
+            }
+        }
+
+        let expected = content_length.unwrap_or_default();
+        let mut body = Vec::with_capacity(expected);
+        let mut body_read_chunks = 0;
+        while body.len() < expected {
+            let mut chunk = [0u8; 16 * 1024];
+            let remaining = expected - body.len();
+            let read_len = remaining.min(chunk.len());
+            let read = stream.read(&mut chunk[..read_len]).expect("read mock body");
+            assert_ne!(read, 0, "mock request body ended early");
+            body.extend_from_slice(&chunk[..read]);
+            body_read_chunks += 1;
+        }
+
+        RecordedHttpRequest {
+            method,
+            path,
+            content_length,
+            transfer_encoding,
+            body_read_chunks,
+            body,
+        }
+    }
+
+    fn mock_artifact(state: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": "artifact-id",
+            "build_id": "build-id",
+            "name": "artifact.apk",
+            "artifact_type": "apk",
+            "file_path": "build-id/artifact-id/artifact.apk",
+            "file_size": null,
+            "checksum": null,
+            "metadata": {},
+            "created_at": 1,
+            "state": state
+        })
+    }
+
+    fn mock_reservation(upload_url: &str) -> String {
+        serde_json::json!({
+            "artifact": mock_artifact("pending"),
+            "upload_url": upload_url
+        })
+        .to_string()
+    }
+
+    fn mock_completion() -> String {
+        serde_json::json!({ "artifact": mock_artifact("available") }).to_string()
+    }
+
+    fn test_runner_config(daemon_url: &str) -> RunnerConfig {
+        RunnerConfig {
+            runner_id: "runner-id".to_string(),
+            runner_token: "runner-token".to_string(),
+            daemon_url: daemon_url.to_string(),
+            name: "runner".to_string(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn current_uid_matches_new_file_owner() {
+        use std::os::unix::fs::MetadataExt;
+
+        let workspace = temp_workspace();
+        assert_eq!(
+            current_uid().expect("read effective uid"),
+            fs::metadata(&workspace).expect("read metadata").uid()
+        );
+        cleanup_workspace(&workspace);
+    }
 
     static TEMP_WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -4872,6 +5064,183 @@ mod tests {
             ),
             "https://s3.example.com/bucket/artifact?signature=abc"
         );
+    }
+
+    #[tokio::test]
+    async fn local_artifact_upload_streams_with_content_length_after_url_rewrite() {
+        let workspace = temp_workspace();
+        let bytes = vec![0x5a; ARTIFACT_UPLOAD_CHUNK_BYTES * 2 + 17];
+        fs::write(workspace.join("artifact.apk"), &bytes).expect("write artifact");
+        let (daemon_url, server) = spawn_mock_http_server(|_| {
+            vec![
+                MockHttpResponse {
+                    status: 200,
+                    body: mock_reservation(
+                        "https://ci.example.com/v1/artifacts/local-upload/upload-token",
+                    ),
+                },
+                MockHttpResponse {
+                    status: 200,
+                    body: String::new(),
+                },
+                MockHttpResponse {
+                    status: 200,
+                    body: mock_completion(),
+                },
+            ]
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("HTTP client");
+        let config = test_runner_config(&daemon_url);
+
+        let result = scan_and_upload_artifacts(
+            &workspace,
+            &client,
+            &daemon_url,
+            &config,
+            "build-id",
+            &["artifact.apk".to_string()],
+            None,
+        )
+        .await;
+        let requests = server.join().expect("mock server");
+        cleanup_workspace(&workspace);
+        result.expect("artifact upload");
+
+        let upload = &requests[1];
+        assert_eq!(upload.method, "PUT");
+        assert_eq!(upload.path, "/v1/artifacts/local-upload/upload-token");
+        assert_eq!(upload.content_length, Some(bytes.len()));
+        assert_eq!(upload.transfer_encoding, None);
+        assert!(upload.body_read_chunks > 1);
+        assert_eq!(upload.body, bytes);
+        assert!(requests[2].path.ends_with("/artifact-id/complete"));
+    }
+
+    #[tokio::test]
+    async fn s3_artifact_upload_streams_with_content_length_to_the_original_url() {
+        let workspace = temp_workspace();
+        let bytes = vec![0xa5; ARTIFACT_UPLOAD_CHUNK_BYTES * 2 + 17];
+        fs::write(workspace.join("artifact.apk"), &bytes).expect("write artifact");
+        let (storage_url, storage_server) = spawn_mock_http_server(|_| {
+            vec![MockHttpResponse {
+                status: 200,
+                body: String::new(),
+            }]
+        });
+        let expected_upload_path = "/bucket/artifact.apk?signature=abc";
+        let upload_url = format!("{storage_url}{expected_upload_path}");
+        let (daemon_url, daemon_server) = spawn_mock_http_server(move |_| {
+            vec![
+                MockHttpResponse {
+                    status: 200,
+                    body: mock_reservation(&upload_url),
+                },
+                MockHttpResponse {
+                    status: 200,
+                    body: mock_completion(),
+                },
+            ]
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("HTTP client");
+        let config = test_runner_config(&daemon_url);
+
+        let result = scan_and_upload_artifacts(
+            &workspace,
+            &client,
+            &daemon_url,
+            &config,
+            "build-id",
+            &["artifact.apk".to_string()],
+            None,
+        )
+        .await;
+        let daemon_requests = daemon_server.join().expect("daemon server");
+        let storage_requests = storage_server.join().expect("storage server");
+        cleanup_workspace(&workspace);
+        result.expect("artifact upload");
+
+        let upload = &storage_requests[0];
+        assert_eq!(upload.method, "PUT");
+        assert_eq!(upload.path, expected_upload_path);
+        assert_eq!(upload.content_length, Some(bytes.len()));
+        assert_eq!(upload.transfer_encoding, None);
+        assert!(upload.body_read_chunks > 1);
+        assert_eq!(upload.body, bytes);
+        assert!(daemon_requests[1].path.ends_with("/artifact-id/complete"));
+    }
+
+    #[tokio::test]
+    async fn failed_upload_after_reservation_aborts_the_artifact() {
+        let workspace = temp_workspace();
+        fs::write(workspace.join("artifact.apk"), b"artifact").expect("write artifact");
+        let (daemon_url, server) = spawn_mock_http_server(|_| {
+            vec![
+                MockHttpResponse {
+                    status: 200,
+                    body: mock_reservation(
+                        "https://ci.example.com/v1/artifacts/local-upload/upload-token",
+                    ),
+                },
+                MockHttpResponse {
+                    status: 500,
+                    body: String::new(),
+                },
+                MockHttpResponse {
+                    status: 200,
+                    body: String::new(),
+                },
+            ]
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("HTTP client");
+        let config = test_runner_config(&daemon_url);
+
+        let error = scan_and_upload_artifacts(
+            &workspace,
+            &client,
+            &daemon_url,
+            &config,
+            "build-id",
+            &["artifact.apk".to_string()],
+            None,
+        )
+        .await
+        .expect_err("failed upload");
+        let requests = server.join().expect("mock server");
+        cleanup_workspace(&workspace);
+
+        assert!(format!("{error:#}").contains("upload returned HTTP 500"));
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[1].method, "PUT");
+        assert!(requests[2].path.ends_with("/artifact-id/abort"));
+        let abort: serde_json::Value =
+            serde_json::from_slice(&requests[2].body).expect("abort body");
+        assert!(
+            abort["error_message"]
+                .as_str()
+                .is_some_and(|message| message.contains("upload returned HTTP 500"))
+        );
+    }
+
+    #[tokio::test]
+    async fn artifact_checksum_reads_the_file_in_multiple_chunks() {
+        let workspace = temp_workspace();
+        let path = workspace.join("artifact.bin");
+        let bytes = vec![0x5a; ARTIFACT_UPLOAD_CHUNK_BYTES + 17];
+        fs::write(&path, &bytes).expect("write artifact");
+
+        let checksum = compute_file_sha256(&path).await.expect("checksum");
+
+        assert_eq!(checksum, hex::encode(Sha256::digest(&bytes)));
+        cleanup_workspace(&workspace);
     }
 
     fn cleanup_workspace(path: &Path) {

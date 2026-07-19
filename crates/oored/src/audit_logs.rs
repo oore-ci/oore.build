@@ -68,8 +68,7 @@ pub async fn list_audit_logs(
 ) -> ApiResult<ListAuditLogsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "audit_logs", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let requested_limit = params.limit.unwrap_or(50);
     if requested_limit <= 0 {

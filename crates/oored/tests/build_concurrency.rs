@@ -10,6 +10,39 @@ use sqlx::Row;
 use tokio::task::JoinSet;
 
 #[tokio::test]
+async fn runner_claim_query_uses_queue_order_index() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let _app = common::create_test_app(&db_path).await;
+    let pool = common::connect_pool(&db_path).await;
+
+    let rows = sqlx::query(
+        "EXPLAIN QUERY PLAN \
+         SELECT b.* FROM builds b \
+         JOIN projects p ON p.id = b.project_id \
+         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN instance_preferences pref ON pref.id = 1 \
+         WHERE b.status = 'queued' \
+           AND pref.direct_macos_runner_enabled = 1 \
+           AND r.allow_direct_macos_runner = 1 \
+         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let details = rows
+        .iter()
+        .map(|row| row.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !details.contains("USE TEMP B-TREE FOR ORDER BY"),
+        "claim query should use idx_builds_claim_queue:\n{details}"
+    );
+}
+
+#[tokio::test]
 async fn test_concurrent_build_number_allocation() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
