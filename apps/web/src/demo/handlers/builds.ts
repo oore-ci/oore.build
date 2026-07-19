@@ -4,6 +4,27 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
 
+function withBuildContext(build: (typeof demoState.builds)[number]) {
+  const project = demoState.projects.find(
+    (candidate) => candidate.id === build.project_id,
+  )
+
+  return {
+    ...build,
+    context: {
+      project_name: project?.name,
+      project_avatar_url: project?.repository_avatar_url,
+      repository_full_name: project?.repository_full_name,
+      pipeline_name: demoState.pipelines.find(
+        (pipeline) => pipeline.id === build.pipeline_id,
+      )?.name,
+      runner_name: demoState.runners.find(
+        (runner) => runner.id === build.runner_id,
+      )?.name,
+    },
+  }
+}
+
 export const buildHandlers = [
   http.get(
     '/v1/projects/:projectId/builds/changelog-preview',
@@ -101,7 +122,7 @@ export const buildHandlers = [
     const offset = Number(url.searchParams.get('offset')) || 0
 
     return HttpResponse.json({
-      builds: builds.slice(offset, offset + limit),
+      builds: builds.slice(offset, offset + limit).map(withBuildContext),
       total: builds.length,
     })
   }),
@@ -117,7 +138,7 @@ export const buildHandlers = [
       )
     }
     return HttpResponse.json({
-      build,
+      build: withBuildContext(build),
       events: demoState.buildEvents[build.id] ?? [
         {
           id: `evt-auto-${build.id}`,
@@ -187,7 +208,7 @@ export const buildHandlers = [
         created_at: build.created_at,
       },
     ]
-    return HttpResponse.json({ build })
+    return HttpResponse.json({ build: withBuildContext(build) })
   }),
 
   http.post('/v1/builds/:buildId/cancel', async ({ params, request }) => {
@@ -219,7 +240,7 @@ export const buildHandlers = [
       actor: persona.userId,
       created_at: build.updated_at,
     })
-    return HttpResponse.json({ build })
+    return HttpResponse.json({ build: withBuildContext(build) })
   }),
 
   http.post('/v1/builds/:buildId/rerun', async ({ params, request }) => {
@@ -268,7 +289,7 @@ export const buildHandlers = [
         created_at: rerun.created_at,
       },
     ]
-    return HttpResponse.json({ build: rerun })
+    return HttpResponse.json({ build: withBuildContext(rerun) })
   }),
 
   // Stream token — return 503 to trigger polling fallback in useLogStream

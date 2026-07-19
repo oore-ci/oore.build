@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-19
 
+- **Richer active-build summary**:
+  - Dashboard active-build items now present project identity, project avatar, build number, branch, status, current stage, and elapsed time in aligned compact columns while removing ornamental activity icons. Demo build responses now include project, pipeline, runner, and repository display context, with GitHub and GitLab marks standing in for unavailable repository avatars.
+  - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
+
 - **Nested application routes**:
   - Builds, projects, project details, pipeline details, sources, and notifications now use TanStack Router layout routes with exact index children. Their nested screens inherit real parent matches for navigation and breadcrumbs instead of reconstructing parent relationships in page metadata.
   - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5

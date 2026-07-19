@@ -1,17 +1,11 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import {
-  LoaderCircle ,
-  Clock ,
-} from 'lucide-react'
 
+import RepositoryAvatar from '@/components/repository-avatar'
 import type { Build } from '@/lib/types'
 import { Badge } from '@/components/ui/badge'
 import {
   Item,
-  ItemActions,
   ItemContent,
-  ItemDescription,
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
@@ -30,8 +24,38 @@ interface ActiveBuildBannerProps {
   build: Build
 }
 
+function buildStage(build: Build): string {
+  if (build.status === 'queued') return 'Waiting in queue'
+  if (build.status === 'scheduled') return 'Scheduled'
+  if (build.status === 'assigned') return 'Starting'
+  return (
+    build.step_results?.find(
+      (step) => step.status === 'running' || step.status === 'in_progress',
+    )?.name ?? 'Running'
+  )
+}
+
 export default function ActiveBuildBanner({ build }: ActiveBuildBannerProps) {
   const startTime = build.started_at ?? build.queued_at
+  const projectName = build.context?.project_name ?? build.project_id
+
+  /**
+     <Item variant="outline" size="sm" 
+      render={
+        <a href="#">
+          <ItemMedia>
+            <BadgeCheckIcon className="size-5" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Your profile has been verified.</ItemTitle>
+          </ItemContent>
+          <ItemActions>
+            <ChevronRightIcon className="size-4" />
+          </ItemActions>
+        </a>
+      } 
+      />
+   */
 
   return (
     <Item
@@ -44,27 +68,38 @@ export default function ActiveBuildBanner({ build }: ActiveBuildBannerProps) {
         />
       }
     >
-      <ItemMedia variant="icon">
-        {build.status === 'running' ? (
-          <DynamicLucideIcon
-            icon={LoaderCircle}
-            className="animate-spin text-info"
-          />
-        ) : (
-          <DynamicLucideIcon
-            icon={Clock}
-            className="text-muted-foreground"
-          />
-        )}
+      <ItemMedia>
+        <RepositoryAvatar
+          fullName={build.context?.repository_full_name ?? projectName}
+          avatarUrl={build.context?.project_avatar_url}
+          size="sm"
+        />
       </ItemMedia>
-      <ItemContent>
-        <ItemTitle>
-          #{build.build_number}
-          <Badge variant={getStatusVariant(build.status)}>{build.status}</Badge>
+      <ItemContent className="min-w-0">
+        <ItemTitle className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 sm:grid-cols-[minmax(0,1fr)_4rem_7rem_7rem_5.5rem] md:grid-cols-[minmax(0,1fr)_4rem_7rem_7rem_minmax(8rem,12rem)_5.5rem]">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate">{projectName}</span>
+          </span>
+          <span className="hidden font-mono text-xs font-normal text-muted-foreground sm:inline">
+            #{build.build_number}
+          </span>
+          <span className="hidden truncate font-normal text-muted-foreground sm:inline">
+            {build.branch ?? 'No branch'}
+          </span>
+          <Badge
+            variant={getStatusVariant(build.status)}
+            className="justify-self-start"
+          >
+            {build.status}
+          </Badge>
+          <span className="hidden truncate font-normal text-muted-foreground md:inline">
+            {buildStage(build)}
+          </span>
+          <span className="justify-self-end font-mono text-xs font-normal text-muted-foreground">
+            {elapsed(startTime)}
+          </span>
         </ItemTitle>
-        <ItemDescription>{build.branch ?? 'n/a'}</ItemDescription>
       </ItemContent>
-      <ItemActions>{elapsed(startTime)}</ItemActions>
     </Item>
   )
 }

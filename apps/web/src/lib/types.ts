@@ -459,6 +459,8 @@ export type RunnerPolicyBlockReason =
 
 export interface BuildContext {
   project_name?: string
+  project_avatar_url?: string
+  repository_full_name?: string
   pipeline_name?: string
   runner_name?: string
 }

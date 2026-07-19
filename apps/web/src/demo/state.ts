@@ -39,7 +39,11 @@ import {
   demoNotificationDeliveries,
 } from './data/notification-channels'
 import { demoPipelines } from './data/pipelines'
-import { demoProjects } from './data/projects'
+import {
+  demoProjects,
+  GITHUB_DEMO_AVATAR_URL,
+  GITLAB_DEMO_AVATAR_URL,
+} from './data/projects'
 import { demoLastCleanup, demoRetentionPolicy } from './data/retention'
 import { demoRunners } from './data/runners'
 import {
@@ -224,6 +228,10 @@ function makeGeneratedProjects(): Array<Project> {
       repository_full_name: hasSource
         ? `acme-corp/mobile-service-${suffix}`
         : undefined,
+      repository_avatar_url:
+        number % 2 === 0
+          ? GITHUB_DEMO_AVATAR_URL
+          : GITLAB_DEMO_AVATAR_URL,
       default_branch: number % 3 === 0 ? 'develop' : 'main',
       settings: {},
       created_by: USER_IDS.owner,
@@ -242,6 +250,7 @@ function makeExtraProjects(): Array<Project> {
         'Developer-owned tooling with project-level developer access',
       repository_id: 'repo-004',
       repository_full_name: 'acme-corp/mobile-service-004',
+      repository_avatar_url: GITHUB_DEMO_AVATAR_URL,
       default_branch: 'main',
       settings: {},
       created_by: USER_IDS.developer,
@@ -254,6 +263,7 @@ function makeExtraProjects(): Array<Project> {
       description: 'Linked repository waiting for its first imported workflow',
       repository_id: 'repo-005',
       repository_full_name: 'acme-corp/mobile-service-005',
+      repository_avatar_url: GITLAB_DEMO_AVATAR_URL,
       default_branch: 'main',
       settings: {},
       created_by: USER_IDS.owner,
