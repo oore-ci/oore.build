@@ -18,7 +18,7 @@ export default function QaAppHeader() {
   const isDark = resolvedTheme === 'dark'
 
   return (
-    <header className="sticky top-0 z-30 border-b bg-background pt-[var(--safe-area-top)]">
+    <header className="sticky top-0 z-30 border-b bg-background pt-(--safe-area-top)">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-3 px-4 sm:px-6 lg:px-10">
         <Link to="/" className="flex min-w-0 items-center gap-3">
           <img src="/logo.svg" alt="Oore CI" className="size-8" />

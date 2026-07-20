@@ -121,7 +121,7 @@ function SetupLayout() {
     <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
       <PageMeta title="Setup" />
       <div className="w-full max-w-lg space-y-6 sm:space-y-8">
-        <div className="text-center space-y-4">
+        <div className="space-y-4 text-center">
           <div className="mx-auto flex size-14 items-center justify-center">
             <img src="/logo.svg" alt="Oore logo" className="size-full" />
           </div>
@@ -129,7 +129,7 @@ function SetupLayout() {
             <h1 className="text-3xl font-bold tracking-tight">
               Instance Setup
             </h1>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-sm text-muted-foreground">
               Configure your self-hosted CI instance
             </p>
           </div>
@@ -140,7 +140,7 @@ function SetupLayout() {
         {formatted && !isExpired ? (
           <div className="text-center">
             <p
-              className={`text-xs font-mono ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
+              className={`font-mono text-xs ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
             >
               Session expires in {formatted}
             </p>

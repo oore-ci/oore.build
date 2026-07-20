@@ -237,7 +237,7 @@ function AuthCallbackPage() {
       <PageMeta title="Signing In" />
       <div className="flex items-center gap-3">
         <Spinner className="size-5" />
-        <p className="text-muted-foreground text-sm">Completing sign-in...</p>
+        <p className="text-sm text-muted-foreground">Completing sign-in...</p>
       </div>
     </div>
   )

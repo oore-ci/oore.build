@@ -134,7 +134,7 @@ export default function NavUserMenu({
             sideOffset={4}
           >
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="font-normal p-0">
+              <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                   <Avatar className="size-8">
                     {authUser.avatar_url ? (
@@ -217,7 +217,7 @@ export default function NavUserMenu({
             ) : null}
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
-                Mode
+                Theme
               </DropdownMenuLabel>
               <DropdownMenuItem onClick={() => setTheme('light')}>
                 <DynamicLucideIcon icon={Sun03Icon} size={16} />

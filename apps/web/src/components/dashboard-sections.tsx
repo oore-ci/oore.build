@@ -199,7 +199,7 @@ export function DashboardRecentBuilds({
                   key={build.id}
                   to="/builds/$buildId"
                   params={{ buildId: build.id }}
-                  className="flex min-h-16 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex min-h-16 items-center justify-between gap-3 py-3 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
@@ -238,7 +238,7 @@ export function DashboardRecentBuilds({
                         <Link
                           to="/builds/$buildId"
                           params={{ buildId: build.id }}
-                          className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                         >
                           #{build.build_number}
                         </Link>

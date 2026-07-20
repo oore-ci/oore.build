@@ -7,7 +7,6 @@ import {
   Link2 as Link04Icon,
   Bell as Notification03Icon,
   Settings as Settings01Icon,
-  Sun as Sun03Icon,
   Users as UserMultiple02Icon,
 } from 'lucide-react'
 
@@ -17,18 +16,6 @@ const ADMIN_ROLES: ReadonlyArray<UserRole> = ['owner', 'admin']
 const OPERATOR_ROLES: ReadonlyArray<UserRole> = ['owner', 'admin', 'developer']
 
 const SETTINGS_GROUPS = [
-  {
-    title: 'Personal',
-    items: [
-      {
-        title: 'Theme',
-        description: 'Color and light or dark mode.',
-        to: '/settings/theme',
-        icon: Sun03Icon,
-        roles: OPERATOR_ROLES,
-      },
-    ],
-  },
   {
     title: 'Instance',
     items: [

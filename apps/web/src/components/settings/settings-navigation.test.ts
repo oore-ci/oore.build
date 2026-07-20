@@ -11,7 +11,6 @@ function titlesFor(role: 'owner' | 'admin' | 'developer' | 'qa_viewer') {
 describe('settings navigation', () => {
   it('keeps the full grouped hub available to instance administrators', () => {
     expect(titlesFor('owner')).toEqual([
-      'Theme',
       'General',
       'Runners',
       'Sources',
@@ -26,7 +25,6 @@ describe('settings navigation', () => {
 
   it('limits developers to their supported read and token surfaces', () => {
     expect(titlesFor('developer')).toEqual([
-      'Theme',
       'Runners',
       'Sources',
       'API tokens',

@@ -88,7 +88,7 @@ export default function LocalFolderPickerDialog({
         <div className="space-y-4">
           <div className="border bg-muted/20 p-3">
             <p className="text-xs text-muted-foreground">Current folder</p>
-            <p className="mt-1 break-all font-mono text-xs">
+            <p className="mt-1 font-mono text-xs break-all">
               {browserData?.current_path ?? 'Loading...'}
             </p>
           </div>

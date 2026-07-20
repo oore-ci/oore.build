@@ -6,17 +6,17 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" data-theme-icon />
-    <link rel="alternate icon" href="/favicon.ico" data-theme-icon />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="alternate icon" href="/favicon.ico" />
     <meta
       name="theme-color"
-      content="#92400e"
+      content="#ffffff"
       media="(prefers-color-scheme: light)"
       data-theme="light"
     />
     <meta
       name="theme-color"
-      content="#78350f"
+      content="#171717"
       media="(prefers-color-scheme: dark)"
       data-theme="dark"
     />
@@ -51,34 +51,6 @@
     <title>Oore CI | Self-Hosted Mobile CI</title>
     <script>
       try {
-        const themePrimaries = {
-          neutral: ['oklch(0.205 0 0)', 'oklch(0.922 0 0)'],
-          amber: ['oklch(0.555 0.163 48.998)', 'oklch(0.473 0.137 46.201)'],
-          blue: ['oklch(0.488 0.243 264.376)', 'oklch(0.424 0.199 265.638)'],
-          cyan: ['oklch(0.52 0.105 223.128)', 'oklch(0.45 0.085 224.283)'],
-          emerald: ['oklch(0.508 0.118 165.612)', 'oklch(0.432 0.095 166.913)'],
-          fuchsia: ['oklch(0.518 0.253 323.949)', 'oklch(0.452 0.211 324.591)'],
-          green: ['oklch(0.527 0.154 150.069)', 'oklch(0.448 0.119 151.328)'],
-          indigo: ['oklch(0.457 0.24 277.023)', 'oklch(0.398 0.195 277.366)'],
-          lime: ['oklch(0.841 0.238 128.85)', 'oklch(0.768 0.233 130.85)'],
-          orange: ['oklch(0.553 0.195 38.402)', 'oklch(0.47 0.157 37.304)'],
-          pink: ['oklch(0.525 0.223 3.958)', 'oklch(0.459 0.187 3.815)'],
-          purple: ['oklch(0.496 0.265 301.924)', 'oklch(0.438 0.218 303.724)'],
-          red: ['oklch(0.505 0.213 27.518)', 'oklch(0.444 0.177 26.899)'],
-          rose: ['oklch(0.514 0.222 16.935)', 'oklch(0.455 0.188 13.697)'],
-          sky: ['oklch(0.5 0.134 242.749)', 'oklch(0.443 0.11 240.79)'],
-          teal: ['oklch(0.511 0.096 186.391)', 'oklch(0.437 0.078 188.216)'],
-          violet: ['oklch(0.491 0.27 292.581)', 'oklch(0.432 0.232 292.759)'],
-          yellow: ['oklch(0.852 0.199 91.936)', 'oklch(0.795 0.184 86.047)'],
-        }
-        const savedColorTheme = localStorage.getItem('oore_color_theme')
-        const selectedPrimaries = Object.prototype.hasOwnProperty.call(
-          themePrimaries,
-          savedColorTheme,
-        )
-          ? themePrimaries[savedColorTheme]
-          : themePrimaries.amber
-        const [lightPrimary, darkPrimary] = selectedPrimaries
         const savedTheme = localStorage.getItem('theme')
         const dark =
           savedTheme === 'dark' ||
@@ -86,27 +58,12 @@
             window.matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.classList.add(dark ? 'dark' : 'light')
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-        document.documentElement.style.setProperty(
-          '--initial-primary-light',
-          lightPrimary,
-        )
-        document.documentElement.style.setProperty(
-          '--initial-primary-dark',
-          darkPrimary,
-        )
-        const lightThemeColor = document.querySelector('[data-theme="light"]')
-        const darkThemeColor = document.querySelector('[data-theme="dark"]')
-        lightThemeColor.content = lightPrimary
-        darkThemeColor.content = darkPrimary
-        lightThemeColor.media = dark ? 'not all' : 'all'
-        darkThemeColor.media = dark ? 'all' : 'not all'
-        const iconColor = dark ? darkPrimary : lightPrimary
-        const icon = `data:image/svg+xml,${encodeURIComponent(
-          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><circle id="c" cx="16" cy="16" r="7"/><mask id="m"><rect width="32" height="32" fill="white"/><use href="#c" fill="black"/></mask><clipPath id="l"><rect width="15" height="32"/></clipPath><clipPath id="r"><rect x="17" width="15" height="32"/></clipPath></defs><rect x="2" y="2" width="28" height="28" rx="6" fill="${iconColor}" clip-path="url(#l)" mask="url(#m)"/><rect x="2" y="2" width="28" height="28" rx="6" fill="${iconColor}" clip-path="url(#r)" mask="url(#m)"/></svg>`,
-        )}`
-        document
-          .querySelectorAll('[data-theme-icon]')
-          .forEach((link) => (link.href = icon))
+        document.querySelector('[data-theme="light"]').media = dark
+          ? 'not all'
+          : 'all'
+        document.querySelector('[data-theme="dark"]').media = dark
+          ? 'all'
+          : 'not all'
       } catch {
         // The system color-scheme media query below remains the fallback.
       }
@@ -137,15 +94,11 @@
     <style>
       html {
         --initial-background: #ffffff;
-        --initial-primary-light: oklch(0.555 0.163 48.998);
-        --initial-primary-dark: oklch(0.473 0.137 46.201);
-        --initial-primary: var(--initial-primary-light);
         background: var(--initial-background);
         color-scheme: light;
       }
       html.dark {
         --initial-background: #171717;
-        --initial-primary: var(--initial-primary-dark);
         color-scheme: dark;
       }
       html,
@@ -161,7 +114,6 @@
       @media (prefers-color-scheme: dark) {
         html:not(.light) {
           --initial-background: #171717;
-          --initial-primary: var(--initial-primary-dark);
           color-scheme: dark;
         }
       }
@@ -190,71 +142,27 @@
       }
     </style>
   </head>
-  <body class="style-vega">
-    <script>
-      try {
-        const componentStyles = [
-          'vega',
-          'nova',
-          'maia',
-          'lyra',
-          'mira',
-          'luma',
-          'sera',
-          'rhea',
-        ]
-        const savedComponentStyle = localStorage.getItem('oore_component_style')
-        const componentStyle = componentStyles.includes(savedComponentStyle)
-          ? savedComponentStyle
-          : 'vega'
-        document.body.className = `style-${componentStyle}`
-        document.documentElement.style.setProperty(
-          '--radius',
-          componentStyle === 'lyra' || componentStyle === 'sera'
-            ? '0rem'
-            : '0.625rem',
-        )
-      } catch {
-        // Vega remains the pre-paint default.
-      }
-    </script>
+  <body>
     <div id="app">
       <!-- Shown instantly; removed when React mounts -->
       <div class="app-loading" aria-hidden="true">
-        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <circle id="loading-mark-cut" cx="16" cy="16" r="7" />
-            <mask id="loading-mark-hole">
-              <rect width="32" height="32" fill="white" />
-              <use href="#loading-mark-cut" fill="black" />
-            </mask>
-            <clipPath id="loading-mark-left">
-              <rect width="15" height="32" />
-            </clipPath>
-            <clipPath id="loading-mark-right">
-              <rect x="17" width="15" height="32" />
-            </clipPath>
-          </defs>
-          <rect
-            x="2"
-            y="2"
-            width="28"
-            height="28"
-            rx="6"
-            fill="var(--initial-primary)"
-            clip-path="url(#loading-mark-left)"
-            mask="url(#loading-mark-hole)"
-          />
-          <rect
-            x="2"
-            y="2"
-            width="28"
-            height="28"
-            rx="6"
-            fill="var(--initial-primary)"
-            clip-path="url(#loading-mark-right)"
-            mask="url(#loading-mark-hole)"
-          />
+        <svg
+          viewBox="0 0 100 100"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <rect width="100" height="100" rx="20" fill="#dc7702" />
+          <text
+            x="50"
+            y="62"
+            text-anchor="middle"
+            font-size="48"
+            font-weight="700"
+            fill="#fff"
+            font-family="system-ui"
+          >
+            o
+          </text>
         </svg>
       </div>
     </div>

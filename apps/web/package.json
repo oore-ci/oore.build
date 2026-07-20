@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "portless run --name web.oore --app-port 3000 vite --port 3000",
-    "dev:legacy": "vite --port 3000",
+    "demo": "VITE_DEMO_MODE=true bun run dev",
     "build": "vite build && tsc",
     "bundle:check": "node tools/check-bundle-budget.js",
     "preview": "vite preview",

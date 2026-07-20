@@ -216,7 +216,7 @@ export default function RuntimeUpdateDialog({
                   </Badge>
                 </div>
                 <ScrollArea className="max-h-52 border bg-muted/30">
-                  <p className="whitespace-pre-wrap p-4 text-sm leading-6">
+                  <p className="p-4 text-sm leading-6 whitespace-pre-wrap">
                     {notes ||
                       'No release notes were published for this version.'}
                   </p>

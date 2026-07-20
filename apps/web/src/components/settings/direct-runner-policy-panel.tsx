@@ -105,7 +105,7 @@ function DirectRunnerPolicyControl() {
         </Badge>
       </div>
 
-      <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-3xl space-y-2">
           <p className="text-sm text-foreground">
             Repository commands run with the macOS permissions of the runner

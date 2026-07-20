@@ -91,7 +91,7 @@ export function ExternalAccessSetup({
               networkSettingsQuery.isLoading ||
               !!networkSettingsQuery.error
             }
-            className="group h-auto w-full flex-col items-stretch justify-start whitespace-normal border-border/60 bg-card p-4 text-left hover:border-primary/40 hover:bg-primary/5"
+            className="group h-auto w-full flex-col items-stretch justify-start border-border/60 bg-card p-4 text-left whitespace-normal hover:border-primary/40 hover:bg-primary/5"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -135,7 +135,7 @@ export function ExternalAccessSetup({
             disabled={
               !isOwner || identityQuery.isLoading || !!identityQuery.error
             }
-            className="group h-auto w-full flex-col items-stretch justify-start whitespace-normal border-border/60 bg-card p-4 text-left hover:border-primary/40 hover:bg-primary/5"
+            className="group h-auto w-full flex-col items-stretch justify-start border-border/60 bg-card p-4 text-left whitespace-normal hover:border-primary/40 hover:bg-primary/5"
           >
             <div className="flex items-start justify-between gap-3">
               <div>

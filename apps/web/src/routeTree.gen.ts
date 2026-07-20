@@ -29,7 +29,6 @@ import { Route as SettingsNotificationsRouteRouteImport } from './routes/setting
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
 import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
-import { Route as SettingsThemeRouteImport } from './routes/settings/theme'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
@@ -160,13 +159,6 @@ const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   getParentRoute: () => SettingsRouteRoute,
 } as any).lazy(() =>
   import('./routes/settings/runners.lazy').then((d) => d.Route),
-)
-const SettingsThemeRoute = SettingsThemeRouteImport.update({
-  id: '/theme',
-  path: '/theme',
-  getParentRoute: () => SettingsRouteRoute,
-} as any).lazy(() =>
-  import('./routes/settings/theme.lazy').then((d) => d.Route),
 )
 const SettingsUsersRoute = SettingsUsersRouteImport.update({
   id: '/users',
@@ -307,7 +299,6 @@ export interface FileRoutesByFullPath {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
-  '/settings/theme': typeof SettingsThemeRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -343,7 +334,6 @@ export interface FileRoutesByTo {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
-  '/settings/theme': typeof SettingsThemeRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -386,7 +376,6 @@ export interface FileRoutesById {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
-  '/settings/theme': typeof SettingsThemeRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -431,7 +420,6 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
-    | '/settings/theme'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -467,7 +455,6 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
-    | '/settings/theme'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -509,7 +496,6 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
-    | '/settings/theme'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -685,13 +671,6 @@ declare module '@tanstack/react-router' {
       path: '/runners'
       fullPath: '/settings/runners'
       preLoaderRoute: typeof SettingsRunnersRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/theme': {
-      id: '/settings/theme'
-      path: '/theme'
-      fullPath: '/settings/theme'
-      preLoaderRoute: typeof SettingsThemeRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/users': {
@@ -952,7 +931,6 @@ interface SettingsRouteRouteChildren {
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
   SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
-  SettingsThemeRoute: typeof SettingsThemeRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
@@ -966,7 +944,6 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsPreferencesRoute: SettingsPreferencesRoute,
   SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
-  SettingsThemeRoute: SettingsThemeRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }

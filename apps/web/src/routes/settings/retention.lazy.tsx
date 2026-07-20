@@ -89,7 +89,7 @@ function EnabledRetentionFields({
     <>
       <div className="border-t pt-6">
         <h4 className="mb-4 text-sm font-medium">Retention criteria</h4>
-        <p className="text-muted-foreground text-sm mb-4">
+        <p className="mb-4 text-sm text-muted-foreground">
           Builds matching any of the criteria below will be cleaned up. Leave a
           field empty to disable that criterion.
         </p>
@@ -231,7 +231,7 @@ function EnabledRetentionFields({
 
       <div className="border-t pt-6">
         <h4 className="mb-4 text-sm font-medium">Protected statuses</h4>
-        <p className="text-muted-foreground text-sm mb-4">
+        <p className="mb-4 text-sm text-muted-foreground">
           Builds with these statuses will never be cleaned up, regardless of
           other criteria.
         </p>

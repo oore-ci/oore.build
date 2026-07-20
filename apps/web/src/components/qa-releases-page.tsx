@@ -183,7 +183,7 @@ function QaActivityRow({
       params={{ buildId: build.id }}
       search={artifact ? { install: artifact.id } : {}}
       resetScroll
-      className="flex min-h-16 items-center justify-between gap-3 px-3 py-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-4"
+      className="flex min-h-16 items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-4"
       aria-label={`Open ${version}`}
     >
       <div className="min-w-0">

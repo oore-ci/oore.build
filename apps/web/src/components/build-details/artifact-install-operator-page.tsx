@@ -114,7 +114,7 @@ export default function OperatorArtifactInstallPage({
       <section className="flex flex-col gap-5 pt-2 sm:pt-6">
         <header>
           <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
-          <h1 className="mt-3 wrap-break-word text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 className="mt-3 text-2xl font-bold tracking-tight wrap-break-word sm:text-3xl">
             {appName}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">

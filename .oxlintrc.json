@@ -20,10 +20,26 @@
   ],
   "overrides": [
     {
-      "files": ["apps/site/tests/**/*.mjs"],
+      "files": [
+        "apps/site/tests/**/*.mjs"
+      ],
       "rules": {
         "typescript/no-floating-promises": "off"
       }
     }
-  ]
+  ],
+  "jsPlugins": [
+    "oxlint-tailwindcss"
+  ],
+  "settings": {
+    "tailwindcss": {
+      "entryPoint": "apps/web/src/styles.css", // your CSS file with @import "tailwindcss"
+    },
+  },
+  "rules": {
+    "tailwindcss/no-conflicting-classes": "error",
+    "tailwindcss/enforce-sort-order": "warn",
+    "tailwindcss/enforce-canonical": "error",
+    "tailwindcss/enforce-shorthand": "warn",
+  },
 }

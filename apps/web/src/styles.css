@@ -1,37 +1,24 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+@import './typeset.css';
 @import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
 
-@font-face {
-  font-family: 'JetBrains Mono Variable';
-  font-style: normal;
-  font-weight: 100 800;
-  font-display: swap;
-  src: url('@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2')
-    format('woff2-variations');
-  unicode-range:
-    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
-    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
-    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-
-@font-face {
-  font-family: 'JetBrains Mono Variable';
-  font-style: normal;
-  font-weight: 100 800;
-  font-display: swap;
-  src: url('@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2')
-    format('woff2-variations');
-  unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
-    U+2215, U+FEFF, U+FFFD;
+.typeset-docs {
+  --typeset-font-body: var(--font-inter);
+  --typeset-font-heading: var(--font-inter);
+  --typeset-font-mono: var(--font-jetbrains-mono);
+  --typeset-size: 15px;
+  --typeset-leading: 1.75;
+  --typeset-flow: 1.25em;
 }
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --font-inter: 'Inter Variable', sans-serif;
+  --font-jetbrains-mono: 'JetBrains Mono Variable', monospace;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
@@ -209,7 +196,7 @@
   }
 
   body {
-    @apply font-sans antialiased bg-background text-foreground;
+    @apply font-sans antialiased bg-surface text-foreground;
     min-height: 100dvh;
     padding-right: var(--safe-area-right);
     padding-left: var(--safe-area-left);

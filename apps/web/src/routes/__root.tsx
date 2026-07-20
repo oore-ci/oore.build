@@ -37,23 +37,23 @@ const CommandPalette = lazy(loadCommandPalette)
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
-      Promise.all([
-        import('@tanstack/react-devtools'),
-        import('@tanstack/react-router-devtools'),
-      ]).then(([devMod, routerDevMod]) => ({
-        default: () => (
-          <devMod.TanStackDevtools
-            config={{ position: 'bottom-right' }}
-            plugins={[
-              {
-                name: 'Tanstack Router',
-                render: <routerDevMod.TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
-        ),
-      })),
-    )
+    Promise.all([
+      import('@tanstack/react-devtools'),
+      import('@tanstack/react-router-devtools'),
+    ]).then(([devMod, routerDevMod]) => ({
+      default: () => (
+        <devMod.TanStackDevtools
+          config={{ position: 'bottom-right' }}
+          plugins={[
+            {
+              name: 'Tanstack Router',
+              render: <routerDevMod.TanStackRouterDevtoolsPanel />,
+            },
+          ]}
+        />
+      ),
+    })),
+  )
   : () => null
 
 export const Route = createRootRoute({
@@ -126,7 +126,7 @@ function RootLayout() {
         <ThemeColorSync />
         <a
           href="#main-content"
-          className="fixed top-2 left-2 z-100 -translate-y-20 bg-background px-3 py-2 text-sm font-medium text-foreground ring-2 ring-ring transition-transform focus:translate-y-0"
+          className="fixed top-2 left-2 z-100 -translate-y-20 px-3 py-2 text-sm font-medium text-foreground ring-2 ring-ring transition-transform focus:translate-y-0"
         >
           Skip to content
         </a>
@@ -146,8 +146,8 @@ function RootLayout() {
         ) : showAppChrome ? (
           <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
-            <SidebarInset id="main-content" tabIndex={-1}>
-              <header className="sticky top-0 z-30 flex h-[calc(3rem+var(--safe-area-top))] shrink-0 items-center gap-2 border-b bg-background px-4 pt-(--safe-area-top)">
+            <SidebarInset id="main-content typeset typeset-docs max-w-[37em]" tabIndex={-1}>
+              <header className="sticky top-0 z-30 flex h-[calc(3rem+var(--safe-area-top))] shrink-0 items-center gap-2 border-b px-4 pt-(--safe-area-top)">
                 <SidebarTrigger className="-ml-1" />
                 <Separator
                   orientation="vertical"
@@ -163,7 +163,7 @@ function RootLayout() {
                     onMouseEnter={() => void loadCommandPalette()}
                     onFocus={() => void loadCommandPalette()}
                     onClick={() => openCommandPalette(true)}
-                    className="w-10 justify-center bg-background px-0 text-xs text-muted-foreground sm:w-52 sm:justify-between sm:px-3"
+                    className="w-10 justify-center px-0 text-xs text-muted-foreground sm:w-52 sm:justify-between sm:px-3"
                   >
                     <DynamicLucideIcon icon={Search01Icon} size={14} />
                     <span className="hidden sm:inline">Search</span>
@@ -184,7 +184,7 @@ function RootLayout() {
             className="flex min-h-dvh flex-col bg-surface pt-(--safe-area-top) pb-(--safe-area-bottom)"
           >
             <ConnectivityBanner />
-            <div className="flex-1 flex flex-col">
+            <div className="flex flex-1 flex-col">
               <Outlet />
             </div>
           </main>

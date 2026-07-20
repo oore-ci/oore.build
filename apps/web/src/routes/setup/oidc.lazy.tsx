@@ -201,7 +201,7 @@ function OidcConfigStep() {
           Configure this redirect URI in your identity provider
         </AlertTitle>
         <AlertDescription>
-          <p className="text-sm text-muted-foreground mb-2">
+          <p className="mb-2 text-sm text-muted-foreground">
             Add this as an authorized redirect URI when creating your OAuth app:
           </p>
           <CopyableOidcRedirectUri
@@ -271,7 +271,7 @@ function OidcConfigStep() {
       <div className="space-y-2">
         <Label htmlFor="client-secret">
           Client Secret{' '}
-          <span className="text-muted-foreground font-normal">(optional)</span>
+          <span className="font-normal text-muted-foreground">(optional)</span>
         </Label>
         <Input
           id="client-secret"

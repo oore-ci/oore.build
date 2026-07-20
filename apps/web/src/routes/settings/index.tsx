@@ -41,9 +41,9 @@ function SettingsHubPage() {
                 <Link
                   key={item.to}
                   to={item.to}
-                  className="group grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset sm:px-4"
+                  className="group grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 p-3 transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-4"
                 >
-                  <span className="flex size-8 items-center justify-center border bg-background text-muted-foreground group-hover:text-foreground">
+                  <span className="flex size-8 items-center justify-center text-muted-foreground group-hover:text-foreground">
                     <DynamicLucideIcon icon={item.icon} aria-hidden />
                   </span>
                   <span className="min-w-0">

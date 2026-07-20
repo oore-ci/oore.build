@@ -16,7 +16,7 @@ export function CopyableOidcRedirectUri({ uri }: { uri: string }) {
 
   return (
     <div className="flex items-center gap-2 bg-muted px-3 py-2">
-      <code className="flex-1 break-all font-mono text-xs">{uri}</code>
+      <code className="flex-1 font-mono text-xs break-all">{uri}</code>
       <Button
         type="button"
         variant="ghost"

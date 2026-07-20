@@ -40,22 +40,6 @@ declare module '@tanstack/react-router' {
 
 // Boot the app — conditionally enables demo mode before rendering
 async function boot() {
-  try {
-    const storedComponentStyle = localStorage.getItem('oore_component_style')
-    const { applyComponentStyle, loadComponentStyle } =
-      await import('./lib/component-style')
-    await loadComponentStyle(storedComponentStyle)
-    applyComponentStyle(storedComponentStyle)
-
-    const storedTheme = localStorage.getItem('oore_color_theme')
-    if (storedTheme && storedTheme !== 'amber') {
-      const { applyColorTheme } = await import('./lib/color-theme')
-      applyColorTheme(storedTheme)
-    }
-  } catch {
-    // Keep the default Amber theme.
-  }
-
   if (import.meta.env.VITE_DEMO_MODE === 'true') {
     const { enableDemoMode } = await import('./demo/enable-demo')
     await enableDemoMode()

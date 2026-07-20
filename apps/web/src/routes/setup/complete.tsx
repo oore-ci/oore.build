@@ -97,7 +97,7 @@ function CompleteStep() {
         <div className="space-y-4">
           {/* Configuration review */}
           {status || summary ? (
-            <div className="border p-3 space-y-2 text-sm">
+            <div className="space-y-2 border p-3 text-sm">
               <p className="text-xs font-medium text-muted-foreground">
                 Configuration summary
               </p>
@@ -109,16 +109,16 @@ function CompleteStep() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Instance</span>
-                <code className="text-xs font-mono">
+                <code className="font-mono text-xs">
                   {summary?.instance_id ?? status?.instance_id}
                 </code>
               </div>
               {summary?.issuer_url ? (
                 <div className="flex justify-between gap-4">
-                  <span className="text-muted-foreground shrink-0">
+                  <span className="shrink-0 text-muted-foreground">
                     OIDC Issuer
                   </span>
-                  <code className="text-xs font-mono truncate">
+                  <code className="truncate font-mono text-xs">
                     {summary.issuer_url}
                   </code>
                 </div>

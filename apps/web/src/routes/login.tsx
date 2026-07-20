@@ -446,13 +446,13 @@ function LoginPage() {
     <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
       <PageMeta title="Login" />
       <div className="w-full max-w-sm space-y-8">
-        <div className="text-center space-y-4">
+        <div className="space-y-4 text-center">
           <div className="mx-auto flex size-14 items-center justify-center">
             <img src="/logo.svg" alt="Oore logo" className="size-full" />
           </div>
           <div className="space-y-1">
             <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-sm text-muted-foreground">
               Authenticate to the active instance to continue.
             </p>
           </div>
@@ -463,7 +463,7 @@ function LoginPage() {
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Instance</span>
               <Separator orientation="vertical" className="h-3!" />
-              <code className="bg-muted px-1.5 py-0.5 text-xs font-mono font-medium">
+              <code className="bg-muted px-1.5 py-0.5 font-mono text-xs font-medium">
                 {instance?.label ?? 'none selected'}
               </code>
             </div>

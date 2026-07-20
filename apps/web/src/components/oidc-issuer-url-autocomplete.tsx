@@ -96,7 +96,7 @@ export const OidcIssuerUrlAutocomplete = React.forwardRef<
         disabled={disabled}
         placeholder="https://accounts.google.com"
         className={cn(
-          'border-input focus-visible:border-ring focus-visible:ring-ring aria-invalid:ring-destructive/30 aria-invalid:border-destructive h-9 rounded-md border bg-background px-2.5 py-1 text-base transition-[border-color,box-shadow] focus-visible:ring-3 aria-invalid:ring-3 md:text-sm placeholder:text-muted-foreground w-full min-w-0 outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+          'h-9 w-full min-w-0 rounded-md border border-input bg-background px-2.5 py-1 text-base transition-[border-color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/30 md:text-sm',
           className,
         )}
       />
@@ -110,13 +110,13 @@ export const OidcIssuerUrlAutocomplete = React.forwardRef<
         >
           <AutocompletePrimitive.Popup
             className={cn(
-              'bg-popover text-popover-foreground ring-foreground/10 w-(--anchor-width) origin-(--transform-origin) rounded-md shadow-md ring-1',
-              'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0',
-              'data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2',
+              'w-(--anchor-width) origin-(--transform-origin) rounded-md bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10',
+              'data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
+              'data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 data-open:zoom-in-95 data-closed:zoom-out-95',
               'max-h-(--available-height) overflow-x-hidden overflow-y-auto p-1 duration-100',
             )}
           >
-            <AutocompletePrimitive.Empty className="text-muted-foreground px-2 py-2 text-xs">
+            <AutocompletePrimitive.Empty className="p-2 text-xs text-muted-foreground">
               No matches. Enter a custom issuer URL.
             </AutocompletePrimitive.Empty>
 
@@ -126,17 +126,17 @@ export const OidcIssuerUrlAutocomplete = React.forwardRef<
                   key={`${item.kind}:${item.label}`}
                   value={item}
                   className={cn(
-                    'relative flex w-full cursor-default select-none flex-col gap-0.5 rounded-sm px-2 py-1.5 outline-none',
+                    'relative flex w-full cursor-default flex-col gap-0.5 rounded-sm px-2 py-1.5 outline-none select-none',
                     'data-disabled:pointer-events-none data-disabled:opacity-50',
                     'data-highlighted:bg-accent data-highlighted:text-accent-foreground',
                   )}
                 >
                   <span className="text-sm">{item.label}</span>
-                  <span className="text-muted-foreground text-xs font-mono break-all">
+                  <span className="font-mono text-xs break-all text-muted-foreground">
                     {item.value}
                   </span>
                   {item.hint ? (
-                    <span className="text-muted-foreground text-[11px]">
+                    <span className="text-[11px] text-muted-foreground">
                       {item.hint}
                     </span>
                   ) : null}

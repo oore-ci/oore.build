@@ -61,25 +61,25 @@ export function RetentionSummaryCard({
         ) : lastCleanup ? (
           <div className="grid gap-4 sm:grid-cols-4">
             <div>
-              <p className="text-muted-foreground text-sm">Builds cleaned</p>
+              <p className="text-sm text-muted-foreground">Builds cleaned</p>
               <p className="text-lg font-semibold">
                 {lastCleanup.builds_expired}
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">Artifacts deleted</p>
+              <p className="text-sm text-muted-foreground">Artifacts deleted</p>
               <p className="text-lg font-semibold">
                 {lastCleanup.artifacts_deleted}
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">Space reclaimed</p>
+              <p className="text-sm text-muted-foreground">Space reclaimed</p>
               <p className="text-lg font-semibold">
                 {formatBytes(lastCleanup.bytes_reclaimed)}
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">Ran</p>
+              <p className="text-sm text-muted-foreground">Ran</p>
               <p className="text-lg font-semibold">
                 {formatRelativeTime(lastCleanup.ran_at)}
                 {lastCleanup.dry_run && (
@@ -91,7 +91,7 @@ export function RetentionSummaryCard({
             </div>
           </div>
         ) : (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             No cleanup has run yet. Enable the retention policy and wait for the
             next scheduled run.
           </p>

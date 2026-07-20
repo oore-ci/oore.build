@@ -47,12 +47,12 @@ export default function InstanceSwitcherMenu({
   const instanceList = Object.values(instances)
   const hostname = instance
     ? (() => {
-        try {
-          return new URL(instance.url).hostname
-        } catch {
-          return instance.url || 'local'
-        }
-      })()
+      try {
+        return new URL(instance.url).hostname
+      } catch {
+        return instance.url || 'local'
+      }
+    })()
     : ''
 
   return (
@@ -68,7 +68,7 @@ export default function InstanceSwitcherMenu({
                 />
               }
             >
-              <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center">
+              <div className="flex aspect-square size-8 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">
                 <DynamicLucideIcon
                   icon={getInstanceIcon(instance?.icon)}
                   size={16}
@@ -139,7 +139,7 @@ export default function InstanceSwitcherMenu({
                   requestAnimationFrame(() => setShowAddDialog(true))
                 }}
               >
-                <div className="flex size-6 items-center justify-center border bg-background">
+                <div className="flex size-6 items-center justify-center border">
                   <DynamicLucideIcon icon={Add01Icon} size={14} />
                 </div>
                 Add instance

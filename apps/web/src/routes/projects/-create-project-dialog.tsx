@@ -179,7 +179,7 @@ export default function CreateProjectDialog({
                   <FormItem>
                     <FormLabel>
                       Description{' '}
-                      <span className="text-muted-foreground font-normal">
+                      <span className="font-normal text-muted-foreground">
                         (optional)
                       </span>
                     </FormLabel>
@@ -247,7 +247,7 @@ export default function CreateProjectDialog({
                   <FormItem>
                     <FormLabel>
                       Default branch{' '}
-                      <span className="text-muted-foreground font-normal">
+                      <span className="font-normal text-muted-foreground">
                         (optional)
                       </span>
                     </FormLabel>

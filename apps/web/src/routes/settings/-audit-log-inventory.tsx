@@ -157,7 +157,7 @@ export function AuditLogInventory({
                 ))
               : entries.map((entry) => (
                   <TableRow key={entry.id}>
-                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
                       <time
                         dateTime={new Date(
                           entry.created_at * 1000,

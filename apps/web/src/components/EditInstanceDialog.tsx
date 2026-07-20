@@ -127,7 +127,7 @@ export default function EditInstanceDialog({
           <div className="space-y-2">
             <Label htmlFor="edit-instance-url">
               Backend URL{' '}
-              <span className="text-muted-foreground font-normal">
+              <span className="font-normal text-muted-foreground">
                 (optional)
               </span>
             </Label>

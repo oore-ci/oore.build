@@ -155,7 +155,7 @@ export default function ArtifactShareMenu({
           {createdToken ? (
             <div className="space-y-3">
               <Alert>
-                <AlertDescription className="break-all text-xs font-mono">
+                <AlertDescription className="font-mono text-xs break-all">
                   {createdToken.download_url}
                 </AlertDescription>
               </Alert>

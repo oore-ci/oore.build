@@ -46,7 +46,7 @@ function InstanceButton({
           onFocus={onFocus}
           onMouseEnter={onMouseEnter}
         >
-          <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center">
+          <div className="flex aspect-square size-8 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">
             <DynamicLucideIcon
               icon={getInstanceIcon(instance?.icon)}
               size={16}

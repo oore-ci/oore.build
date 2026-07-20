@@ -228,7 +228,7 @@ function QaReleaseDetail({
                 <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
               ) : null}
             </div>
-            <p className="mt-3 wrap-break-word text-2xl font-bold tracking-tight sm:text-3xl">
+            <p className="mt-3 text-2xl font-bold tracking-tight wrap-break-word sm:text-3xl">
               {appName}
             </p>
             {artifact ? (

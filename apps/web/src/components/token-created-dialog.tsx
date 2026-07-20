@@ -49,7 +49,7 @@ export default function TokenCreatedDialog({
         </DialogHeader>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-sm">
+            <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-sm break-all">
               {response?.token}
             </code>
             <Button variant="outline" size="sm" onClick={handleCopy}>

@@ -22,7 +22,7 @@ export default function PageLayout({
     <div
       className={cn(
         WIDTH_CLASSES[width],
-        'mx-auto min-w-0 w-full space-y-5 px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8',
+        'mx-auto w-full min-w-0 space-y-5 px-4 py-5 sm:p-6 lg:p-8',
         className,
       )}
     >

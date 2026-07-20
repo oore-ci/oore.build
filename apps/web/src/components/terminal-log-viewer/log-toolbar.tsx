@@ -41,7 +41,7 @@ export function LogToolbar({
 }: LogToolbarProps) {
   return (
     <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
-      <InputGroup className="order-first w-full flex-none bg-background sm:order-none sm:w-56">
+      <InputGroup className="order-first w-full flex-none bg-background sm:order-0 sm:w-56">
         <InputGroupInput
           ref={searchInputRef}
           value={searchQuery}

@@ -104,7 +104,7 @@ export default function AddInstanceDialog({
             <Label htmlFor="instance-url">
               Backend URL{' '}
               {!hostedUi ? (
-                <span className="text-muted-foreground font-normal">
+                <span className="font-normal text-muted-foreground">
                   (optional)
                 </span>
               ) : null}

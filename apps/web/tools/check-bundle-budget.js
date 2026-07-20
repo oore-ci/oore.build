@@ -12,9 +12,6 @@ const entryKey = Object.entries(manifest).find(
 )?.[0]
 if (!entryKey) throw new Error('Vite manifest has no entry chunk')
 
-const componentStyleEntry = 'src/lib/component-style.ts'
-const defaultStyleEntry = 'src/styles/shadcn/loaders/style-vega.css'
-
 function assetsFor(entryKeys) {
   const js = new Set()
   const css = new Set()
@@ -42,17 +39,11 @@ function gzipKiB(assetPaths) {
   return bytes / 1024
 }
 
-const baselineEntries = [entryKey, componentStyleEntry]
-const assets = assetsFor(baselineEntries)
-const defaultStyleAsset = manifest[defaultStyleEntry]?.file
-if (!defaultStyleAsset) {
-  throw new Error('Vite manifest has no default Vega style asset')
-}
-assets.css.add(defaultStyleAsset)
+const assets = assetsFor([entryKey])
 const jsKiB = gzipKiB(assets.js)
 const cssKiB = gzipKiB(assets.css)
 const jsBudgetKiB = Number(process.env.OORE_WEB_JS_BUDGET_KIB ?? 165)
-const cssBudgetKiB = Number(process.env.OORE_WEB_CSS_BUDGET_KIB ?? 38)
+const cssBudgetKiB = Number(process.env.OORE_WEB_CSS_BUDGET_KIB ?? 22)
 
 const profiles = [
   {
@@ -212,7 +203,7 @@ console.log(
 let exceedsBudget = jsKiB > jsBudgetKiB || cssKiB > cssBudgetKiB
 
 for (const profile of profiles) {
-  const profileAssets = assetsFor([...baselineEntries, ...profile.entries])
+  const profileAssets = assetsFor([entryKey, ...profile.entries])
   if (profile.includeDynamic) {
     for (const profileEntry of profile.entries) {
       for (const dynamicEntry of manifest[profileEntry]?.dynamicImports ?? []) {
