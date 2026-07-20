@@ -1,6 +1,5 @@
 import PageBreadcrumb from './page-breadcrumb'
 import { Button } from './ui/button'
-import { DynamicLucideIcon } from './ui/dynamic-lucide-icon'
 import { Kbd } from './ui/kbd'
 import { Separator } from './ui/separator'
 import { SidebarTrigger } from './ui/sidebar'
@@ -26,7 +25,7 @@ export default function SiteHeader() {
         <PageBreadcrumb />
         <div className="ml-auto flex items-center gap-2">
           <Button variant="outline" size="default" className="hidden sm:flex">
-            <DynamicLucideIcon icon={SearchIcon} />
+            <SearchIcon />
             <span className="hidden sm:inline">Search</span>
             <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
           </Button>

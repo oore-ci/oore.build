@@ -1,5 +1,4 @@
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createBoundStore } from '@/lib/store'
 
 interface UiStoreState {
   commandPaletteOpen: boolean
@@ -7,18 +6,12 @@ interface UiStoreState {
   toggleCommandPalette: () => void
 }
 
-export const useUiStore = create<UiStoreState>()(
-  persist(
-    (set) => ({
-      commandPaletteOpen: false,
-      setCommandPaletteOpen: (commandPaletteOpen) =>
-        set({ commandPaletteOpen }),
-      toggleCommandPalette: () =>
-        set((state) => ({ commandPaletteOpen: !state.commandPaletteOpen })),
-    }),
-    {
-      name: 'oore-ui-preferences',
-      partialize: () => ({}),
-    },
-  ),
+export const useUiStore = createBoundStore<UiStoreState>(
+  (set) => ({
+    commandPaletteOpen: false,
+    setCommandPaletteOpen: (commandPaletteOpen) => set({ commandPaletteOpen }),
+    toggleCommandPalette: () =>
+      set((state) => ({ commandPaletteOpen: !state.commandPaletteOpen })),
+  }),
+  { name: 'oore-ui-preferences', partialize: () => ({}) },
 )

@@ -1,5 +1,4 @@
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createBoundStore } from '@/lib/store'
 
 const MAX_RECENT = 5
 
@@ -16,8 +15,8 @@ interface RecentProjectsStoreState {
   clear: () => void
 }
 
-export const useRecentProjectsStore = create<RecentProjectsStoreState>()(
-  persist(
+export const useRecentProjectsStore =
+  createBoundStore<RecentProjectsStoreState>(
     (set) => ({
       projects: [],
       trackVisit: (id, name) =>
@@ -37,5 +36,4 @@ export const useRecentProjectsStore = create<RecentProjectsStoreState>()(
       clear: () => set({ projects: [] }),
     }),
     { name: 'oore-recent-projects' },
-  ),
-)
+  )

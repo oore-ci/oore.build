@@ -14,7 +14,7 @@ function seedDemoStores() {
   const instanceUrl = getDemoInstanceUrl()
   const now = Date.now()
 
-  // Seed instance store — matches zustand/persist format (name: 'oore_instances')
+  // Seed instance store — matches the persisted store format (name: 'oore_instances')
   const demoInstance = {
     id: DEMO_INSTANCE_ID,
     label: DEMO_INSTANCE_LABEL,
@@ -40,7 +40,7 @@ function seedDemoStores() {
   }
 
   // Imperatively set Zustand store state so React sees the demo instance
-  // immediately, without waiting for zustand/persist async rehydration.
+  // immediately, without waiting for persisted-state rehydration.
   useInstanceStore.setState({
     instances: { [DEMO_INSTANCE_ID]: demoInstance },
     activeInstanceId: DEMO_INSTANCE_ID,
