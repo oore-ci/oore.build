@@ -196,7 +196,7 @@
   }
 
   body {
-    @apply font-sans antialiased bg-surface text-foreground;
+    @apply font-sans antialiased bg-background text-foreground;
     min-height: 100dvh;
     padding-right: var(--safe-area-right);
     padding-left: var(--safe-area-left);
