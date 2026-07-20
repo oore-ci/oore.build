@@ -47,12 +47,12 @@ export default function InstanceSwitcherMenu({
   const instanceList = Object.values(instances)
   const hostname = instance
     ? (() => {
-      try {
-        return new URL(instance.url).hostname
-      } catch {
-        return instance.url || 'local'
-      }
-    })()
+        try {
+          return new URL(instance.url).hostname
+        } catch {
+          return instance.url || 'local'
+        }
+      })()
     : ''
 
   return (

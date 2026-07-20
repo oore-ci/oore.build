@@ -3,7 +3,13 @@ import { Link } from '@tanstack/react-router'
 import RepositoryAvatar from '@/components/repository-avatar'
 import type { Build } from '@/lib/types'
 // import { Badge } from '@/components/ui/badge'
-import { Item, ItemActions, ItemContent, ItemMedia, ItemTitle } from '@/components/ui/item'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 // import { getStatusVariant } from '@/lib/status-variants'
 
 // function elapsed(startEpoch: number): string {
@@ -68,9 +74,7 @@ export default function ActiveBuildBanner({ build }: ActiveBuildBannerProps) {
       <ItemContent>
         <ItemTitle>{projectName}</ItemTitle>
       </ItemContent>
-      <ItemActions>
-        #{build.build_number}
-      </ItemActions>
+      <ItemActions>#{build.build_number}</ItemActions>
       {/* <span className="hidden font-mono text-xs font-normal text-muted-foreground sm:inline">
             #{build.build_number}
           </span>

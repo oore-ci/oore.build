@@ -24,11 +24,7 @@ describe('settings navigation', () => {
   })
 
   it('limits developers to their supported read and token surfaces', () => {
-    expect(titlesFor('developer')).toEqual([
-      'Runners',
-      'Sources',
-      'API tokens',
-    ])
+    expect(titlesFor('developer')).toEqual(['Runners', 'Sources', 'API tokens'])
   })
 
   it('keeps the tester workspace out of instance settings', () => {

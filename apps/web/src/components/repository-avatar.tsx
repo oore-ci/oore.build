@@ -25,7 +25,9 @@ export default function RepositoryAvatar({
       ) : avatarUrl ? (
         <AvatarImage src={avatarUrl} alt="" referrerPolicy="no-referrer" />
       ) : null}
-      {fullName && <AvatarFallback>{repositoryInitials(fullName)}</AvatarFallback>}
+      {fullName && (
+        <AvatarFallback>{repositoryInitials(fullName)}</AvatarFallback>
+      )}
     </Avatar>
   )
 }

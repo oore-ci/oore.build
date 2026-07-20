@@ -37,23 +37,23 @@ const CommandPalette = lazy(loadCommandPalette)
 
 const DevTools = import.meta.env.DEV
   ? lazy(() =>
-    Promise.all([
-      import('@tanstack/react-devtools'),
-      import('@tanstack/react-router-devtools'),
-    ]).then(([devMod, routerDevMod]) => ({
-      default: () => (
-        <devMod.TanStackDevtools
-          config={{ position: 'bottom-right' }}
-          plugins={[
-            {
-              name: 'Tanstack Router',
-              render: <routerDevMod.TanStackRouterDevtoolsPanel />,
-            },
-          ]}
-        />
-      ),
-    })),
-  )
+      Promise.all([
+        import('@tanstack/react-devtools'),
+        import('@tanstack/react-router-devtools'),
+      ]).then(([devMod, routerDevMod]) => ({
+        default: () => (
+          <devMod.TanStackDevtools
+            config={{ position: 'bottom-right' }}
+            plugins={[
+              {
+                name: 'Tanstack Router',
+                render: <routerDevMod.TanStackRouterDevtoolsPanel />,
+              },
+            ]}
+          />
+        ),
+      })),
+    )
   : () => null
 
 export const Route = createRootRoute({
@@ -146,7 +146,10 @@ function RootLayout() {
         ) : showAppChrome ? (
           <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <AppSidebar />
-            <SidebarInset id="main-content typeset typeset-docs max-w-[37em]" tabIndex={-1}>
+            <SidebarInset
+              id="main-content typeset typeset-docs max-w-[37em]"
+              tabIndex={-1}
+            >
               <header className="sticky top-0 z-30 flex h-[calc(3rem+var(--safe-area-top))] shrink-0 items-center gap-2 border-b px-4 pt-(--safe-area-top)">
                 <SidebarTrigger className="-ml-1" />
                 <Separator
