@@ -32,6 +32,6 @@ describe('RepositoryAvatar', () => {
       />,
     )
 
-    expect(mockUseRepositoryAvatarUrl).toHaveBeenCalledWith('repo-1', true)
+    expect(mockUseRepositoryAvatarUrl).toHaveBeenCalledWith('repo-1')
   })
 })

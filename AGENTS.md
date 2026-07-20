@@ -4,12 +4,8 @@ This file guides future coding sessions for `oore.build`.
 
 ## Read First (Mandatory)
 
-Before making any code or architecture change, read the private docs index with
-the Obsidian CLI:
-
-```sh
-obsidian vault="oore.build" read file="Oore Docs Index"
-```
+Before making any code or architecture change, use the Obsidian MCP to read
+`Oore Docs Index` from the `oore.build` vault.
 
 Treat that index and its linked notes as the source of truth.
 
