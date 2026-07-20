@@ -38,5 +38,5 @@
     "tailwindcss/enforce-canonical": "error",
     "tailwindcss/enforce-shorthand": "warn"
   },
-  "plugins": ["react", "import"]
+  "plugins": ["react", "import", "react-perf", "oxc", "promise", "typescript"]
 }
