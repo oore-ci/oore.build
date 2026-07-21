@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-21
 
+- **Executable release binaries**:
+  - Release packaging now restores executable modes after the GitHub artifact handoff and fails before archive creation if the staged macOS binaries are not executable.
+  - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
+
 - **Boot-safe, no-worry Direct runner operation**:
   - macOS `all` and `backend` installs now enroll the local Direct runner and install it as a separate system LaunchDaemon alongside `oored`. Both services start at boot as the selected non-root account without requiring a GUI login, and repairing the runner with `oore runner install-service --managed-local` also repairs local enrollment without adopting a manually registered external runner config.
   - Hosts upgrading from earlier login-session daemon/runner jobs rerun the current installer for their installed release channel. Before any shell-side replacement, it delegates the verified archive to the candidate updater transaction, which drains active work, snapshots the release and database, converts both services to boot-time LaunchDaemons, verifies backend readiness and the runner heartbeat, and restores the old data, release, and service definitions on failure. After this migration, boot recovery and future managed updates are automatic.

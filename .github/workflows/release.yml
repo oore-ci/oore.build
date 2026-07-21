@@ -225,39 +225,42 @@ jobs:
           mkdir -p "$stage_web_darwin_arm/bin" "$stage_web_darwin_x64/bin"
           mkdir -p "$stage_web_linux_arm/bin" "$stage_web_linux_x64/bin"
 
-          cp "dist/rust/arm64/oored" "$stage_arm/bin/oored"
-          cp "dist/rust/arm64/oore"  "$stage_arm/bin/oore"
-          cp "dist/oore-web-arm64" "$stage_arm/bin/oore-web"
+          install -m 0755 "dist/rust/arm64/oored" "$stage_arm/bin/oored"
+          install -m 0755 "dist/rust/arm64/oore"  "$stage_arm/bin/oore"
+          install -m 0755 "dist/oore-web-arm64" "$stage_arm/bin/oore-web"
           cp -R "apps/web/dist" "$stage_arm/web-dist"
           cp "LICENSE" "$stage_arm/LICENSE"
           printf '%s\n' "$ver" > "$stage_arm/VERSION"
 
-          cp "dist/rust/x86_64/oored" "$stage_x64/bin/oored"
-          cp "dist/rust/x86_64/oore"  "$stage_x64/bin/oore"
-          cp "dist/oore-web-x86_64" "$stage_x64/bin/oore-web"
+          install -m 0755 "dist/rust/x86_64/oored" "$stage_x64/bin/oored"
+          install -m 0755 "dist/rust/x86_64/oore"  "$stage_x64/bin/oore"
+          install -m 0755 "dist/oore-web-x86_64" "$stage_x64/bin/oore-web"
           cp -R "apps/web/dist" "$stage_x64/web-dist"
           cp "LICENSE" "$stage_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_x64/VERSION"
 
-          cp "dist/oore-web-arm64" "$stage_web_darwin_arm/bin/oore-web"
+          install -m 0755 "dist/oore-web-arm64" "$stage_web_darwin_arm/bin/oore-web"
           cp -R "apps/web/dist" "$stage_web_darwin_arm/web-dist"
           cp "LICENSE" "$stage_web_darwin_arm/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_darwin_arm/VERSION"
 
-          cp "dist/oore-web-x86_64" "$stage_web_darwin_x64/bin/oore-web"
+          install -m 0755 "dist/oore-web-x86_64" "$stage_web_darwin_x64/bin/oore-web"
           cp -R "apps/web/dist" "$stage_web_darwin_x64/web-dist"
           cp "LICENSE" "$stage_web_darwin_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_darwin_x64/VERSION"
 
-          cp "dist/oore-web-linux-arm64" "$stage_web_linux_arm/bin/oore-web"
+          install -m 0755 "dist/oore-web-linux-arm64" "$stage_web_linux_arm/bin/oore-web"
           cp -R "apps/web/dist" "$stage_web_linux_arm/web-dist"
           cp "LICENSE" "$stage_web_linux_arm/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_linux_arm/VERSION"
 
-          cp "dist/oore-web-linux-x86_64" "$stage_web_linux_x64/bin/oore-web"
+          install -m 0755 "dist/oore-web-linux-x86_64" "$stage_web_linux_x64/bin/oore-web"
           cp -R "apps/web/dist" "$stage_web_linux_x64/web-dist"
           cp "LICENSE" "$stage_web_linux_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_linux_x64/VERSION"
+
+          [[ -x "$stage_arm/bin/oore" && -x "$stage_arm/bin/oored" && -x "$stage_arm/bin/oore-web" ]]
+          [[ -x "$stage_x64/bin/oore" && -x "$stage_x64/bin/oored" && -x "$stage_x64/bin/oore-web" ]]
 
           out="dist/releases/$tag"
           arm_asset="$(printf 'oore_%s_darwin_arm64.tar.gz' "$ver")"
