@@ -15,8 +15,9 @@ Use this deployment shape when the daemon and build runner should run on one hos
 | Backend    | `backend`    | macOS          | `oored`, `oore`                         |
 | Frontend   | `frontend`   | Linux or macOS | `oore-web`, web assets                  |
 
-The backend Mac also runs the separately registered Direct macOS runner service.
-Repository commands never execute inside `oored`.
+The backend installer enrolls and starts the separate Direct macOS runner as a
+boot-time service alongside `oored`. Repository commands never execute inside
+the daemon process.
 
 `OORE_INSTALL_MODE=auto` prompts for a role on interactive macOS installs. On Linux, it selects `frontend`.
 

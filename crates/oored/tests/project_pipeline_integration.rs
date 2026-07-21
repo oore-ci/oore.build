@@ -1393,7 +1393,7 @@ async fn test_pipeline_and_build_reads_redact_environment_values_by_boundary() {
 }
 
 #[tokio::test]
-async fn test_developer_repository_assignment_is_scoped_to_authorized_sources() {
+async fn test_only_owner_and_admin_can_trust_project_sources() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -1401,45 +1401,39 @@ async fn test_developer_repository_assignment_is_scoped_to_authorized_sources() 
     let owner_id = seed_test_user(&pool).await;
     let owner_token = create_session_token(&pool, &owner_id).await;
     let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
-    let (allowed_project_id, _) =
-        seed_project_chain(&pool, &integration_id, &owner_id, "org/allowed-private").await;
-    let (private_project_id, _) =
-        seed_project_chain(&pool, &integration_id, &owner_id, "org/unrelated-private").await;
-    let (public_project_id, _) =
-        seed_project_chain(&pool, &integration_id, &owner_id, "org/public-source").await;
+    let (existing_project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/existing").await;
+    let (admin_source_project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/admin-source").await;
+    let (owner_source_project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "org/owner-source").await;
 
-    let allowed_repository_id: String =
+    let existing_repository_id: String =
         sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = ?1")
-            .bind(&allowed_project_id)
+            .bind(&existing_project_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    let private_repository_id: String =
+    let admin_repository_id: String =
         sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = ?1")
-            .bind(&private_project_id)
+            .bind(&admin_source_project_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    let public_repository_id: String =
+    let owner_repository_id: String =
         sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = ?1")
-            .bind(&public_project_id)
+            .bind(&owner_source_project_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    sqlx::query("UPDATE integration_repositories SET is_private = 1 WHERE id IN (?1, ?2)")
-        .bind(&allowed_repository_id)
-        .bind(&private_repository_id)
-        .execute(&pool)
-        .await
-        .unwrap();
 
     let developer_id = seed_user_with_role(&pool, "repository-dev@example.com", "developer").await;
     seed_project_member(
         &pool,
-        &allowed_project_id,
+        &existing_project_id,
         &developer_id,
         &owner_id,
-        "developer",
+        "maintainer",
     )
     .await;
     let developer_token = create_session_token(&pool, &developer_id).await;
@@ -1467,65 +1461,86 @@ async fn test_developer_repository_assignment_is_scoped_to_authorized_sources() 
             "/v1/projects",
             token,
             Some(serde_json::json!({
-                "name": "Stolen private source",
-                "repository_id": private_repository_id,
+                "name": "Developer source",
+                "repository_id": admin_repository_id,
             })),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{denied}");
-        assert_eq!(denied["code"], "invalid_repository");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+        assert_eq!(denied["code"], "insufficient_role");
     }
-
-    let (status, allowed) = json_request(
-        &app,
-        "POST",
-        "/v1/projects",
-        &developer_token,
-        Some(serde_json::json!({
-            "name": "Authorized private source",
-            "repository_id": allowed_repository_id,
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{allowed}");
-    let created_project_id = allowed["project"]["id"].as_str().unwrap();
 
     let (status, denied) = json_request(
         &app,
         "PATCH",
-        &format!("/v1/projects/{created_project_id}"),
+        &format!("/v1/projects/{existing_project_id}"),
         &developer_token,
-        Some(serde_json::json!({ "repository_id": private_repository_id })),
+        Some(serde_json::json!({ "repository_id": admin_repository_id })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{denied}");
-    assert_eq!(denied["code"], "invalid_repository");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+    assert_eq!(denied["code"], "insufficient_role");
 
-    let (status, public_project) = json_request(
+    let (status, updated) = json_request(
+        &app,
+        "PATCH",
+        &format!("/v1/projects/{existing_project_id}"),
+        &developer_token,
+        Some(serde_json::json!({ "name": "Maintainer edit" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["project"]["name"], "Maintainer edit");
+
+    let admin_id = seed_user_with_role(&pool, "repository-admin@example.com", "admin").await;
+    let admin_token = create_session_token(&pool, &admin_id).await;
+    let (status, created) = json_request(
         &app,
         "POST",
         "/v1/projects",
-        &developer_token,
+        &admin_token,
         Some(serde_json::json!({
-            "name": "Public source",
-            "repository_id": public_repository_id,
+            "name": "Admin trusted source",
+            "repository_id": admin_repository_id,
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{public_project}");
+    assert_eq!(status, StatusCode::OK, "{created}");
 
-    let (status, owner_project) = json_request(
+    let (status, updated) = json_request(
         &app,
-        "POST",
-        "/v1/projects",
+        "PATCH",
+        &format!("/v1/projects/{existing_project_id}"),
         &owner_token,
-        Some(serde_json::json!({
-            "name": "Owner private source",
-            "repository_id": private_repository_id,
-        })),
+        Some(serde_json::json!({ "repository_id": owner_repository_id })),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{owner_project}");
+    assert_eq!(status, StatusCode::OK, "{updated}");
+
+    let source_audit = sqlx::query(
+        "SELECT actor_id, details FROM audit_logs \
+         WHERE action = 'project_source_link_updated' AND resource_id = ?1 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&existing_project_id)
+    .fetch_one(&pool)
+    .await
+    .expect("project source link audit");
+    assert_eq!(
+        source_audit.get::<Option<String>, _>("actor_id").as_deref(),
+        Some(owner_id.as_str())
+    );
+    let details: serde_json::Value = serde_json::from_str(
+        source_audit
+            .get::<Option<String>, _>("details")
+            .as_deref()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(details["previous_repository_id"], existing_repository_id);
+    assert_eq!(details["previous_repository_full_name"], "org/existing");
+    assert_eq!(details["repository_id"], owner_repository_id);
+    assert_eq!(details["repository_full_name"], "org/owner-source");
 }
 
 #[tokio::test]

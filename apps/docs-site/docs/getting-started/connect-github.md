@@ -36,13 +36,14 @@ After installation, GitHub redirects you back to Oore CI, which stores the integ
 
 Once connected:
 
-1. Open the source details under **Settings > Sources** and approve the repository for Direct runner builds
-2. Go to **Projects** and click **New Project**
-3. Select the GitHub integration from the source dropdown
-4. Browse your repositories or search by name
-5. Select a repository and click **Create Project**
+1. As an Owner or Admin, go to **Projects** and click **New Project**
+2. Select the GitHub integration from the source dropdown
+3. Browse your repositories or search by name
+4. Select a repository and click **Create Project**
 
-The project is created with the repository linked. Webhooks are configured automatically.
+The project link is the execution trust decision: repository code can now run
+with the Direct runner account's permissions. Webhooks are configured
+automatically; no second repository approval is required.
 
 ## 4. Verify the connection
 
@@ -55,8 +56,8 @@ Trigger a test:
 If the build stays in `queued`, read the policy reason shown on the build:
 
 - Navigate to **Settings > Runners** and verify a runner is online
-- In **Settings > Preferences**, verify Direct macOS runner is enabled
-- In **Settings > Sources**, verify the repository is approved
+- In **Settings > Preferences**, verify **Accept new builds** is on
+- Verify the project's linked source is still available
 
 ## What happens behind the scenes
 

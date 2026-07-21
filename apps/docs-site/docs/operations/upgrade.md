@@ -1,6 +1,6 @@
 ---
 status: implemented
-description: 'Upgrade Oore CI to a new version with zero-downtime strategies.'
+description: 'Upgrade Oore CI safely with managed drains, restarts, and rollback.'
 ---
 
 # Upgrade Procedures
@@ -21,10 +21,34 @@ How to upgrade your Oore CI instance to a new version.
 oore update
 ```
 
-The updater creates a pre-update backup, stages the verified release inside the install root, atomically replaces release files, reloads active launchd daemon/local-web services, and rolls back the release if readiness fails. Use `/healthz` for liveness and `/readyz` for database, migration, and encryption-runtime readiness.
+The updater creates a pre-update data backup and release snapshot, stages the
+verified release inside the install root, atomically replaces release files,
+reloads managed launchd services, and verifies backend readiness plus the
+runner handoff. If migration, readiness, or runner acknowledgement fails, it
+restores both the previous release and data. Use `/healthz` for liveness and
+`/readyz` for database, migration, and encryption-runtime readiness.
 
-::: warning
-This hardening release must be installed with the current installer. An already-installed older updater cannot be made retroactively atomic or rollback-safe.
+When moving from the older per-repository execution gate, links that were
+already approved remain intact. Oore unlinks projects whose source was never
+approved and cancels their queued builds rather than silently trusting them.
+After the update, an Owner or Admin can restore one from **Project > Settings >
+Source repository**.
+
+::: warning First update from a pre-hardening release
+Run the current installer instead of the old installed `oore update`:
+
+```bash
+export OORE_CHANNEL=stable # use beta or alpha if that is the installed channel
+curl -fsSL https://oore.build/install | bash
+```
+
+Use the current installer for the same release channel as the existing install.
+It verifies and extracts the release outside the install root, then runs its
+candidate `oore` updater before changing installed files. The same transaction
+drains active work, creates the backup, upgrades the release, migrates older
+login-session daemon/runner jobs to boot-time services, verifies the new
+processes, and rolls back on failure. After this transition, use `oore update`
+normally.
 :::
 
 ### Source checkout update

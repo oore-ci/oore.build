@@ -25,7 +25,6 @@ function repositories(id: string): ListRepositoriesResponse {
         external_id: id,
         full_name: `owner/${id}`,
         is_private: true,
-        allow_direct_macos_runner: false,
         created_at: 0,
         updated_at: 0,
       },
@@ -44,7 +43,7 @@ function deferred<T>() {
 }
 
 describe('discoverSourceRepositories', () => {
-  it('starts repository requests together and skips failed sources', async () => {
+  it('starts repository requests together and retains healthy sources when one fails', async () => {
     const first = deferred<ListRepositoriesResponse>()
     const second = deferred<ListRepositoriesResponse>()
     const third = deferred<ListRepositoriesResponse>()
@@ -64,10 +63,49 @@ describe('discoverSourceRepositories', () => {
     second.resolve(repositories('second'))
     third.reject(new Error('Source unavailable'))
 
-    await expect(discovered).resolves.toMatchObject([
-      { integration_id: 'first', full_name: 'owner/first' },
-      { integration_id: 'second', full_name: 'owner/second' },
-    ])
+    await expect(discovered).resolves.toEqual({
+      repositories: [
+        expect.objectContaining({
+          id: 'repository-first',
+          integration_id: 'first',
+        }),
+        expect.objectContaining({
+          id: 'repository-second',
+          integration_id: 'second',
+        }),
+      ],
+      failures: [
+        expect.objectContaining({
+          integration_id: 'third',
+          message: 'Source unavailable',
+        }),
+      ],
+    })
+  })
+
+  it('returns an empty healthy result with one warning per failed source', async () => {
+    const listRepositories = vi.fn((source: Integration) =>
+      Promise.reject(new Error(`${source.id} unavailable`)),
+    )
+
+    await expect(
+      discoverSourceRepositories(
+        [integration('first'), integration('second')],
+        listRepositories,
+      ),
+    ).resolves.toEqual({
+      repositories: [],
+      failures: [
+        expect.objectContaining({
+          integration_id: 'first',
+          message: 'first unavailable',
+        }),
+        expect.objectContaining({
+          integration_id: 'second',
+          message: 'second unavailable',
+        }),
+      ],
+    })
   })
 
   it('does not return discoveries after cancellation', async () => {

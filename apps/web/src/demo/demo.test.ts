@@ -97,6 +97,18 @@ describe('demo API visibility', () => {
     await expect(response.json()).resolves.toMatchObject({ code: 'forbidden' })
   })
 
+  it('keeps instance preferences admin-only for a developer', async () => {
+    const developer = DEMO_PERSONAS.find(
+      (persona) => persona.role === 'developer',
+    )!
+    const response = await fetch(`${demoOrigin}/v1/settings/preferences`, {
+      headers: { Authorization: `Bearer ${developer.token}` },
+    })
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({ code: 'forbidden' })
+  })
+
   it('scopes eligible member candidates to project maintainers', async () => {
     const developer = DEMO_PERSONAS.find(
       (persona) => persona.role === 'developer',
@@ -131,36 +143,50 @@ describe('demo API visibility', () => {
       'Content-Type': 'application/json',
     }
 
-    const [invite, createProject, updateViewerProject, runDeveloperProject] =
-      await Promise.all([
-        fetch(`${demoOrigin}/v1/users/invite`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            email: 'demo+new@oore.build',
-            role: 'developer',
-          }),
+    const [
+      invite,
+      createProject,
+      updateViewerProject,
+      relinkMaintainerProject,
+      runDeveloperProject,
+    ] = await Promise.all([
+      fetch(`${demoOrigin}/v1/users/invite`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          email: 'demo+new@oore.build',
+          role: 'developer',
         }),
-        fetch(`${demoOrigin}/v1/projects`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ name: 'Developer project' }),
-        }),
-        fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ name: 'Should not change' }),
-        }),
-        fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}/builds`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ pipeline_id: PIPELINE_IDS.shopAndroid }),
-        }),
-      ])
+      }),
+      fetch(`${demoOrigin}/v1/projects`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'Developer project' }),
+      }),
+      fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ name: 'Should not change' }),
+      }),
+      fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ repository_id: 'repo-other' }),
+      }),
+      fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}/builds`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ pipeline_id: PIPELINE_IDS.shopAndroid }),
+      }),
+    ])
 
     expect(invite.status).toBe(403)
-    expect(createProject.status).toBe(200)
+    expect(createProject.status).toBe(403)
+    await expect(createProject.json()).resolves.toMatchObject({
+      code: 'forbidden',
+    })
     expect(updateViewerProject.status).toBe(403)
+    expect(relinkMaintainerProject.status).toBe(403)
     expect(runDeveloperProject.status).toBe(200)
 
     const runViewerProject = await fetch(

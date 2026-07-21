@@ -159,6 +159,16 @@ async fn wait_for_webhook_status(pool: &sqlx::SqlitePool, delivery_id: &str) -> 
     panic!("webhook {delivery_id} did not finish processing");
 }
 
+async fn webhook_processing_error(pool: &sqlx::SqlitePool, delivery_id: &str) -> String {
+    sqlx::query_scalar(
+        "SELECT processing_error FROM integration_webhooks WHERE provider_delivery_id = ?1",
+    )
+    .bind(delivery_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 async fn project_build_count(pool: &sqlx::SqlitePool, project_id: &str) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE project_id = ?1")
         .bind(project_id)
@@ -357,6 +367,10 @@ async fn test_github_pull_request_revision_trust_policy() {
         assert_eq!(wait_for_webhook_status(&pool, delivery_id).await, "ignored");
         assert_eq!(project_build_count(&pool, &project_id).await, 3);
     }
+    assert_eq!(
+        webhook_processing_error(&pool, "gh-pr-fork").await,
+        "external-fork pull request revisions are blocked by policy"
+    );
 }
 
 #[tokio::test]
@@ -822,6 +836,10 @@ async fn test_gitlab_merge_request_revision_trust_policy() {
         assert_eq!(wait_for_webhook_status(&pool, delivery_id).await, "ignored");
         assert_eq!(project_build_count(&pool, &project_id).await, 3);
     }
+    assert_eq!(
+        webhook_processing_error(&pool, "gl-mr-fork").await,
+        "external-fork merge request revisions are blocked by policy"
+    );
 }
 
 #[tokio::test]

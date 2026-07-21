@@ -218,9 +218,13 @@ function usePreferencesPageState() {
   const frontendUpdatePhase =
     runtimeUpdates.startFrontendUpdate.data?.phase ??
     runtimeUpdates.frontendRelease.data?.phase
-  const backendUpdatePhase =
-    runtimeUpdates.startBackendUpdate.data?.phase ??
-    runtimeUpdates.backendUpdate.data?.phase
+  const backendUpdateQueryIsCurrent =
+    runtimeUpdates.backendUpdate.dataUpdatedAt >=
+    runtimeUpdates.startBackendUpdate.submittedAt
+  const backendUpdatePhase = backendUpdateQueryIsCurrent
+    ? runtimeUpdates.backendUpdate.data?.phase
+    : (runtimeUpdates.startBackendUpdate.data?.phase ??
+      runtimeUpdates.backendUpdate.data?.phase)
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
   const oidcConfigQuery = useExternalAccessOidc()
@@ -682,23 +686,29 @@ function usePreferencesPageState() {
     )
   }
 
-  function handleDirectRunnerToggle(enabled: boolean) {
-    if (!preferences || updatePreferencesMutation.isPending || !canWrite) return
+  function handleDirectRunnerToggle(acceptingBuilds: boolean) {
+    if (
+      !preferences ||
+      preferencesQuery.isError ||
+      updatePreferencesMutation.isPending ||
+      !canWrite
+    )
+      return
 
     updatePreferencesMutation.mutate(
       {
         key_storage_mode: preferences.key_storage_mode,
-        direct_macos_runner_enabled: enabled,
+        direct_macos_runner_paused: !acceptingBuilds,
       },
       {
         onSuccess: () =>
           toast.success(
-            enabled
-              ? 'Direct macOS runner enabled.'
-              : 'Direct macOS runner paused. Running builds will finish.',
+            acceptingBuilds
+              ? 'This Mac is accepting new builds.'
+              : 'New builds are paused. Running builds will finish.',
           ),
         onError: (error) =>
-          toast.error(`Failed to update runner policy: ${error.message}`),
+          toast.error(`Failed to change build intake: ${error.message}`),
       },
     )
   }
@@ -739,6 +749,7 @@ function usePreferencesPageState() {
     preloadOidcSettingsDialog,
     preloadTrustedProxySettingsDialog,
     preferences,
+    preferencesQuery,
     readinessOpen,
     readinessReady,
     remoteAuthMode,
@@ -771,49 +782,60 @@ function usePreferencesPageState() {
 export type PreferencesPageState = ReturnType<typeof usePreferencesPageState>
 
 function DirectRunnerSettings({ state }: { state: PreferencesPageState }) {
-  const enabled = state.preferences?.direct_macos_runner_enabled ?? false
+  const paused = state.preferences?.direct_macos_runner_paused
+  const acceptingBuilds = paused === false
+  const runnerStateLabel = state.preferencesQuery.isError
+    ? 'Unavailable'
+    : paused === undefined
+      ? 'Checking...'
+      : acceptingBuilds
+        ? 'Accepting builds'
+        : 'Paused'
 
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between gap-4">
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <CardTitle className="text-sm font-medium">
             Direct macOS runner
           </CardTitle>
-          <Badge variant={enabled ? 'success' : 'outline'}>
-            {enabled ? 'Enabled' : 'Paused'}
+          <Badge variant={acceptingBuilds ? 'success' : 'outline'}>
+            {runnerStateLabel}
           </Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-start justify-between gap-6">
           <div className="space-y-1">
-            <p className="text-sm font-medium">
-              Allow approved repositories to run
-            </p>
+            <p className="text-sm font-medium">Accept new builds</p>
             <p className="text-sm text-muted-foreground">
               When paused, running builds finish and queued builds wait.
             </p>
           </div>
           <Switch
-            checked={enabled}
+            checked={acceptingBuilds}
             disabled={
               !state.canWrite ||
               !state.preferences ||
+              state.preferencesQuery.isError ||
               state.updatePreferencesMutation.isPending
             }
             onCheckedChange={(checked) =>
               state.handleDirectRunnerToggle(checked)
             }
-            aria-label="Enable Direct macOS runner"
+            aria-label="Accept new builds"
             className="after:-inset-y-3.5"
           />
         </div>
         <Alert>
           <AlertDescription>
-            Repository commands run with the macOS permissions of the runner
-            account. Enable only repositories you would run directly on this
-            Mac, then approve them under Sources.
+            {state.preferencesQuery.isError
+              ? 'Oore could not load the runner pause state. Refresh this page before changing build intake.'
+              : paused === undefined
+                ? 'Checking whether this Mac is accepting new builds.'
+                : !state.canWrite
+                  ? 'An owner or admin can pause new claims while assigned and running builds finish.'
+                : 'Pausing stops new claims while assigned and running builds finish. Resume whenever this Mac is ready for more work.'}
           </AlertDescription>
         </Alert>
       </CardContent>

@@ -134,13 +134,13 @@ User management. Requires a user session with appropriate RBAC permissions.
 
 Project management.
 
-| Method   | Path                        | Auth                       |
-| -------- | --------------------------- | -------------------------- |
-| `GET`    | `/v1/projects`              | User session               |
-| `POST`   | `/v1/projects`              | User session               |
-| `GET`    | `/v1/projects/{project_id}` | User session               |
-| `PATCH`  | `/v1/projects/{project_id}` | User session               |
-| `DELETE` | `/v1/projects/{project_id}` | User session (owner/admin) |
+| Method   | Path                        | Auth                                    |
+| -------- | --------------------------- | --------------------------------------- |
+| `GET`    | `/v1/projects`              | User session                            |
+| `POST`   | `/v1/projects`              | User session (owner/admin)              |
+| `GET`    | `/v1/projects/{project_id}` | User session                            |
+| `PATCH`  | `/v1/projects/{project_id}` | Project RBAC; source change owner/admin |
+| `DELETE` | `/v1/projects/{project_id}` | User session (owner/admin)              |
 
 ### Pipelines API
 
@@ -218,14 +218,14 @@ Build log streaming and retrieval.
 
 Build artifact management and downloads.
 
-| Method | Path                                               | Auth           |
-| ------ | -------------------------------------------------- | -------------- |
-| `GET`  | `/v1/builds/{build_id}/artifacts`                  | User session   |
-| `POST` | `/v1/artifacts/{artifact_id}/download-link`        | User session   |
-| `POST` | `/v1/artifacts/{artifact_id}/install-link`         | User session   |
-| `GET`  | `/install/ios/{token}/manifest.plist`              | Install token  |
-| `GET`  | `/v1/artifacts/download/{token}`                   | Download token |
-| `GET`  | `/install/artifact/{token}`                        | Scoped token   |
+| Method | Path                                        | Auth           |
+| ------ | ------------------------------------------- | -------------- |
+| `GET`  | `/v1/builds/{build_id}/artifacts`           | User session   |
+| `POST` | `/v1/artifacts/{artifact_id}/download-link` | User session   |
+| `POST` | `/v1/artifacts/{artifact_id}/install-link`  | User session   |
+| `GET`  | `/install/ios/{token}/manifest.plist`       | Install token  |
+| `GET`  | `/v1/artifacts/download/{token}`            | Download token |
+| `GET`  | `/install/artifact/{token}`                 | Scoped token   |
 
 ### Webhooks
 

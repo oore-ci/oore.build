@@ -322,6 +322,13 @@ export const projectHandlers = [
     )
     if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
+    if ('repository_id' in body) {
+      const sourceForbidden = requireDemoInstancePermission(
+        request,
+        'projects:write',
+      )
+      if (sourceForbidden) return sourceForbidden
+    }
     const project = demoProjects.find((p) => p.id === params.projectId)
     return HttpResponse.json({
       project: project

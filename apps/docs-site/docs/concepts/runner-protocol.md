@@ -44,7 +44,7 @@ The daemon uses heartbeat data to track which runners are available.
 
 The runner calls `POST /v1/runners/{runner_id}/claim` with `{"protocol_version": 4}` to request work. The daemon rejects incompatible runners before assigning work.
 
-1. Finds the oldest queued build whose repository is approved and whose instance Direct runner switch is enabled
+1. Finds the oldest queued build whose linked source is available while the instance accepts new builds
 2. Transitions the build: `queued` → `scheduled` → `assigned`
 3. Sets the `runner_id` on the build record
 4. Returns a `ClaimedJob` containing everything the runner needs:
@@ -72,7 +72,7 @@ The runner uses the `config_snapshot` to determine what to build. This snapshot 
 - UI-configured execution settings (platforms, build args, environment variables, artifact patterns)
 - The commit SHA and branch to check out
 
-The runner clones the repository, checks out the commit, and executes build steps directly with the permissions of its macOS account. Protocol compatibility does not provide process isolation; repository approval is the execution trust decision.
+The runner clones the repository, checks out the commit, and executes build steps directly with the permissions of its macOS account. Protocol compatibility does not provide process isolation; the Owner/Admin action that links the source to a project is the execution trust decision.
 
 ### 5. Status reporting
 
@@ -116,7 +116,7 @@ These endpoints return decrypted credentials only while the job is assigned or r
 - Runner tokens are long-lived secrets — treat them like API keys
 - The daemon verifies the active assignment and a separate per-job signing capability before returning signing material
 - Repository-controlled stages do not receive signing credentials or the job-scoped capability
-- Direct repository commands have the runner account's host authority; approve only repositories you would run on that Mac
+- Direct repository commands have the runner account's host authority; link only repositories you would run on that Mac
 - External-fork pull and merge requests are ignored rather than automatically executed
 - Artifact upload URLs are time-limited (30-minute TTL)
 - Signing credentials are only served to the runner assigned to the build

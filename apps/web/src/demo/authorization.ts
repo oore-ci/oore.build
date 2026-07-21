@@ -7,7 +7,6 @@ const INSTANCE_PERMISSIONS: Record<string, ReadonlySet<string>> = {
   owner: new Set(['*']),
   admin: new Set(['*']),
   developer: new Set([
-    'projects:write',
     'pipelines:write',
     'pipelines:delete',
     'builds:write',

@@ -12,11 +12,26 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-21
+
+- **Boot-safe, no-worry Direct runner operation**:
+  - macOS `all` and `backend` installs now enroll the local Direct runner and install it as a separate system LaunchDaemon alongside `oored`. Both services start at boot as the selected non-root account without requiring a GUI login, and repairing the runner with `oore runner install-service --managed-local` also repairs local enrollment without adopting a manually registered external runner config.
+  - Hosts upgrading from earlier login-session daemon/runner jobs rerun the current installer for their installed release channel. Before any shell-side replacement, it delegates the verified archive to the candidate updater transaction, which drains active work, snapshots the release and database, converts both services to boot-time LaunchDaemons, verifies backend readiness and the runner heartbeat, and restores the old data, release, and service definitions on failure. After this migration, boot recovery and future managed updates are automatic.
+  - Direct execution no longer combines an instance enablement gate with a per-repository allowlist. An Owner/Admin project creation or source-link change is the repository trust decision; **Accept new builds** is a default-on operational pause that lets active work finish while queued work waits.
+  - During the one-time policy migration, projects linked to repositories that were never approved are unlinked and their queued or only-scheduled builds are canceled instead of silently gaining execution trust. An Owner or Admin can choose the source again in Project Settings; previously approved project links remain intact.
+  - Build snapshots are bound to the exact trusted repository ID. Relinking a project cancels queued or only-scheduled snapshots from the old source, claims and reruns reject stale source identities, and assigned or running GitLab work drains through its original build-bound checkout instead of the project's mutable link.
+  - Source sync retains repository and provider-installation rows while assigned or running snapshots still reference them, so in-flight checkouts keep their immutable dependency chain. Explicit integration disconnect returns `409 Conflict` until those active builds finish; queued or scheduled work is canceled when the source is removed.
+  - External-fork pull and merge requests remain blocked. Direct mode continues to mean trusted-code execution with the runner account's authority, not hostile-code isolation; manually registered runners on another Mac remain supported.
+  - iOS signing keeps provisioning profiles inside the private job workspace and passes a temporary keychain explicitly to signing tools without changing the user's default keychain, search list, or globally installed profiles.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
+  - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+
 ## 2026-07-18
 
 - **Source trust controls at repository scale**:
-  - Source details now open on one searchable, runner-state-filtered repository inventory with 20/50/100 pagination. Accounts and connection metadata live in separate tabs, while sync and provider actions stay in the page header.
-  - Direct runner access uses neutral Allowed/Blocked controls and states that leaving repositories blocked is expected. The global trust notice is acknowledged once per user and instance; it no longer treats approval of every discovered repository as setup completion.
+  - Source details now open on one searchable repository inventory with 20/50/100 pagination. Accounts and connection metadata live in separate tabs, while sync and provider actions stay in the page header.
+  - Repository inventory remains informational. Owners and Admins make the execution trust decision when linking a repository to a project instead of maintaining a second Allowed/Blocked state.
   - GitLab webhook tokens are created only from a selected project action. Rotation requires confirmation, the one-time reveal names the project and includes the webhook URL, and closing the dialog clears the secret from the page.
   - Repository and account query failures now render explicit retry states instead of appearing as empty inventories.
   - Frontend Quality: https://linear.app/oorebuild/document/feature-frontend-product-quality-and-build-experience-overhaul-c257decee5c5
@@ -24,9 +39,9 @@ Rules:
 
 - **Direct macOS runner trust policy**:
   - The supported V1 runner now executes checkout and repository commands directly as the runner's macOS account. The unsupported Seatbelt profile and temporary Swift sandbox workaround are removed; private workspaces, cleanup, checkout credential scoping, environment scrubbing, late one-time signing grants, fixed signer selection, artifact verification, cancellation, logging, and managed service updates remain.
-  - Runner protocol v4 prevents older sandboxed runners from silently claiming new jobs. Direct runner execution and every repository approval default off, only Owners and Admins may change them, and the claim query skips policy-blocked jobs while already-running builds drain normally. Queued build responses and the UI report the exact policy block reason.
-  - Repository approval applies to every project linked to that source. The post-upgrade banner points operators to the instance and source controls and states that build code receives the runner account's authority. A dedicated non-admin macOS account is recommended hardening, not hostile-code isolation.
-  - GitHub source sync now reads every installation and repository page before cleanup. Ordinary rediscovery preserves approval, while a real source removal transactionally unlinks affected projects and deleting then rediscovering the repository creates a fresh, unapproved record; generic and local-path source deletion use the same fail-closed lifecycle.
+  - Runner protocol v4 prevents older sandboxed runners from silently claiming new jobs. Owners and Admins trust repository execution by linking a source to a project, while the instance **Accept new builds** control is an operational pause. The claim query skips unavailable-source and paused jobs while already-running builds drain normally, and queued build responses report the exact reason.
+  - The project-creation warning states that build code receives the runner account's authority. A dedicated non-admin macOS account is recommended hardening, not hostile-code isolation.
+  - GitHub source sync now reads every installation and repository page before cleanup. A real source removal transactionally unlinks affected projects; generic and local-path source deletion use the same fail-closed lifecycle.
   - GitHub and GitLab pushes remain unchanged. Only immutable, verified same-repository pull/merge request revisions auto-queue; external forks, ambiguous sources, and non-revision events are ignored until a future isolated execution path exists.
   - Historical security findings and Seatbelt ledger entries remain as history; ADR-0014's containment guarantee is deliberately superseded by the approved trusted-code threat model.
   - `make direct-runner-upgrade-smoke` exercises the UI-managed update path against a live previous-alpha macOS install, first confirms that the daemon is managed, then requires the daemon and same managed runner to reach the explicitly expected candidate version with a newer heartbeat and protocol v4. Its default `api` trigger calls the UI's update endpoint; `OORE_UPGRADE_SMOKE_TRIGGER=observe` arms the verifier before an operator clicks Update in the browser, so the actual previous-alpha-to-candidate UI run can satisfy the release gate without SSH or `launchctl`.
@@ -181,10 +196,9 @@ Rules:
   - Repository-owned workflows keep file-first behavior. Partial runs filter default or `platform_commands` entries and explicitly reject shared `commands.build` lists that cannot be mapped safely to a platform.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-per-run-platform-selection-for-combined-pipelines-b34e810fd79b
 
-- **Reliable iOS runner session and local artifact delivery**:
-  - `oore runner install-service` now installs a persistent macOS LaunchAgent in the logged-in Aqua session, where Apple permits non-interactive access to imported signing keys. `oore runner uninstall-service` removes it. This replaces unsupported iOS signing from a system LaunchDaemon or background login session while preserving a separately managed `oored` backend.
-  - If Keychain Services rejects signing because a runner is outside that session, the build error now names the supported service command instead of ending at macOS's opaque `errSecInternalComponent` message.
-  - Runner-side PKCS#12 import uses an isolated temporary keychain, allows the imported identity to be used non-interactively for the build, verifies it with a real preflight signature, and restores the user's original keychain state during cleanup.
+- **Reliable headless iOS signing and local artifact delivery**:
+  - `oore runner install-service` installs a persistent boot-time system LaunchDaemon under the configured non-root account. iOS signing no longer depends on a logged-in Aqua session.
+  - Runner-side PKCS#12 import uses an isolated temporary keychain, grants only the fixed signing tool non-interactive access, passes that keychain explicitly, and verifies it with a real preflight signature. Provisioning profiles remain in the private job workspace; the runner does not change the user's default keychain, search list, or globally installed profiles.
   - Local-storage artifact upload URLs are routed over the runner's configured daemon connection. Large IPA uploads no longer leave the private Mac, traverse the public frontend proxy, and return to the same backend; S3 and other external presigned URLs remain unchanged.
   - API signing rejects expired stored distribution certificates and provisions a fresh certificate instead of silently reusing an unusable `.p12`. If Apple refuses certificate creation, sync fails explicitly rather than generating profiles for a certificate whose private key Oore does not own.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
@@ -197,10 +211,10 @@ Rules:
   - The imported signing identity explicitly allows non-interactive use inside Oore's temporary build keychain, avoiding a Keychain approval prompt during archive and export.
   - When Oore supplies ExportOptions, the runner removes both accepted forms of Flutter's conflicting `--export-method` option before executing the build command.
   - Flutter iOS pipelines now create a signed archive with Oore's imported distribution identity and temporary keychain before exporting the IPA. Oore routes each stored provisioning profile to only the matching app or extension bundle ID during the archive, while third-party Pods remain profile-free; ExportOptions preserves the same exact mapping during export. This supports apps with extensions without rewriting their Xcode project.
-  - The isolated build keychain becomes the runner user's default only for the signing window, allowing Xcode's distribution exporter to resolve the imported identity; cleanup restores both the previous default and search list before deleting the temporary keychain.
+  - The isolated build keychain is passed explicitly to the fixed signing tools and deleted during cleanup without modifying the runner user's default or search-list keychain state.
   - Archive builds no longer force one app certificate onto every Xcode target. Xcode now selects the matching imported identity for the app and extension profiles, while CocoaPods and other unsigned dependency targets remain outside the app-signing boundary; ExportOptions still pins the exact certificate SHA-1 for the final IPA.
   - App and extension archive identities use the same bundle-ID-keyed Xcode lookup as their profiles. This overrides repository development identities only for stored app bundles without reintroducing the dependency-target signing failure.
-  - Oore directly signs the archived app's nested frameworks, extensions, and main bundle with the managed temporary keychain, verifies the result, and packages the IPA. The runner itself remains in the active macOS login session required by Apple Keychain Services.
+  - Oore directly signs the archived app's nested frameworks, nested apps (including Watch apps and App Clips), extensions, and main bundle in dependency order with the managed temporary keychain, verifies the result, and packages the IPA from the headless runner service.
   - Linear feature doc: https://linear.app/oorebuild/document/feature-reliable-ios-certificate-imports-across-openssl-variants-f445e897e5a1
 - **Portable iOS certificate inspection**:
   - PKCS#12 inspection and re-export now try the portable command first, then use OpenSSL 3's legacy provider only when an older bundle requires it. Valid Apple certificates can therefore be saved on the supported macOS backend, whose system LibreSSL does not recognize the `-legacy` option.

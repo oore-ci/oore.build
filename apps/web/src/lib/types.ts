@@ -265,17 +265,8 @@ export interface IntegrationRepository {
   default_branch?: string
   is_private: boolean
   avatar_url?: string
-  allow_direct_macos_runner: boolean
   created_at: number
   updated_at: number
-}
-
-export interface UpdateRepositoryRunnerPolicyRequest {
-  allow_direct_macos_runner: boolean
-}
-
-export interface UpdateRepositoryRunnerPolicyResponse {
-  repository: IntegrationRepository
 }
 
 export interface GitHubAppStartRequest {
@@ -455,7 +446,7 @@ export interface Build {
 }
 
 export type RunnerPolicyBlockReason =
-  'instance_disabled' | 'repository_not_approved' | 'repository_unavailable'
+  'instance_paused' | 'repository_unavailable'
 
 export interface BuildContext {
   project_name?: string
@@ -731,7 +722,7 @@ export interface InstancePreferences {
   runtime_mode: RuntimeMode
   remote_auth_mode: RemoteAuthMode
   restart_required: boolean
-  direct_macos_runner_enabled: boolean
+  direct_macos_runner_paused: boolean
   updated_at?: number
 }
 
@@ -743,7 +734,7 @@ export interface UpdateInstancePreferencesRequest {
   key_storage_mode: KeyStorageMode
   runtime_mode?: RuntimeMode
   remote_auth_mode?: RemoteAuthMode
-  direct_macos_runner_enabled?: boolean
+  direct_macos_runner_paused?: boolean
 }
 
 // ── Project domain types ────────────────────────────────────────

@@ -27,7 +27,7 @@ This tutorial walks you through inviting team members to your Oore CI instance a
    | Role          | What they can do                                                                   |
    | ------------- | ---------------------------------------------------------------------------------- |
    | **Admin**     | Manage users, projects, pipelines, settings — everything except ownership transfer |
-   | **Developer** | Create projects, configure pipelines, trigger builds, download artifacts           |
+   | **Developer** | Configure pipelines and trigger builds in assigned projects; download artifacts    |
    | **QA Viewer** | View builds and download artifacts (read-only access to projects)                  |
 
 4. Click **Invite**
@@ -50,15 +50,16 @@ Go to **Settings > Users** and confirm the user appears as `active` after their 
 
 ## Roles overview
 
-| Permission           | Owner | Admin | Developer | QA Viewer |
-| -------------------- | ----- | ----- | --------- | --------- |
-| Manage users         | Yes   | Yes   | No        | No        |
-| Manage settings      | Yes   | Yes   | No        | No        |
-| Create/edit projects | Yes   | Yes   | Yes       | No        |
-| Configure pipelines  | Yes   | Yes   | Yes       | No        |
-| Trigger builds       | Yes   | Yes   | Yes       | No        |
-| View builds          | Yes   | Yes   | Yes       | Yes       |
-| Download artifacts   | Yes   | Yes   | Yes       | Yes       |
+| Permission            | Owner | Admin | Developer     | QA Viewer |
+| --------------------- | ----- | ----- | ------------- | --------- |
+| Manage users          | Yes   | Yes   | No            | No        |
+| Manage settings       | Yes   | Yes   | No            | No        |
+| Create projects       | Yes   | Yes   | No            | No        |
+| Edit assigned project | Yes   | Yes   | If maintainer | No        |
+| Configure pipelines   | Yes   | Yes   | Yes           | No        |
+| Trigger builds        | Yes   | Yes   | Yes           | No        |
+| View builds           | Yes   | Yes   | Yes           | Yes       |
+| Download artifacts    | Yes   | Yes   | Yes           | Yes       |
 
 For the full permission matrix, see [RBAC Reference](/reference/rbac).
 

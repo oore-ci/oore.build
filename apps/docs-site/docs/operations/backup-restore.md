@@ -24,12 +24,16 @@ oore backup create --state-file "$HOME/Library/Application Support/oore-prod/oor
 
 ## Restore
 
-Stop the daemon first. Restore refuses to run while the default managed daemon is reachable, preventing a live process from writing over restored state.
+Stop the daemon and runner first. Restore refuses to run while the default
+managed daemon is reachable, preventing a live process from writing over
+restored state.
 
 ```bash
-launchctl bootout gui/$(id -u)/build.oore.oored
+sudo launchctl bootout system/build.oore.oore-runner
+sudo launchctl bootout system/build.oore.oored
 oore backup restore --input /Volumes/backups/oore-2026-07-12.tar.gz
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/build.oore.oored.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/build.oore.oored.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/build.oore.oore-runner.plist
 ```
 
 The command verifies the manifest, both SHA-256 checksums, key length, and SQLite integrity before replacing files. It swaps database and key atomically and restores the previous pair if replacement fails.

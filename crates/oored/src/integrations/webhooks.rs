@@ -868,7 +868,7 @@ async fn webhook_trigger_decision(
             }
             if source_id != target_id {
                 return Ok(WebhookTriggerDecision::Ignore(
-                    "external pull request revisions require explicit approval",
+                    "external-fork pull request revisions are blocked by policy",
                 ));
             }
             let Some(repository_full_name) = event.repository_full_name.as_deref() else {
@@ -933,7 +933,7 @@ async fn webhook_trigger_decision(
             }
             if source_id != target_id {
                 return Ok(WebhookTriggerDecision::Ignore(
-                    "external merge request revisions require explicit approval",
+                    "external-fork merge request revisions are blocked by policy",
                 ));
             }
             let Some(repository_full_name) = event.repository_full_name.as_deref() else {

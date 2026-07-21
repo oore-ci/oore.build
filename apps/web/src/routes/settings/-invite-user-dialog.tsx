@@ -43,7 +43,7 @@ const ROLE_DESCRIPTIONS: Record<keyof typeof ROLE_OPTIONS, string> = {
   admin:
     'Can manage users, integrations, and all projects. Cannot delete the instance.',
   developer:
-    'Can create and manage assigned projects, pipelines, and builds. Cannot manage users or instance settings.',
+    'Can work on assigned projects according to their project role. Cannot create projects or manage instance settings.',
   qa_viewer:
     'Tester access to assigned project releases, install actions, and diagnostic logs.',
 }

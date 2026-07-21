@@ -108,13 +108,93 @@ install_binaries
 [[ "$(< "$OORE_INSTALL_ROOT/INSTALL_MODE")" == "backend" ]]
 rm -rf "$transition_dir"
 
+managed_transition_dir="$(mktemp -d)"
+managed_release_dir="$managed_transition_dir/release"
+TMP_DIR="$managed_transition_dir/download"
+OORE_INSTALL_ROOT="$managed_transition_dir/install"
+BIN_DIR="$OORE_INSTALL_ROOT/bin"
+LOG_DIR="$OORE_INSTALL_ROOT/logs"
+WEB_BINARY="$BIN_DIR/oore-web"
+WEB_DIST_DIR="$OORE_INSTALL_ROOT/web-dist"
+DAEMON_LAUNCH_DAEMON_PLIST="$managed_transition_dir/build.oore.oored.plist"
+DAEMON_LAUNCH_AGENT_PLIST="$managed_transition_dir/missing-launch-agent.plist"
+candidate_call="$managed_transition_dir/candidate.log"
+export CANDIDATE_CALL="$candidate_call"
+mkdir -p "$managed_release_dir/bin" "$TMP_DIR" "$BIN_DIR" "$WEB_DIST_DIR"
+printf '#!/bin/sh\nprintf "root=%%s\\n" "$OORE_INSTALL_ROOT" > "$CANDIDATE_CALL"\nprintf "args=%%s\\n" "$*" >> "$CANDIDATE_CALL"\n' > "$managed_release_dir/bin/oore"
+printf 'new-oored\n' > "$managed_release_dir/bin/oored"
+printf 'new-oore-web\n' > "$managed_release_dir/bin/oore-web"
+printf 'new-web-dist\n' > "$managed_release_dir/web-index"
+mkdir -p "$managed_release_dir/web-dist"
+mv "$managed_release_dir/web-index" "$managed_release_dir/web-dist/index.html"
+chmod +x "$managed_release_dir/bin/oore" "$managed_release_dir/bin/oored" "$managed_release_dir/bin/oore-web"
+printf '2.1.0\n' > "$managed_release_dir/VERSION"
+printf 'old-oore\n' > "$BIN_DIR/oore"
+printf 'old-oored\n' > "$BIN_DIR/oored"
+printf 'old-oore-web\n' > "$WEB_BINARY"
+chmod +x "$BIN_DIR/oore" "$BIN_DIR/oored" "$WEB_BINARY"
+printf 'old-web-dist\n' > "$WEB_DIST_DIR/index.html"
+printf '1.9.0\n' > "$OORE_INSTALL_ROOT/VERSION"
+printf 'all\n' > "$OORE_INSTALL_ROOT/INSTALL_MODE"
+touch "$DAEMON_LAUNCH_DAEMON_PLIST"
+OORE_INSTALL_MODE=all
+RELEASE_VERSION=2.1.0
+RELEASE_OS=darwin
+RELEASE_ARCH=arm64
+RESOLVED_CHANNEL=alpha
+OORE_GITHUB_REPO=oore-ci/oore.build
+MANAGED_BACKEND_UPGRADE=0
+tar -czf "$TMP_DIR/$(release_archive_name)" -C "$managed_release_dir" .
+install_binaries
+[[ "$MANAGED_BACKEND_UPGRADE" -eq 1 ]]
+[[ "$(< "$BIN_DIR/oore")" == "old-oore" ]]
+[[ "$(< "$BIN_DIR/oored")" == "old-oored" ]]
+[[ "$(< "$WEB_BINARY")" == "old-oore-web" ]]
+[[ "$(< "$WEB_DIST_DIR/index.html")" == "old-web-dist" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/VERSION")" == "1.9.0" ]]
+grep -q -- "^root=$OORE_INSTALL_ROOT$" "$candidate_call"
+grep -q -- "^args=update --staged-release $TMP_DIR/extract --ensure-managed-runner --channel alpha --repo oore-ci/oore.build --force$" "$candidate_call"
+
+rm -rf "$TMP_DIR/extract"
+rm -f "$DAEMON_LAUNCH_DAEMON_PLIST"
+DAEMON_LAUNCH_AGENT_PLIST="$managed_transition_dir/build.oore.oored.user.plist"
+touch "$DAEMON_LAUNCH_AGENT_PLIST"
+: > "$candidate_call"
+MANAGED_BACKEND_UPGRADE=0
+install_binaries
+[[ "$MANAGED_BACKEND_UPGRADE" -eq 1 ]]
+[[ "$(< "$BIN_DIR/oore")" == "old-oore" ]]
+[[ "$(< "$BIN_DIR/oored")" == "old-oored" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/VERSION")" == "1.9.0" ]]
+grep -q -- "^args=update --staged-release $TMP_DIR/extract --ensure-managed-runner --channel alpha --repo oore-ci/oore.build --force$" "$candidate_call"
+
+rm -rf "$TMP_DIR/extract"
+printf '#!/bin/sh\nexit 17\n' > "$managed_release_dir/bin/oore"
+chmod +x "$managed_release_dir/bin/oore"
+tar -czf "$TMP_DIR/$(release_archive_name)" -C "$managed_release_dir" .
+MANAGED_BACKEND_UPGRADE=0
+if install_binaries; then
+  echo '[install-acceptance] failed staged upgrade unexpectedly fell through to shell installation' >&2
+  exit 1
+fi
+[[ "$MANAGED_BACKEND_UPGRADE" -eq 0 ]]
+[[ "$(< "$BIN_DIR/oore")" == "old-oore" ]]
+[[ "$(< "$BIN_DIR/oored")" == "old-oored" ]]
+[[ "$(< "$WEB_BINARY")" == "old-oore-web" ]]
+[[ "$(< "$WEB_DIST_DIR/index.html")" == "old-web-dist" ]]
+[[ "$(< "$OORE_INSTALL_ROOT/VERSION")" == "1.9.0" ]]
+rm -rf "$managed_transition_dir"
+
 sudo_call="$(mktemp)"
 oored_call="$(mktemp)"
+oore_call="$(mktemp)"
 service_bin_dir="$(mktemp -d)"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$OORED_CALL"\n' > "$service_bin_dir/oored"
-chmod +x "$service_bin_dir/oored"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$OORE_CALL"\n' > "$service_bin_dir/oore"
+chmod +x "$service_bin_dir/oored" "$service_bin_dir/oore"
 export OORED_CALL="$oored_call"
-OORE_INSTALL_MODE=backend
+export OORE_CALL="$oore_call"
+OORE_INSTALL_MODE=all
 OORE_DAEMON_LISTEN=100.64.0.10:8787
 OORE_PUBLIC_URL='https://ci.example.test/?a=1&b=2'
 OORE_WARPGATE_TICKET='opaque-ticket'
@@ -157,7 +237,14 @@ if command -v plutil >/dev/null 2>&1; then
   render_system_daemon_plist appbuilder | plutil -lint - >/dev/null
 fi
 install_daemon_service
+install_runner_service
 grep -q -- '^uninstall-service$' "$oored_call"
+grep -q -- '^runner install-service --managed-local --daemon-url http://127.0.0.1:8787$' "$oore_call"
+OORE_DAEMON_LISTEN='[fd00::10]:9797'
+[[ "$(runner_loopback_url)" == 'http://[::1]:9797' ]]
+OORE_DAEMON_LISTEN='127.0.0.2:9898'
+[[ "$(runner_loopback_url)" == 'http://127.0.0.2:9898' ]]
+OORE_DAEMON_LISTEN=100.64.0.10:8787
 grep -q -- '^/usr/bin/install -o root -g wheel -m 0600 /dev/null .*build.oore.oored.plist.install.' "$sudo_call"
 grep -q -- '^/usr/bin/tee .*build.oore.oored.plist.install.' "$sudo_call"
 grep -q -- '^/bin/launchctl bootstrap system .*build.oore.oored.plist$' "$sudo_call"
@@ -184,7 +271,7 @@ grep -q -- '<key>OORE_WARPGATE_TICKET</key>' "$DAEMON_LAUNCH_DAEMON_PLIST"
 grep -q -- '<string>opaque-ticket</string>' "$DAEMON_LAUNCH_DAEMON_PLIST"
 unset -f sudo id curl_quick
 rm -rf "$service_bin_dir"
-rm -f "$sudo_call" "$oored_call"
+rm -f "$sudo_call" "$oored_call" "$oore_call"
 
 curl_args="$(mktemp)"
 OORE_CHANNEL=alpha

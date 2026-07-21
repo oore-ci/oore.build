@@ -36,9 +36,8 @@ export function getStatusVariant(status: string): BadgeVariant {
 }
 
 const RUNNER_POLICY_BLOCK_LABEL: Record<RunnerPolicyBlockReason, string> = {
-  instance_disabled: 'Direct runner paused',
-  repository_not_approved: 'Repository approval required',
-  repository_unavailable: 'Repository policy unavailable',
+  instance_paused: 'Direct runner paused',
+  repository_unavailable: 'Source unavailable',
 }
 
 export function getRunnerPolicyBlockLabel(

@@ -12,8 +12,9 @@ This tutorial walks you through creating a project, configuring a pipeline, and 
 - A running Oore CI instance in `ready` state ([Set Up Your Instance](/getting-started/first-instance))
 - A [GitHub](/getting-started/connect-github) or GitLab integration connected
 - A Flutter project repository accessible through your integration
-- A registered Direct macOS runner running as a separate login-session service
-- Direct runner execution enabled in **Settings > Preferences** and the repository approved in **Settings > Sources**
+- An online Direct macOS runner (installed automatically with a local macOS backend)
+- **Accept new builds** on in **Settings > Preferences**
+- An Owner/Admin-created project whose linked source is available
 
 ## 1. Create a project
 
@@ -126,9 +127,9 @@ For the full state machine, see [Build States](/reference/build-states).
 
 ### Build stuck in "queued"
 
-- Read the waiting reason on the build page. Enable Direct runner execution in **Settings > Preferences** or approve the repository in **Settings > Sources** when prompted.
+- Read the waiting reason on the build page. Turn on **Accept new builds** in **Settings > Preferences**, or reconnect the project's source when prompted.
 - Check **Settings > Runners** for an active runner.
-- For a foreground diagnostic run, start it with `oore runner start`. Normal installations should use `oore runner install-service`.
+- For a foreground diagnostic run, start it with `oore runner start`. Normal backend installations should use `oore runner install-service --managed-local`; a separately registered external runner uses `oore runner install-service`.
 
 ### Flutter commands fail
 

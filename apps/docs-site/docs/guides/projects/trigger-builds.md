@@ -12,7 +12,7 @@ Oore CI supports three ways to trigger builds: manual triggers from the UI, webh
 - **Role**: any authenticated user (for manual/API triggers)
 - A [project](/guides/projects/create-project) with at least one [pipeline](/guides/projects/pipeline-config)
 - An online Direct macOS runner
-- The instance runner switch enabled and the repository approved by an owner or admin
+- **Accept new builds** on and the project's linked source available
 
 ## Manual trigger (UI)
 
@@ -22,6 +22,10 @@ Oore CI supports three ways to trigger builds: manual triggers from the UI, webh
 4. Click **Start Build**
 
 Oore resolves the selected branch to its current commit before the build enters `queued` state. The runner checks out that exact commit, and a rerun keeps the same commit even if the branch has moved.
+
+A rerun also keeps the original repository identity. If an Owner or Admin has
+since changed the project's source, Oore asks you to trigger a new build instead
+of running the old snapshot under the new source link.
 
 ## Webhook trigger
 
@@ -82,7 +86,8 @@ After triggering:
 2. Click on a build to view real-time logs (streamed via SSE)
 3. Build states progress: `queued` → `assigned` → `running` → `succeeded`/`failed`
 
-If runner execution is paused or the repository is not approved, the build remains queued and shows the exact policy reason. Running builds are not terminated when policy is disabled.
+If the instance is paused or the linked source is unavailable, the build remains
+queued and shows the exact reason. Pausing does not terminate running builds.
 
 ### List builds via API
 

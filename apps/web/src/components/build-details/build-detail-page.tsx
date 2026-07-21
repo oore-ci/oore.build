@@ -44,6 +44,10 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const canCancelBuildGlobally = useHasPermission('builds', 'cancel')
   const canManageShareLinksGlobally = useHasPermission('artifacts', 'write')
+  const canWriteInstanceSettings = useHasPermission(
+    'instance_settings',
+    'write',
+  )
   const rerunMutation = useRerunBuild()
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
@@ -229,40 +233,36 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            {build.runner_policy_block_reason === 'instance_disabled' ? (
-              <>
-                This build is waiting because the Direct macOS runner is paused.
-                An owner or admin can enable it in{' '}
-                <Link
-                  to="/settings/preferences"
-                  className="font-medium underline underline-offset-4"
-                >
-                  Preferences
-                </Link>
-                .
-              </>
-            ) : build.runner_policy_block_reason ===
-              'repository_not_approved' ? (
-              <>
-                This build is waiting for repository approval. An owner or admin
-                can approve it under{' '}
-                <Link
-                  to="/settings/integrations"
-                  className="font-medium underline underline-offset-4"
-                >
-                  Sources
-                </Link>
-                .
-              </>
+            {build.runner_policy_block_reason === 'instance_paused' ? (
+              canWriteInstanceSettings ? (
+                <>
+                  This build is waiting because the Direct macOS runner is
+                  paused. Resume it in{' '}
+                  <Link
+                    to="/settings/preferences"
+                    className="font-medium underline underline-offset-4"
+                  >
+                    Preferences
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>
+                  This build is waiting because the Direct macOS runner is
+                  paused. Ask an owner or admin to resume it.
+                </>
+              )
             ) : (
               <>
-                This build is waiting because its repository policy is
-                unavailable. Check the project&apos;s repository under{' '}
+                This build is waiting because its source repository is
+                unavailable. An owner or admin can repair the source link in{' '}
                 <Link
-                  to="/settings/integrations"
+                  to="/projects/$projectId"
+                  params={{ projectId: build.project_id }}
+                  search={{ tab: 'settings' }}
                   className="font-medium underline underline-offset-4"
                 >
-                  Sources
+                  Project Settings
                 </Link>
                 .
               </>

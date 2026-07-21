@@ -128,8 +128,13 @@ export default function RuntimeUpdateDialog({
     )
   const frontendPhase =
     updates.startFrontendUpdate.data?.phase ?? frontend?.phase
-  const backendPhase =
-    updates.startBackendUpdate.data?.phase ?? updates.backendUpdate.data?.phase
+  const backendQueryIsCurrent =
+    updates.backendUpdate.dataUpdatedAt >=
+    updates.startBackendUpdate.submittedAt
+  const backendPhase = backendQueryIsCurrent
+    ? updates.backendUpdate.data?.phase
+    : (updates.startBackendUpdate.data?.phase ??
+      updates.backendUpdate.data?.phase)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
