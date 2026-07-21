@@ -1,6 +1,6 @@
-import type { Build, Project } from '@/lib/types'
+import type { BuildStatus, Build } from '@/lib/types'
 
-const ACTIVE_BUILD_STATUSES = new Set([
+const ACTIVE_BUILD_STATUSES = new Set<BuildStatus>([
   'queued',
   'scheduled',
   'assigned',
@@ -17,10 +17,4 @@ export function selectDashboardBuilds(builds: Array<Build>): {
       .filter((build) => !ACTIVE_BUILD_STATUSES.has(build.status))
       .slice(0, 6),
   }
-}
-
-export function selectDashboardProjects(
-  projects: Array<Project>,
-): Array<Project> {
-  return projects.slice(0, 6)
 }

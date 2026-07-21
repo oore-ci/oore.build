@@ -65,6 +65,7 @@ export default defineConfig({
     tanstackRouter({
       target: 'react',
       autoCodeSplitting: true,
+      quoteStyle: 'single',
     }),
     viteReact(),
     tailwindcss(),

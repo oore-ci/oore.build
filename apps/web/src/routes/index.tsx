@@ -34,7 +34,7 @@ import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
-import { selectDashboardBuilds, selectDashboardProjects } from '@/lib/dashboard'
+import { selectDashboardBuilds } from '@/lib/dashboard'
 import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
@@ -325,11 +325,8 @@ function ConfiguredDashboard({
   )
   const { active: activeBuilds, recentCompleted: recentCompletedBuilds } =
     useMemo(() => selectDashboardBuilds(recentBuilds), [recentBuilds])
-  const recentProjects = useMemo(
-    () => selectDashboardProjects(projects),
-    [projects],
-  )
   const hasProjects = projects.length > 0
+  const recentProjects = hasProjects ? projects.slice(0, 6) : []
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
