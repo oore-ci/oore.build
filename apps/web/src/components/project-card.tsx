@@ -25,10 +25,11 @@ export default function ProjectCard({
   onTriggerBuild,
 }: ProjectCardProps) {
   return (
-    <Card className="group relative h-full">
-      <CardContent className="flex h-full flex-col gap-3">
+    <Card className="group relative flex h-full flex-col overflow-hidden">
+      <CardContent className="flex flex-1 flex-col gap-3 p-4">
+        {/* Header row */}
         <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
             {project.repository_full_name ? (
               <RepositoryAvatar
                 fullName={project.repository_full_name}
@@ -55,9 +56,8 @@ export default function ProjectCard({
           <Button
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0"
+            className="size-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
             aria-label={`Open settings for ${project.name}`}
-            title={`Open settings for ${project.name}`}
             render={
               <Link
                 to="/projects/$projectId"
@@ -66,10 +66,11 @@ export default function ProjectCard({
             }
             nativeButton={false}
           >
-            <HugeiconsIcon icon={Setting07Icon} />
+            <HugeiconsIcon icon={Setting07Icon} size={14} />
           </Button>
         </div>
 
+        {/* Meta row */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {pipelineCount != null ? (
             <span>
@@ -77,29 +78,29 @@ export default function ProjectCard({
             </span>
           ) : null}
           {lastBuildStatus ? (
-            <Badge
-              variant={getStatusVariant(lastBuildStatus)}
-              className="text-[10px]"
-            >
+            <Badge variant={getStatusVariant(lastBuildStatus)} className="text-[10px]">
               {lastBuildStatus}
             </Badge>
           ) : (
-            <span className="italic">No builds</span>
+            <span className="italic opacity-60">No builds</span>
           )}
         </div>
+      </CardContent>
 
+      {/* Footer action */}
+      <div className="border-t px-4 py-2.5">
         <Button
           size="sm"
-          variant="outline"
-          className="mt-auto w-full"
+          variant="ghost"
+          className="h-7 w-full gap-1.5 text-xs"
           onMouseEnter={onPreloadTriggerBuild}
           onFocus={onPreloadTriggerBuild}
           onClick={() => onTriggerBuild(project.id)}
         >
-          <HugeiconsIcon icon={PlayIcon} />
+          <HugeiconsIcon icon={PlayIcon} size={13} />
           Run build
         </Button>
-      </CardContent>
+      </div>
     </Card>
   )
 }

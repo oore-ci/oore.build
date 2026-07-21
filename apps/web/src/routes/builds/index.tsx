@@ -20,7 +20,7 @@ import { getStatusVariant } from '@/lib/status-variants'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
   Empty,
@@ -108,123 +108,139 @@ function BuildsHistoryCard({
   total: number
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Build queue and history
-          </CardTitle>
-          <span className="text-xs text-muted-foreground">{total} total</span>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {builds.length === 0 ? (
-          <Empty className="p-8">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <HugeiconsIcon icon={PlayIcon} />
-              </EmptyMedia>
-              <EmptyTitle>No builds yet</EmptyTitle>
-              <EmptyDescription>
-                Run a pipeline to see its status, output, and artifacts here.
-              </EmptyDescription>
-            </EmptyHeader>
-            {canTriggerBuild ? (
-              <EmptyContent>
-                <Button
-                  size="sm"
-                  onMouseEnter={onPreloadTrigger}
-                  onFocus={onPreloadTrigger}
-                  onClick={onOpenTrigger}
-                >
-                  <HugeiconsIcon icon={PlayIcon} />
-                  Run first build
-                </Button>
-              </EmptyContent>
-            ) : null}
-          </Empty>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Build</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Trigger</TableHead>
-                <TableHead>Branch</TableHead>
-                <TableHead>Commit</TableHead>
-                <TableHead>Created</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {builds.map((build) => (
-                <TableRow
-                  key={build.id}
-                  className="group cursor-pointer"
-                  role="link"
-                  tabIndex={0}
-                  onClick={() => onOpenBuild(build.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      onOpenBuild(build.id)
-                    }
-                  }}
-                >
-                  <TableCell>
-                    <div>
-                      <p className="font-mono text-sm group-hover:underline">
-                        #{build.build_number}
-                      </p>
-                      <p className="font-mono text-[11px] text-muted-foreground">
-                        {build.id.slice(0, 8)}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <p className="text-sm">
-                      {build.context?.project_name ??
-                        projects.find(
-                          (project) => project.id === build.project_id,
-                        )?.name ??
-                        'Unknown project'}
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+          Build queue and history
+        </p>
+        <span className="font-mono text-xs text-muted-foreground">
+          {total} total
+        </span>
+      </div>
+      {builds.length === 0 ? (
+        <Empty className="p-8">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={PlayIcon} />
+            </EmptyMedia>
+            <EmptyTitle>No builds yet</EmptyTitle>
+            <EmptyDescription>
+              Run a pipeline to see its status, output, and artifacts here.
+            </EmptyDescription>
+          </EmptyHeader>
+          {canTriggerBuild ? (
+            <EmptyContent>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onMouseEnter={onPreloadTrigger}
+                onFocus={onPreloadTrigger}
+                onClick={onOpenTrigger}
+              >
+                <HugeiconsIcon icon={PlayIcon} size={13} />
+                Run first build
+              </Button>
+            </EmptyContent>
+          ) : null}
+        </Empty>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow className="border-b">
+              <TableHead className="h-9 pl-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Build
+              </TableHead>
+              <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Project
+              </TableHead>
+              <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Status
+              </TableHead>
+              <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Trigger
+              </TableHead>
+              <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Branch
+              </TableHead>
+              <TableHead className="h-9 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Commit
+              </TableHead>
+              <TableHead className="h-9 pr-4 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                Created
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {builds.map((build) => (
+              <TableRow
+                key={build.id}
+                className="group cursor-pointer"
+                role="link"
+                tabIndex={0}
+                onClick={() => onOpenBuild(build.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onOpenBuild(build.id)
+                  }
+                }}
+              >
+                <TableCell className="py-2.5 pl-4">
+                  <span className="font-mono text-sm font-semibold text-primary group-hover:underline">
+                    #{build.build_number}
+                  </span>
+                  <p className="font-mono text-[11px] text-muted-foreground/60">
+                    {build.id.slice(0, 8)}
+                  </p>
+                </TableCell>
+                <TableCell className="py-2.5">
+                  <p className="text-sm">
+                    {build.context?.project_name ??
+                      projects.find(
+                        (project) => project.id === build.project_id,
+                      )?.name ??
+                      'Unknown project'}
+                  </p>
+                  {build.context?.pipeline_name ? (
+                    <p className="text-xs text-muted-foreground">
+                      {build.context.pipeline_name}
                     </p>
-                    {build.context?.pipeline_name ? (
-                      <p className="text-xs text-muted-foreground">
-                        {build.context.pipeline_name}
-                      </p>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={getStatusVariant(build.status)}>
-                      {build.status}
+                  ) : null}
+                </TableCell>
+                <TableCell className="py-2.5">
+                  <Badge
+                    variant={getStatusVariant(build.status)}
+                    className="text-[10px]"
+                  >
+                    {build.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="py-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      {build.trigger_type}
                     </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{build.trigger_type}</Badge>
-                      {build.trigger_actor ? (
-                        <span className="text-xs text-muted-foreground">
-                          by {build.trigger_actor}
-                        </span>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {build.branch ?? 'n/a'}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {build.commit_sha ? build.commit_sha.slice(0, 10) : 'n/a'}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {relativeTime(build.created_at)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
+                    {build.trigger_actor ? (
+                      <span className="text-xs text-muted-foreground">
+                        {build.trigger_actor}
+                      </span>
+                    ) : null}
+                  </div>
+                </TableCell>
+                <TableCell className="py-2.5 font-mono text-xs text-muted-foreground">
+                  {build.branch ?? 'n/a'}
+                </TableCell>
+                <TableCell className="py-2.5 font-mono text-xs text-muted-foreground">
+                  {build.commit_sha ? build.commit_sha.slice(0, 10) : 'n/a'}
+                </TableCell>
+                <TableCell className="py-2.5 pr-4 text-right text-xs text-muted-foreground">
+                  {relativeTime(build.created_at)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
     </Card>
   )
 }

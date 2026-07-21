@@ -21,7 +21,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -180,14 +180,14 @@ function IndexPage() {
             </p>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          <Card className="overflow-hidden">
+            <div className="border-b px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">
                 Instance Registry
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
+              </p>
+            </div>
+            <CardContent className="space-y-4 p-4">
+              <p className="text-sm leading-relaxed text-muted-foreground">
                 Add a backend instance to start setup or connect to an
                 already-configured daemon.
               </p>
@@ -438,13 +438,15 @@ function ConfiguredDashboard({
           <div className="flex items-center gap-2">
             <HugeiconsIcon
               icon={Loading03Icon}
-              size={14}
+              size={13}
               className="animate-spin text-info"
             />
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">
               Active Builds
             </h2>
-            <Badge variant="info">{activeBuilds.length}</Badge>
+            <Badge variant="info" className="font-mono text-[10px]">
+              {activeBuilds.length}
+            </Badge>
           </div>
           <div className="space-y-1">
             {activeBuilds.map((build) => (
@@ -457,17 +459,18 @@ function ConfiguredDashboard({
       {/* Projects Grid */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/60">
             Projects
           </h2>
           <Button
             variant="ghost"
             size="sm"
+            className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
             render={<Link to="/projects" />}
             nativeButton={false}
           >
             View all
-            <HugeiconsIcon icon={ArrowRight01Icon} />
+            <HugeiconsIcon icon={ArrowRight01Icon} size={13} />
           </Button>
         </div>
 

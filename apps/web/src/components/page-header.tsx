@@ -12,12 +12,14 @@ export default function PageHeader({
   meta,
 }: PageHeaderProps) {
   return (
-    <header className="space-y-3">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0 space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
+    <header className="space-y-2.5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 space-y-0.5">
+          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
           {description ? (
-            <p className="text-sm text-muted-foreground">{description}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {description}
+            </p>
           ) : null}
         </div>
         {actions ? (
@@ -26,7 +28,7 @@ export default function PageHeader({
       </div>
 
       {meta ? (
-        <div className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           {meta}
         </div>
       ) : null}

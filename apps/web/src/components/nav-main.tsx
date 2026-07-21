@@ -98,7 +98,9 @@ function ActiveBuildBadge() {
   const { data } = useBuilds({ status: 'running', limit: 100 })
   const count = data?.builds.length ?? 0
   if (count === 0) return null
-  return <SidebarMenuBadge>{count}</SidebarMenuBadge>
+  return (
+    <SidebarMenuBadge className="font-mono text-[10px]">{count}</SidebarMenuBadge>
+  )
 }
 
 export default function NavMain() {
@@ -127,7 +129,9 @@ export default function NavMain() {
   return (
     <>
       <SidebarGroup>
-        <SidebarGroupLabel>Operations</SidebarGroupLabel>
+        <SidebarGroupLabel className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+          Operations
+        </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             {visiblePrimaryItems.map((item) => (
@@ -136,8 +140,9 @@ export default function NavMain() {
                   isActive={isActive(item)}
                   tooltip={item.title}
                   render={<Link to={item.to} />}
+                  className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                 >
-                  <HugeiconsIcon icon={item.icon} size={18} />
+                  <HugeiconsIcon icon={item.icon} size={16} />
                   <span>{item.title}</span>
                 </SidebarMenuButton>
                 {item.to === '/builds' && <ActiveBuildBadge />}
@@ -170,9 +175,11 @@ export default function NavMain() {
 
       {visibleAdminItems.length > 0 && (
         <>
-          <Separator className="mx-2" />
+          <Separator className="mx-2 opacity-50" />
           <SidebarGroup>
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupLabel className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              Admin
+            </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {visibleAdminItems.map((item) => (
@@ -181,8 +188,9 @@ export default function NavMain() {
                       isActive={isActive(item)}
                       tooltip={item.title}
                       render={<Link to={item.to} />}
+                      className="data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                     >
-                      <HugeiconsIcon icon={item.icon} size={18} />
+                      <HugeiconsIcon icon={item.icon} size={16} />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

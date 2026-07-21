@@ -46,18 +46,22 @@ function InstanceButton({
           onFocus={onFocus}
           onMouseEnter={onMouseEnter}
         >
-          <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center">
-            <HugeiconsIcon icon={getInstanceIcon(instance?.icon)} size={16} />
+          <div className="flex aspect-square size-8 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+            <HugeiconsIcon icon={getInstanceIcon(instance?.icon)} size={15} />
           </div>
-          <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-medium">
+          <div className="grid flex-1 text-left leading-tight">
+            <span className="truncate text-sm font-semibold">
               {instance?.label ?? 'No instance'}
             </span>
-            <span className="truncate text-xs text-muted-foreground">
+            <span className="truncate font-mono text-[10px] text-muted-foreground">
               {hostname}
             </span>
           </div>
-          <HugeiconsIcon icon={ArrowUpDownIcon} className="ml-auto" size={16} />
+          <HugeiconsIcon
+            icon={ArrowUpDownIcon}
+            className="ml-auto shrink-0 text-muted-foreground"
+            size={14}
+          />
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

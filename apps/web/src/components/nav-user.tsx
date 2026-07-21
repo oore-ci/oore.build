@@ -46,21 +46,27 @@ function UserButton({
           onFocus={onFocus}
           onMouseEnter={onMouseEnter}
         >
-          <Avatar className="size-8">
+          <Avatar className="size-7 rounded-md">
             {authUser.avatar_url ? (
               <AvatarImage src={authUser.avatar_url} alt={authUser.email} />
             ) : null}
-            <AvatarFallback className="text-xs">
+            <AvatarFallback className="rounded-md text-[10px] font-semibold">
               {getInitials(authUser.email)}
             </AvatarFallback>
           </Avatar>
-          <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-medium">{authUser.email}</span>
-            <span className="truncate text-xs text-muted-foreground capitalize">
+          <div className="grid flex-1 text-left leading-tight">
+            <span className="truncate text-sm font-medium">
+              {authUser.email}
+            </span>
+            <span className="truncate font-mono text-[10px] text-muted-foreground capitalize">
               {authUser.role.replace('_', ' ')}
             </span>
           </div>
-          <HugeiconsIcon icon={ArrowUp01Icon} className="ml-auto size-4" />
+          <HugeiconsIcon
+            icon={ArrowUp01Icon}
+            className="ml-auto shrink-0 text-muted-foreground"
+            size={14}
+          />
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
