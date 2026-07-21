@@ -176,9 +176,8 @@ export const useInstanceStore = createBoundStore<InstanceStoreState>(
   { name: 'oore_instances' },
 )
 
-export function useActiveInstance(): Instance | null {
-  const activeId = useInstanceStore((s) => s.activeInstanceId)
-  const instances = useInstanceStore((s) => s.instances)
-  if (!activeId) return null
-  return instances[activeId] ?? null
+export function useActiveInstance() {
+  return useInstanceStore((s) => {
+    return s.activeInstanceId ? s.instances[s.activeInstanceId] : null
+  })
 }

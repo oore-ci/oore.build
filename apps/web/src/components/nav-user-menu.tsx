@@ -1,7 +1,7 @@
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
-  ArrowUp as ArrowUp01Icon,
   BookOpen as BookOpen01Icon,
+  ChevronsUpDown,
   LogOut as Logout03Icon,
   Moon as Moon02Icon,
   Smartphone as SmartPhone01Icon,
@@ -108,27 +108,24 @@ export default function NavUserMenu({
               />
             }
           >
-            <Avatar className="size-8">
+            <Avatar className="size-8 rounded-lg">
               {authUser.avatar_url ? (
                 <AvatarImage src={authUser.avatar_url} alt={authUser.email} />
               ) : null}
-              <AvatarFallback className="text-xs">
+              <AvatarFallback className="rounded-lg">
                 {getInitials(authUser.email)}
               </AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{authUser.email}</span>
-              <span className="truncate text-xs text-muted-foreground capitalize">
+              <span className="truncate text-xs capitalize">
                 {authUser.role.replace('_', ' ')}
               </span>
             </div>
-            <DynamicLucideIcon
-              icon={ArrowUp01Icon}
-              className="ml-auto size-4"
-            />
+            <ChevronsUpDown className="ml-auto size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="min-w-56"
+            className="w-(--anchor-width) min-w-56 rounded-lg"
             side={isMobile ? 'bottom' : 'right'}
             align="end"
             sideOffset={4}
@@ -136,14 +133,14 @@ export default function NavUserMenu({
             <DropdownMenuGroup>
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                  <Avatar className="size-8">
+                  <Avatar className="size-8 rounded-lg">
                     {authUser.avatar_url ? (
                       <AvatarImage
                         src={authUser.avatar_url}
                         alt={authUser.email}
                       />
                     ) : null}
-                    <AvatarFallback className="text-xs">
+                    <AvatarFallback className="rounded-lg">
                       {getInitials(authUser.email)}
                     </AvatarFallback>
                   </Avatar>
@@ -151,7 +148,7 @@ export default function NavUserMenu({
                     <span className="truncate font-medium">
                       {authUser.email}
                     </span>
-                    <span className="truncate text-xs text-muted-foreground capitalize">
+                    <span className="truncate text-xs capitalize">
                       {authUser.role.replace('_', ' ')}
                     </span>
                   </div>
