@@ -7202,7 +7202,7 @@ struct PreparedUpdateRelease {
 }
 
 fn compiled_daemon_package_version(executable: &Path) -> anyhow::Result<String> {
-    let output = std::process::Command::new(executable)
+    let package_output = std::process::Command::new(executable)
         .arg("package-version")
         .output()
         .with_context(|| {
@@ -7211,10 +7211,22 @@ fn compiled_daemon_package_version(executable: &Path) -> anyhow::Result<String> 
                 executable.display()
             )
         })?;
-    anyhow::ensure!(
-        output.status.success(),
-        "candidate daemon did not report its compiled package version"
-    );
+    let output = if package_output.status.success() {
+        package_output
+    } else {
+        let empty_install_root =
+            tempfile::tempdir().context("failed to prepare legacy daemon package version probe")?;
+        let legacy_output = std::process::Command::new(executable)
+            .arg("version")
+            .env("OORE_INSTALL_ROOT", empty_install_root.path())
+            .output()
+            .with_context(|| format!("failed to inspect legacy daemon {}", executable.display()))?;
+        anyhow::ensure!(
+            legacy_output.status.success(),
+            "daemon did not report its compiled package version"
+        );
+        legacy_output
+    };
     let version = String::from_utf8(output.stdout)?.trim().to_string();
     anyhow::ensure!(
         !version.is_empty(),
@@ -7990,6 +8002,20 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn package_version_probe_supports_legacy_daemons() {
+        let temp = tempfile::tempdir().unwrap();
+        let daemon = temp.path().join("oored");
+        fs::write(
+            &daemon,
+            "#!/bin/sh\n[ \"$1\" = version ] && [ ! -f \"$OORE_INSTALL_ROOT/VERSION\" ] && printf '0.1.10\\n'\n",
+        )
+        .unwrap();
+        set_executable(&daemon).unwrap();
+
+        assert_eq!(compiled_daemon_package_version(&daemon).unwrap(), "0.1.10");
+    }
 
     #[test]
     fn backup_output_is_private_before_first_write() {
