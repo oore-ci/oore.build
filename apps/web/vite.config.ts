@@ -84,6 +84,11 @@ function htmlOptimisePlugin(): Plugin {
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
+    // Enable demo mode by default for local dev when no real backend is configured.
+    // Set VITE_DEMO_MODE=false in your .env.local to disable.
+    'import.meta.env.VITE_DEMO_MODE': JSON.stringify(
+      process.env.VITE_DEMO_MODE ?? 'true',
+    ),
     'import.meta.env.VITE_RELEASE_CHANNEL': JSON.stringify(
       process.env.OORE_WEB_RELEASE_CHANNEL === 'alpha' ||
         process.env.OORE_WEB_RELEASE_CHANNEL === 'beta' ||
