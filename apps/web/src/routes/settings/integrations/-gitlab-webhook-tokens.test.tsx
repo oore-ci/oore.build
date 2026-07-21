@@ -21,7 +21,6 @@ const repository: IntegrationRepository = {
   full_name: 'group/mobile-app',
   default_branch: 'main',
   is_private: true,
-  allow_direct_macos_runner: false,
   created_at: 1,
   updated_at: 1,
 }

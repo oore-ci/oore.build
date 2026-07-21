@@ -22,11 +22,11 @@ Go to **Settings > Users** and find the user whose role you want to change.
 
 Click the user's current role and select the new role from the dropdown:
 
-| Role          | Permissions                                                |
-| ------------- | ---------------------------------------------------------- |
-| **Admin**     | Manage users, settings, projects, pipelines, builds        |
-| **Developer** | Create/manage projects, trigger builds, download artifacts |
-| **QA Viewer** | View builds and download artifacts only                    |
+| Role          | Permissions                                                           |
+| ------------- | --------------------------------------------------------------------- |
+| **Admin**     | Manage users, settings, projects, pipelines, builds                   |
+| **Developer** | Manage assigned project pipelines, trigger builds, download artifacts |
+| **QA Viewer** | View builds and download artifacts only                               |
 
 ### 3. Save
 

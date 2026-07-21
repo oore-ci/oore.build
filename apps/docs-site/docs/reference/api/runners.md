@@ -117,7 +117,10 @@ POST /v1/runners/{runner_id}/claim
 
 **Authentication**: Runner token (Bearer)
 
-The request must use runner protocol version `4`. The daemon considers only queued builds whose repository is approved and whose instance Direct runner switch is enabled. A blocked oldest build does not prevent a later eligible build from being claimed.
+The request must use runner protocol version `4`. The daemon considers queued
+builds whose linked source is available while the instance accepts new builds.
+An ineligible oldest build does not prevent a later eligible build from being
+claimed.
 
 ### Response `200 OK`
 

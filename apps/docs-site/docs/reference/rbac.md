@@ -9,19 +9,19 @@ Oore CI gives each user one instance role. Developers and QA viewers also need e
 
 ## Roles
 
-| Role        | Description                                                                                                           |
-| ----------- | --------------------------------------------------------------------------------------------------------------------- |
-| `owner`     | Instance creator. Full access to everything. Exactly one per instance.                                                |
-| `admin`     | Full management access. Can manage users, settings, and all project operations.                                       |
-| `developer` | Can create projects, use assigned operator surfaces, and mutate an assigned project when its project role permits it. |
-| `qa_viewer` | Tester-only access to assigned apps, release details, diagnostic logs, and installable artifacts.                     |
+| Role        | Description                                                                                         |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| `owner`     | Instance creator. Full access to everything. Exactly one per instance.                              |
+| `admin`     | Full management access. Can manage users, settings, and all project operations.                     |
+| `developer` | Can use assigned operator surfaces and mutate an assigned project when its project role permits it. |
+| `qa_viewer` | Tester-only access to assigned apps, release details, diagnostic logs, and installable artifacts.   |
 
 ## Operator surface policy
 
 | Surface                         | Owner        | Admin        | Developer                                        | QA Viewer                    |
 | ------------------------------- | ------------ | ------------ | ------------------------------------------------ | ---------------------------- |
 | Operator dashboard              | Full         | Full         | Assigned work                                    | No; tester workspace instead |
-| Create projects                 | Yes          | Yes          | Yes                                              | No                           |
+| Create projects                 | Yes          | Yes          | No                                               | No                           |
 | Existing project/build surfaces | All projects | All projects | Assigned projects; mutations follow project role | Assigned release data only   |
 | Users and invitations           | Manage       | Manage       | No                                               | No                           |
 | Sources                         | Manage       | Manage       | Read-only                                        | No operator route            |
@@ -48,7 +48,7 @@ Project Maintainers can discover only eligible developer and QA-viewer candidate
 
 ## Route behavior
 
-- Developers can use the dashboard, project creation, assigned project and build routes, API tokens, and read-only Sources and Runners. Project mutations are checked against the effective project role before mutation UI renders.
+- Developers can use the dashboard, assigned project and build routes, API tokens, and read-only Sources and Runners. Project mutations are checked against the effective project role before mutation UI renders. Only Owners and Admins can create a project or change its linked repository because that action trusts repository code to run.
 - QA viewers use the canonical `/` tester workspace. `/builds` redirects to `/`; an assigned `/builds/:buildId` opens tester release detail with release information, install/download action, and secondary diagnostic logs.
 - QA viewers do not receive the operator Projects, Sources, Runners, Users, Notifications, or instance-settings routes.
 - Disallowed direct routes redirect before their mutation interface renders. The backend remains the security boundary.

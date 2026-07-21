@@ -26,11 +26,18 @@ oore doctor [--json] [--platform android|ios|macos]... [--all]
 `oore doctor` reports status for:
 
 - Core runner tools: `git`, `fvm`, and `flutter`
+- Managed runner lifecycle on macOS: the boot-time system service is installed, running, and recently authenticated to the backend, with explicit warnings for a stopped or crash-looping service, a process that is up but has not authenticated successfully, and the legacy login-session runner
 - Android (with `--platform android`): Java and an `ANDROID_HOME` / `ANDROID_SDK_ROOT` SDK with Platform-Tools
 - iOS/macOS (with `--platform ios` or `--platform macos`): `xcode-select -p` and `xcodebuild -version`
-- Optional Apple signing and notarization readiness: signing identities and `xcrun notarytool`
+- Apple signing and notarization readiness: job-scoped `security`/`codesign` tools and optional `xcrun notarytool`
+
+`oore doctor` does not search the user's default keychain for signing identities.
+Oore supplies build credentials through a temporary job keychain and validates
+them when that build runs, so an empty personal keychain is not a runner error.
 
 Every check is `ok`, `warning`, `missing`, or `skipped`. Warnings cover optional signing/notarization setup and do not fail the command.
+When a warning or missing check has a repair action, plain output prints it on a
+separate `Fix:` line and JSON returns it as `install_hint`.
 
 ## Exit codes
 
@@ -45,9 +52,10 @@ Every check is `ok`, `warning`, `missing`, or `skipped`. Warnings cover optional
 oore doctor -- environment checks
   [ok] git                git version 2.49.0
   [ok] flutter            Flutter 3.29.0
+  [ok] runner_service     boot-time system service is installed, running, and authenticated
   [ok] xcode              Xcode 16.2 (/Applications/Xcode.app/Contents/Developer)
-  [warning] codesign_identity import an Apple development or distribution certificate before signing
-1 required issue(s) found.
+  [ok] apple_signing_tools job-scoped signing tools are available; build credentials are validated from each temporary keychain
+All selected required checks passed.
 ```
 
 ## JSON output example

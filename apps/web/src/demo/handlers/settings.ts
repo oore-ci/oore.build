@@ -163,8 +163,13 @@ export const settingsHandlers = [
     })
   }),
 
-  http.get('/v1/settings/preferences', async () => {
+  http.get('/v1/settings/preferences', async ({ request }) => {
     await delay(150)
+    const forbidden = requireDemoInstancePermission(
+      request,
+      'instance_settings:read',
+    )
+    if (forbidden) return forbidden
     return HttpResponse.json({ preferences: instancePreferences })
   }),
 

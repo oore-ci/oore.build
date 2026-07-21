@@ -31,9 +31,9 @@ Signing credentials never leave your infrastructure — they're stored on the da
 
 Android signing is straightforward: upload a keystore (`.jks` / `.keystore`), provide the passwords, and Oore CI handles the rest.
 
-| What you provide          | What Oore CI does                                      |
-| ------------------------- | ------------------------------------------------------ |
-| Keystore file + passwords | Stores encrypted and signs the completed artifact      |
+| What you provide          | What Oore CI does                                 |
+| ------------------------- | ------------------------------------------------- |
+| Keystore file + passwords | Stores encrypted and signs the completed artifact |
 
 See [Generate an Android Keystore](/guides/signing/android-keystore) and [Configure Gradle Signing](/guides/signing/android-gradle).
 
@@ -70,4 +70,5 @@ See [iOS Manual Signing](/guides/signing/ios-manual-signing) and [iOS API Signin
 - Credentials are transmitted only over HTTPS, except literal-loopback runner connections
 - Only the actively assigned runner with the per-job signing capability receives credentials
 - Repository-controlled commands never receive signing files, passwords, capability tokens, or an unlocked signing keychain
+- iOS profiles remain in the private job workspace; the runner passes a temporary keychain explicitly to signing tools without changing the user's default keychain, search list, or globally installed profiles
 - Credentials are not included in build logs

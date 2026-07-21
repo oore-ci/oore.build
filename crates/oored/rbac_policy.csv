@@ -53,7 +53,6 @@ p, admin, integrations, delete
 p, admin, audit_logs, read
 
 p, developer, projects, read
-p, developer, projects, write
 p, developer, pipelines, read
 p, developer, pipelines, write
 p, developer, builds, read

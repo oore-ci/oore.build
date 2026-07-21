@@ -273,13 +273,12 @@ async fn ensure_local_repository_for_project(
     Ok((repository_id, default_branch))
 }
 
-async fn require_repository_attach_permission(
+async fn require_repository_attachable(
     pool: &sqlx::SqlitePool,
-    auth: &AuthUser,
     repository_id: &str,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
+) -> Result<String, (StatusCode, Json<ApiError>)> {
     let repository = sqlx::query(
-        "SELECT r.is_private, i.provider FROM integration_repositories r \
+        "SELECT r.full_name, i.provider FROM integration_repositories r \
          JOIN integration_installations inst ON inst.id = r.installation_id \
          JOIN integrations i ON i.id = inst.integration_id WHERE r.id = ?1",
     )
@@ -323,32 +322,7 @@ async fn require_repository_attach_permission(
         ));
     }
 
-    if auth.0.role == "owner" || auth.0.role == "admin" || !repository.get::<bool, _>("is_private")
-    {
-        return Ok(());
-    }
-
-    let assigned: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM projects p \
-         JOIN project_members pm ON pm.project_id = p.id \
-         WHERE p.repository_id = ?1 AND pm.user_id = ?2 \
-         AND pm.role IN ('developer', 'maintainer')",
-    )
-    .bind(repository_id)
-    .bind(&auth.0.user_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false);
-
-    if assigned {
-        Ok(())
-    } else {
-        Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_repository",
-            "Repository not found",
-        ))
-    }
+    Ok(repository.get("full_name"))
 }
 
 // ── Query parameters ────────────────────────────────────────────
@@ -401,6 +375,9 @@ pub async fn create_project(
     auth: AuthUser,
     Json(req): Json<CreateProjectRequest>,
 ) -> ApiResult<CreateProjectResponse> {
+    // Linking a repository to a project authorizes its build commands to run on
+    // the Direct runner account. Keep that trust decision with instance admins.
+    auth.require_admin_or_above()?;
     check_permission(&state.enforcer, &auth.0.role, "projects", "write").await?;
 
     let name = req.name.trim();
@@ -452,7 +429,7 @@ pub async fn create_project(
         req.local_repository_path.as_deref(),
     ) {
         (Some(repo_id), None) => {
-            require_repository_attach_permission(&pool, &auth, &repo_id).await?;
+            require_repository_attachable(&pool, &repo_id).await?;
             (Some(repo_id), None)
         }
         (None, Some(local_repo_path)) => {
@@ -810,9 +787,12 @@ pub async fn update_project(
         ));
     }
 
-    if let Some(ref repo_id) = req.repository_id {
-        require_repository_attach_permission(&pool, &auth, repo_id).await?;
-    }
+    let requested_source_full_name = if let Some(ref repo_id) = req.repository_id {
+        auth.require_admin_or_above()?;
+        Some(require_repository_attachable(&pool, repo_id).await?)
+    } else {
+        None
+    };
 
     let now = now_unix();
 
@@ -876,8 +856,116 @@ pub async fn update_project(
     }
     q = q.bind(&project_id);
 
-    q.execute(&pool).await.map_err(|e| {
+    let mut tx = pool.begin().await.map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to start project update transaction");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update project",
+        )
+    })?;
+
+    let source_changed = if let (Some(repository_id), Some(repository_full_name)) = (
+        req.repository_id.as_deref(),
+        requested_source_full_name.as_deref(),
+    ) {
+        let result = sqlx::query(
+            "INSERT INTO audit_logs \
+             (actor_id, action, resource_type, resource_id, details, created_at) \
+             SELECT ?1, 'project_source_link_updated', 'project', p.id, \
+                    json_object( \
+                      'previous_repository_id', p.repository_id, \
+                      'previous_repository_full_name', old_r.full_name, \
+                      'repository_id', ?3, \
+                      'repository_full_name', ?4, \
+                      'updated_by', ?5 \
+                    ), ?6 \
+             FROM projects p \
+             LEFT JOIN integration_repositories old_r ON old_r.id = p.repository_id \
+             WHERE p.id = ?2 AND p.repository_id IS NOT ?3",
+        )
+        .bind(&auth.0.user_id)
+        .bind(&project_id)
+        .bind(repository_id)
+        .bind(repository_full_name)
+        .bind(&auth.0.email)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            error!(error = %e, project_id = %project_id, "failed to audit project source change");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update project source",
+            )
+        })?;
+        result.rows_affected() == 1
+    } else {
+        false
+    };
+
+    if source_changed {
+        sqlx::query(
+            "INSERT INTO build_events \
+             (id, build_id, from_status, to_status, actor, reason, created_at) \
+             SELECT lower(hex(randomblob(16))), id, status, 'canceled', ?1, \
+                    'Canceled because the project source changed; trigger a new build from the new source', ?2 \
+             FROM builds \
+             WHERE project_id = ?3 AND status IN ('queued', 'scheduled')",
+        )
+        .bind(&auth.0.email)
+        .bind(now)
+        .bind(&project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            error!(error = %e, project_id = %project_id, "failed to record source-change build cancellations");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update project source",
+            )
+        })?;
+
+        sqlx::query(
+            "UPDATE builds \
+             SET status = 'canceled', runner_id = NULL, signing_token_hash = NULL, \
+                 finished_at = ?1, updated_at = ?1 \
+             WHERE project_id = ?2 AND status IN ('queued', 'scheduled')",
+        )
+        .bind(now)
+        .bind(&project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            error!(error = %e, project_id = %project_id, "failed to cancel pending builds during source change");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update project source",
+            )
+        })?;
+    }
+
+    let update_result = q.execute(&mut *tx).await.map_err(|e| {
         error!(error = %e, "failed to update project");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update project",
+        )
+    })?;
+    if update_result.rows_affected() != 1 {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project not found",
+        ));
+    }
+
+    tx.commit().await.map_err(|e| {
+        error!(error = %e, project_id = %project_id, "failed to commit project update");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",

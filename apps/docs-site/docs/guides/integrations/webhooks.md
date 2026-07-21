@@ -82,4 +82,6 @@ Webhooks require your daemon to be reachable from the internet (or from your Git
 
 ### Build created but stuck in queued
 
-Check the wait reason shown on the build. The instance Direct runner switch may be paused, the repository may need approval, or no runner may be online. See [builds stuck in queued](/operations/troubleshooting#builds-stuck-in-queued).
+Check the wait reason shown on the build. The instance may be paused, the linked
+source may be unavailable, or no runner may be online. See [builds stuck in
+queued](/operations/troubleshooting#builds-stuck-in-queued).

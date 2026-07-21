@@ -138,17 +138,25 @@ async fn seed_embedded_runner(pool: &sqlx::SqlitePool, name: &str) -> String {
 async fn create_build(pool: &sqlx::SqlitePool, project_id: &str, pipeline_id: &str) -> String {
     let build_id = uuid::Uuid::new_v4().to_string();
     let now = common::now_unix();
+    let repository_id: String =
+        sqlx::query_scalar("SELECT repository_id FROM projects WHERE id = ?1")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await
+            .expect("test project must have a repository");
+    let config_snapshot = serde_json::json!({ "repository_id": repository_id }).to_string();
 
     sqlx::query(
         "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, \
          trigger_type, config_snapshot, queued_at, created_at, updated_at) \
          VALUES (?1, ?2, ?3, \
                  (SELECT COALESCE(MAX(build_number), 0) + 1 FROM builds WHERE project_id = ?2), \
-                 'queued', 'manual', '{}', ?4, ?4, ?4)",
+                 'queued', 'manual', ?4, ?5, ?5, ?5)",
     )
     .bind(&build_id)
     .bind(project_id)
     .bind(pipeline_id)
+    .bind(config_snapshot)
     .bind(now)
     .execute(pool)
     .await
@@ -169,21 +177,21 @@ async fn create_build(pool: &sqlx::SqlitePool, project_id: &str, pipeline_id: &s
     build_id
 }
 
-async fn set_direct_runner_instance_policy(pool: &sqlx::SqlitePool, enabled: bool) {
+async fn set_direct_runner_paused(pool: &sqlx::SqlitePool, paused: bool) {
     let now = common::now_unix();
     sqlx::query(
         "INSERT INTO instance_preferences \
-         (id, key_storage_mode, runtime_mode, direct_macos_runner_enabled, created_at, updated_at) \
+         (id, key_storage_mode, runtime_mode, direct_macos_runner_paused, created_at, updated_at) \
          VALUES (1, 'file', 'local', ?1, ?2, ?2) \
          ON CONFLICT(id) DO UPDATE SET \
-         direct_macos_runner_enabled = excluded.direct_macos_runner_enabled, \
+         direct_macos_runner_paused = excluded.direct_macos_runner_paused, \
          updated_at = excluded.updated_at",
     )
-    .bind(enabled)
+    .bind(paused)
     .bind(now)
     .execute(pool)
     .await
-    .expect("failed to set direct runner instance policy");
+    .expect("failed to set direct runner pause state");
 }
 
 async fn repository_id_for_project(pool: &sqlx::SqlitePool, project_id: &str) -> String {
@@ -192,25 +200,6 @@ async fn repository_id_for_project(pool: &sqlx::SqlitePool, project_id: &str) ->
         .fetch_one(pool)
         .await
         .expect("failed to load project repository")
-}
-
-async fn set_direct_runner_repository_policy(
-    pool: &sqlx::SqlitePool,
-    project_id: &str,
-    enabled: bool,
-) -> String {
-    let repository_id = repository_id_for_project(pool, project_id).await;
-    sqlx::query(
-        "UPDATE integration_repositories \
-         SET allow_direct_macos_runner = ?1, updated_at = ?2 WHERE id = ?3",
-    )
-    .bind(enabled)
-    .bind(common::now_unix())
-    .bind(&repository_id)
-    .execute(pool)
-    .await
-    .expect("failed to set direct runner repository policy");
-    repository_id
 }
 
 async fn claim_job(
@@ -388,12 +377,11 @@ async fn test_runner_claim_and_execute() {
     let integration_id = seed_github_integration(&pool, &user_id, webhook_secret).await;
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "test/repo").await;
-    set_direct_runner_instance_policy(&pool, true).await;
-    set_direct_runner_repository_policy(&pool, &project_id, true).await;
-
     // Create a build
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let repository_id = repository_id_for_project(&pool, &project_id).await;
     let snapshot = serde_json::json!({
+        "repository_id": repository_id,
         "ui_execution_config": {
             "env": [{ "key": "DEPLOY_TOKEN", "value": "runner-secret-value" }]
         }
@@ -582,6 +570,43 @@ async fn test_requeue_atomically_revokes_runner_assignment() {
 }
 
 #[tokio::test]
+async fn test_startup_requeues_a_claim_interrupted_while_scheduled() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let _app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let user_id = seed_test_user(&pool).await;
+    let integration_id = seed_github_integration(&pool, &user_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &user_id, "test/restart-scheduled").await;
+    let build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    sqlx::query("UPDATE builds SET status = 'scheduled' WHERE id = ?1")
+        .bind(&build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let scheduler = oored::scheduler::Scheduler::new(16);
+    assert_eq!(scheduler.reload_pending(&pool).await.unwrap(), 1);
+    let status: String = sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+        .bind(&build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "queued");
+    let recovery_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM build_events \
+         WHERE build_id = ?1 AND from_status = 'scheduled' AND to_status = 'queued' \
+           AND reason = 'daemon restart recovery'",
+    )
+    .bind(&build_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(recovery_events, 1);
+}
+
+#[tokio::test]
 async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
     use base64::Engine as _;
     use std::sync::Arc;
@@ -647,8 +672,6 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
     .unwrap();
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "internal/mobile/app").await;
-    set_direct_runner_instance_policy(&pool, true).await;
-    set_direct_runner_repository_policy(&pool, &project_id, true).await;
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
     let (runner_id, runner_token) = register_runner(&app, &session_token, "gitlab-runner").await;
 
@@ -687,6 +710,14 @@ async fn test_gitlab_claim_uses_credential_free_checkout_proxy() {
         app.clone().oneshot(running).await.unwrap().status(),
         StatusCode::OK
     );
+
+    // Active work keeps its build-bound checkout identity even if an upgrade
+    // or operator action unlinks the project's legacy source while it drains.
+    sqlx::query("UPDATE projects SET repository_id = NULL WHERE id = ?1")
+        .bind(&project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let checkout_path = format!(
         "/v1/runners/{runner_id}/jobs/{build_id}/gitlab/internal/mobile/app.git/info/refs?service=git-upload-pack"
@@ -748,8 +779,6 @@ async fn test_no_double_claim() {
     let integration_id = seed_github_integration(&pool, &user_id, webhook_secret).await;
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "test/no-double").await;
-    set_direct_runner_instance_policy(&pool, true).await;
-    set_direct_runner_repository_policy(&pool, &project_id, true).await;
     let _build_id = create_build(&pool, &project_id, &pipeline_id).await;
 
     // Register two runners
@@ -823,7 +852,7 @@ async fn test_protocol_3_runner_cannot_claim_after_direct_runner_upgrade() {
 }
 
 #[tokio::test]
-async fn test_direct_runner_claim_requires_both_instance_and_repository_approval() {
+async fn test_direct_runner_claims_trusted_project_when_not_paused() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -834,44 +863,27 @@ async fn test_direct_runner_claim_requires_both_instance_and_repository_approval
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "test/policy-combinations").await;
     let build_id = create_build(&pool, &project_id, &pipeline_id).await;
-    let repository_id = repository_id_for_project(&pool, &project_id).await;
     let (runner_id, runner_token) = register_runner(&app, &session_token, "policy-runner").await;
 
-    let repository_default: i64 = sqlx::query_scalar(
-        "SELECT allow_direct_macos_runner FROM integration_repositories WHERE id = ?1",
-    )
-    .bind(&repository_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(repository_default, 0, "repository policy must fail closed");
     assert!(
-        !oored::instance_settings::load_direct_macos_runner_enabled(&pool)
+        !oored::instance_settings::load_direct_macos_runner_paused(&pool)
             .await
             .unwrap(),
-        "instance policy must fail closed"
+        "fresh instances must accept builds"
     );
 
+    set_direct_runner_paused(&pool, true).await;
     let (status, json) = claim_job(&app, &runner_id, &runner_token).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(json["job"].is_null(), "false/false must not claim");
+    assert!(json["job"].is_null(), "paused runners must not claim");
 
-    set_direct_runner_instance_policy(&pool, true).await;
+    set_direct_runner_paused(&pool, false).await;
     let (_, json) = claim_job(&app, &runner_id, &runner_token).await;
-    assert!(json["job"].is_null(), "true/false must not claim");
-
-    set_direct_runner_instance_policy(&pool, false).await;
-    set_direct_runner_repository_policy(&pool, &project_id, true).await;
-    let (_, json) = claim_job(&app, &runner_id, &runner_token).await;
-    assert!(json["job"].is_null(), "false/true must not claim");
-
-    set_direct_runner_instance_policy(&pool, true).await;
-    let (_, json) = claim_job(&app, &runner_id, &runner_token).await;
-    assert_eq!(json["job"]["build_id"], build_id, "true/true must claim");
+    assert_eq!(json["job"]["build_id"], build_id);
 }
 
 #[tokio::test]
-async fn test_claim_skips_policy_blocked_head_of_line_build() {
+async fn test_claim_skips_repository_unavailable_head_of_line_build() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -898,8 +910,11 @@ async fn test_claim_skips_policy_blocked_head_of_line_build() {
         .execute(&pool)
         .await
         .unwrap();
-    set_direct_runner_instance_policy(&pool, true).await;
-    set_direct_runner_repository_policy(&pool, &eligible_project_id, true).await;
+    sqlx::query("UPDATE projects SET repository_id = NULL WHERE id = ?1")
+        .bind(&blocked_project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let (runner_id, runner_token) =
         register_runner(&app, &session_token, "head-of-line-runner").await;
 
@@ -915,7 +930,150 @@ async fn test_claim_skips_policy_blocked_head_of_line_build() {
 }
 
 #[tokio::test]
-async fn test_disabling_direct_runner_drains_running_work_and_blocks_new_claims() {
+async fn test_relinked_project_cannot_claim_or_rerun_builds_from_previous_source() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "test/source-a").await;
+    let (other_project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "test/source-b").await;
+    let source_b_id = repository_id_for_project(&pool, &other_project_id).await;
+    let stale_queued_build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let rerun_source_build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    sqlx::query("UPDATE builds SET status = 'canceled', finished_at = ?1 WHERE id = ?2")
+        .bind(common::now_unix())
+        .bind(&rerun_source_build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Simulate a source relink that happened outside the current API path so
+    // the claim guard itself is exercised independently of queue cancellation.
+    sqlx::query("UPDATE projects SET repository_id = ?1 WHERE id = ?2")
+        .bind(&source_b_id)
+        .bind(&project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (runner_id, runner_token) =
+        register_runner(&app, &owner_session, "source-bound-runner").await;
+    let (claim_status, claim_body) = claim_job(&app, &runner_id, &runner_token).await;
+    assert_eq!(claim_status, StatusCode::OK);
+    assert!(
+        claim_body["job"].is_null(),
+        "a source-A snapshot must not run under source-B trust"
+    );
+    let stale_status: String = sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+        .bind(&stale_queued_build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stale_status, "queued");
+
+    let rerun = Request::post(format!("/v1/builds/{rerun_source_build_id}/rerun"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let rerun_response = app.clone().oneshot(rerun).await.unwrap();
+    assert_eq!(rerun_response.status(), StatusCode::CONFLICT);
+    let rerun_body = body_json(rerun_response.into_body()).await;
+    assert_eq!(rerun_body["code"], "source_changed");
+
+    let (_, detail) = get_json(
+        &app,
+        &owner_session,
+        &format!("/v1/builds/{stale_queued_build_id}"),
+    )
+    .await;
+    assert_eq!(
+        detail["build"]["runner_policy_block_reason"],
+        "repository_unavailable"
+    );
+}
+
+#[tokio::test]
+async fn test_project_source_change_cancels_unassigned_work() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let owner_session = create_session_token(&pool, &owner_id).await;
+    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
+    let (project_id, pipeline_id) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "test/source-before").await;
+    let (other_project_id, _) =
+        seed_project_chain(&pool, &integration_id, &owner_id, "test/source-after").await;
+    let source_after_id = repository_id_for_project(&pool, &other_project_id).await;
+    let queued_build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    let scheduled_build_id = create_build(&pool, &project_id, &pipeline_id).await;
+    sqlx::query("UPDATE builds SET status = 'scheduled' WHERE id = ?1")
+        .bind(&scheduled_build_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let request = Request::patch(format!("/v1/projects/{project_id}"))
+        .header(
+            http::header::AUTHORIZATION,
+            format!("Bearer {owner_session}"),
+        )
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "repository_id": source_after_id,
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let rows = sqlx::query("SELECT id, status FROM builds WHERE id IN (?1, ?2)")
+        .bind(&queued_build_id)
+        .bind(&scheduled_build_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let status_for = |id: &str| {
+        rows.iter()
+            .find(|row| row.get::<String, _>("id") == id)
+            .map(|row| row.get::<String, _>("status"))
+            .unwrap()
+    };
+    assert_eq!(status_for(&queued_build_id), "canceled");
+    assert_eq!(status_for(&scheduled_build_id), "canceled");
+    let cancellation_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM build_events \
+         WHERE build_id = ?1 AND from_status = 'queued' AND to_status = 'canceled'",
+    )
+    .bind(&queued_build_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(cancellation_events, 1);
+    let scheduled_cancellation_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM build_events \
+         WHERE build_id = ?1 AND from_status = 'scheduled' AND to_status = 'canceled'",
+    )
+    .bind(&scheduled_build_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(scheduled_cancellation_events, 1);
+}
+
+#[tokio::test]
+async fn test_pausing_direct_runner_drains_running_work_and_blocks_new_claims() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
@@ -925,8 +1083,6 @@ async fn test_disabling_direct_runner_drains_running_work_and_blocks_new_claims(
     let integration_id = seed_github_integration(&pool, &user_id, "secret").await;
     let (project_id, pipeline_id) =
         seed_project_chain(&pool, &integration_id, &user_id, "test/drain").await;
-    set_direct_runner_instance_policy(&pool, true).await;
-    set_direct_runner_repository_policy(&pool, &project_id, true).await;
     let running_build_id = create_build(&pool, &project_id, &pipeline_id).await;
     let (runner_id, runner_token) = register_runner(&app, &session_token, "draining-runner").await;
     let (second_runner_id, second_runner_token) =
@@ -950,7 +1106,7 @@ async fn test_disabling_direct_runner_drains_running_work_and_blocks_new_claims(
     );
 
     let queued_build_id = create_build(&pool, &project_id, &pipeline_id).await;
-    set_direct_runner_instance_policy(&pool, false).await;
+    set_direct_runner_paused(&pool, true).await;
     let (_, json) = claim_job(&app, &second_runner_id, &second_runner_token).await;
     assert!(json["job"].is_null());
 
@@ -971,46 +1127,16 @@ async fn test_disabling_direct_runner_drains_running_work_and_blocks_new_claims(
 }
 
 #[tokio::test]
-async fn test_runner_policy_endpoints_enforce_roles_and_write_audit_logs() {
+async fn test_direct_runner_pause_endpoint_enforces_roles_and_writes_audit_log() {
     let tmp = tempfile::TempDir::new().unwrap();
     let db_path = tmp.path().join("test.db");
     let app = create_test_app(&db_path).await;
     let pool = connect_pool(&db_path).await;
     let owner_id = seed_test_user(&pool).await;
     let owner_session = create_session_token(&pool, &owner_id).await;
-    let admin_id = seed_user_with_role(&pool, "admin-policy@example.com", "admin").await;
-    let admin_session = create_session_token(&pool, &admin_id).await;
     let developer_id =
         seed_user_with_role(&pool, "developer-policy@example.com", "developer").await;
     let developer_session = create_session_token(&pool, &developer_id).await;
-    let integration_id = seed_github_integration(&pool, &owner_id, "secret").await;
-    let (project_id, _pipeline_id) =
-        seed_project_chain(&pool, &integration_id, &owner_id, "test/policy-api").await;
-    let repository_id = repository_id_for_project(&pool, &project_id).await;
-    let now = common::now_unix();
-    sqlx::query(
-        "INSERT INTO project_members \
-         (id, project_id, user_id, role, created_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 'maintainer', ?4, ?5, ?5)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&project_id)
-    .bind(&developer_id)
-    .bind(&owner_id)
-    .bind(now)
-    .execute(&pool)
-    .await
-    .unwrap();
-    let uri = format!("/v1/integration-repositories/{repository_id}/runner-policy");
-
-    let (status, _) = put_json(
-        &app,
-        &developer_session,
-        &uri,
-        serde_json::json!({ "allow_direct_macos_runner": true }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
 
     let (status, _) = put_json(
         &app,
@@ -1018,46 +1144,11 @@ async fn test_runner_policy_endpoints_enforce_roles_and_write_audit_logs() {
         "/v1/settings/preferences",
         serde_json::json!({
             "key_storage_mode": "file",
-            "direct_macos_runner_enabled": true,
+            "direct_macos_runner_paused": true,
         }),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-
-    let (status, body) = put_json(
-        &app,
-        &admin_session,
-        &uri,
-        serde_json::json!({ "allow_direct_macos_runner": true }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["repository"]["allow_direct_macos_runner"], true);
-
-    let repository_audit = sqlx::query(
-        "SELECT actor_id, details FROM audit_logs \
-         WHERE action = 'repository_runner_policy_updated' AND resource_id = ?1 \
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(&repository_id)
-    .fetch_one(&pool)
-    .await
-    .expect("repository policy audit log");
-    assert_eq!(
-        repository_audit
-            .get::<Option<String>, _>("actor_id")
-            .as_deref(),
-        Some(admin_id.as_str())
-    );
-    let details: serde_json::Value = serde_json::from_str(
-        repository_audit
-            .get::<Option<String>, _>("details")
-            .as_deref()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(details["previous_allow_direct_macos_runner"], false);
-    assert_eq!(details["allow_direct_macos_runner"], true);
 
     let (status, body) = put_json(
         &app,
@@ -1065,16 +1156,31 @@ async fn test_runner_policy_endpoints_enforce_roles_and_write_audit_logs() {
         "/v1/settings/preferences",
         serde_json::json!({
             "key_storage_mode": "file",
-            "direct_macos_runner_enabled": true,
+            "direct_macos_runner_paused": true,
         }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["preferences"]["direct_macos_runner_enabled"], true);
+    assert_eq!(body["preferences"]["direct_macos_runner_paused"], true);
+
+    let (status, body) = put_json(
+        &app,
+        &owner_session,
+        "/v1/settings/preferences",
+        serde_json::json!({
+            "key_storage_mode": "file",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["preferences"]["direct_macos_runner_paused"], true,
+        "an unrelated preferences update must preserve the operator pause"
+    );
 
     let instance_audit = sqlx::query(
         "SELECT actor_id, details FROM audit_logs \
-         WHERE action = 'direct_macos_runner_policy_updated' \
+         WHERE action = 'direct_macos_runner_pause_updated' \
          ORDER BY created_at DESC LIMIT 1",
     )
     .fetch_one(&pool)
@@ -1093,8 +1199,8 @@ async fn test_runner_policy_endpoints_enforce_roles_and_write_audit_logs() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(details["previous_direct_macos_runner_enabled"], false);
-    assert_eq!(details["direct_macos_runner_enabled"], true);
+    assert_eq!(details["previous_direct_macos_runner_paused"], false);
+    assert_eq!(details["direct_macos_runner_paused"], true);
 }
 
 #[tokio::test]
@@ -1124,20 +1230,20 @@ async fn test_queued_builds_expose_derived_runner_policy_block_reason() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        body["builds"][0]["runner_policy_block_reason"], "instance_disabled",
-        "instance-disabled must take precedence"
+        body["builds"][0]["runner_policy_block_reason"],
+        "repository_unavailable"
     );
-    let (_, body) = get_json(&app, &owner_session, &format!("/v1/builds/{build_id}")).await;
-    assert_eq!(
-        body["build"]["runner_policy_block_reason"],
-        "instance_disabled"
-    );
-
-    set_direct_runner_instance_policy(&pool, true).await;
     let (_, body) = get_json(&app, &owner_session, &format!("/v1/builds/{build_id}")).await;
     assert_eq!(
         body["build"]["runner_policy_block_reason"],
         "repository_unavailable"
+    );
+
+    set_direct_runner_paused(&pool, true).await;
+    let (_, body) = get_json(&app, &owner_session, &format!("/v1/builds/{build_id}")).await;
+    assert_eq!(
+        body["build"]["runner_policy_block_reason"], "repository_unavailable",
+        "source repair must remain visible while the instance is paused"
     );
 
     sqlx::query("UPDATE projects SET repository_id = ?1 WHERE id = ?2")
@@ -1146,13 +1252,7 @@ async fn test_queued_builds_expose_derived_runner_policy_block_reason() {
         .execute(&pool)
         .await
         .unwrap();
-    let (_, body) = get_json(&app, &owner_session, &format!("/v1/builds/{build_id}")).await;
-    assert_eq!(
-        body["build"]["runner_policy_block_reason"],
-        "repository_not_approved"
-    );
-
-    set_direct_runner_repository_policy(&pool, &project_id, true).await;
+    set_direct_runner_paused(&pool, false).await;
     let (_, body) = get_json(&app, &owner_session, &format!("/v1/builds/{build_id}")).await;
     assert!(
         body["build"].get("runner_policy_block_reason").is_none(),
@@ -1290,7 +1390,7 @@ async fn test_runner_rename_blocks_embedded_runner() {
     let (status, body) = rename_runner(&app, &session, &runner_id, "renamed-embedded").await;
 
     assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(body["code"].as_str().unwrap(), "embedded_runner_locked");
+    assert_eq!(body["code"].as_str().unwrap(), "managed_runner_locked");
 }
 
 #[tokio::test]

@@ -647,21 +647,10 @@ pub struct IntegrationRepository {
     pub full_name: String,
     pub default_branch: Option<String>,
     pub is_private: bool,
-    pub allow_direct_macos_runner: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avatar_url: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct UpdateRepositoryRunnerPolicyRequest {
-    pub allow_direct_macos_runner: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct UpdateRepositoryRunnerPolicyResponse {
-    pub repository: IntegrationRepository,
 }
 
 // ── SCM Integration API types ──────────────────────────────────
@@ -814,9 +803,8 @@ pub enum BuildStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerPolicyBlockReason {
-    InstanceDisabled,
+    InstancePaused,
     RepositoryUnavailable,
-    RepositoryNotApproved,
 }
 
 impl FromStr for RunnerPolicyBlockReason {
@@ -824,9 +812,8 @@ impl FromStr for RunnerPolicyBlockReason {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "instance_disabled" => Ok(Self::InstanceDisabled),
+            "instance_paused" => Ok(Self::InstancePaused),
             "repository_unavailable" => Ok(Self::RepositoryUnavailable),
-            "repository_not_approved" => Ok(Self::RepositoryNotApproved),
             other => Err(format!("unknown runner policy block reason: {other}")),
         }
     }
@@ -845,7 +832,7 @@ impl BuildStatus {
     pub fn valid_transitions(self) -> &'static [BuildStatus] {
         match self {
             Self::Queued => &[Self::Scheduled, Self::Canceled, Self::Expired],
-            Self::Scheduled => &[Self::Assigned, Self::Canceled, Self::Expired],
+            Self::Scheduled => &[Self::Assigned, Self::Queued, Self::Canceled, Self::Expired],
             Self::Assigned => &[Self::Running, Self::Queued, Self::Canceled, Self::TimedOut],
             Self::Running => &[
                 Self::Succeeded,
@@ -1737,7 +1724,7 @@ pub struct InstancePreferences {
     pub key_storage_mode: KeyStorageMode,
     pub runtime_mode: RuntimeMode,
     pub remote_auth_mode: RemoteAuthMode,
-    pub direct_macos_runner_enabled: bool,
+    pub direct_macos_runner_paused: bool,
     pub restart_required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
@@ -1756,7 +1743,7 @@ pub struct UpdateInstancePreferencesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_auth_mode: Option<RemoteAuthMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub direct_macos_runner_enabled: Option<bool>,
+    pub direct_macos_runner_paused: Option<bool>,
 }
 
 // ── Project API types ───────────────────────────────────────────

@@ -12,7 +12,6 @@ describe('repositoryProjectDefaults', () => {
         full_name: 'mobile-apps/kite',
         default_branch: 'develop',
         is_private: true,
-        allow_direct_macos_runner: true,
         created_at: 1,
         updated_at: 1,
         integration_id: 'integration-1',

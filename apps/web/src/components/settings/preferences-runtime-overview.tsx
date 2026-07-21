@@ -3,6 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Download04Icon } from '@hugeicons/core-free-icons'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
@@ -19,6 +20,11 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
     webHealthQuery,
     webVersionLabel,
   } = state
+  const backendUpdateFailure =
+    runtimeUpdates.backendUpdate.data?.phase === 'failed'
+      ? runtimeUpdates.backendUpdate.data.error
+      : null
+
   return (
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Card>
@@ -147,7 +153,9 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                     ? 'Restarting...'
                     : backendUpdatePhase === 'updating'
                       ? 'Updating...'
-                      : 'Update backend'}
+                      : backendUpdatePhase === 'failed'
+                        ? 'Retry backend update'
+                        : 'Update backend'}
               </Button>
               {runtimeUpdates.backendUpdate.data &&
               !runtimeUpdates.backendUpdate.data.managed_service ? (
@@ -156,6 +164,24 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                 </p>
               ) : null}
             </>
+          ) : null}
+          {runtimeUpdates.backendUpdate.data?.phase === 'failed' ? (
+            <Alert variant="destructive" className="mt-3">
+              <AlertTitle>Backend update failed</AlertTitle>
+              <AlertDescription className="space-y-2 break-words">
+                <p>
+                  {backendUpdateFailure ||
+                    'The supervised backend update stopped before completion.'}
+                </p>
+                <p>
+                  Check{' '}
+                  <code className="font-mono text-[11px]">
+                    &lt;install root&gt;/logs/update-supervisor.log
+                  </code>{' '}
+                  on the backend Mac for the rollback details, then retry.
+                </p>
+              </AlertDescription>
+            </Alert>
           ) : null}
         </CardContent>
       </Card>

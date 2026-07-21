@@ -9,7 +9,7 @@ A project in Oore CI represents a single application repository. Each project ca
 
 ## What you need
 
-- **Role**: any authenticated user (developer, admin, or owner)
+- **Role**: owner or admin
 - A connected [GitHub](/guides/integrations/github-app) or [GitLab](/guides/integrations/gitlab) integration
 - At least one repository accessible through the integration
 
@@ -32,7 +32,28 @@ Choose the integration (GitHub or GitLab) and browse or search for the repositor
 
 ### 4. Create
 
-Click **Create Project**. The project is created and ready for pipeline configuration.
+Click **Create Project**. Linking the repository is the Direct runner trust
+decision: its checkout, dependencies, and build scripts may now run with the
+runner account's permissions. There is no separate repository approval step.
+The project is then ready for pipeline configuration.
+
+## Choose or repair a project source
+
+An Owner or Admin can open **Project > Settings** and choose **Source
+repository** to link an unlinked project or change its source. Saving that field
+is the same Direct runner trust decision as creating the project. Project
+Maintainers can continue to edit the project name, description, and default
+branch, but cannot change its source.
+
+Changing the source cancels builds that are still queued or only scheduled so a
+snapshot from the old repository cannot run under the new link. Assigned or
+running work is allowed to finish with its original build-bound source. Trigger
+a new build after the new source is saved.
+
+An upgrade from the older per-repository execution gate may leave a project
+unlinked when its repository was never approved. Its unassigned builds are canceled;
+choose the source here before starting a new build. Previously approved links
+remain intact.
 
 ## Via the API
 
@@ -42,8 +63,7 @@ curl -X POST http://127.0.0.1:8787/v1/projects \
   -H "Content-Type: application/json" \
   -d '{
     "name": "My Flutter App",
-    "repository_url": "https://github.com/org/my-flutter-app",
-    "integration_id": "<integration_id>"
+    "repository_id": "<repository_id>"
   }'
 ```
 

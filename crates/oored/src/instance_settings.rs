@@ -471,15 +471,15 @@ pub async fn load_remote_auth_mode(pool: &sqlx::SqlitePool) -> anyhow::Result<Re
     Ok(mode)
 }
 
-pub async fn load_direct_macos_runner_enabled(pool: &sqlx::SqlitePool) -> anyhow::Result<bool> {
+pub async fn load_direct_macos_runner_paused(pool: &sqlx::SqlitePool) -> anyhow::Result<bool> {
     let row =
-        sqlx::query("SELECT direct_macos_runner_enabled FROM instance_preferences WHERE id = 1")
+        sqlx::query("SELECT direct_macos_runner_paused FROM instance_preferences WHERE id = 1")
             .fetch_optional(pool)
             .await?;
 
     Ok(row
-        .and_then(|row| row.try_get::<i32, _>("direct_macos_runner_enabled").ok())
-        .is_some_and(|enabled| enabled != 0))
+        .and_then(|row| row.try_get::<i32, _>("direct_macos_runner_paused").ok())
+        .is_some_and(|paused| paused != 0))
 }
 
 pub async fn load_warpgate_install_ticket(
@@ -512,7 +512,7 @@ fn preferences_response(
     mode: KeyStorageMode,
     runtime_mode: RuntimeMode,
     remote_auth_mode: RemoteAuthMode,
-    direct_macos_runner_enabled: bool,
+    direct_macos_runner_paused: bool,
     updated_at: Option<i64>,
 ) -> InstancePreferencesResponse {
     InstancePreferencesResponse {
@@ -520,7 +520,7 @@ fn preferences_response(
             key_storage_mode: mode,
             runtime_mode,
             remote_auth_mode,
-            direct_macos_runner_enabled,
+            direct_macos_runner_paused,
             restart_required: false,
             updated_at,
         },
@@ -1145,7 +1145,7 @@ pub async fn get_instance_preferences(
     };
 
     let row = sqlx::query(
-        "SELECT runtime_mode, remote_auth_mode, direct_macos_runner_enabled, updated_at \
+        "SELECT runtime_mode, remote_auth_mode, direct_macos_runner_paused, updated_at \
          FROM instance_preferences WHERE id = 1",
     )
     .fetch_optional(&pool)
@@ -1172,8 +1172,8 @@ pub async fn get_instance_preferences(
             .flatten()
             .and_then(|raw| raw.parse::<RemoteAuthMode>().ok())
             .unwrap_or(RemoteAuthMode::Oidc);
-        let direct_macos_runner_enabled = row
-            .try_get::<i32, _>("direct_macos_runner_enabled")
+        let direct_macos_runner_paused = row
+            .try_get::<i32, _>("direct_macos_runner_paused")
             .unwrap_or(0)
             != 0;
         let updated_at: Option<i64> = row.get("updated_at");
@@ -1181,7 +1181,7 @@ pub async fn get_instance_preferences(
             KeyStorageMode::File,
             runtime_mode,
             remote_auth_mode,
-            direct_macos_runner_enabled,
+            direct_macos_runner_paused,
             updated_at,
         )));
     }
@@ -2061,8 +2061,8 @@ pub async fn update_instance_preferences(
             "Failed to update instance preferences",
         )
     })?;
-    let existing_direct_macos_runner_enabled =
-        load_direct_macos_runner_enabled(&pool).await.map_err(|e| {
+    let existing_direct_macos_runner_paused =
+        load_direct_macos_runner_paused(&pool).await.map_err(|e| {
             error!(error = %e, "failed to load existing direct runner policy");
             api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -2073,13 +2073,16 @@ pub async fn update_instance_preferences(
 
     let runtime_mode = req.runtime_mode.unwrap_or(existing_mode);
     let remote_auth_mode = req.remote_auth_mode.unwrap_or(existing_remote_auth_mode);
-    let direct_macos_runner_enabled = req
-        .direct_macos_runner_enabled
-        .unwrap_or(existing_direct_macos_runner_enabled);
+    let direct_macos_runner_paused = req
+        .direct_macos_runner_paused
+        .unwrap_or(existing_direct_macos_runner_paused);
+    let runtime_mode_supplied = req.runtime_mode.is_some();
+    let remote_auth_mode_supplied = req.remote_auth_mode.is_some();
+    let direct_macos_runner_paused_supplied = req.direct_macos_runner_paused.is_some();
     let runtime_mode_changed = runtime_mode != existing_mode;
     let remote_auth_mode_changed = remote_auth_mode != existing_remote_auth_mode;
     let direct_macos_runner_policy_changed =
-        direct_macos_runner_enabled != existing_direct_macos_runner_enabled;
+        direct_macos_runner_paused != existing_direct_macos_runner_paused;
     let auth_policy_changed = runtime_mode_changed || remote_auth_mode_changed;
 
     if auth_policy_changed && auth.0.role != "owner" {
@@ -2145,23 +2148,32 @@ pub async fn update_instance_preferences(
     // updating unrelated preferences must not rewrite it through a global path.
     let active_source = crypto::KeySource::LegacyFile;
 
-    sqlx::query(
-        "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, remote_auth_mode, direct_macos_runner_enabled, updated_by, created_at, updated_at)
+    let persistence_result = sqlx::query(
+        "INSERT INTO instance_preferences (id, key_storage_mode, runtime_mode, remote_auth_mode, direct_macos_runner_paused, updated_by, created_at, updated_at)
          VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?6)
          ON CONFLICT(id) DO UPDATE SET
             key_storage_mode = excluded.key_storage_mode,
-            runtime_mode = excluded.runtime_mode,
-            remote_auth_mode = excluded.remote_auth_mode,
-            direct_macos_runner_enabled = excluded.direct_macos_runner_enabled,
+            runtime_mode = CASE WHEN ?7 THEN excluded.runtime_mode ELSE instance_preferences.runtime_mode END,
+            remote_auth_mode = CASE WHEN ?8 THEN excluded.remote_auth_mode ELSE instance_preferences.remote_auth_mode END,
+            direct_macos_runner_paused = CASE WHEN ?9 THEN excluded.direct_macos_runner_paused ELSE instance_preferences.direct_macos_runner_paused END,
             updated_by = excluded.updated_by,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at
+         WHERE (NOT ?7 OR instance_preferences.runtime_mode = ?10)
+           AND (NOT ?8 OR instance_preferences.remote_auth_mode = ?11)
+           AND (NOT ?9 OR instance_preferences.direct_macos_runner_paused = ?12)",
     )
     .bind(KeyStorageMode::File.to_string())
     .bind(runtime_mode.to_string())
     .bind(remote_auth_mode.to_string())
-    .bind(direct_macos_runner_enabled)
+    .bind(direct_macos_runner_paused)
     .bind(&auth.0.user_id)
     .bind(now)
+    .bind(runtime_mode_supplied)
+    .bind(remote_auth_mode_supplied)
+    .bind(direct_macos_runner_paused_supplied)
+    .bind(existing_mode.to_string())
+    .bind(existing_remote_auth_mode.to_string())
+    .bind(existing_direct_macos_runner_paused)
     .execute(&pool)
     .await
     .map_err(|e| {
@@ -2172,12 +2184,45 @@ pub async fn update_instance_preferences(
             "Failed to update instance preferences",
         )
     })?;
+    if persistence_result.rows_affected() != 1 {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "preferences_changed",
+            "Instance preferences changed while you were saving. Review the current settings and try again.",
+        ));
+    }
+
+    let persisted_runtime_mode = load_runtime_mode(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to reload persisted runtime mode");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load updated instance preferences",
+        )
+    })?;
+    let persisted_remote_auth_mode = load_remote_auth_mode(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to reload persisted remote auth mode");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load updated instance preferences",
+        )
+    })?;
+    let persisted_direct_macos_runner_paused =
+        load_direct_macos_runner_paused(&pool).await.map_err(|e| {
+            error!(error = %e, "failed to reload persisted direct runner pause");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load updated instance preferences",
+            )
+        })?;
 
     let mut details_value = serde_json::json!({
         "key_storage_mode": KeyStorageMode::File.to_string(),
-        "runtime_mode": runtime_mode.to_string(),
-        "remote_auth_mode": remote_auth_mode.to_string(),
-        "direct_macos_runner_enabled": direct_macos_runner_enabled,
+        "runtime_mode": persisted_runtime_mode.to_string(),
+        "remote_auth_mode": persisted_remote_auth_mode.to_string(),
+        "direct_macos_runner_paused": persisted_direct_macos_runner_paused,
         "active_key_source": active_source.as_str(),
     });
     if let Some(result) = preflight_result.as_ref() {
@@ -2196,15 +2241,15 @@ pub async fn update_instance_preferences(
 
     if direct_macos_runner_policy_changed {
         let details = serde_json::json!({
-            "previous_direct_macos_runner_enabled": existing_direct_macos_runner_enabled,
-            "direct_macos_runner_enabled": direct_macos_runner_enabled,
+            "previous_direct_macos_runner_paused": existing_direct_macos_runner_paused,
+            "direct_macos_runner_paused": direct_macos_runner_paused,
             "updated_by": auth.0.email,
         })
         .to_string();
         let _ = write_audit_log(
             &pool,
             Some(&auth.0.user_id),
-            "direct_macos_runner_policy_updated",
+            "direct_macos_runner_pause_updated",
             "instance_settings",
             Some("direct_macos_runner"),
             Some(&details),
@@ -2291,9 +2336,9 @@ pub async fn update_instance_preferences(
 
     Ok(Json(preferences_response(
         KeyStorageMode::File,
-        runtime_mode,
-        remote_auth_mode,
-        direct_macos_runner_enabled,
+        persisted_runtime_mode,
+        persisted_remote_auth_mode,
+        persisted_direct_macos_runner_paused,
         Some(now),
     )))
 }

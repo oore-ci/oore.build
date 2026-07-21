@@ -34,7 +34,6 @@ import {
   updateArtifactStorageSettings,
   updateInstancePreferences,
   updateProjectMember,
-  updateRepositoryRunnerPolicy,
   updatePipeline,
   updateRunner,
   validatePipeline,
@@ -462,38 +461,6 @@ describe('repository avatars', () => {
   })
 })
 
-describe('repository runner policy', () => {
-  it('updates one repository through the narrow policy endpoint', async () => {
-    const payload = {
-      repository: {
-        id: 'repo-1',
-        allow_direct_macos_runner: true,
-      },
-    }
-    mockFetch.mockReturnValue(mockJsonResponse(200, payload))
-
-    const result = await updateRepositoryRunnerPolicy(
-      'https://oore.example.com',
-      'session-token',
-      'repo-1',
-      { allow_direct_macos_runner: true },
-    )
-
-    expect(mockFetch).toHaveBeenCalledWith(
-      'https://oore.example.com/v1/integration-repositories/repo-1/runner-policy',
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer session-token',
-        },
-        body: JSON.stringify({ allow_direct_macos_runner: true }),
-      },
-    )
-    expect(result).toEqual(payload)
-  })
-})
-
 describe('artifact download links', () => {
   it('replaces the daemon loopback fallback with the reachable instance origin', async () => {
     mockFetch
@@ -786,7 +753,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'local',
-        direct_macos_runner_enabled: false,
+        direct_macos_runner_paused: true,
         restart_required: false,
         updated_at: 123,
       },
@@ -814,7 +781,7 @@ describe('instance preferences api', () => {
       preferences: {
         key_storage_mode: 'file',
         runtime_mode: 'remote',
-        direct_macos_runner_enabled: true,
+        direct_macos_runner_paused: false,
         restart_required: false,
       },
     }
@@ -826,7 +793,7 @@ describe('instance preferences api', () => {
       {
         key_storage_mode: 'file',
         runtime_mode: 'remote',
-        direct_macos_runner_enabled: true,
+        direct_macos_runner_paused: false,
       },
     )
 
@@ -841,7 +808,7 @@ describe('instance preferences api', () => {
         body: JSON.stringify({
           key_storage_mode: 'file',
           runtime_mode: 'remote',
-          direct_macos_runner_enabled: true,
+          direct_macos_runner_paused: false,
         }),
       },
     )

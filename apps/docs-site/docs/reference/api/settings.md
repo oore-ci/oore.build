@@ -57,6 +57,7 @@ GET /v1/settings/preferences
   "preferences": {
     "key_storage_mode": "file",
     "runtime_mode": "local",
+    "direct_macos_runner_paused": false,
     "restart_required": false,
     "updated_at": 1738886400
   }
@@ -221,9 +222,14 @@ PUT /v1/settings/preferences
 ```json
 {
   "key_storage_mode": "file",
-  "runtime_mode": "remote"
+  "runtime_mode": "remote",
+  "direct_macos_runner_paused": false
 }
 ```
+
+`direct_macos_runner_paused` is an operational scheduling control. `false`
+means **Accept new builds** is on. Setting it to `true` prevents new claims while
+allowing active builds to finish; it is not a repository trust grant.
 
 ### Runtime mode mutation rules
 

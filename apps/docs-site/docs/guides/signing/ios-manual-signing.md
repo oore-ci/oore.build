@@ -13,10 +13,14 @@ Upload your signing certificate and provisioning profile directly to Oore CI for
 - A `.p12` signing certificate and its export password (see [Acquire iOS Certificates](/guides/signing/ios-certificates))
 - A `.mobileprovision` provisioning profile (see [Acquire iOS Certificates](/guides/signing/ios-certificates))
 - A [pipeline](/guides/projects/pipeline-config) configured for iOS builds
-- A macOS runner started with `oore runner install-service` in an interactive login session
+- A macOS runner installed with `oore runner install-service`
 
-::: warning Runner session
-iOS signing cannot run inside the `oored` system LaunchDaemon. Register the Mac as a Direct macOS runner and install its user service. The user may connect over SSH, but an interactive macOS login session must remain active for Apple Keychain code signing.
+::: info Headless signing
+The Direct runner is a boot-time system LaunchDaemon running as its configured
+non-root account. iOS signing does not require an active GUI login. Oore keeps
+profiles inside the private job workspace and passes its temporary keychain
+explicitly to signing tools; it does not change the user's default keychain,
+keychain search list, or globally installed provisioning profiles.
 :::
 
 ## Steps
@@ -45,7 +49,10 @@ Click **Save**. The certificate and profile are encrypted at rest.
 
 ### 5. Verify
 
-Trigger a build. The runner installs the certificate and profile before executing `flutter build ipa`. Download the resulting `.ipa` and verify:
+Trigger a build. The runner imports the certificate into its temporary keychain,
+uses the workspace-local profiles, signs nested apps such as Watch apps and App
+Clips plus extensions before the root app, and cleans up the temporary signing
+state. Download the resulting `.ipa` and verify:
 
 ```bash
 codesign -dv --verbose=4 Payload/Runner.app

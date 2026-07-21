@@ -88,7 +88,7 @@ export function RunnerInventory({
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span>Heartbeat {relative(runner.last_heartbeat_at)}</span>
-                  <span>{runner.registered_by ?? 'Embedded runner'}</span>
+                  <span>{runner.registered_by ?? 'Managed runner'}</span>
                 </div>
                 {canWrite && runner.registered_by ? (
                   <Button

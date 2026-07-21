@@ -25,12 +25,15 @@ The daemon creates a build record with status `queued` and a snapshot of the pip
 
 ### 2. Queue and scheduling
 
-The build enters the queue. A runner can claim it only when the instance Direct runner switch is enabled and its repository is approved. The claim query picks the oldest eligible build, so an unapproved repository does not block approved work behind it.
+The build enters the queue. A runner can claim it while the instance is accepting
+new builds and the project's linked source repository is available. Linking a
+source to a project is the Owner/Admin trust decision; there is no separate
+per-repository execution checkbox.
 
-Running builds finish if either control is disabled. Queued builds wait and expose one of these policy reasons in the API and UI:
+Running builds finish when the instance is paused. Queued builds wait and expose
+one of these policy reasons in the API and UI:
 
-- `instance_disabled`
-- `repository_not_approved`
+- `instance_paused`
 - `repository_unavailable`
 
 ### 3. Claim
@@ -83,14 +86,18 @@ Download links are time-limited and generated on demand via `POST /v1/artifacts/
 
 ## Direct macOS runner
 
-Repository execution uses the separate `oore-runner` process. Register and start it with:
+Repository execution uses the separate `oore-runner` process. On the backend
+Mac, the installer enrolls it and installs its boot-time service. To repair that
+managed service, run:
 
 ```bash
-oore runner register --daemon-url http://127.0.0.1:8787 --token <session_token>
-oore runner start
+oore runner install-service --managed-local
 ```
 
-The runner can be on the daemon Mac or another macOS host. It is a compatibility-first execution mode for trusted repositories, not a sandbox for hostile code. A dedicated non-admin runner account is recommended hardening. Embedded repository execution is unavailable.
+For another macOS host, use `oore runner register` before installing the service.
+The runner is a compatibility-first execution mode for trusted repositories, not
+a sandbox for hostile code. A dedicated non-admin runner account is recommended
+hardening. Embedded repository execution is unavailable.
 
 ## Config resolution at build time
 

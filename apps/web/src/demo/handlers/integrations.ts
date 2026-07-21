@@ -91,33 +91,6 @@ export const integrationHandlers = [
     },
   ),
 
-  http.put(
-    '/v1/integration-repositories/:repositoryId/runner-policy',
-    async ({ params, request }) => {
-      await delay(200)
-      const forbidden = requireDemoInstancePermission(
-        request,
-        'integrations:write',
-      )
-      if (forbidden) return forbidden
-      const repository = Object.values(demoRepositories)
-        .flat()
-        .find((item) => item.id === params.repositoryId)
-      if (!repository) {
-        return HttpResponse.json(
-          { error: 'Repository not found', code: 'not_found' },
-          { status: 404 },
-        )
-      }
-      const body = (await request.json()) as {
-        allow_direct_macos_runner?: boolean
-      }
-      repository.allow_direct_macos_runner =
-        body.allow_direct_macos_runner === true
-      return HttpResponse.json({ repository })
-    },
-  ),
-
   http.get('/v1/integrations/:id/installations', async ({ params }) => {
     await delay(150)
     return HttpResponse.json({
@@ -224,7 +197,6 @@ export const integrationHandlers = [
         external_id: payload.repository_path ?? '/tmp/demo-repo',
         full_name: (payload.repository_path ?? 'demo-repo').split('/').pop(),
         is_private: true,
-        allow_direct_macos_runner: false,
         created_at: now,
         updated_at: now,
       },

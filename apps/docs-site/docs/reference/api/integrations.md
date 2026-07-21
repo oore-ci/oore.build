@@ -71,23 +71,9 @@ GET /v1/integrations/{id}/repositories
 
 Returns an array of repository objects with name, URL, and visibility.
 
-Each repository also includes `allow_direct_macos_runner`. New and re-added repositories default to `false`.
-
-## Update Repository Runner Policy {#repository-runner-policy}
-
-```
-PUT /v1/integration-repositories/{id}/runner-policy
-```
-
-**Authentication**: owner or admin user session
-
-```json
-{
-  "allow_direct_macos_runner": true
-}
-```
-
-The response contains the updated repository. Approval affects every project linked to that repository. Revocation stops future claims but does not terminate a running build.
+Repository discovery does not grant execution independently. An Owner or Admin
+trusts a repository when they link it to a project; there is no separate runner
+policy endpoint or per-repository execution flag.
 
 ---
 

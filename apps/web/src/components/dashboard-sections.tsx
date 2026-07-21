@@ -83,7 +83,7 @@ export function DashboardGettingStarted({
               <p className="text-xs text-muted-foreground">
                 {runtimeMode === 'local'
                   ? 'Point to a local Flutter repository to get started.'
-                  : 'Pick a repository from a connected source or use a local path.'}
+                  : 'Pick a repository from a connected source.'}
               </p>
               {canWriteProjects && !noConnectedSources ? (
                 <Button
@@ -96,7 +96,7 @@ export function DashboardGettingStarted({
                 </Button>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Ask a developer or admin to create a project.
+                  Ask an owner or admin to create a project.
                 </p>
               )}
             </div>

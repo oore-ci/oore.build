@@ -24,8 +24,9 @@ Returns an array of project objects.
   {
     "id": "proj_abc123",
     "name": "My Flutter App",
-    "repository_url": "https://github.com/org/my-flutter-app",
-    "integration_id": "int_def456",
+    "repository_id": "repo_def456",
+    "repository_full_name": "org/my-flutter-app",
+    "repository_provider": "github",
     "created_at": 1738800000,
     "updated_at": 1738800000
   }
@@ -40,15 +41,14 @@ Returns an array of project objects.
 POST /v1/projects
 ```
 
-**Authentication**: User session (Bearer)
+**Authentication**: owner or admin user session
 
 ### Request body
 
 ```json
 {
   "name": "My Flutter App",
-  "repository_url": "https://github.com/org/my-flutter-app",
-  "integration_id": "int_def456"
+  "repository_id": "repo_def456"
 }
 ```
 
@@ -56,13 +56,17 @@ POST /v1/projects
 
 Returns the created project object.
 
+Creating a project links executable repository code to the Direct runner trust
+boundary. Only Owners and Admins may make this decision.
+
 ### Error responses
 
-| Status | Code              | Description                       |
-| ------ | ----------------- | --------------------------------- |
-| 400    | `invalid_input`   | Missing or invalid fields         |
-| 401    | `missing_auth`    | Authorization header not provided |
-| 401    | `invalid_session` | Session token is invalid          |
+| Status | Code                | Description                       |
+| ------ | ------------------- | --------------------------------- |
+| 400    | `invalid_input`     | Missing or invalid fields         |
+| 401    | `missing_auth`      | Authorization header not provided |
+| 401    | `invalid_session`   | Session token is invalid          |
+| 403    | `insufficient_role` | Owner or Admin role is required   |
 
 ---
 
@@ -101,6 +105,12 @@ Partial update — only include fields to change.
 ### Response `200 OK`
 
 Returns the updated project object.
+
+Changing `repository_id` requires an Owner or Admin because it changes which
+repository is trusted to execute. Other project updates continue to use project
+RBAC. The same action is available in **Project > Settings > Source repository**
+for repairing a source link removed by an integration sync or the one-time
+execution-trust migration.
 
 ---
 

@@ -1,21 +1,12 @@
 import type { IntegrationRepository } from '@/lib/types'
 
-export type RepositoryRunnerFilter = 'all' | 'allowed' | 'blocked'
-
 export function filterIntegrationRepositories(
   repositories: Array<IntegrationRepository>,
   query: string | undefined,
-  runnerFilter: RepositoryRunnerFilter,
 ): Array<IntegrationRepository> {
   const normalizedQuery = query?.trim().toLocaleLowerCase()
   return repositories
     .filter((repository) => {
-      if (runnerFilter === 'allowed' && !repository.allow_direct_macos_runner) {
-        return false
-      }
-      if (runnerFilter === 'blocked' && repository.allow_direct_macos_runner) {
-        return false
-      }
       if (!normalizedQuery) return true
       return [
         repository.full_name,

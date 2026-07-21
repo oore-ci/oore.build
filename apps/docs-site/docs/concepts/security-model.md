@@ -113,9 +113,24 @@ Oore CI is designed for local-network deployment:
 
 Oore V1 uses a **Direct macOS runner** for repositories you trust. Checkout and build commands run with the permissions of the runner's macOS account; Oore does not use `sandbox-exec` or claim that Direct mode contains hostile repository code.
 
-An owner or admin must enable Direct runner execution for the instance and approve each repository. Approval means the operator accepts the same code, dependency, build-script, and contributor risk as running that build directly on the runner Mac. New and re-added repositories start unapproved. External-fork pull and merge requests are ignored rather than executed automatically.
+Only an Owner or Admin may create a project or change its linked source
+repository. That link is the explicit trust decision: the operator accepts the
+same code, dependency, build-script, and contributor risk as running the project
+directly on the runner Mac. Oore does not add a second repository execution
+allowlist. External-fork pull and merge requests are ignored rather than executed
+automatically.
 
-Private workspaces, environment scrubbing, scoped checkout credentials, late signing-material retrieval, one-time signing grants, fixed signer commands, output verification, and cleanup remain defense-in-depth against accidental leakage. They are not an isolation boundary against malicious code already approved to run under the same account.
+Every build snapshot records the exact repository link it was created from.
+Runners claim queued work only while that identity still matches the project;
+changing a project source cancels queued snapshots from the previous repository.
+Already-active work keeps its build-bound checkout identity so an operator or
+upgrade can drain it without silently changing the code being built.
+
+**Accept new builds** in instance Preferences is an operational pause, not a
+trust grant. Pausing lets active work finish and prevents runners from claiming
+queued work until an Owner or Admin resumes it.
+
+Private workspaces, environment scrubbing, scoped checkout credentials, late signing-material retrieval, one-time signing grants, fixed signer commands, output verification, and cleanup remain defense-in-depth against accidental leakage. iOS profiles stay in the private job workspace and signing uses an explicit temporary keychain without changing the runner user's default keychain, search list, or globally installed profiles. These controls are not an isolation boundary against malicious code already trusted to run under the same account.
 
 A dedicated non-admin runner account is recommended. Strong isolation for untrusted contributions requires disposable macOS virtual machines and is outside V1.
 
