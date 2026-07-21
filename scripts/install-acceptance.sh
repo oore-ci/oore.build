@@ -305,6 +305,14 @@ should_open_browser
 OORE_NO_OPEN=1
 ! should_open_browser
 
+validate_optional_bool_env TEST_BOOL true
+validate_optional_bool_env TEST_BOOL false
+if bool_error="$(validate_optional_bool_env TEST_BOOL invalid 2>&1)"; then
+  echo '[install-acceptance] expected invalid optional boolean to fail' >&2
+  exit 1
+fi
+[[ "$bool_error" == *"TEST_BOOL must be one of"* ]]
+
 LOCAL_WEB_URL="http://127.0.0.1:4173"
 curl_quick() { printf '<html>not oore-web</html>\n'; }
 if is_local_web_healthy; then
