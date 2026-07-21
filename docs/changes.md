@@ -14,6 +14,10 @@ Rules:
 
 ## 2026-07-21
 
+- **Stopped legacy daemon upgrades**:
+  - Managed updates can now recover the compiled package version from pre-`package-version` daemons when the existing backend is stopped, preserving rollback verification for upgrades from older alpha releases.
+  - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+
 - **Executable release binaries**:
   - Release packaging now restores executable modes after the GitHub artifact handoff and fails before archive creation if the staged macOS binaries are not executable.
   - Release channels doc: https://linear.app/oorebuild/document/release-channels-alpha-beta-stable-via-woodpecker-github-releases-993db297927a
