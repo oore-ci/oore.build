@@ -15,7 +15,7 @@ Rules:
 ## 2026-07-23
 
 - **Headless iOS signing key access**:
-  - Temporary build keychains now grant imported private keys non-interactive application access plus the complete Apple codesigning partition set, become the user-domain default, and are added to the user keychain search list for the duration of the build. The managed boot-time service enters the runner account's user bootstrap session before dropping privileges, so macOS Security can authorize codesign without an interactive prompt; cleanup restores the user's previous default, removes only Oore's temporary keychain, and preserves the other search list entries.
+  - Temporary build keychains now grant imported private keys non-interactive application access plus the complete Apple codesigning partition set, become the user-domain default, and are added to the user keychain search list for the duration of the build. The managed boot-time service preserves Oore's private acknowledgement environment, enters the runner account's user bootstrap session, and then drops privileges, so macOS Security can authorize codesign without an interactive prompt; readiness authenticates the actual runner child rather than the privilege-dropping monitor. Cleanup restores the user's previous default, removes only Oore's temporary keychain, and preserves the other search list entries.
   - Legacy P12 normalization now preserves intermediate certificates instead of exporting only the leaf signing certificate.
   - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
 

@@ -4574,6 +4574,7 @@ struct ManagedRunnerServiceSpec {
     config: PathBuf,
     daemon_url: Option<String>,
     acknowledgement: PathBuf,
+    service_pid_is_parent: bool,
 }
 
 fn managed_runner_update_service_from_program_arguments(
@@ -4593,10 +4594,12 @@ fn runner_command_from_program_arguments(program_arguments: &[String]) -> &[Stri
     if program_arguments.first().map(String::as_str) == Some("/bin/launchctl")
         && program_arguments.get(1).map(String::as_str) == Some("asuser")
         && program_arguments.get(3).map(String::as_str) == Some("/usr/bin/sudo")
-        && program_arguments.get(4).map(String::as_str) == Some("-u")
-        && program_arguments.len() > 6
+        && program_arguments.get(4).map(String::as_str) == Some("-E")
+        && program_arguments.get(5).map(String::as_str) == Some("-H")
+        && program_arguments.get(6).map(String::as_str) == Some("-u")
+        && program_arguments.len() > 8
     {
-        &program_arguments[6..]
+        &program_arguments[8..]
     } else {
         program_arguments
     }
@@ -4673,6 +4676,7 @@ fn managed_runner_service_spec_from_document(
         config,
         daemon_url: value_from_program_arguments(runner_arguments, "--daemon-url"),
         acknowledgement,
+        service_pid_is_parent: runner_arguments.len() != arguments.len(),
     }))
 }
 
@@ -4743,15 +4747,50 @@ fn verify_managed_runner_service(
     if let Some(daemon_url) = &spec.daemon_url {
         config.daemon_url.clone_from(daemon_url);
     }
+    let expected_pid = if spec.service_pid_is_parent {
+        let ack: oore_runner::RunnerServiceAck =
+            serde_json::from_slice(&fs::read(&spec.acknowledgement)?)
+                .context("runner service acknowledgement is invalid")?;
+        anyhow::ensure!(
+            process_is_descendant_of(ack.pid, pid)?,
+            "runner acknowledgement process is not owned by the active service"
+        );
+        ack.pid
+    } else {
+        pid
+    };
     oore_runner::verify_runner_service_ack(
         &spec.acknowledgement,
         &config,
         &spec.executable,
-        pid,
+        expected_pid,
         not_before,
         Duration::from_secs(oore_runner::RUNNER_SERVICE_ACK_MAX_AGE_SECS),
     )?;
     Ok(())
+}
+
+fn process_is_descendant_of(mut process: u32, ancestor: u32) -> anyhow::Result<bool> {
+    for _ in 0..16 {
+        if process == ancestor {
+            return Ok(true);
+        }
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-o", "ppid=", "-p", &process.to_string()])
+            .output()
+            .context("failed to inspect runner service process ownership")?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+        process = String::from_utf8(output.stdout)?
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        if process <= 1 {
+            return Ok(false);
+        }
+    }
+    Ok(false)
 }
 
 fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
@@ -4817,6 +4856,8 @@ fn render_runner_launch_daemon(
         "asuser".to_string(),
         uid.to_string(),
         "/usr/bin/sudo".to_string(),
+        "-E".to_string(),
+        "-H".to_string(),
         "-u".to_string(),
         user.to_string(),
         executable.display().to_string(),
@@ -8305,7 +8346,9 @@ mod tests {
         assert!(plist.contains("<string>/bin/launchctl</string>"));
         assert!(plist.contains("<string>asuser</string>\n        <string>501</string>"));
         assert!(plist.contains("<string>/usr/bin/sudo</string>"));
-        assert!(plist.contains("<string>-u</string>\n        <string>me</string>"));
+        assert!(plist.contains(
+            "<string>-E</string>\n        <string>-H</string>\n        <string>-u</string>\n        <string>me</string>"
+        ));
         assert!(!plist.contains("LimitLoadToSessionType"));
         assert!(plist.contains("<string>/Users/me/.oore/bin/oore</string>"));
         assert!(plist.contains("<string>runner</string>\n        <string>start</string>"));
