@@ -2785,6 +2785,7 @@ async fn resolve_local_runner_config(
     daemon_url: &str,
     name: &str,
     capabilities: &serde_json::Value,
+    adopt_installed_registration: bool,
 ) -> anyhow::Result<(RunnerConfig, bool)> {
     let capabilities = serde_json::to_string(capabilities)?;
     let existing_row = if let Some(config) = existing {
@@ -2799,7 +2800,7 @@ async fn resolve_local_runner_config(
 
     if let (Some(config), Some(row)) = (existing, existing_row.as_ref()) {
         let registered_by: Option<String> = row.try_get("registered_by")?;
-        if registered_by.is_some() {
+        if registered_by.is_some() && !adopt_installed_registration {
             anyhow::bail!(
                 "the existing runner config belongs to a manually registered runner; use a separate config for the managed local runner"
             );
@@ -2808,7 +2809,7 @@ async fn resolve_local_runner_config(
         if expected_hash == runner_token_hash(&config.runner_token) {
             sqlx::query(
                 "UPDATE runners SET name = ?1, capabilities = ?2, updated_at = ?3 \
-                 WHERE id = ?4 AND registered_by IS NULL",
+                 WHERE id = ?4",
             )
             .bind(name)
             .bind(&capabilities)
@@ -2826,6 +2827,9 @@ async fn resolve_local_runner_config(
                 },
                 false,
             ));
+        }
+        if adopt_installed_registration {
+            anyhow::bail!("the installed runner config does not match its backend registration");
         }
     }
 
@@ -2930,6 +2934,7 @@ async fn publish_local_runner_config(
 async fn ensure_runner_service_config(
     args: &RunnerServiceArgs,
     config_path: PathBuf,
+    adopt_installed_registration: bool,
 ) -> anyhow::Result<(PathBuf, RunnerConfig, bool)> {
     let existing = read_runner_config(&config_path)?;
 
@@ -2972,9 +2977,15 @@ async fn ensure_runner_service_config(
 
     let pool = connect_existing_runner_db(&database).await?;
     let capabilities = oore_runner::detect_capabilities().await;
-    let (config, enrolled) =
-        resolve_local_runner_config(&pool, existing.as_ref(), &daemon_url, &name, &capabilities)
-            .await?;
+    let (config, enrolled) = resolve_local_runner_config(
+        &pool,
+        existing.as_ref(),
+        &daemon_url,
+        &name,
+        &capabilities,
+        adopt_installed_registration,
+    )
+    .await?;
     publish_local_runner_config(&pool, &config_path, existing.as_ref(), &config, enrolled).await?;
     pool.close().await;
     Ok((config_path, config, enrolled))
@@ -3023,18 +3034,18 @@ async fn runner_config_is_locally_managed(
         return Ok(false);
     }
     let pool = connect_existing_runner_db(&database).await?;
-    let row = sqlx::query("SELECT registered_by FROM runners WHERE id = ?1")
-        .bind(&config.runner_id)
-        .fetch_optional(&pool)
-        .await
-        .context("failed to validate the installed runner service registration")?;
+    let token_hash =
+        sqlx::query_scalar::<_, String>("SELECT token_hash FROM runners WHERE id = ?1")
+            .bind(&config.runner_id)
+            .fetch_optional(&pool)
+            .await
+            .context("failed to validate the installed runner service registration")?;
     pool.close().await;
 
-    let Some(row) = row else {
+    let Some(token_hash) = token_hash else {
         return Ok(false);
     };
-    let registered_by: Option<String> = row.try_get("registered_by")?;
-    Ok(registered_by.is_none())
+    Ok(token_hash == runner_token_hash(&config.runner_token))
 }
 
 async fn migrate_managed_runner_service_config(
@@ -3044,7 +3055,7 @@ async fn migrate_managed_runner_service_config(
 ) -> anyhow::Result<()> {
     if !runner_config_is_locally_managed(source, state_file).await? {
         anyhow::bail!(
-            "the installed runner service is manually registered; uninstall it before installing this backend's managed local runner"
+            "the installed runner config does not match its backend registration; uninstall it before installing this backend's managed local runner"
         );
     }
     seed_managed_local_runner_config(source, destination)
@@ -4976,10 +4987,22 @@ fn stop_user_launchd_service(service: &str) -> anyhow::Result<()> {
     let _ = std::process::Command::new("/bin/launchctl")
         .args(["bootout", service])
         .output();
-    if user_launchd_service_loaded(service) {
+    if !wait_for_launchd_service_unloaded(|| Ok(user_launchd_service_loaded(service)))? {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
     Ok(())
+}
+
+fn wait_for_launchd_service_unloaded(
+    mut is_loaded: impl FnMut() -> anyhow::Result<bool>,
+) -> anyhow::Result<bool> {
+    for _ in 0..20 {
+        if !is_loaded()? {
+            return Ok(true);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(false)
 }
 
 fn system_launchd_service_loaded(service: &str) -> anyhow::Result<bool> {
@@ -5040,7 +5063,7 @@ fn stop_system_launchd_service(service: &str) -> anyhow::Result<()> {
         "/bin/launchctl",
         &[OsStr::new("bootout"), OsStr::new(service)],
     );
-    if system_launchd_service_loaded(service)? {
+    if !wait_for_launchd_service_unloaded(|| system_launchd_service_loaded(service))? {
         anyhow::bail!("failed to stop system runner service {service}");
     }
     Ok(())
@@ -5400,7 +5423,12 @@ async fn handle_runner_install_service_inner(
 
     let install_result = async {
         let (config, runner, enrolled) =
-            ensure_runner_service_config(&args, requested_config.clone()).await?;
+            ensure_runner_service_config(
+                &args,
+                requested_config.clone(),
+                existing_managed_config.is_some(),
+            )
+            .await?;
         let restore_config = || {
             if enrolled {
                 Ok(())
@@ -5639,7 +5667,7 @@ fn daemon_url_from_listen_address(listen: &str) -> anyhow::Result<String> {
         .trim()
         .parse::<SocketAddr>()
         .with_context(|| format!("invalid daemon listen address: {listen}"))?;
-    Ok(url_from_socket_address(address))
+    Ok(format!("http://127.0.0.1:{}", address.port()))
 }
 
 fn plutil_output(plist: &Path, args: &[&str]) -> anyhow::Result<std::process::Output> {
@@ -5846,9 +5874,15 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
     } else {
         &[]
     };
-    let mut bootout = std::process::Command::new(command);
-    bootout.args(prefix).args(["bootout", &service]);
-    let _ = run_command_with_timeout(&mut bootout, "launchd bootout", Duration::from_secs(15))?;
+    if launchd_service_loaded(label) {
+        let mut bootout = std::process::Command::new(command);
+        bootout.args(prefix).args(["bootout", &service]);
+        let status =
+            run_command_with_timeout(&mut bootout, "launchd bootout", Duration::from_secs(15))?;
+        if !status.success() && launchd_service_loaded(label) {
+            anyhow::bail!("failed to stop managed service {label} before restart");
+        }
+    }
 
     let mut bootstrap = std::process::Command::new(command);
     bootstrap
@@ -6255,6 +6289,8 @@ struct UpdateServicePlan {
     runner_service: Option<&'static str>,
     runner_previous_pid: Option<u32>,
     runner_ack: Option<RunnerUpdateAck>,
+    runner_installed_version: String,
+    runner_restored_version: String,
     install_managed_runner: bool,
     managed_runner_service_existed: bool,
     managed_runner_config_existed: bool,
@@ -7001,6 +7037,7 @@ impl UpdateServicePlan {
         activation: ReleaseActivation,
     ) -> anyhow::Result<()> {
         if self.daemon_is_managed && !self.defer_daemon_restart {
+            println!("Restarting the backend and verifying its release...");
             control.restart_managed_service(DAEMON_SERVICE_LABEL)?;
         } else if let Some(listen) = &self.unmanaged_daemon_listen {
             control.restart_unmanaged_daemon(listen).await?;
@@ -7059,12 +7096,17 @@ impl UpdateServicePlan {
         activation: ReleaseActivation,
     ) -> anyhow::Result<()> {
         if self.install_managed_runner && activation == ReleaseActivation::Installed {
+            println!("Migrating the runner to its boot-time service...");
             let database = self
                 .managed_runner_database
                 .as_deref()
                 .context("managed runner migration is missing the database path")?;
             control
-                .install_managed_runner(database, &self.installed_version, &self.restored_version)
+                .install_managed_runner(
+                    database,
+                    &self.runner_installed_version,
+                    &self.runner_restored_version,
+                )
                 .await?;
             return Ok(());
         }
@@ -7421,8 +7463,8 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
     let runner_previous_pid = managed_runner_process_pid()?;
     let runner_ack = prepare_runner_update_ack(
         &database,
-        &prepared.package_version,
-        &restored_package_version,
+        &prepared.version.to_string(),
+        &current.to_string(),
     )
     .await?;
 
@@ -7501,6 +7543,8 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         runner_service: Some(RUNNER_SERVICE_LABEL),
         runner_previous_pid,
         runner_ack: Some(runner_ack),
+        runner_installed_version: prepared.version.to_string(),
+        runner_restored_version: current.to_string(),
         install_managed_runner: false,
         managed_runner_service_existed: true,
         managed_runner_config_existed: true,
@@ -7759,8 +7803,8 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         Some(_) => Some(
             prepare_runner_update_ack(
                 &database,
-                &prepared.package_version,
-                &restored_package_version,
+                &prepared.version.to_string(),
+                &current.to_string(),
             )
             .await?,
         ),
@@ -7831,6 +7875,8 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         runner_service: runner_update_service,
         runner_previous_pid,
         runner_ack,
+        runner_installed_version: prepared.version.to_string(),
+        runner_restored_version: current.to_string(),
         install_managed_runner,
         managed_runner_service_existed,
         managed_runner_config_existed,
@@ -8493,7 +8539,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn managed_local_service_migrates_only_a_database_owned_runner_config() {
+    async fn managed_local_service_migrates_only_a_database_matching_runner_config() {
         let temp = tempfile::tempdir().unwrap();
         let database = temp.path().join("oore.db");
         let pool = SqlitePoolOptions::new()
@@ -8530,7 +8576,7 @@ mod tests {
             &managed_path,
             &RunnerConfig {
                 runner_id: "managed".to_string(),
-                runner_token: "stale-managed-token".to_string(),
+                runner_token: "managed-token".to_string(),
                 daemon_url: "http://127.0.0.1:8787".to_string(),
                 name: "managed".to_string(),
             },
@@ -8554,27 +8600,46 @@ mod tests {
             .unwrap();
         let migrated = read_runner_config(&migrated_path).unwrap().unwrap();
         assert_eq!(migrated.runner_id, "managed");
-        assert_eq!(migrated.runner_token, "stale-managed-token");
+        assert_eq!(migrated.runner_token, "managed-token");
         assert_eq!(fs::read(&managed_path).unwrap(), managed_before);
         remove_migrated_managed_runner_config(&managed_path, &migrated_path).unwrap();
         assert!(!managed_path.exists());
         assert!(migrated_path.is_file());
 
-        let manual_before = fs::read(&manual_path).unwrap();
         let manual_destination = temp.path().join("manual-destination.json");
+        migrate_managed_runner_service_config(&manual_path, &manual_destination, database.to_str())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_runner_config(&manual_destination)
+                .unwrap()
+                .unwrap()
+                .runner_id,
+            "manual"
+        );
+
+        let mismatched_path = temp.path().join("mismatched.json");
+        write_runner_config(
+            &mismatched_path,
+            &RunnerConfig {
+                runner_id: "manual".to_string(),
+                runner_token: "wrong-token".to_string(),
+                daemon_url: "https://ci.example.com".to_string(),
+                name: "manual".to_string(),
+            },
+        )
+        .unwrap();
         let error = migrate_managed_runner_service_config(
-            &manual_path,
-            &manual_destination,
+            &mismatched_path,
+            &temp.path().join("mismatched-destination.json"),
             database.to_str(),
         )
         .await
         .unwrap_err();
         assert!(
-            error.to_string().contains("manually registered"),
+            error.to_string().contains("does not match"),
             "unexpected error: {error:#}"
         );
-        assert!(!manual_destination.exists());
-        assert_eq!(fs::read(&manual_path).unwrap(), manual_before);
     }
 
     #[tokio::test]
@@ -8588,6 +8653,7 @@ mod tests {
             "http://127.0.0.1:8787",
             "build-host",
             &capabilities,
+            false,
         )
         .await
         .unwrap();
@@ -8598,6 +8664,7 @@ mod tests {
             "https://ci.example.com",
             "renamed-host",
             &serde_json::json!({"os": "macos", "arch": "arm64", "version": "next"}),
+            false,
         )
         .await
         .unwrap();
@@ -8642,6 +8709,7 @@ mod tests {
             "http://127.0.0.1:8787",
             "new-hostname",
             &serde_json::json!({}),
+            false,
         )
         .await
         .unwrap();
@@ -8680,6 +8748,7 @@ mod tests {
             "http://127.0.0.1:8787",
             "manual",
             &serde_json::json!({}),
+            false,
         )
         .await
         .unwrap_err();
@@ -8691,6 +8760,26 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(token_hash, runner_token_hash("actual-token"));
+
+        let (adopted, enrolled) = resolve_local_runner_config(
+            &pool,
+            Some(&manual),
+            "http://127.0.0.1:8787",
+            "managed-host",
+            &serde_json::json!({}),
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(!enrolled);
+        assert_eq!(adopted.runner_id, "manual");
+        assert_eq!(adopted.runner_token, "actual-token");
+        let registered_by: Option<String> =
+            sqlx::query_scalar("SELECT registered_by FROM runners WHERE id = 'manual'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(registered_by.as_deref(), Some("owner"));
     }
 
     #[tokio::test]
@@ -8753,7 +8842,9 @@ mod tests {
             name: None,
         };
 
-        let (_, resolved, enrolled) = ensure_runner_service_config(&args, path).await.unwrap();
+        let (_, resolved, enrolled) = ensure_runner_service_config(&args, path, false)
+            .await
+            .unwrap();
 
         assert!(!enrolled);
         assert_eq!(resolved.runner_id, "external");
@@ -8771,7 +8862,7 @@ mod tests {
             name: None,
         };
 
-        let error = ensure_runner_service_config(&args, temp.path().join("missing.json"))
+        let error = ensure_runner_service_config(&args, temp.path().join("missing.json"), false)
             .await
             .unwrap_err();
 
@@ -8876,6 +8967,8 @@ mod tests {
             runner_service: (!defer_daemon_restart).then_some(RUNNER_SERVICE_LABEL),
             runner_previous_pid: None,
             runner_ack: None,
+            runner_installed_version: "2.0.0-release".to_string(),
+            runner_restored_version: "1.0.0-release".to_string(),
             install_managed_runner: false,
             managed_runner_service_existed: false,
             managed_runner_config_existed: false,
@@ -8957,6 +9050,8 @@ mod tests {
             runner_service: None,
             runner_previous_pid: None,
             runner_ack: None,
+            runner_installed_version: "2.0.0-release".to_string(),
+            runner_restored_version: "1.0.0-release".to_string(),
             install_managed_runner: false,
             managed_runner_service_existed: false,
             managed_runner_config_existed: false,
@@ -9368,8 +9463,14 @@ mod tests {
         assert_eq!(listen, "10.23.0.8:9876");
         assert_eq!(
             daemon_url_from_listen_address(&listen).unwrap(),
-            "http://10.23.0.8:9876"
+            "http://127.0.0.1:9876"
         );
+    }
+
+    #[test]
+    fn launchd_stop_waits_for_delayed_unload() {
+        let mut states = [true, true, false].into_iter();
+        assert!(wait_for_launchd_service_unloaded(|| Ok(states.next().unwrap_or(false))).unwrap());
     }
 
     #[test]
