@@ -11,6 +11,8 @@ DATA_DIR="$HOME/Library/Application Support/oore"
 DAEMON_LAUNCH_AGENT_LABEL="build.oore.oored"
 DAEMON_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$DAEMON_LAUNCH_AGENT_LABEL.plist"
 DAEMON_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$DAEMON_LAUNCH_AGENT_LABEL.plist"
+UPDATER_LAUNCH_DAEMON_LABEL="build.oore.oore-updater"
+UPDATER_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$UPDATER_LAUNCH_DAEMON_LABEL.plist"
 RUNNER_LAUNCH_AGENT_LABEL="build.oore.oore-runner"
 RUNNER_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$RUNNER_LAUNCH_AGENT_LABEL.plist"
 RUNNER_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$RUNNER_LAUNCH_AGENT_LABEL.plist"
@@ -333,6 +335,13 @@ remove_runner_service() {
     "legacy runner launch agent"
 }
 
+remove_updater_service() {
+  remove_system_launchd_service \
+    "$UPDATER_LAUNCH_DAEMON_LABEL" \
+    "$UPDATER_LAUNCH_DAEMON_PLIST" \
+    "backend updater"
+}
+
 stop_local_web() {
   if [[ -f "$WEB_PID_FILE" ]]; then
     local pid=""
@@ -452,12 +461,14 @@ main() {
 
   if [[ ! -d "$OORE_INSTALL_ROOT" ]] \
     && [[ ! -f "$DAEMON_LAUNCH_DAEMON_PLIST" ]] \
+    && [[ ! -f "$UPDATER_LAUNCH_DAEMON_PLIST" ]] \
     && [[ ! -f "$RUNNER_LAUNCH_DAEMON_PLIST" ]] \
     && [[ ! -f "$DAEMON_LAUNCH_AGENT_PLIST" ]] \
     && [[ ! -f "$RUNNER_LAUNCH_AGENT_PLIST" ]] \
     && [[ ! -f "$WEB_LAUNCH_AGENT_PLIST" ]] \
     && [[ ! -f "$WEB_SYSTEMD_SERVICE_FILE" ]] \
     && ! system_launchd_job_is_loaded "$DAEMON_LAUNCH_AGENT_LABEL" \
+    && ! system_launchd_job_is_loaded "$UPDATER_LAUNCH_DAEMON_LABEL" \
     && ! system_launchd_job_is_loaded "$RUNNER_LAUNCH_AGENT_LABEL" \
     && ! user_launchd_job_is_loaded "$DAEMON_LAUNCH_AGENT_LABEL" \
     && ! user_launchd_job_is_loaded "$RUNNER_LAUNCH_AGENT_LABEL" \
@@ -475,6 +486,7 @@ main() {
   fi
 
   remove_runner_service
+  remove_updater_service
   remove_daemon_launch_agent
   stop_daemon
   stop_local_web

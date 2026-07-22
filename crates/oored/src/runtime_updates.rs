@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -11,7 +10,9 @@ use anyhow::Context;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use oore_contract::{ApiError, RuntimeUpdatePhase, RuntimeUpdateStatus};
+use oore_contract::{
+    ApiError, DeferredRuntimeUpdateRequest, RuntimeUpdatePhase, RuntimeUpdateStatus,
+};
 use tokio::sync::RwLock;
 
 use crate::AppState;
@@ -20,13 +21,18 @@ use crate::store::write_audit_log;
 use crate::util::api_err;
 
 const SYSTEM_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oored.plist";
+const UPDATE_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oore-updater.plist";
+const UPDATE_SERVICE: &str = "system/build.oore.oore-updater";
 const UPDATE_STATUS_FILE: &str = ".runtime-update-status.json";
-const UPDATE_LOG_FILE: &str = "runtime-update.log";
+const UPDATE_REQUEST_DIR: &str = "run/runtime-update-queue";
+const UPDATE_REQUEST_FILE: &str = "request.json";
 
 pub type RuntimeUpdateState = Arc<RwLock<RuntimeUpdateStatus>>;
 
 fn managed_service_installed() -> bool {
-    cfg!(target_os = "macos") && Path::new(SYSTEM_SERVICE_PLIST).is_file()
+    cfg!(target_os = "macos")
+        && Path::new(SYSTEM_SERVICE_PLIST).is_file()
+        && Path::new(UPDATE_SERVICE_PLIST).is_file()
 }
 
 fn install_root_from_current_exe() -> anyhow::Result<PathBuf> {
@@ -148,43 +154,72 @@ fn loopback_daemon_url() -> anyhow::Result<String> {
 }
 
 struct DeferredUpdateInvocation {
-    oore: PathBuf,
     parent_pid: u32,
     database: PathBuf,
     key: PathBuf,
     daemon_url: String,
     status: PathBuf,
-    log: PathBuf,
-    label: String,
 }
 
-impl DeferredUpdateInvocation {
-    fn launchctl_args(&self) -> Vec<OsString> {
-        vec![
-            "submit".into(),
-            "-l".into(),
-            self.label.clone().into(),
-            "-o".into(),
-            self.log.as_os_str().to_owned(),
-            "-e".into(),
-            self.log.as_os_str().to_owned(),
-            "--".into(),
-            "/usr/bin/env".into(),
-            "OORE_UPDATE_DEFER_DAEMON_RESTART=1".into(),
-            self.oore.as_os_str().to_owned(),
-            "update".into(),
-            "--deferred-parent-pid".into(),
-            self.parent_pid.to_string().into(),
-            "--deferred-state-file".into(),
-            self.database.as_os_str().to_owned(),
-            "--deferred-key-file".into(),
-            self.key.as_os_str().to_owned(),
-            "--deferred-daemon-url".into(),
-            self.daemon_url.clone().into(),
-            "--deferred-status-file".into(),
-            self.status.as_os_str().to_owned(),
-        ]
+impl From<DeferredUpdateInvocation> for DeferredRuntimeUpdateRequest {
+    fn from(invocation: DeferredUpdateInvocation) -> Self {
+        Self {
+            parent_pid: invocation.parent_pid,
+            database: invocation.database,
+            key: invocation.key,
+            daemon_url: invocation.daemon_url,
+            status: invocation.status,
+        }
     }
+}
+
+fn write_update_request(path: &Path, request: &DeferredRuntimeUpdateRequest) -> anyhow::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let parent = path
+        .parent()
+        .context("runtime update request has no parent")?;
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(".{UPDATE_REQUEST_FILE}.{}.tmp", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    if let Err(error) = (|| -> anyhow::Result<()> {
+        serde_json::to_writer(&mut file, request)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })() {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).context("failed to publish the runtime update request");
+    }
+    Ok(())
+}
+
+fn start_update_supervisor(
+    path: &Path,
+    request: &DeferredRuntimeUpdateRequest,
+) -> anyhow::Result<()> {
+    write_update_request(path, request)?;
+    let output = Command::new("/bin/launchctl")
+        .args(["kickstart", UPDATE_SERVICE])
+        .output()
+        .context("failed to start the managed update supervisor")?;
+    if !output.status.success() {
+        let _ = fs::remove_file(path);
+        let diagnostic = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let suffix = if diagnostic.is_empty() {
+            String::new()
+        } else {
+            format!(": {diagnostic}")
+        };
+        anyhow::bail!("managed update supervisor did not start{suffix}");
+    }
+    Ok(())
 }
 
 pub async fn get_status(
@@ -250,30 +285,31 @@ pub async fn start_update(
             error.to_string(),
         )
     })?;
-    let logs = install_root.join("logs");
-    fs::create_dir_all(&logs).map_err(|error| {
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "runtime_update_unavailable",
-            format!("Failed to prepare the update log: {error}"),
-        )
-    })?;
+    let request_path = install_root
+        .join(UPDATE_REQUEST_DIR)
+        .join(UPDATE_REQUEST_FILE);
+    if request_path.exists() {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "runtime_update_in_progress",
+            "A backend update request is already queued",
+        ));
+    }
+    fs::create_dir_all(request_path.parent().expect("request path has a parent")).map_err(
+        |error| {
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "runtime_update_unavailable",
+                format!("Failed to prepare the update queue: {error}"),
+            )
+        },
+    )?;
     let invocation = DeferredUpdateInvocation {
-        oore,
         parent_pid: std::process::id(),
         database,
         key,
         daemon_url,
         status: status_path.clone(),
-        log: logs.join(UPDATE_LOG_FILE),
-        label: format!(
-            "build.oore.runtime-update.{}.{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ),
     };
 
     {
@@ -292,7 +328,7 @@ pub async fn start_update(
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "runtime_update_unmanaged",
-                "Backend updates from the web require the managed macOS launchd service",
+                "Backend updates from the web require the managed macOS update supervisor; run the installer once from Terminal to finish service setup",
             ));
         }
         if matches!(
@@ -334,20 +370,17 @@ pub async fn start_update(
     }
 
     let result = tokio::task::spawn_blocking(move || {
-        Command::new("/bin/launchctl")
-            .args(invocation.launchctl_args())
-            .output()
+        start_update_supervisor(&request_path, &invocation.into())
     })
     .await;
     let failure = match result {
-        Ok(Ok(output)) if output.status.success() => None,
-        Ok(Ok(output)) => Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        Ok(Ok(())) => None,
         Ok(Err(error)) => Some(error.to_string()),
         Err(error) => Some(error.to_string()),
     };
     if let Some(failure) = failure {
         let diagnostic = if failure.is_empty() {
-            "launchd rejected the backend update job".to_string()
+            "Could not queue the backend update".to_string()
         } else {
             failure.chars().take(2_000).collect()
         };
@@ -373,31 +406,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn launchd_job_carries_the_complete_deferred_update_contract() {
+    fn queued_request_carries_the_complete_deferred_update_contract() {
         let invocation = DeferredUpdateInvocation {
-            oore: "/opt/oore/bin/oore".into(),
             parent_pid: 42,
             database: "/data/oore.db".into(),
             key: "/data/encryption.key".into(),
             daemon_url: "http://127.0.0.1:8787".into(),
             status: "/opt/oore/.runtime-update-status.json".into(),
-            log: "/opt/oore/logs/runtime-update.log".into(),
-            label: "build.oore.runtime-update.test".into(),
         };
-        let arguments = invocation
-            .launchctl_args()
-            .into_iter()
-            .map(|value| value.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        for required in [
-            "OORE_UPDATE_DEFER_DAEMON_RESTART=1",
-            "--deferred-parent-pid",
-            "--deferred-state-file",
-            "--deferred-key-file",
-            "--deferred-daemon-url",
-            "--deferred-status-file",
-        ] {
-            assert!(arguments.iter().any(|argument| argument == required));
-        }
+        let request = DeferredRuntimeUpdateRequest::from(invocation);
+        assert_eq!(request.parent_pid, 42);
+        assert_eq!(request.database, Path::new("/data/oore.db"));
+        assert_eq!(request.key, Path::new("/data/encryption.key"));
+        assert_eq!(request.daemon_url, "http://127.0.0.1:8787");
+        assert_eq!(
+            request.status,
+            Path::new("/opt/oore/.runtime-update-status.json")
+        );
+    }
+
+    #[test]
+    fn queued_request_is_private_and_complete_before_publish() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(UPDATE_REQUEST_FILE);
+        let request = DeferredRuntimeUpdateRequest {
+            parent_pid: 42,
+            database: "/data/oore.db".into(),
+            key: "/data/encryption.key".into(),
+            daemon_url: "http://127.0.0.1:8787".into(),
+            status: "/opt/oore/.runtime-update-status.json".into(),
+        };
+
+        write_update_request(&path, &request).unwrap();
+
+        assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        let persisted: DeferredRuntimeUpdateRequest =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(persisted.parent_pid, 42);
+        assert_eq!(persisted.status, request.status);
     }
 }

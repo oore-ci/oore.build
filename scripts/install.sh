@@ -60,6 +60,11 @@ WEB_SYSTEMD_SERVICE_FILE="$WEB_SYSTEMD_USER_DIR/$WEB_SYSTEMD_SERVICE_NAME"
 DAEMON_SERVICE_LABEL="build.oore.oored"
 DAEMON_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$DAEMON_SERVICE_LABEL.plist"
 DAEMON_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$DAEMON_SERVICE_LABEL.plist"
+UPDATER_SERVICE_LABEL="build.oore.oore-updater"
+UPDATER_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$UPDATER_SERVICE_LABEL.plist"
+UPDATER_QUEUE_DIR="$OORE_INSTALL_ROOT/run/runtime-update-queue"
+UPDATER_REQUEST_FILE="$UPDATER_QUEUE_DIR/request.json"
+UPDATER_LOG="$LOG_DIR/runtime-update.log"
 RUNNER_SERVICE_LABEL="build.oore.oore-runner"
 DAEMON_URL="$OORE_DAEMON_URL"
 WEB_BACKEND_URL="$OORE_WEB_BACKEND_URL"
@@ -1770,6 +1775,75 @@ install_daemon_service() {
   return 0
 }
 
+render_system_updater_plist() {
+  local service_user="$1"
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$UPDATER_SERVICE_LABEL</string>
+    <key>UserName</key>
+    <string>$(xml_escape "$service_user")</string>
+    <key>SessionCreate</key>
+    <true/>
+    <key>ProgramArguments</key>
+    <array>
+      <string>$(xml_escape "$BIN_DIR/oore")</string>
+      <string>update-supervisor</string>
+      <string>--request-file</string>
+      <string>$(xml_escape "$UPDATER_REQUEST_FILE")</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HOME</key>
+      <string>$(xml_escape "$HOME")</string>
+      <key>PATH</key>
+      <string>$(xml_escape "$PATH")</string>
+      <key>OORE_INSTALL_ROOT</key>
+      <string>$(xml_escape "$OORE_INSTALL_ROOT")</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>$(xml_escape "$OORE_INSTALL_ROOT")</string>
+    <key>StandardOutPath</key>
+    <string>$(xml_escape "$UPDATER_LOG")</string>
+    <key>StandardErrorPath</key>
+    <string>$(xml_escape "$UPDATER_LOG")</string>
+  </dict>
+</plist>
+EOF
+}
+
+install_update_service() {
+  ensure_dependency sudo
+  local service_user
+  local plist_tmp="$UPDATER_LAUNCH_DAEMON_PLIST.install.$$"
+  service_user="$(id -un)"
+
+  mkdir -p "$UPDATER_QUEUE_DIR" "$LOG_DIR" || return 1
+  chmod 0700 "$UPDATER_QUEUE_DIR" || return 1
+  sudo /bin/rm -f "$plist_tmp" || return 1
+  sudo /usr/bin/install -o root -g wheel -m 0600 /dev/null "$plist_tmp" || return 1
+  if ! render_system_updater_plist "$service_user" \
+    | sudo /usr/bin/tee "$plist_tmp" >/dev/null; then
+    sudo /bin/rm -f "$plist_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! sudo /bin/chmod 0600 "$plist_tmp" \
+    || ! sudo /usr/bin/plutil -lint "$plist_tmp" >/dev/null; then
+    sudo /bin/rm -f "$plist_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  sudo /bin/launchctl bootout "system/$UPDATER_SERVICE_LABEL" >/dev/null 2>&1 || true
+  sudo /bin/launchctl remove "$UPDATER_SERVICE_LABEL" >/dev/null 2>&1 || true
+  sudo /bin/mv -f "$plist_tmp" "$UPDATER_LAUNCH_DAEMON_PLIST" || return 1
+  sudo /bin/launchctl bootstrap system "$UPDATER_LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 \
+    || return 1
+  sudo /bin/launchctl print "system/$UPDATER_SERVICE_LABEL" >/dev/null 2>&1 \
+    || return 1
+}
+
 runner_loopback_url() {
   local address="${OORE_DAEMON_LISTEN#http://}"
   local loopback="127.0.0.1"
@@ -1808,6 +1882,7 @@ install_runner_service() {
 
 install_backend_services() {
   install_daemon_service || return 1
+  install_update_service || return 1
   install_runner_service || return 1
 }
 
@@ -2557,6 +2632,7 @@ main() {
     # an existing managed backend. Do not mutate backend configuration or
     # reinstall services after it has committed.
     step "Finalizing upgrade..."
+    install_update_service || exit 1
     step_done "backend + runner verified"
     printf '\n%bOore CI is up to date.%b\n' "$UI_BOLD$UI_SUCCESS" "$UI_RESET"
     log "The existing managed backend, runner, and managed web UI (when configured) were restarted and verified."
