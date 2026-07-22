@@ -1705,6 +1705,13 @@ fn install_ios_signing_bundle(
             .chain(original_keychains)
             .collect::<Vec<_>>(),
         )?;
+        run_security_command_with_strings(&[
+            "default-keychain".to_string(),
+            "-d".to_string(),
+            "user".to_string(),
+            "-s".to_string(),
+            keychain_path_str.clone(),
+        ])?;
 
         run_security_command_with_strings(&[
             "import".to_string(),
@@ -1715,8 +1722,7 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
             "-P".to_string(),
             bundle.p12_password.clone(),
-            "-T".to_string(),
-            "/usr/bin/codesign".to_string(),
+            "-A".to_string(),
         ])?;
 
         run_security_command_with_strings(&[

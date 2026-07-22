@@ -4580,12 +4580,26 @@ fn managed_runner_update_service_from_program_arguments(
     install_root: &Path,
     program_arguments: &[String],
 ) -> Option<&'static str> {
-    let configured = fs::canonicalize(Path::new(program_arguments.first()?)).ok()?;
+    let runner_arguments = runner_command_from_program_arguments(program_arguments);
+    let configured = fs::canonicalize(Path::new(runner_arguments.first()?)).ok()?;
     let installed = fs::canonicalize(install_root.join("bin/oore")).ok()?;
     (configured == installed
-        && program_arguments.get(1).map(String::as_str) == Some("runner")
-        && program_arguments.get(2).map(String::as_str) == Some("start"))
+        && runner_arguments.get(1).map(String::as_str) == Some("runner")
+        && runner_arguments.get(2).map(String::as_str) == Some("start"))
     .then_some(RUNNER_SERVICE_LABEL)
+}
+
+fn runner_command_from_program_arguments(program_arguments: &[String]) -> &[String] {
+    if program_arguments.first().map(String::as_str) == Some("/bin/launchctl")
+        && program_arguments.get(1).map(String::as_str) == Some("asuser")
+        && program_arguments.get(3).map(String::as_str) == Some("/usr/bin/sudo")
+        && program_arguments.get(4).map(String::as_str) == Some("-u")
+        && program_arguments.len() > 6
+    {
+        &program_arguments[6..]
+    } else {
+        program_arguments
+    }
 }
 
 fn value_from_program_arguments(program_arguments: &[String], option: &str) -> Option<String> {
@@ -4605,7 +4619,11 @@ fn value_from_program_arguments(program_arguments: &[String], option: &str) -> O
 }
 
 fn runner_config_from_program_arguments(program_arguments: &[String]) -> Option<PathBuf> {
-    value_from_program_arguments(program_arguments, "--config").map(PathBuf::from)
+    value_from_program_arguments(
+        runner_command_from_program_arguments(program_arguments),
+        "--config",
+    )
+    .map(PathBuf::from)
 }
 
 fn managed_runner_service_spec_from_document(
@@ -4623,16 +4641,17 @@ fn managed_runner_service_spec_from_document(
                 .context("managed runner ProgramArguments must contain only strings")
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let runner_arguments = runner_command_from_program_arguments(&arguments);
     anyhow::ensure!(
-        arguments.get(1).map(String::as_str) == Some("runner")
-            && arguments.get(2).map(String::as_str) == Some("start"),
+        runner_arguments.get(1).map(String::as_str) == Some("runner")
+            && runner_arguments.get(2).map(String::as_str) == Some("start"),
         "managed runner service does not launch `oore runner start`"
     );
-    let executable = arguments
+    let executable = runner_arguments
         .first()
         .map(PathBuf::from)
         .context("managed runner service has no executable")?;
-    let config = runner_config_from_program_arguments(&arguments)
+    let config = runner_config_from_program_arguments(runner_arguments)
         .context("managed runner service does not specify --config")?;
     let acknowledgement = document
         .get("EnvironmentVariables")
@@ -4652,7 +4671,7 @@ fn managed_runner_service_spec_from_document(
     Ok(Some(ManagedRunnerServiceSpec {
         executable,
         config,
-        daemon_url: value_from_program_arguments(&arguments, "--daemon-url"),
+        daemon_url: value_from_program_arguments(runner_arguments, "--daemon-url"),
         acknowledgement,
     }))
 }
@@ -4791,8 +4810,15 @@ fn render_runner_launch_daemon(
     log_path: &Path,
     path: &str,
     user: &str,
+    uid: &str,
 ) -> String {
     let values = [
+        "/bin/launchctl".to_string(),
+        "asuser".to_string(),
+        uid.to_string(),
+        "/usr/bin/sudo".to_string(),
+        "-u".to_string(),
+        user.to_string(),
         executable.display().to_string(),
         "runner".to_string(),
         "start".to_string(),
@@ -4812,10 +4838,6 @@ fn render_runner_launch_daemon(
 <dict>
     <key>Label</key>
     <string>{RUNNER_SERVICE_LABEL}</string>
-    <key>UserName</key>
-    <string>{}</string>
-    <key>SessionCreate</key>
-    <true/>
     <key>ProgramArguments</key>
     <array>
 {arguments}
@@ -4842,7 +4864,6 @@ fn render_runner_launch_daemon(
 </dict>
 </plist>
 "#,
-        launchd_xml_escape(user),
         launchd_xml_escape(&home.display().to_string()),
         launchd_xml_escape(path),
         oore_runner::RUNNER_SERVICE_ACK_PATH_ENV,
@@ -4853,7 +4874,77 @@ fn render_runner_launch_daemon(
     )
 }
 
+fn migrate_runner_service_to_user_bootstrap(plist: &Path) -> anyhow::Result<bool> {
+    let document = plist_json(plist)?;
+    if document.get("UserName").is_none() {
+        return Ok(false);
+    }
+    let user = document
+        .get("UserName")
+        .and_then(serde_json::Value::as_str)
+        .context("managed runner service has no runner account")?;
+    anyhow::ensure!(!user.is_empty() && user != "root", "invalid runner account");
+    let uid_output = std::process::Command::new("/usr/bin/id")
+        .args(["-u", user])
+        .output()
+        .context("failed to resolve the managed runner account")?;
+    anyhow::ensure!(
+        uid_output.status.success(),
+        "managed runner account does not exist"
+    );
+    let uid = String::from_utf8(uid_output.stdout)?.trim().to_string();
+    let spec = managed_runner_service_spec_from_document(&document)?
+        .context("managed runner service is missing authenticated readiness")?;
+    let environment = document
+        .get("EnvironmentVariables")
+        .and_then(serde_json::Value::as_object)
+        .context("managed runner service has no environment")?;
+    let required_environment = |key: &str| {
+        environment
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .with_context(|| format!("managed runner service has no {key}"))
+    };
+    let home = PathBuf::from(required_environment("HOME")?);
+    let path = required_environment("PATH")?;
+    let working_dir = PathBuf::from(
+        document
+            .get("WorkingDirectory")
+            .and_then(serde_json::Value::as_str)
+            .context("managed runner service has no working directory")?,
+    );
+    let log_path = PathBuf::from(
+        document
+            .get("StandardOutPath")
+            .and_then(serde_json::Value::as_str)
+            .context("managed runner service has no log path")?,
+    );
+    let rendered = render_runner_launch_daemon(
+        &spec.executable,
+        &spec.config,
+        &spec.acknowledgement,
+        &home,
+        &working_dir,
+        &log_path,
+        path,
+        user,
+        &uid,
+    );
+    let service = format!("system/{RUNNER_SERVICE_LABEL}");
+    stop_system_launchd_service(&service)?;
+    write_system_runner_plist(&rendered)?;
+    Ok(true)
+}
+
 fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
+    let uid = current_user_id()?;
+    Ok((
+        format!("gui/{uid}"),
+        format!("gui/{uid}/{RUNNER_SERVICE_LABEL}"),
+    ))
+}
+
+fn current_user_id() -> anyhow::Result<String> {
     let output = std::process::Command::new("/usr/bin/id")
         .arg("-u")
         .output()
@@ -4865,10 +4956,7 @@ fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
         .context("current user id was not valid UTF-8")?
         .trim()
         .to_string();
-    Ok((
-        format!("gui/{uid}"),
-        format!("gui/{uid}/{RUNNER_SERVICE_LABEL}"),
-    ))
+    Ok(uid)
 }
 
 fn current_user_name() -> anyhow::Result<String> {
@@ -5297,6 +5385,7 @@ async fn handle_runner_install_service_inner(
     }
 
     let user = current_user_name()?;
+    let uid = current_user_id()?;
     if args.managed_local && args.config.is_some() {
         anyhow::bail!("--managed-local cannot be combined with --config");
     }
@@ -5464,6 +5553,7 @@ async fn handle_runner_install_service_inner(
             &log_path,
             &path,
             &user,
+            &uid,
         );
         let plist = match write_system_runner_plist(&rendered) {
             Ok(plist) => plist,
@@ -6830,6 +6920,13 @@ impl UpdateServiceControl for LiveUpdateServiceControl<'_> {
             let (plist, system) = managed_service_plist(label)?;
             if system {
                 let service = format!("system/{RUNNER_SERVICE_LABEL}");
+                if migrate_runner_service_to_user_bootstrap(&plist)? {
+                    start_system_runner_service(&plist, &service, true)?;
+                    if let Some(ack) = ack {
+                        ack.wait_for(activation).await?;
+                    }
+                    return Ok(());
+                }
                 ensure_system_runner_service_active(&plist, &service, previous_pid)?;
                 if let Some(ack) = ack {
                     ack.wait_for(activation).await?;
@@ -6960,6 +7057,14 @@ impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
             system,
             "deferred updates require the boot-time runner service"
         );
+        if migrate_runner_service_to_user_bootstrap(&plist)? {
+            let service = format!("system/{RUNNER_SERVICE_LABEL}");
+            start_system_runner_service(&plist, &service, true)?;
+            if let Some(ack) = ack {
+                ack.wait_for(activation).await?;
+            }
+            return Ok(());
+        }
         let spec = managed_runner_service_spec(&plist)?;
         if let Some(spec) = &spec {
             clear_runner_service_acknowledgement(&spec.acknowledgement)?;
@@ -8192,11 +8297,15 @@ mod tests {
             Path::new("/Users/me/.oore/logs/oore-runner.log"),
             "/usr/bin:/bin",
             "me",
+            "501",
         );
 
         assert!(plist.contains("<string>build.oore.oore-runner</string>"));
-        assert!(plist.contains("<key>UserName</key>\n    <string>me</string>"));
-        assert!(plist.contains("<key>SessionCreate</key>\n    <true/>"));
+        assert!(!plist.contains("<key>UserName</key>"));
+        assert!(plist.contains("<string>/bin/launchctl</string>"));
+        assert!(plist.contains("<string>asuser</string>\n        <string>501</string>"));
+        assert!(plist.contains("<string>/usr/bin/sudo</string>"));
+        assert!(plist.contains("<string>-u</string>\n        <string>me</string>"));
         assert!(!plist.contains("LimitLoadToSessionType"));
         assert!(plist.contains("<string>/Users/me/.oore/bin/oore</string>"));
         assert!(plist.contains("<string>runner</string>\n        <string>start</string>"));
@@ -8278,6 +8387,7 @@ mod tests {
             Path::new("/Users/a&b/runner.log"),
             "/usr/bin:/a&b",
             "a&b",
+            "501",
         );
 
         assert!(plist.contains("/Users/a&amp;b/oore"));

@@ -15,7 +15,7 @@ Rules:
 ## 2026-07-23
 
 - **Headless iOS signing key access**:
-  - Temporary build keychains now grant the complete Apple codesigning partition set and are added to the user keychain search list for the duration of the build. This lets the managed launchd runner authorize imported distribution identities without an interactive prompt; cleanup removes only Oore's temporary keychain and preserves the user's existing default and search list entries.
+  - Temporary build keychains now grant imported private keys non-interactive application access plus the complete Apple codesigning partition set, become the user-domain default, and are added to the user keychain search list for the duration of the build. The managed boot-time service enters the runner account's user bootstrap session before dropping privileges, so macOS Security can authorize codesign without an interactive prompt; cleanup restores the user's previous default, removes only Oore's temporary keychain, and preserves the other search list entries.
   - Legacy P12 normalization now preserves intermediate certificates instead of exporting only the leaf signing certificate.
   - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
 
@@ -42,7 +42,7 @@ Rules:
   - Build snapshots are bound to the exact trusted repository ID. Relinking a project cancels queued or only-scheduled snapshots from the old source, claims and reruns reject stale source identities, and assigned or running GitLab work drains through its original build-bound checkout instead of the project's mutable link.
   - Source sync retains repository and provider-installation rows while assigned or running snapshots still reference them, so in-flight checkouts keep their immutable dependency chain. Explicit integration disconnect returns `409 Conflict` until those active builds finish; queued or scheduled work is canceled when the source is removed.
   - External-fork pull and merge requests remain blocked. Direct mode continues to mean trusted-code execution with the runner account's authority, not hostile-code isolation; manually registered runners on another Mac remain supported.
-  - iOS signing keeps provisioning profiles inside the private job workspace and passes a temporary keychain explicitly to signing tools. The runner temporarily prepends that keychain to the user's search list for non-interactive Apple signing, then removes only its own entry during cleanup; it does not change the default keychain or install profiles globally.
+  - iOS signing keeps provisioning profiles inside the private job workspace and passes a temporary keychain explicitly to signing tools. The runner temporarily makes that keychain the user-domain default and prepends it to the user's search list for non-interactive Apple signing, then restores the previous default and removes only its own search-list entry during cleanup; it does not install profiles globally.
   - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
   - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
   - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
