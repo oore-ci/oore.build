@@ -12,6 +12,12 @@ Rules:
 - Any code change under `apps/`, `crates/`, `tools/`, etc. must add an entry here.
 - Include a Linear issue/doc link for each entry.
 
+## 2026-07-23
+
+- **Headless iOS signing key access**:
+  - Temporary build keychains now grant the complete Apple codesigning partition set, allowing the managed launchd runner to use imported distribution identities without an interactive keychain prompt.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+
 ## 2026-07-21
 
 - **Independent web-update supervisor**:

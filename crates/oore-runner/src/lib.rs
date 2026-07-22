@@ -1695,7 +1695,7 @@ fn install_ios_signing_bundle(
         run_security_command_with_strings(&[
             "set-key-partition-list".to_string(),
             "-S".to_string(),
-            "apple:".to_string(),
+            "apple-tool:,apple:,codesign:".to_string(),
             "-s".to_string(),
             "-k".to_string(),
             keychain_password.clone(),
