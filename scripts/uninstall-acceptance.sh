@@ -38,6 +38,7 @@ assert_system_uninstall_uses_root_tools() (
   local uninstaller_lib="$case_dir/uninstall-lib.sh"
   local sudo_log="$case_dir/sudo.log"
   local daemon_loaded=1
+  local updater_loaded=1
   local runner_loaded=1
 
   export HOME="$case_dir/home"
@@ -48,8 +49,9 @@ assert_system_uninstall_uses_root_tools() (
   source "$uninstaller_lib"
 
   DAEMON_LAUNCH_DAEMON_PLIST="$case_dir/build.oore.oored.plist"
+  UPDATER_LAUNCH_DAEMON_PLIST="$case_dir/build.oore.oore-updater.plist"
   RUNNER_LAUNCH_DAEMON_PLIST="$case_dir/build.oore.oore-runner.plist"
-  touch "$DAEMON_LAUNCH_DAEMON_PLIST" "$RUNNER_LAUNCH_DAEMON_PLIST"
+  touch "$DAEMON_LAUNCH_DAEMON_PLIST" "$UPDATER_LAUNCH_DAEMON_PLIST" "$RUNNER_LAUNCH_DAEMON_PLIST"
   sudo() {
     printf '%s\n' "$*" >> "$sudo_log"
 
@@ -63,11 +65,13 @@ assert_system_uninstall_uses_root_tools() (
     if [[ "${1:-}" == "/bin/launchctl" && "${2:-}" == "bootout" ]]; then
       case "${3:-}" in
         system/build.oore.oored) daemon_loaded=0 ;;
+        system/build.oore.oore-updater) updater_loaded=0 ;;
         system/build.oore.oore-runner) runner_loaded=0 ;;
       esac
     elif [[ "${1:-}" == "/bin/launchctl" && "${2:-}" == "print" ]]; then
       case "${3:-}" in
         system/build.oore.oored) [[ "$daemon_loaded" -eq 1 ]] ;;
+        system/build.oore.oore-updater) [[ "$updater_loaded" -eq 1 ]] ;;
         system/build.oore.oore-runner) [[ "$runner_loaded" -eq 1 ]] ;;
         *) return 1 ;;
       esac
@@ -82,6 +86,7 @@ assert_system_uninstall_uses_root_tools() (
     if [[ "${1:-}" == "print" ]]; then
       case "${2:-}" in
         system/build.oore.oored) [[ "$daemon_loaded" -eq 1 ]] ;;
+        system/build.oore.oore-updater) [[ "$updater_loaded" -eq 1 ]] ;;
         system/build.oore.oore-runner) [[ "$runner_loaded" -eq 1 ]] ;;
         *) return 1 ;;
       esac
@@ -91,6 +96,7 @@ assert_system_uninstall_uses_root_tools() (
   }
 
   remove_runner_service
+  remove_updater_service
   remove_daemon_launch_agent
 
   grep -q -- '^-v$' "$sudo_log"
@@ -98,11 +104,16 @@ assert_system_uninstall_uses_root_tools() (
   grep -q -- '^-n /bin/launchctl remove build.oore.oore-runner$' "$sudo_log"
   grep -q -- '^-n /bin/launchctl print system/build.oore.oore-runner$' "$sudo_log"
   grep -q -- "^-n /bin/rm -f $RUNNER_LAUNCH_DAEMON_PLIST$" "$sudo_log"
+  grep -q -- '^-n /bin/launchctl bootout system/build.oore.oore-updater$' "$sudo_log"
+  grep -q -- '^-n /bin/launchctl remove build.oore.oore-updater$' "$sudo_log"
+  grep -q -- '^-n /bin/launchctl print system/build.oore.oore-updater$' "$sudo_log"
+  grep -q -- "^-n /bin/rm -f $UPDATER_LAUNCH_DAEMON_PLIST$" "$sudo_log"
   grep -q -- '^-n /bin/launchctl bootout system/build.oore.oored$' "$sudo_log"
   grep -q -- '^-n /bin/launchctl remove build.oore.oored$' "$sudo_log"
   grep -q -- '^-n /bin/launchctl print system/build.oore.oored$' "$sudo_log"
   grep -q -- "^-n /bin/rm -f $DAEMON_LAUNCH_DAEMON_PLIST$" "$sudo_log"
   [[ ! -e "$RUNNER_LAUNCH_DAEMON_PLIST" ]]
+  [[ ! -e "$UPDATER_LAUNCH_DAEMON_PLIST" ]]
   [[ ! -e "$DAEMON_LAUNCH_DAEMON_PLIST" ]]
 )
 
@@ -122,6 +133,7 @@ assert_legacy_mode_without_system_jobs_skips_sudo() (
 
   printf 'all\n' > "$OORE_INSTALL_ROOT/INSTALL_MODE"
   DAEMON_LAUNCH_DAEMON_PLIST="$case_dir/missing-oored.plist"
+  UPDATER_LAUNCH_DAEMON_PLIST="$case_dir/missing-updater.plist"
   RUNNER_LAUNCH_DAEMON_PLIST="$case_dir/missing-runner.plist"
   sudo() {
     printf '%s\n' "$*" >> "$sudo_log"
@@ -132,6 +144,7 @@ assert_legacy_mode_without_system_jobs_skips_sudo() (
   }
 
   remove_runner_service
+  remove_updater_service
   remove_daemon_launch_agent
 
   [[ ! -e "$sudo_log" ]]

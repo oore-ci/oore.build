@@ -14,13 +14,13 @@ use chrono::{Local, TimeZone};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use oore_contract::{
     ApiError, BootstrapTokenRecord, BootstrapTokenVerifyRequest, BootstrapTokenVerifyResponse,
-    LOCAL_RECOVERY_MAX_TTL_SECS, LOCAL_RECOVERY_MIN_TTL_SECS, LOCAL_RECOVERY_SOCKET_DIR,
-    LOCAL_RECOVERY_SOCKET_FILE, ListBuildsResponse, ListRunnersResponse, LocalLoginRequest,
-    LocalLoginResponse, LocalRecoveryMintRequest, LocalRecoveryMintResponse, OidcConfigureRequest,
-    OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode, RuntimeMode,
-    SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse, SetupOidcVerifyRequest,
-    SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus, UserProfileResponse,
-    parse_repository_pipeline_yaml,
+    DeferredRuntimeUpdateRequest, LOCAL_RECOVERY_MAX_TTL_SECS, LOCAL_RECOVERY_MIN_TTL_SECS,
+    LOCAL_RECOVERY_SOCKET_DIR, LOCAL_RECOVERY_SOCKET_FILE, ListBuildsResponse, ListRunnersResponse,
+    LocalLoginRequest, LocalLoginResponse, LocalRecoveryMintRequest, LocalRecoveryMintResponse,
+    OidcConfigureRequest, OidcConfigureResponse, RegisterRunnerResponse, RemoteAuthMode,
+    RuntimeMode, SetupCompleteResponse, SetupOidcStartRequest, SetupOidcStartResponse,
+    SetupOidcVerifyRequest, SetupOidcVerifyResponse, SetupState, SetupStateFile, SetupStatus,
+    UserProfileResponse, parse_repository_pipeline_yaml,
 };
 use oore_runner::RunnerConfig;
 use rand::RngCore;
@@ -95,6 +95,8 @@ enum Commands {
     Version,
     /// Update oore and oored to the latest release
     Update(UpdateArgs),
+    #[command(hide = true)]
+    UpdateSupervisor(UpdateSupervisorArgs),
     /// Create, verify, or restore an encrypted-state backup
     Backup(BackupArgs),
 }
@@ -249,6 +251,12 @@ struct UpdateArgs {
 
     #[arg(long, hide = true)]
     deferred_status_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct UpdateSupervisorArgs {
+    #[arg(long)]
+    request_file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -7590,6 +7598,66 @@ async fn handle_deferred_update(args: UpdateArgs) -> anyhow::Result<()> {
         .await
 }
 
+async fn handle_update_supervisor(args: UpdateSupervisorArgs) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let install_root = resolve_install_root()?;
+    let expected = install_root
+        .join("run/runtime-update-queue")
+        .join("request.json");
+    anyhow::ensure!(
+        args.request_file == expected,
+        "runtime update request must be {}",
+        expected.display()
+    );
+    let metadata = fs::symlink_metadata(&args.request_file)
+        .with_context(|| format!("failed to inspect {}", args.request_file.display()))?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "runtime update request is not a file"
+    );
+    anyhow::ensure!(
+        metadata.uid() == unsafe { libc::geteuid() },
+        "runtime update request is owned by another user"
+    );
+    anyhow::ensure!(
+        metadata.permissions().mode() & 0o077 == 0,
+        "runtime update request permissions are too broad"
+    );
+
+    let active = install_root
+        .join("run")
+        .join(format!("runtime-update-active-{}.json", std::process::id()));
+    fs::rename(&args.request_file, &active).context("failed to claim runtime update request")?;
+    let result = async {
+        let request: DeferredRuntimeUpdateRequest = serde_json::from_slice(
+            &fs::read(&active).context("failed to read runtime update request")?,
+        )
+        .context("invalid runtime update request")?;
+        handle_deferred_update(UpdateArgs {
+            check: false,
+            force: false,
+            channel: None,
+            repo: None,
+            staged_release: None,
+            ensure_managed_runner: false,
+            deferred_parent_pid: Some(request.parent_pid),
+            deferred_state_file: Some(request.database),
+            deferred_key_file: Some(request.key),
+            deferred_daemon_url: Some(request.daemon_url),
+            deferred_status_file: Some(request.status),
+        })
+        .await
+    }
+    .await;
+    let cleanup = fs::remove_file(&active).context("failed to clear runtime update request");
+    match (result, cleanup) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
     let defer_daemon_restart = std::env::var_os("OORE_UPDATE_DEFER_DAEMON_RESTART").is_some();
@@ -8034,6 +8102,11 @@ fn main() -> anyhow::Result<()> {
             let runtime =
                 tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
             runtime.block_on(handle_update(args))?;
+        }
+        Commands::UpdateSupervisor(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(handle_update_supervisor(args))?;
         }
         Commands::Backup(args) => match args.command {
             BackupSubcommand::Create(args) => backup_create(args)?,

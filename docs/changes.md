@@ -14,6 +14,11 @@ Rules:
 
 ## 2026-07-21
 
+- **Independent web-update supervisor**:
+  - Managed macOS installs now include a least-privilege launchd updater job. The backend writes a private, validated request and kickstarts that pre-installed job, allowing the daemon and runner to restart without terminating the rollback-safe update transaction.
+  - Existing managed installations add the supervisor during their next terminal installer upgrade; later backend updates remain one-click from the web UI.
+  - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+
 - **Stopped legacy daemon upgrades**:
   - Managed updates can now recover the compiled package version from pre-`package-version` daemons when the existing backend is stopped, preserving rollback verification for upgrades from older alpha releases.
   - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9

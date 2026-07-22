@@ -206,6 +206,10 @@ OORE_INSTALL_ROOT="$service_bin_dir"
 LOG_DIR="$service_bin_dir/logs"
 DAEMON_LOG="$LOG_DIR/oored.log"
 DAEMON_LAUNCH_DAEMON_PLIST="$service_bin_dir/build.oore.oored.plist"
+UPDATER_LAUNCH_DAEMON_PLIST="$service_bin_dir/build.oore.oore-updater.plist"
+UPDATER_QUEUE_DIR="$service_bin_dir/run/runtime-update-queue"
+UPDATER_REQUEST_FILE="$UPDATER_QUEUE_DIR/request.json"
+UPDATER_LOG="$LOG_DIR/runtime-update.log"
 sudo() {
   printf '%s\n' "$*" >> "$sudo_call"
   case "$1" in
@@ -237,6 +241,7 @@ if command -v plutil >/dev/null 2>&1; then
   render_system_daemon_plist appbuilder | plutil -lint - >/dev/null
 fi
 install_daemon_service
+install_update_service
 install_runner_service
 grep -q -- '^uninstall-service$' "$oored_call"
 grep -q -- '^runner install-service --managed-local --daemon-url http://127.0.0.1:8787$' "$oore_call"
@@ -249,6 +254,7 @@ grep -q -- '^/usr/bin/install -o root -g wheel -m 0600 /dev/null .*build.oore.oo
 grep -q -- '^/usr/bin/tee .*build.oore.oored.plist.install.' "$sudo_call"
 grep -q -- '^/bin/launchctl bootstrap system .*build.oore.oored.plist$' "$sudo_call"
 grep -q -- '^/bin/launchctl kickstart -k system/build.oore.oored$' "$sudo_call"
+grep -q -- '^/bin/launchctl bootstrap system .*build.oore.oore-updater.plist$' "$sudo_call"
 if grep -q -- "$service_bin_dir/oored install-service\|$service_bin_dir/oored uninstall-service" "$sudo_call"; then
   echo '[install-acceptance] user-owned oored crossed the sudo boundary' >&2
   exit 1
@@ -268,6 +274,12 @@ grep -q -- '<string>appbuilder</string>' "$DAEMON_LAUNCH_DAEMON_PLIST"
 grep -q -- "<string>$service_bin_dir/oored</string>" "$DAEMON_LAUNCH_DAEMON_PLIST"
 grep -q -- '<string>https://ci.example.test/?a=1&amp;b=2</string>' "$DAEMON_LAUNCH_DAEMON_PLIST"
 grep -q -- '<key>OORE_WARPGATE_TICKET</key>' "$DAEMON_LAUNCH_DAEMON_PLIST"
+if grep -q -- '<key>QueueDirectories</key>' "$UPDATER_LAUNCH_DAEMON_PLIST"; then
+  echo '[install-acceptance] updater service should be explicitly kickstarted' >&2
+  exit 1
+fi
+grep -q -- '<string>update-supervisor</string>' "$UPDATER_LAUNCH_DAEMON_PLIST"
+grep -q -- "<string>$UPDATER_REQUEST_FILE</string>" "$UPDATER_LAUNCH_DAEMON_PLIST"
 grep -q -- '<string>opaque-ticket</string>' "$DAEMON_LAUNCH_DAEMON_PLIST"
 unset -f sudo id curl_quick
 rm -rf "$service_bin_dir"

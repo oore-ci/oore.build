@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -409,6 +410,15 @@ pub struct RuntimeUpdateStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub managed_service: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeferredRuntimeUpdateRequest {
+    pub parent_pid: u32,
+    pub database: PathBuf,
+    pub key: PathBuf,
+    pub daemon_url: String,
+    pub status: PathBuf,
 }
 
 // ── User management types ───────────────────────────────────────
