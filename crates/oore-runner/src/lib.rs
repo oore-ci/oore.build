@@ -1636,7 +1636,7 @@ fn install_ios_signing_bundle(
         prepared_profiles.push((profile.bundle_id.clone(), profile_ref, work_path));
     }
 
-    let journal = IosCleanupJournal {
+    let mut journal = IosCleanupJournal {
         keychain_path: keychain_path.clone(),
         original_default_keychain: None,
         original_keychains: Vec::new(),
@@ -1678,6 +1678,33 @@ fn install_ios_signing_bundle(
             "21600".to_string(),
             keychain_path_str.clone(),
         ])?;
+
+        let original_default_keychain =
+            parse_keychain_list(&run_security_command(&["default-keychain", "-d", "user"])?)
+                .into_iter()
+                .next()
+                .context("user keychain domain has no default keychain")?;
+        let original_keychains =
+            parse_keychain_list(&run_security_command(&["list-keychains", "-d", "user"])?);
+        anyhow::ensure!(
+            !original_keychains.is_empty(),
+            "user keychain search list is empty"
+        );
+        journal.original_default_keychain = Some(original_default_keychain);
+        journal.original_keychains = original_keychains.clone();
+        write_ios_cleanup_journal(&journal_path, &journal)?;
+        run_security_command_with_strings(
+            &[
+                "list-keychains".to_string(),
+                "-d".to_string(),
+                "user".to_string(),
+                "-s".to_string(),
+                keychain_path_str.clone(),
+            ]
+            .into_iter()
+            .chain(original_keychains)
+            .collect::<Vec<_>>(),
+        )?;
 
         run_security_command_with_strings(&[
             "import".to_string(),
