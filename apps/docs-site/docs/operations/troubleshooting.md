@@ -84,7 +84,8 @@ preserved.
 
 Check the build logs for errors. Common causes:
 
-- Oore's managed FVM binary is missing after an incomplete install or update
+- The first-build download of Oore's managed FVM or selected Flutter SDK was
+  interrupted; retry the build after checking network access
 - Incorrect Flutter version requested
 - Missing Android SDK or full Xcode for the selected platform
 - No active login session for the runner account when Apple signing is enabled
