@@ -74,6 +74,12 @@ For a backend-host runner, repair enrollment and the boot-time service by runnin
 administrator access for launchd setup; do not run the whole command with
 `sudo`.
 
+If the web UI says managed service repair is required, rerun the current
+installer for the host's installed channel. Alpha.17 and alpha.18 need this
+one-time repair because their runner plist cannot be converted by the
+unprivileged web updater. Existing runner identity and project configuration are
+preserved.
+
 ### Runner claiming but builds failing immediately
 
 Check the build logs for errors. Common causes:
@@ -81,6 +87,7 @@ Check the build logs for errors. Common causes:
 - Flutter/FVM not installed on the runner machine
 - Incorrect Flutter version requested
 - Missing Xcode for iOS builds
+- No active login session for the runner account when Apple signing is enabled
 
 Run `oore doctor --all` on the runner machine to verify the toolchain.
 

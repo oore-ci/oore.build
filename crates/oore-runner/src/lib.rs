@@ -1223,20 +1223,46 @@ impl Drop for IosSigningCleanup {
 }
 
 fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("/usr/bin/security")
-        .args(args)
+    run_security_command_with_strings(
+        &args
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn user_bootstrap_command_arguments(uid: u32, program: &str, args: &[String]) -> Vec<String> {
+    ["asuser".to_string(), uid.to_string(), program.to_string()]
+        .into_iter()
+        .chain(args.iter().cloned())
+        .collect()
+}
+
+fn user_bootstrap_command(program: &str, args: &[String]) -> Command {
+    let mut command = Command::new("/bin/launchctl");
+    command.args(user_bootstrap_command_arguments(
+        unsafe { libc::geteuid() },
+        program,
+        args,
+    ));
+    command
+}
+
+fn require_ios_signing_user_session() -> anyhow::Result<()> {
+    let uid = unsafe { libc::geteuid() };
+    let output = Command::new("/bin/launchctl")
+        .args(["print", &format!("gui/{uid}")])
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("security command failed: {stderr}");
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        .context("failed to inspect the runner account login session")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+    );
+    Ok(())
 }
 
 fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> {
-    let output = Command::new("/usr/bin/security")
-        .args(args)
+    let output = user_bootstrap_command("/usr/bin/security", args)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
     if !output.status.success() {
@@ -1554,6 +1580,19 @@ fn install_ios_signing_bundle(
     signing_workspace: &Path,
     bundle: &RunnerIosSigningBundle,
 ) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
+    install_ios_signing_bundle_with_session_check(
+        signing_workspace,
+        bundle,
+        require_ios_signing_user_session,
+    )
+}
+
+fn install_ios_signing_bundle_with_session_check(
+    signing_workspace: &Path,
+    bundle: &RunnerIosSigningBundle,
+    require_session: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
+    require_session()?;
     if bundle.team_id.trim().is_empty() {
         anyhow::bail!("iOS signing bundle team_id is empty");
     }
@@ -1713,17 +1752,11 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
         ])?;
 
-        run_security_command_with_strings(&[
-            "import".to_string(),
-            p12_path.display().to_string(),
-            "-f".to_string(),
-            "pkcs12".to_string(),
-            "-k".to_string(),
-            keychain_path_str.clone(),
-            "-P".to_string(),
-            bundle.p12_password.clone(),
-            "-A".to_string(),
-        ])?;
+        run_security_command_with_strings(&ios_keychain_import_arguments(
+            &p12_path,
+            &keychain_path,
+            &bundle.p12_password,
+        ))?;
 
         run_security_command_with_strings(&[
             "set-key-partition-list".to_string(),
@@ -1830,11 +1863,32 @@ fn install_ios_signing_bundle(
     }
 }
 
+fn ios_keychain_import_arguments(
+    p12_path: &Path,
+    keychain_path: &Path,
+    password: &str,
+) -> Vec<String> {
+    vec![
+        "import".to_string(),
+        p12_path.display().to_string(),
+        "-f".to_string(),
+        "pkcs12".to_string(),
+        "-k".to_string(),
+        keychain_path.display().to_string(),
+        "-P".to_string(),
+        password.to_string(),
+        "-T".to_string(),
+        "/usr/bin/codesign".to_string(),
+    ]
+}
+
 fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyhow::Result<String> {
-    let output = Command::new(program)
-        .args(&args)
-        .output()
-        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+    let output = if program == "/usr/bin/codesign" {
+        user_bootstrap_command(program, &args).output()
+    } else {
+        Command::new(program).args(&args).output()
+    }
+    .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -3722,6 +3776,20 @@ fn add_checkout_proxy_config(
     ]);
 }
 
+fn snapshot_requests_ios(snapshot: &serde_json::Value) -> bool {
+    let platforms = snapshot
+        .get("selected_platforms")
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            snapshot
+                .get("ui_execution_config")
+                .and_then(|config| config.get("platforms"))
+        });
+    platforms
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|platforms| platforms.iter().any(|platform| platform == "ios"))
+}
+
 async fn execute_build(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -3757,10 +3825,51 @@ async fn execute_build(
     let snapshot = &job.config_snapshot;
     let mut steps = Vec::new();
     let mut log_seq: i64 = 0;
+    let mut ios_signing_source: Option<&str> = None;
+    let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
+    let ios_signing_checked_before_checkout = snapshot_requests_ios(snapshot);
 
     if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id, &authority).await
     {
         return (steps, Err(e));
+    }
+
+    if ios_signing_checked_before_checkout {
+        match fetch_job_ios_signing(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+        )
+        .await
+        {
+            Ok(Some(server_payload)) => {
+                if let Some(mut bundle) = server_payload.bundle {
+                    if let Err(error) = require_ios_signing_user_session() {
+                        zeroize_ios_signing_bundle(&mut bundle);
+                        return (steps, Err(error));
+                    }
+                    let signing_source = match bundle.mode {
+                        oore_contract::IosSigningMode::Manual => "manual",
+                        oore_contract::IosSigningMode::Api => "api",
+                        oore_contract::IosSigningMode::Hybrid => "hybrid",
+                    };
+                    ios_signing_bundle = Some(bundle);
+                    ios_signing_source = Some(signing_source);
+                    println!("Reserved iOS signing bundle before repository checkout");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return (
+                    steps,
+                    Err(anyhow::anyhow!(
+                        "Failed to load iOS signing bundle before checkout. Aborting to avoid unsigned iOS artifacts: {error}"
+                    )),
+                );
+            }
+        }
     }
 
     let repo_url = snapshot
@@ -3911,8 +4020,6 @@ async fn execute_build(
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
     let mut signing_inputs: Option<AndroidSigningInputs> = None;
-    let mut ios_signing_source: Option<&str> = None;
-    let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
     let build_commands = execution_plan.stage_commands.build.as_slice();
     match determine_android_signing_variant(build_commands) {
         Ok(Some(variant)) => {
@@ -3956,9 +4063,10 @@ async fn execute_build(
         Err(e) => return (steps, Err(e)),
     }
 
-    if build_commands
-        .iter()
-        .any(|command| is_ios_flutter_build_command(command))
+    if !ios_signing_checked_before_checkout
+        && build_commands
+            .iter()
+            .any(|command| is_ios_flutter_build_command(command))
     {
         match fetch_job_ios_signing(
             client,
@@ -3970,7 +4078,11 @@ async fn execute_build(
         .await
         {
             Ok(Some(server_payload)) => {
-                if let Some(bundle) = server_payload.bundle {
+                if let Some(mut bundle) = server_payload.bundle {
+                    if let Err(error) = require_ios_signing_user_session() {
+                        zeroize_ios_signing_bundle(&mut bundle);
+                        return (steps, Err(error));
+                    }
                     let signing_source = match bundle.mode {
                         oore_contract::IosSigningMode::Manual => "manual",
                         oore_contract::IosSigningMode::Api => "api",
@@ -5194,6 +5306,92 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn apple_signing_commands_enter_only_the_user_bootstrap() {
+        let arguments = user_bootstrap_command_arguments(
+            501,
+            "/usr/bin/codesign",
+            &["--verify".to_string(), "/tmp/App.app".to_string()],
+        );
+
+        assert_eq!(
+            arguments,
+            [
+                "asuser",
+                "501",
+                "/usr/bin/codesign",
+                "--verify",
+                "/tmp/App.app",
+            ]
+        );
+    }
+
+    #[test]
+    fn ios_snapshot_selection_is_known_before_checkout() {
+        assert!(snapshot_requests_ios(&serde_json::json!({
+            "selected_platforms": ["ios"]
+        })));
+        assert!(!snapshot_requests_ios(&serde_json::json!({
+            "selected_platforms": ["android"],
+            "ui_execution_config": { "platforms": ["android", "ios"] }
+        })));
+        assert!(snapshot_requests_ios(&serde_json::json!({
+            "ui_execution_config": { "platforms": ["android", "ios"] }
+        })));
+    }
+
+    #[test]
+    fn ios_private_key_access_is_scoped_to_codesign() {
+        let arguments = ios_keychain_import_arguments(
+            Path::new("/tmp/identity.p12"),
+            Path::new("/tmp/build.keychain-db"),
+            "secret",
+        );
+
+        assert_eq!(
+            arguments,
+            [
+                "import",
+                "/tmp/identity.p12",
+                "-f",
+                "pkcs12",
+                "-k",
+                "/tmp/build.keychain-db",
+                "-P",
+                "secret",
+                "-T",
+                "/usr/bin/codesign",
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_login_session_fails_before_ios_signing_state_is_created() {
+        let parent = temp_workspace();
+        let signing_workspace = parent.join("signing");
+        let bundle = RunnerIosSigningBundle {
+            enabled: true,
+            mode: oore_contract::IosSigningMode::Manual,
+            team_id: "TEAM".to_string(),
+            export_method: "ad-hoc".to_string(),
+            p12_filename: "identity.p12".to_string(),
+            p12_base64: "unused".to_string(),
+            p12_password: "unused".to_string(),
+            provisioning_profiles: Vec::new(),
+        };
+
+        let error =
+            install_ios_signing_bundle_with_session_check(&signing_workspace, &bundle, || {
+                anyhow::bail!("Log into the runner account and retry the build")
+            })
+            .err()
+            .expect("missing session must fail before signing setup");
+
+        assert!(error.to_string().contains("Log into the runner account"));
+        assert!(!signing_workspace.exists());
+        cleanup_workspace(&parent);
     }
 
     fn release_marker_for(path: &Path, generation: u128) -> String {

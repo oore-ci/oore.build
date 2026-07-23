@@ -14,6 +14,14 @@ Rules:
 
 ## 2026-07-23
 
+- **Boot-safe runner and bounded Apple signing session**:
+  - Managed runners again start directly as their configured non-root account from a system LaunchDaemon, so backend, Android, and unsigned work recover before GUI login. Only fixed `security` and `codesign` commands enter the active user bootstrap; an iOS-signed build fails before checkout with login-and-retry guidance when its snapshot identifies iOS, with a fail-closed pre-build fallback for legacy repository-only configuration.
+  - Imported iOS private keys are scoped to `/usr/bin/codesign` instead of every application. The temporary keychain remains the user-domain default and first search entry only during signing, with the previous state restored during cleanup.
+  - The web updater rejects the alpha.17/alpha.18 wrapper plist before staging an update. Affected hosts run the verified installer once so its existing service snapshot and rollback transaction can repair the plist with administrator authorization; later web updates remain one-click.
+  - Product Trust feature doc: https://linear.app/oorebuild/document/feature-product-trust-hardening-release-592dfc525e77
+  - Platform Contract: https://linear.app/oorebuild/document/platform-contract-v1-7c0f39d2c666
+  - Runtime updates feature doc: https://linear.app/oorebuild/document/feature-runtime-updates-from-the-web-ui-6b648f19a3f9
+
 - **Headless iOS signing key access**:
   - Temporary build keychains now grant imported private keys non-interactive application access plus the complete Apple codesigning partition set, become the user-domain default, and are added to the user keychain search list for the duration of the build. The managed boot-time service preserves Oore's private acknowledgement environment, enters the runner account's user bootstrap session, and then drops privileges, so macOS Security can authorize codesign without an interactive prompt; readiness authenticates the actual runner child rather than the privilege-dropping monitor. Cleanup restores the user's previous default, removes only Oore's temporary keychain, and preserves the other search list entries.
   - Legacy P12 normalization now preserves intermediate certificates instead of exporting only the leaf signing certificate.

@@ -22,6 +22,7 @@ use crate::util::api_err;
 
 const SYSTEM_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oored.plist";
 const UPDATE_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oore-updater.plist";
+const RUNNER_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oore-runner.plist";
 const UPDATE_SERVICE: &str = "system/build.oore.oore-updater";
 const UPDATE_STATUS_FILE: &str = ".runtime-update-status.json";
 const UPDATE_REQUEST_DIR: &str = "run/runtime-update-queue";
@@ -33,6 +34,35 @@ fn managed_service_installed() -> bool {
     cfg!(target_os = "macos")
         && Path::new(SYSTEM_SERVICE_PLIST).is_file()
         && Path::new(UPDATE_SERVICE_PLIST).is_file()
+        && runner_service_is_update_ready(Path::new(RUNNER_SERVICE_PLIST))
+}
+
+fn runner_program_arguments_are_update_ready(arguments: &[String]) -> bool {
+    let uses_alpha_wrapper = arguments.first().map(String::as_str) == Some("/bin/launchctl")
+        && arguments.get(1).map(String::as_str) == Some("asuser")
+        && arguments.get(3).map(String::as_str) == Some("/usr/bin/sudo")
+        && arguments.get(4).map(String::as_str) == Some("-E")
+        && arguments.get(5).map(String::as_str) == Some("-H")
+        && arguments.get(6).map(String::as_str) == Some("-u");
+    !uses_alpha_wrapper
+        && arguments.get(1).map(String::as_str) == Some("runner")
+        && arguments.get(2).map(String::as_str) == Some("start")
+}
+
+fn runner_service_is_update_ready(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let Ok(output) = Command::new("/usr/bin/plutil")
+        .args(["-extract", "ProgramArguments", "json", "-o", "-"])
+        .arg(path)
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+        && serde_json::from_slice::<Vec<String>>(&output.stdout)
+            .is_ok_and(|arguments| runner_program_arguments_are_update_ready(&arguments))
 }
 
 fn install_root_from_current_exe() -> anyhow::Result<PathBuf> {
@@ -328,7 +358,7 @@ pub async fn start_update(
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "runtime_update_unmanaged",
-                "Backend updates from the web require the managed macOS update supervisor; run the installer once from Terminal to finish service setup",
+                "Backend updates from the web require the current managed macOS services; run the installer once from Terminal to finish or repair service setup",
             ));
         }
         if matches!(
@@ -404,6 +434,40 @@ pub async fn start_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_runner_service_is_ready_for_web_updates() {
+        let arguments = [
+            "/Users/appbuilder/.oore/bin/oore",
+            "runner",
+            "start",
+            "--config",
+            "/Users/appbuilder/.oore/managed-runner.json",
+        ]
+        .map(str::to_string);
+
+        assert!(runner_program_arguments_are_update_ready(&arguments));
+    }
+
+    #[test]
+    fn wrapped_alpha_runner_service_requires_installer_repair() {
+        let arguments = [
+            "/bin/launchctl",
+            "asuser",
+            "501",
+            "/usr/bin/sudo",
+            "-E",
+            "-H",
+            "-u",
+            "appbuilder",
+            "/Users/appbuilder/.oore/bin/oore",
+            "runner",
+            "start",
+        ]
+        .map(str::to_string);
+
+        assert!(!runner_program_arguments_are_update_ready(&arguments));
+    }
 
     #[test]
     fn queued_request_carries_the_complete_deferred_update_contract() {

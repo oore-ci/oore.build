@@ -4591,18 +4591,21 @@ fn managed_runner_update_service_from_program_arguments(
 }
 
 fn runner_command_from_program_arguments(program_arguments: &[String]) -> &[String] {
-    if program_arguments.first().map(String::as_str) == Some("/bin/launchctl")
+    if runner_service_uses_user_bootstrap_wrapper(program_arguments) {
+        &program_arguments[8..]
+    } else {
+        program_arguments
+    }
+}
+
+fn runner_service_uses_user_bootstrap_wrapper(program_arguments: &[String]) -> bool {
+    program_arguments.first().map(String::as_str) == Some("/bin/launchctl")
         && program_arguments.get(1).map(String::as_str) == Some("asuser")
         && program_arguments.get(3).map(String::as_str) == Some("/usr/bin/sudo")
         && program_arguments.get(4).map(String::as_str) == Some("-E")
         && program_arguments.get(5).map(String::as_str) == Some("-H")
         && program_arguments.get(6).map(String::as_str) == Some("-u")
         && program_arguments.len() > 8
-    {
-        &program_arguments[8..]
-    } else {
-        program_arguments
-    }
 }
 
 fn value_from_program_arguments(program_arguments: &[String], option: &str) -> Option<String> {
@@ -4812,6 +4815,12 @@ fn managed_runner_update_service(install_root: &Path) -> anyhow::Result<Option<&
     ))
 }
 
+fn managed_runner_service_requires_repair(plist: &Path) -> anyhow::Result<bool> {
+    Ok(runner_service_uses_user_bootstrap_wrapper(
+        &plist_program_arguments(plist)?,
+    ))
+}
+
 fn managed_runner_process_pid() -> anyhow::Result<Option<u32>> {
     let (_, system) = managed_service_plist(RUNNER_SERVICE_LABEL)?;
     let service = if system {
@@ -4849,17 +4858,8 @@ fn render_runner_launch_daemon(
     log_path: &Path,
     path: &str,
     user: &str,
-    uid: &str,
 ) -> String {
     let values = [
-        "/bin/launchctl".to_string(),
-        "asuser".to_string(),
-        uid.to_string(),
-        "/usr/bin/sudo".to_string(),
-        "-E".to_string(),
-        "-H".to_string(),
-        "-u".to_string(),
-        user.to_string(),
         executable.display().to_string(),
         "runner".to_string(),
         "start".to_string(),
@@ -4879,6 +4879,10 @@ fn render_runner_launch_daemon(
 <dict>
     <key>Label</key>
     <string>{RUNNER_SERVICE_LABEL}</string>
+    <key>UserName</key>
+    <string>{}</string>
+    <key>SessionCreate</key>
+    <true/>
     <key>ProgramArguments</key>
     <array>
 {arguments}
@@ -4905,6 +4909,7 @@ fn render_runner_launch_daemon(
 </dict>
 </plist>
 "#,
+        launchd_xml_escape(user),
         launchd_xml_escape(&home.display().to_string()),
         launchd_xml_escape(path),
         oore_runner::RUNNER_SERVICE_ACK_PATH_ENV,
@@ -4913,68 +4918,6 @@ fn render_runner_launch_daemon(
         launchd_xml_escape(&log_path.display().to_string()),
         launchd_xml_escape(&log_path.display().to_string()),
     )
-}
-
-fn migrate_runner_service_to_user_bootstrap(plist: &Path) -> anyhow::Result<bool> {
-    let document = plist_json(plist)?;
-    if document.get("UserName").is_none() {
-        return Ok(false);
-    }
-    let user = document
-        .get("UserName")
-        .and_then(serde_json::Value::as_str)
-        .context("managed runner service has no runner account")?;
-    anyhow::ensure!(!user.is_empty() && user != "root", "invalid runner account");
-    let uid_output = std::process::Command::new("/usr/bin/id")
-        .args(["-u", user])
-        .output()
-        .context("failed to resolve the managed runner account")?;
-    anyhow::ensure!(
-        uid_output.status.success(),
-        "managed runner account does not exist"
-    );
-    let uid = String::from_utf8(uid_output.stdout)?.trim().to_string();
-    let spec = managed_runner_service_spec_from_document(&document)?
-        .context("managed runner service is missing authenticated readiness")?;
-    let environment = document
-        .get("EnvironmentVariables")
-        .and_then(serde_json::Value::as_object)
-        .context("managed runner service has no environment")?;
-    let required_environment = |key: &str| {
-        environment
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .with_context(|| format!("managed runner service has no {key}"))
-    };
-    let home = PathBuf::from(required_environment("HOME")?);
-    let path = required_environment("PATH")?;
-    let working_dir = PathBuf::from(
-        document
-            .get("WorkingDirectory")
-            .and_then(serde_json::Value::as_str)
-            .context("managed runner service has no working directory")?,
-    );
-    let log_path = PathBuf::from(
-        document
-            .get("StandardOutPath")
-            .and_then(serde_json::Value::as_str)
-            .context("managed runner service has no log path")?,
-    );
-    let rendered = render_runner_launch_daemon(
-        &spec.executable,
-        &spec.config,
-        &spec.acknowledgement,
-        &home,
-        &working_dir,
-        &log_path,
-        path,
-        user,
-        &uid,
-    );
-    let service = format!("system/{RUNNER_SERVICE_LABEL}");
-    stop_system_launchd_service(&service)?;
-    write_system_runner_plist(&rendered)?;
-    Ok(true)
 }
 
 fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
@@ -5426,7 +5369,6 @@ async fn handle_runner_install_service_inner(
     }
 
     let user = current_user_name()?;
-    let uid = current_user_id()?;
     if args.managed_local && args.config.is_some() {
         anyhow::bail!("--managed-local cannot be combined with --config");
     }
@@ -5594,7 +5536,6 @@ async fn handle_runner_install_service_inner(
             &log_path,
             &path,
             &user,
-            &uid,
         );
         let plist = match write_system_runner_plist(&rendered) {
             Ok(plist) => plist,
@@ -6563,6 +6504,11 @@ struct ManagedRunnerServiceSnapshot {
     configs: Vec<(PathBuf, Option<Vec<u8>>)>,
 }
 
+trait ManagedRunnerServiceRollback {
+    fn stop_and_restore_files(&self) -> anyhow::Result<()>;
+    fn start(&self) -> anyhow::Result<()>;
+}
+
 impl ManagedRunnerServiceSnapshot {
     fn capture() -> anyhow::Result<Self> {
         let system_plist = system_runner_plist();
@@ -6618,7 +6564,9 @@ impl ManagedRunnerServiceSnapshot {
             configs,
         })
     }
+}
 
+impl ManagedRunnerServiceRollback for ManagedRunnerServiceSnapshot {
     fn stop_and_restore_files(&self) -> anyhow::Result<()> {
         let active_acknowledgement = self
             .system_plist
@@ -6961,13 +6909,6 @@ impl UpdateServiceControl for LiveUpdateServiceControl<'_> {
             let (plist, system) = managed_service_plist(label)?;
             if system {
                 let service = format!("system/{RUNNER_SERVICE_LABEL}");
-                if migrate_runner_service_to_user_bootstrap(&plist)? {
-                    start_system_runner_service(&plist, &service, true)?;
-                    if let Some(ack) = ack {
-                        ack.wait_for(activation).await?;
-                    }
-                    return Ok(());
-                }
                 ensure_system_runner_service_active(&plist, &service, previous_pid)?;
                 if let Some(ack) = ack {
                     ack.wait_for(activation).await?;
@@ -7098,14 +7039,6 @@ impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
             system,
             "deferred updates require the boot-time runner service"
         );
-        if migrate_runner_service_to_user_bootstrap(&plist)? {
-            let service = format!("system/{RUNNER_SERVICE_LABEL}");
-            start_system_runner_service(&plist, &service, true)?;
-            if let Some(ack) = ack {
-                ack.wait_for(activation).await?;
-            }
-            return Ok(());
-        }
         let spec = managed_runner_service_spec(&plist)?;
         if let Some(spec) = &spec {
             clear_runner_service_acknowledgement(&spec.acknowledgement)?;
@@ -7306,7 +7239,7 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     channel: ReleaseChannel,
     repo: &str,
     daemon_migration: Option<&ManagedDaemonServiceMigration>,
-    runner_migration: Option<&ManagedRunnerServiceSnapshot>,
+    runner_migration: Option<&dyn ManagedRunnerServiceRollback>,
     claim_barrier: Option<&RunnerClaimBarrier>,
     services: &UpdateServicePlan,
     rollback_state: Option<&UpdateRollbackState>,
@@ -7603,6 +7536,10 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         "web updates require the boot-time managed runner service"
     );
     anyhow::ensure!(
+        !managed_runner_service_requires_repair(&runner_plist)?,
+        "this runner service needs a one-time repair; run the current installer from Terminal before updating from the web UI"
+    );
+    anyhow::ensure!(
         managed_runner_update_service(&install_root)?.is_some(),
         "managed runner service does not use the selected Oore install"
     );
@@ -7868,6 +7805,14 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let daemon_service_is_installed = daemon_service_plist.is_file();
     let daemon_was_loaded = launchd_service_loaded(DAEMON_SERVICE_LABEL);
     let (runner_plist, runner_is_system) = managed_service_plist(RUNNER_SERVICE_LABEL)?;
+    let runner_service_requires_repair = runner_plist.is_file()
+        && runner_is_system
+        && managed_runner_service_requires_repair(&runner_plist)?;
+    if runner_service_requires_repair && !args.ensure_managed_runner {
+        anyhow::bail!(
+            "this runner service needs a one-time repair; rerun the verified installer for the installed channel before using ordinary updates"
+        );
+    }
     let (web_plist, web_is_system) = managed_service_plist(WEB_SERVICE_LABEL)?;
     let web_is_managed = launchd_service_loaded(WEB_SERVICE_LABEL);
     if (daemon_service_is_installed && daemon_service_is_system)
@@ -8111,7 +8056,9 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         channel,
         &repo,
         daemon_migration.as_ref(),
-        runner_migration.as_ref(),
+        runner_migration
+            .as_ref()
+            .map(|snapshot| snapshot as &dyn ManagedRunnerServiceRollback),
         Some(&barrier),
         &services,
         Some(&rollback_state),
@@ -8338,17 +8285,13 @@ mod tests {
             Path::new("/Users/me/.oore/logs/oore-runner.log"),
             "/usr/bin:/bin",
             "me",
-            "501",
         );
 
         assert!(plist.contains("<string>build.oore.oore-runner</string>"));
-        assert!(!plist.contains("<key>UserName</key>"));
-        assert!(plist.contains("<string>/bin/launchctl</string>"));
-        assert!(plist.contains("<string>asuser</string>\n        <string>501</string>"));
-        assert!(plist.contains("<string>/usr/bin/sudo</string>"));
-        assert!(plist.contains(
-            "<string>-E</string>\n        <string>-H</string>\n        <string>-u</string>\n        <string>me</string>"
-        ));
+        assert!(plist.contains("<key>UserName</key>\n    <string>me</string>"));
+        assert!(plist.contains("<key>SessionCreate</key>\n    <true/>"));
+        assert!(!plist.contains("<string>/bin/launchctl</string>"));
+        assert!(!plist.contains("<string>/usr/bin/sudo</string>"));
         assert!(!plist.contains("LimitLoadToSessionType"));
         assert!(plist.contains("<string>/Users/me/.oore/bin/oore</string>"));
         assert!(plist.contains("<string>runner</string>\n        <string>start</string>"));
@@ -8430,13 +8373,36 @@ mod tests {
             Path::new("/Users/a&b/runner.log"),
             "/usr/bin:/a&b",
             "a&b",
-            "501",
         );
 
         assert!(plist.contains("/Users/a&amp;b/oore"));
         assert!(plist.contains("/Users/a&amp;b/runner-service-ack.json"));
         assert!(plist.contains("/usr/bin:/a&amp;b"));
         assert!(plist.contains("<string>a&amp;b</string>"));
+    }
+
+    #[test]
+    fn wrapped_alpha_runner_service_requires_installer_repair() {
+        let arguments = vec![
+            "/bin/launchctl",
+            "asuser",
+            "501",
+            "/usr/bin/sudo",
+            "-E",
+            "-H",
+            "-u",
+            "appbuilder",
+            "/Users/appbuilder/.oore/bin/oore",
+            "runner",
+            "start",
+            "--config",
+            "/Users/appbuilder/.oore/managed-runner.json",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        assert!(runner_service_uses_user_bootstrap_wrapper(&arguments));
     }
 
     #[test]
@@ -9145,6 +9111,32 @@ mod tests {
         rollback_saw_restored_database: bool,
     }
 
+    struct SimulatedRunnerServiceRollback {
+        plist: PathBuf,
+        config: PathBuf,
+        previous_plist: Vec<u8>,
+        previous_config: Vec<u8>,
+        was_loaded: bool,
+        running: std::cell::Cell<bool>,
+        ready: std::cell::Cell<bool>,
+    }
+
+    impl ManagedRunnerServiceRollback for SimulatedRunnerServiceRollback {
+        fn stop_and_restore_files(&self) -> anyhow::Result<()> {
+            self.running.set(false);
+            self.ready.set(false);
+            fs::write(&self.plist, &self.previous_plist)?;
+            fs::write(&self.config, &self.previous_config)?;
+            Ok(())
+        }
+
+        fn start(&self) -> anyhow::Result<()> {
+            self.running.set(self.was_loaded);
+            self.ready.set(self.was_loaded);
+            Ok(())
+        }
+    }
+
     impl UpdateServiceControl for MigrationFailureControl {
         fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
             if label == DAEMON_SERVICE_LABEL
@@ -9320,6 +9312,114 @@ mod tests {
         assert!(control.daemon_stopped);
         assert!(control.rollback_saw_restored_database);
         assert_eq!(fs::read(database).unwrap(), expected_database);
+    }
+
+    #[tokio::test]
+    async fn wrapper_repair_failure_restores_release_database_and_runner_service_snapshot() {
+        let (temp, install, stage, release_snapshot) = prepare_update_transaction();
+        let database = temp.path().join("state/oore.db");
+        let key = temp.path().join("state/master.key");
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&database)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE state (value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO state (value) VALUES ('before')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        fs::write(&key, [9_u8; 32]).unwrap();
+
+        let backup = temp.path().join("backup.tar.gz");
+        let backup_database = database.clone();
+        let backup_key = key.clone();
+        let backup_output = backup.clone();
+        tokio::task::spawn_blocking(move || {
+            create_backup_archive(&backup_database, &backup_key, &backup_output)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let unpacked = tempfile::tempdir().unwrap();
+        let unpack_backup_path = backup.clone();
+        let unpacked_path = unpacked.path().to_path_buf();
+        tokio::task::spawn_blocking(move || unpack_backup(&unpack_backup_path, &unpacked_path))
+            .await
+            .unwrap()
+            .unwrap();
+        let previous_database = fs::read(unpacked.path().join(BACKUP_DATABASE_FILE)).unwrap();
+        fs::write(&database, b"candidate database migration").unwrap();
+
+        let plist = temp.path().join("build.oore.oore-runner.plist");
+        let config = temp.path().join("managed-runner.json");
+        let previous_plist = b"alpha.18 launchctl asuser sudo wrapper".to_vec();
+        let previous_config = b"original runner identity and registration".to_vec();
+        fs::write(&plist, b"candidate canonical UserName SessionCreate plist").unwrap();
+        fs::write(&config, b"candidate config").unwrap();
+        let runner_snapshot = SimulatedRunnerServiceRollback {
+            plist: plist.clone(),
+            config: config.clone(),
+            previous_plist: previous_plist.clone(),
+            previous_config: previous_config.clone(),
+            was_loaded: true,
+            running: std::cell::Cell::new(true),
+            ready: std::cell::Cell::new(true),
+        };
+        let rollback = UpdateRollbackState {
+            backup,
+            database: database.clone(),
+            key,
+        };
+        let services = UpdateServicePlan {
+            runner_service: None,
+            ..runner_update_plan(false, false)
+        };
+        let mut control = MigrationFailureControl {
+            install_root: install.clone(),
+            database: database.clone(),
+            expected_database: previous_database.clone(),
+            readiness_failed: false,
+            daemon_stopped: false,
+            rollback_saw_restored_database: false,
+        };
+
+        let error = install_release_with_rollback(
+            &stage,
+            &install,
+            &release_snapshot,
+            ReleaseChannel::Stable,
+            "oorebuild/oore",
+            None,
+            Some(&runner_snapshot),
+            None,
+            &services,
+            Some(&rollback),
+            &mut control,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("post-migration readiness"));
+        assert_eq!(
+            fs::read_to_string(install.join("bin/oore")).unwrap(),
+            "old-binary"
+        );
+        assert_eq!(fs::read(&database).unwrap(), previous_database);
+        assert_eq!(fs::read(plist).unwrap(), previous_plist);
+        assert_eq!(fs::read(config).unwrap(), previous_config);
+        assert!(runner_snapshot.running.get());
+        assert!(runner_snapshot.ready.get());
+        assert!(control.rollback_saw_restored_database);
     }
 
     fn v2_marker_has_identity(marker: &str, identity: &str) -> bool {

@@ -51,6 +51,14 @@ processes, and rolls back on failure. After this transition, use `oore update`
 normally.
 :::
 
+::: warning One-time repair for alpha.17 and alpha.18
+Those alpha releases installed a runner service topology that the web updater
+cannot repair without administrator authorization. The backend update button is
+disabled on an affected host. Run the current installer once for the same
+channel; it snapshots and repairs the service transactionally. Later updates
+remain available from the web UI.
+:::
+
 ### Source checkout update
 
 ```bash
