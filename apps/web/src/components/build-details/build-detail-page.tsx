@@ -75,6 +75,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const artifactsQuery = useArtifacts(buildId, {
     refetchInterval: isTerminal ? false : 3000,
   })
+  const artifacts = artifactsQuery.data?.artifacts ?? []
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -314,9 +315,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           {usesTabbedArtifacts ? (
             <TabsTrigger value="artifacts">
               Artifacts
-              {artifactsQuery.data?.artifacts.length
-                ? ` (${artifactsQuery.data.artifacts.length})`
-                : ''}
+              {artifacts.length ? ` (${artifacts.length})` : ''}
             </TabsTrigger>
           ) : null}
         </TabsList>
@@ -349,7 +348,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
             {usesTabbedArtifacts ? (
               <TabsContent value="artifacts">
                 <ArtifactsPanel
-                  artifacts={artifactsQuery.data?.artifacts ?? []}
+                  artifacts={artifacts}
                   isLoading={artifactsQuery.isLoading}
                   buildStatus={build.status}
                   canManageShareLinks={canManageShareLinks}
@@ -360,7 +359,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           {!usesTabbedArtifacts ? (
             <aside aria-label="Build output" className="sticky top-6">
               <ArtifactsPanel
-                artifacts={artifactsQuery.data?.artifacts ?? []}
+                artifacts={artifacts}
                 isLoading={artifactsQuery.isLoading}
                 buildStatus={build.status}
                 canManageShareLinks={canManageShareLinks}

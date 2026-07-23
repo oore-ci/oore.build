@@ -376,24 +376,18 @@ export function ArtifactInstallPage({
     refetchInterval: isTerminal ? false : 3000,
   })
   const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
-  const projectQuery = useProject(
-    isQaViewer ? (buildQuery.data?.build.project_id ?? '') : '',
-  )
-  const projectArtifactsQuery = useProjectArtifacts(
-    isQaViewer ? (buildQuery.data?.build.project_id ?? '') : '',
-  )
+  const qaProjectId = isQaViewer
+    ? (buildQuery.data?.build.project_id ?? '')
+    : ''
+  const projectQuery = useProject(qaProjectId)
+  const projectArtifactsQuery = useProjectArtifacts(qaProjectId)
+  const artifacts = artifactsQuery.data?.artifacts ?? []
   const device = detectInstallDevice(
     typeof navigator === 'undefined' ? '' : navigator.userAgent,
   )
   const artifact = isQaViewer
-    ? selectInstallArtifact(
-        artifactsQuery.data?.artifacts ?? [],
-        device,
-        artifactId,
-      )
-    : artifactsQuery.data?.artifacts.find(
-        (candidate) => candidate.id === artifactId,
-      )
+    ? selectInstallArtifact(artifacts, device, artifactId)
+    : artifacts.find((candidate) => candidate.id === artifactId)
 
   if (buildQuery.isLoading || artifactsQuery.isLoading) {
     return <ArtifactInstallLoading />
@@ -420,7 +414,7 @@ export function ArtifactInstallPage({
     return (
       <QaReleaseDetail
         artifact={artifact}
-        artifacts={artifactsQuery.data?.artifacts ?? []}
+        artifacts={artifacts}
         build={build}
         historyArtifacts={projectArtifactsQuery.data?.artifacts ?? []}
         historyError={projectArtifactsQuery.isError}

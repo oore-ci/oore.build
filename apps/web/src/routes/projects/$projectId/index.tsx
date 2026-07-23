@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
@@ -24,6 +24,7 @@ import { relativeTime } from '@/lib/format-utils'
 import { ApiClientError } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
+import type { ListBuildsResponse } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -94,6 +95,29 @@ interface ProjectDetailSearch {
 const PROJECT_BUILD_SORT_VALUES = new Set<ProjectBuildSort>(
   Object.keys(PROJECT_BUILD_SORT_OPTIONS) as Array<ProjectBuildSort>,
 )
+
+const EMPTY_LAST_BUILD_BY_PIPELINE = new Map<
+  string,
+  { status: string; time: number }
+>()
+
+function selectProjectBuildSummary({ builds, total }: ListBuildsResponse) {
+  const lastBuildByPipeline = new Map<
+    string,
+    { status: string; time: number }
+  >()
+
+  for (const build of builds) {
+    if (build.pipeline_id && !lastBuildByPipeline.has(build.pipeline_id)) {
+      lastBuildByPipeline.set(build.pipeline_id, {
+        status: build.status,
+        time: build.queued_at,
+      })
+    }
+  }
+
+  return { buildCount: total, lastBuildByPipeline }
+}
 
 function validateProjectSearch(
   search: Record<string, unknown>,
@@ -166,9 +190,12 @@ function ProjectDetailPage() {
     offset: (pipelinePage - 1) * pipelinePageSize,
   })
   const { data: pipelinesData } = pipelinesQuery
-  const { data: summaryBuildsData } = useBuilds(
+  const { data: buildSummary } = useBuilds(
     { project_id: projectId, limit: 20 },
-    { refetchInterval: 15_000 },
+    {
+      refetchInterval: 15_000,
+      select: selectProjectBuildSummary,
+    },
   )
   const deleteMutation = useDeleteProject()
   const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
@@ -220,21 +247,9 @@ function ProjectDetailPage() {
     string | undefined
   >()
 
-  const lastBuildByPipeline = useMemo(() => {
-    const byPipeline = new Map<string, { status: string; time: number }>()
-
-    for (const build of summaryBuildsData?.builds ?? []) {
-      if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
-        byPipeline.set(build.pipeline_id, {
-          status: build.status,
-          time: build.queued_at,
-        })
-      }
-    }
-
-    return byPipeline
-  }, [summaryBuildsData?.builds])
-  const buildCount = summaryBuildsData?.total ?? data?.build_count ?? 0
+  const lastBuildByPipeline =
+    buildSummary?.lastBuildByPipeline ?? EMPTY_LAST_BUILD_BY_PIPELINE
+  const buildCount = buildSummary?.buildCount ?? data?.build_count ?? 0
 
   function updatePipelineSearch(updates: Partial<ProjectDetailSearch>) {
     void navigate({

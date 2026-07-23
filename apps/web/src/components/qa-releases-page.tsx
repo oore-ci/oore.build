@@ -8,7 +8,13 @@ import {
   Smartphone as SmartPhone01Icon,
 } from 'lucide-react'
 
-import type { Artifact, Build, BuildStatus, Project } from '@/lib/types'
+import type {
+  Artifact,
+  Build,
+  BuildStatus,
+  ListBuildsResponse,
+  Project,
+} from '@/lib/types'
 import { useArtifactsForBuilds, useBuilds } from '@/hooks/use-builds'
 import { useProjectPages } from '@/hooks/use-projects'
 import { usePageClamp } from '@/hooks/use-page-clamp'
@@ -16,6 +22,7 @@ import {
   detectInstallDevice,
   selectInstallArtifact,
 } from '@/lib/artifact-install'
+import type { InstallDevice } from '@/lib/artifact-install'
 import { relativeTime } from '@/lib/format-utils'
 import {
   changelogSummary,
@@ -64,6 +71,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 const RELEASES_PER_PAGE = 10
 const QaProjectPicker = lazy(() => import('./qa-project-picker'))
+
+function selectActivityBuilds({ builds, total }: ListBuildsResponse) {
+  return {
+    builds,
+    succeededBuildIds: builds.flatMap((build) =>
+      build.status === 'succeeded' ? [build.id] : [],
+    ),
+    total,
+  }
+}
 
 function QaActivityPagination({
   disabled,
@@ -143,18 +160,17 @@ function QaActivityRow({
   artifactState,
   artifacts,
   build,
+  device,
   isLatestInstallable,
   versionBase,
 }: {
   artifactState: 'error' | 'loading' | 'not_applicable' | 'resolved'
   artifacts: Array<Artifact>
   build: Build
+  device: InstallDevice
   isLatestInstallable: boolean
   versionBase: string | null
 }) {
-  const device = detectInstallDevice(
-    typeof navigator === 'undefined' ? '' : navigator.userAgent,
-  )
   const artifact = selectInstallArtifact(artifacts, device)
   const version = qaBuildVersion(build, artifacts, versionBase)
   const isActive = ['queued', 'scheduled', 'assigned', 'running'].includes(
@@ -232,46 +248,37 @@ function ActivityPanel({
   const [pickerReady, setPickerReady] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const offset = (page - 1) * RELEASES_PER_PAGE
-  const buildsQuery = useBuilds({
-    project_id: project.id,
-    status: statuses.length > 0 ? statuses : undefined,
-    limit: RELEASES_PER_PAGE,
-    offset,
-  })
-  const builds = useMemo(
-    () => buildsQuery.data?.builds ?? [],
-    [buildsQuery.data?.builds],
+  const buildsQuery = useBuilds(
+    {
+      project_id: project.id,
+      status: statuses.length > 0 ? statuses : undefined,
+      limit: RELEASES_PER_PAGE,
+      offset,
+    },
+    { select: selectActivityBuilds },
   )
-  const succeededBuildIds = useMemo(
-    () =>
-      builds.flatMap((build) =>
-        build.status === 'succeeded' ? [build.id] : [],
-      ),
-    [builds],
-  )
+  const builds = buildsQuery.data?.builds ?? []
+  const succeededBuildIds = buildsQuery.data?.succeededBuildIds ?? []
   const artifactsQuery = useArtifactsForBuilds(succeededBuildIds)
-  const artifactsByBuild = useMemo(() => {
+  const { artifactsByBuild, versionBase } = useMemo(() => {
+    const artifacts = artifactsQuery.data?.artifacts ?? []
     const byBuild = new Map<string, Array<Artifact>>()
-    for (const artifact of artifactsQuery.data?.artifacts ?? []) {
+    for (const artifact of artifacts) {
       const values = byBuild.get(artifact.build_id) ?? []
       values.push(artifact)
       byBuild.set(artifact.build_id, values)
     }
-    return byBuild
+    return {
+      artifactsByBuild: byBuild,
+      versionBase: qaProjectVersionBase(artifacts),
+    }
   }, [artifactsQuery.data?.artifacts])
-  const allArtifacts = useMemo(
-    () => [...artifactsByBuild.values()].flat(),
-    [artifactsByBuild],
+  const device = detectInstallDevice(
+    typeof navigator === 'undefined' ? '' : navigator.userAgent,
   )
-  const versionBase = qaProjectVersionBase(allArtifacts)
   const latestInstallableBuildId = builds.find((build) => {
     const artifacts = artifactsByBuild.get(build.id) ?? []
-    return selectInstallArtifact(
-      artifacts,
-      detectInstallDevice(
-        typeof navigator === 'undefined' ? '' : navigator.userAgent,
-      ),
-    )
+    return selectInstallArtifact(artifacts, device)
   })?.id
   const total = buildsQuery.data?.total ?? 0
   const filterLabel =
@@ -480,6 +487,7 @@ function ActivityPanel({
                 <QaActivityRow
                   key={build.id}
                   build={build}
+                  device={device}
                   artifacts={artifactsByBuild.get(build.id) ?? []}
                   artifactState={
                     build.status !== 'succeeded'
