@@ -22,27 +22,10 @@ import {
   updateExternalAccessTrustedProxySettings,
   updateInstancePreferences,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
-
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
+import { useApiContext } from '@/hooks/use-api-context'
 
 export function useArtifactStorageSettings() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifact-storage-settings'],
@@ -54,9 +37,7 @@ export function useArtifactStorageSettings() {
 
 export function useUpdateArtifactStorageSettings() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: UpdateArtifactStorageSettingsRequest) => {
@@ -74,9 +55,7 @@ export function useUpdateArtifactStorageSettings() {
 }
 
 export function useInstancePreferences(options?: { enabled?: boolean }) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'instance-preferences'],
@@ -88,9 +67,7 @@ export function useInstancePreferences(options?: { enabled?: boolean }) {
 
 export function useUpdateInstancePreferences() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: UpdateInstancePreferencesRequest) => {
@@ -111,9 +88,7 @@ export function useUpdateInstancePreferences() {
 }
 
 export function useExternalAccessOidc() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-oidc'],
@@ -125,9 +100,7 @@ export function useExternalAccessOidc() {
 
 export function useConfigureExternalAccessOidc() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: ConfigureExternalAccessOidcRequest) => {
@@ -148,8 +121,7 @@ export function useConfigureExternalAccessOidc() {
 }
 
 export function useTestOidcConnection() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: TestOidcConnectionRequest) => {
@@ -162,9 +134,7 @@ export function useTestOidcConnection() {
 }
 
 export function useExternalAccessPreflight() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-preflight'],
@@ -177,9 +147,7 @@ export function useExternalAccessPreflight() {
 export function useExternalAccessNetworkSettings(options?: {
   enabled?: boolean
 }) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-network-settings'],
@@ -191,9 +159,7 @@ export function useExternalAccessNetworkSettings(options?: {
 
 export function useUpdateExternalAccessNetworkSettings() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: UpdateExternalAccessNetworkSettingsRequest) => {
@@ -217,9 +183,7 @@ export function useUpdateExternalAccessNetworkSettings() {
 }
 
 export function useExternalAccessTrustedProxySettings() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'external-access-trusted-proxy'],
@@ -231,9 +195,7 @@ export function useExternalAccessTrustedProxySettings() {
 
 export function useUpdateExternalAccessTrustedProxySettings() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: UpdateTrustedProxySettingsRequest) => {

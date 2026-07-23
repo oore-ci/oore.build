@@ -6,9 +6,7 @@ import {
   createLogFrameBatcher,
   mergeBuildLogChunks,
 } from '@/lib/log-stream-utils'
-import { useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
+import { useApiContext } from '@/hooks/use-api-context'
 
 interface UseLogStreamResult {
   logs: Array<BuildLogChunk>
@@ -63,9 +61,7 @@ export function useLogStream(
   const onDone = options?.onDone
   const [stream, updateStream] = useReducer(streamReducer, initialStreamState)
 
-  const instance = useActiveInstance()
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
-  const token = useAuthStore((s) => s.token)
+  const { baseUrl, token } = useApiContext()
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)

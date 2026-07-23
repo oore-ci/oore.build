@@ -1,30 +1,13 @@
 import { useMutation } from '@tanstack/react-query'
 
-import type { GitHubAppStartRequest, Instance } from '@/lib/types'
+import type { GitHubAppStartRequest } from '@/lib/types'
 import { githubAppStart, setupOidcStart } from '@/lib/api'
-import {
-  resolveInstanceApiBaseUrl,
-  resolveRequiredInstanceApiBaseUrl,
-} from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
+import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useActiveInstance } from '@/stores/instance-store'
-
-function useAuthToken(): string | null {
-  const token = useAuthStore((state) => state.token)
-  const expiresAt = useAuthStore((state) => state.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function requireInstance(instance: Instance | null): string {
-  return resolveRequiredInstanceApiBaseUrl(instance)
-}
+import { useApiContext } from '@/hooks/use-api-context'
 
 export function usePreviewGitHubAppSetup() {
-  const instance = useActiveInstance()
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: GitHubAppStartRequest) => {
@@ -46,6 +29,11 @@ export function useSetupOidcVerificationStart() {
     }: {
       sessionToken: string
       redirectUri: string
-    }) => setupOidcStart(requireInstance(instance), sessionToken, redirectUri),
+    }) =>
+      setupOidcStart(
+        resolveRequiredInstanceApiBaseUrl(instance),
+        sessionToken,
+        redirectUri,
+      ),
   })
 }

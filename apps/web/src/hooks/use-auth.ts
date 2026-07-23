@@ -9,27 +9,11 @@ import {
   reEnableUser,
   updateUserRole,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
-
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
+import { useApiContext } from '@/hooks/use-api-context'
 
 export function useUsers() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'users'],
@@ -40,9 +24,7 @@ export function useUsers() {
 
 export function useInviteUser() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: InviteUserRequest) => {
@@ -60,9 +42,7 @@ export function useInviteUser() {
 
 export function useUpdateUserRole() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: ({
@@ -86,9 +66,7 @@ export function useUpdateUserRole() {
 
 export function useReEnableUser() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (userId: string) => {
@@ -106,9 +84,7 @@ export function useReEnableUser() {
 
 export function useDeleteUser() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (userId: string) => {
@@ -127,8 +103,7 @@ export function useDeleteUser() {
 export function useLogout() {
   const queryClient = useQueryClient()
   const router = useRouter()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
   const clearAuth = useAuthStore((s) => s.clearAuth)
 
   return useMutation({

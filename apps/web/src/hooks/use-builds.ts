@@ -30,9 +30,7 @@ import {
   listBuilds,
   rerunBuild,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
+import { useApiContext } from '@/hooks/use-api-context'
 
 const BUILD_POLL_INTERVAL_MS = 3_000
 
@@ -43,19 +41,6 @@ const TERMINAL_STATUSES: Set<string> = new Set<string>([
   'timed_out',
   'expired',
 ])
-
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
 
 export function useBuilds<TData = ListBuildsResponse>(
   params?: {
@@ -74,9 +59,7 @@ export function useBuilds<TData = ListBuildsResponse>(
     select?: (data: ListBuildsResponse) => TData
   },
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
   const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
 
   return useQuery<ListBuildsResponse, Error, TData>({
@@ -103,9 +86,7 @@ export function useBuild(
   buildId: string,
   options?: Pick<UseQueryOptions<BuildDetailResponse>, 'refetchInterval'>,
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build', buildId],
@@ -118,9 +99,7 @@ export function useBuild(
 
 export function useCreateBuild() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
   const instanceId = instance?.id ?? '__none__'
 
   return useMutation({
@@ -192,9 +171,7 @@ export function useBuildChangelogPreview(
   params: { pipeline_id: string; branch?: string; commit_sha?: string },
   options?: { enabled?: boolean },
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery<BuildChangelogPreviewResponse>({
     queryKey: [
@@ -219,9 +196,7 @@ export function useBuildChangelogPreview(
 
 export function useCancelBuild() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (buildId: string) => {
@@ -242,9 +217,7 @@ export function useCancelBuild() {
 
 export function useRerunBuild() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (buildId: string) => {
@@ -264,9 +237,7 @@ export function useRerunBuild() {
 }
 
 export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-logs', buildId],
@@ -308,9 +279,7 @@ export function useArtifacts(
   buildId: string,
   options?: { refetchInterval?: number | false },
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifacts', buildId],
@@ -323,9 +292,7 @@ export function useArtifacts(
 }
 
 export function useProjectArtifacts(projectId: string, limit = 50) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [
@@ -342,9 +309,7 @@ export function useProjectArtifacts(projectId: string, limit = 50) {
 }
 
 export function useArtifactsForBuilds(buildIds: Array<string>) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-artifacts', buildIds],
@@ -356,8 +321,7 @@ export function useArtifactsForBuilds(buildIds: Array<string>) {
 }
 
 export function useArtifactDownloadLink() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
 
   return useMutation({
     mutationFn: (artifactId: string) => {
@@ -369,10 +333,8 @@ export function useArtifactDownloadLink() {
 }
 
 export function useArtifactInstallLink() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, instance, token } = useApiContext()
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
 
   return useMutation({
     mutationFn: (artifactId: string) => {
@@ -388,10 +350,8 @@ export function useArtifactInstallLink() {
 }
 
 export function useCreateScopedDownloadToken() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, instance, token } = useApiContext()
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
 
   return useMutation({
     mutationFn: ({

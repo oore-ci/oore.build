@@ -1,21 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { listAuditLogs } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
-
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
+import { useApiContext } from '@/hooks/use-api-context'
 
 export function useAuditLogs(params?: {
   limit?: number
@@ -28,9 +13,7 @@ export function useAuditLogs(params?: {
   sort?: 'created_at' | 'actor_email' | 'action' | 'resource_type'
   direction?: 'asc' | 'desc'
 }) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'audit-logs', params ?? {}],

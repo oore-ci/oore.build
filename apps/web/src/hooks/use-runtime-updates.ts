@@ -2,9 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type { RuntimeReleaseStatus, RuntimeUpdateStatus } from '@/lib/types'
 import { getBackendUpdateStatus, startBackendUpdate } from '@/lib/api'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance } from '@/stores/instance-store'
+import { useApiContext } from '@/hooks/use-api-context'
 
 interface BackendRelease {
   version?: string
@@ -57,9 +56,7 @@ async function localUpdateRequest<T>(
 
 export function useRuntimeUpdates() {
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
-  const token = useAuthStore((state) => state.token)
+  const { baseUrl, instance, token } = useApiContext()
   const isOwner = useAuthStore((state) => state.user?.role === 'owner')
   const instanceKey = instance?.id ?? '__none__'
 
