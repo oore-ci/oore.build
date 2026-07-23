@@ -33,6 +33,9 @@ grep -q 'releases.oore.build' scripts/install.sh
 grep -Fq 'latest/$OORE_CHANNEL.json' scripts/install.sh
 grep -q 'releases.oore.build' apps/web/tools/oore-web.js
 grep -q 'releases.oore.build' crates/oore/src/main.rs
+grep -q 'tools/stage-fvm.sh arm64' .github/workflows/release.yml
+grep -q 'tools/stage-fvm.sh x86_64' .github/workflows/release.yml
+bash -n tools/stage-fvm.sh
 if grep -Eq 'make deploy-(site|docs|web)-only &' .github/workflows/release.yml; then
   echo "[release-smoke] Pages deploys must not run concurrently." >&2
   exit 1

@@ -25,29 +25,24 @@ The one-line installer (`curl -fsSL https://oore.build/install | bash`) requires
 
 macOS includes these by default.
 
-## Required tools for running Flutter build jobs
+## Managed Flutter toolchain
 
-After install, runners/build hosts should have:
+Oore includes FVM in the release and manages Flutter versions for each build.
+You do not need to install FVM or Flutter before installing Oore.
 
-- `git`
-- `fvm`
-- `flutter`
-- `xcodebuild`
+Version resolution is:
 
-Install FVM via Homebrew:
+1. The repository's `.fvmrc`
+2. The pipeline's `flutter_version`
+3. Oore-managed stable Flutter
 
-```bash
-brew tap leoafarias/fvm
-brew install fvm
-```
+The selected SDK downloads automatically on the first build and is cached for
+later builds.
 
-Verify:
+Platform SDKs remain host requirements:
 
-```bash
-fvm --version
-flutter --version
-xcodebuild -version
-```
+- Android builds require a supported JDK and Android SDK.
+- iOS and macOS builds require full Xcode, not only the Command Line Tools.
 
 ## Optional tools for source development
 

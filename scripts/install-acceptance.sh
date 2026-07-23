@@ -68,6 +68,30 @@ install_release_metadata "$version_file"
 
 rm -rf "$metadata_dir"
 
+fvm_transition_dir="$(mktemp -d)"
+OORE_INSTALL_ROOT="$fvm_transition_dir/install"
+BIN_DIR="$OORE_INSTALL_ROOT/bin"
+LIBEXEC_DIR="$OORE_INSTALL_ROOT/libexec"
+LOG_DIR="$OORE_INSTALL_ROOT/logs"
+WEB_BINARY="$BIN_DIR/oore-web"
+WEB_DIST_DIR="$OORE_INSTALL_ROOT/web-dist"
+mkdir -p "$fvm_transition_dir/release/bin" "$fvm_transition_dir/release/libexec/fvm/src"
+printf '#!/bin/sh\nexit 0\n' > "$fvm_transition_dir/release/bin/oored"
+printf '#!/bin/sh\nexit 0\n' > "$fvm_transition_dir/release/bin/oore"
+printf '#!/bin/sh\nexit 0\n' > "$fvm_transition_dir/release/bin/fvm"
+printf '#!/bin/sh\nexit 0\n' > "$fvm_transition_dir/release/libexec/fvm/fvm"
+printf 'snapshot\n' > "$fvm_transition_dir/release/libexec/fvm/src/fvm.snapshot"
+printf '2.0.0\n' > "$fvm_transition_dir/release/VERSION"
+chmod +x "$fvm_transition_dir/release/bin/"* "$fvm_transition_dir/release/libexec/fvm/fvm"
+OORE_INSTALL_MODE=backend
+RESOLVED_CHANNEL=alpha
+OORE_GITHUB_REPO=oore-ci/oore.build
+install_extracted_release "$fvm_transition_dir/release"
+[[ -x "$BIN_DIR/fvm" ]]
+[[ -x "$LIBEXEC_DIR/fvm/fvm" ]]
+[[ "$(< "$LIBEXEC_DIR/fvm/src/fvm.snapshot")" == "snapshot" ]]
+rm -rf "$fvm_transition_dir"
+
 transition_dir="$(mktemp -d)"
 release_dir="$transition_dir/release"
 TMP_DIR="$transition_dir/download"
@@ -284,6 +308,16 @@ grep -q -- '<string>opaque-ticket</string>' "$DAEMON_LAUNCH_DAEMON_PLIST"
 unset -f sudo id curl_quick
 rm -rf "$service_bin_dir"
 rm -f "$sudo_call" "$oored_call" "$oore_call"
+
+service_order="$(mktemp)"
+(
+  install_update_service() { printf 'updater\n' >> "$service_order"; }
+  install_daemon_service() { printf 'daemon\n' >> "$service_order"; }
+  install_runner_service() { printf 'runner\n' >> "$service_order"; }
+  install_backend_services
+)
+[[ "$(< "$service_order")" == $'updater\ndaemon\nrunner' ]]
+rm -f "$service_order"
 
 curl_args="$(mktemp)"
 OORE_CHANNEL=alpha

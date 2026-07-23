@@ -136,7 +136,8 @@ For Flutter version resolution:
 
 1. `.fvmrc` in the repository — **highest priority**
 2. `flutter_version` in `.oore.yaml` — **fallback**
-3. Pipeline's Flutter version setting in the UI — **final fallback**
+3. Pipeline's Flutter version setting in the UI — **fallback**
+4. Oore-managed stable Flutter — **default**
 
 ## Validation
 

@@ -26,7 +26,7 @@ If your repository doesn't contain a `.oore.yaml` file, you can configure the pi
 | ------------------- | ----------------------------------------------------------------- |
 | **Name**            | A label for this pipeline (e.g., "Android Release", "iOS Ad Hoc") |
 | **Platforms**       | Select target platforms: Android, iOS, macOS                      |
-| **Flutter version** | Optional fallback version (overridden by `.fvmrc` in the repo)    |
+| **Flutter version** | Optional fallback version; `.fvmrc` wins and managed stable is the default |
 | **Enabled**         | Toggle the pipeline on/off                                        |
 
 ### 3. Configure build commands

@@ -191,11 +191,10 @@ export function PipelineIdentityAndConfigSection({
                       />
                     </FormControl>
                     <p className="text-xs text-muted-foreground">
-                      If set, runner executes Flutter commands using{' '}
-                      <span className="font-mono">fvm use &lt;version&gt;</span>
-                      . If unset, oore will auto-read{' '}
-                      <span className="font-mono">.fvmrc</span> from the repo
-                      when present.
+                      Oore uses <span className="font-mono">.fvmrc</span> when
+                      present, then this value, then managed stable Flutter.
+                      The SDK downloads automatically on the first build and is
+                      cached for later builds.
                     </p>
                     <FormMessage />
                   </FormItem>

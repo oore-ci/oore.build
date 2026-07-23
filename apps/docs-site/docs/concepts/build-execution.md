@@ -52,8 +52,8 @@ The runner clones the repository at the specified branch and commit. For GitHub 
 
 The runner prepares the build environment:
 
-1. **Flutter version** — Checks for `.fvmrc` in the repo, falls back to `flutter_version` from config
-2. **FVM install** — Runs `fvm install` to ensure the correct Flutter version is available
+1. **Flutter version** — Checks for `.fvmrc`, then `flutter_version`, then Oore-managed stable Flutter
+2. **Managed SDK** — Uses Oore's bundled FVM to download and cache the selected Flutter SDK when needed
 3. **Environment** — Sets environment variables from the pipeline config
 
 ### 6. Build
