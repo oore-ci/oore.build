@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from '@/lib/toast'
 
@@ -46,11 +45,11 @@ function GitLabSetupPage() {
     useInstancePreferences()
   const { data: networkSettings } = useExternalAccessNetworkSettings()
   const remoteEnabled = preferences?.runtime_mode === 'remote'
-  const [hostKind, setSelectedHostKind] = useState<GitLabHostKind>('gitlab_com')
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
     mode: 'onBlur',
     defaultValues: {
+      host_kind: 'gitlab_com',
       host_url: 'https://gitlab.com',
       auth_mode: 'personal_token',
       access_token: '',
@@ -58,6 +57,7 @@ function GitLabSetupPage() {
       client_secret: '',
     },
   })
+  const hostKind = form.watch('host_kind')
   const authMode = form.watch('auth_mode')
   const hostUrl = form.watch('host_url')
   const normalizedHostUrl =
@@ -118,7 +118,7 @@ function GitLabSetupPage() {
 
   function selectHostKind(value: GitLabHostKind | null) {
     if (!value) return
-    setSelectedHostKind(() => value)
+    form.setValue('host_kind', value, { shouldDirty: true })
     if (value === 'gitlab_com') {
       form.setValue('host_url', 'https://gitlab.com', {
         shouldDirty: true,

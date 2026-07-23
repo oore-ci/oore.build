@@ -4,6 +4,7 @@ import { normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 
 export const gitLabSetupSchema = z
   .object({
+    host_kind: z.enum(['gitlab_com', 'self_managed']),
     host_url: z
       .string()
       .trim()
@@ -44,4 +45,4 @@ export const gitLabSetupSchema = z
   })
 
 export type GitLabSetupForm = z.infer<typeof gitLabSetupSchema>
-export type GitLabHostKind = 'gitlab_com' | 'self_managed'
+export type GitLabHostKind = GitLabSetupForm['host_kind']
