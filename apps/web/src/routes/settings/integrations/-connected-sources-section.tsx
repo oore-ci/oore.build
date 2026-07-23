@@ -30,8 +30,11 @@ const sortOptions: Record<IntegrationSort, string> = {
 }
 
 export function ConnectedSourcesSection({
-  collection,
+  canWrite,
   direction,
+  error,
+  integrations,
+  isLoading,
   onClearSearch,
   onPageChange,
   onPageSizeChange,
@@ -40,15 +43,15 @@ export function ConnectedSourcesSection({
   onSortChange,
   page,
   pageSize,
-  query,
+  search,
   sort,
+  total,
 }: {
-  collection: {
-    canWrite: boolean
-    integrations: Array<Integration>
-    total: number
-  }
+  canWrite: boolean
   direction: SortDirection
+  error: Error | null
+  integrations: Array<Integration>
+  isLoading: boolean
   onClearSearch: () => void
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
@@ -57,19 +60,20 @@ export function ConnectedSourcesSection({
   onSortChange: (sort: IntegrationSort, direction: SortDirection) => void
   page: number
   pageSize: number
-  query: { error: Error | null; isLoading: boolean; search?: string }
+  search?: string
   sort: IntegrationSort
+  total: number
 }) {
-  const isEmpty = !query.isLoading && !query.error && collection.total === 0
+  const isEmpty = !isLoading && !error && total === 0
   return (
     <section
       aria-label="Connected sources"
       className="flex min-w-0 flex-col gap-4"
     >
-      {query.isLoading || collection.total > 0 || query.search ? (
+      {isLoading || total > 0 || search ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CollectionSearchInput
-            initialValue={query.search ?? ''}
+            initialValue={search ?? ''}
             onSearch={onSearch}
             placeholder="Search connected sources"
             ariaLabel="Search connected sources"
@@ -90,18 +94,18 @@ export function ConnectedSourcesSection({
           </NativeSelect>
         </div>
       ) : null}
-      {query.error ? (
+      {error ? (
         <Alert variant="destructive">
           <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>Failed to load sources: {query.error.message}</span>
+            <span>Failed to load sources: {error.message}</span>
             <Button variant="outline" size="sm" onClick={onRetry}>
               Retry
             </Button>
           </AlertDescription>
         </Alert>
       ) : null}
-      {isEmpty && !query.search ? (
+      {isEmpty && !search ? (
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -109,14 +113,14 @@ export function ConnectedSourcesSection({
             </EmptyMedia>
             <EmptyTitle>No connected sources</EmptyTitle>
             <EmptyDescription>
-              {collection.canWrite
+              {canWrite
                 ? 'Choose GitHub or GitLab below to discover repositories.'
                 : 'An owner or admin can connect the first source.'}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : null}
-      {isEmpty && query.search ? (
+      {isEmpty && search ? (
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -134,18 +138,18 @@ export function ConnectedSourcesSection({
           </EmptyContent>
         </Empty>
       ) : null}
-      {!query.error && (query.isLoading || collection.total > 0) ? (
+      {!error && (isLoading || total > 0) ? (
         <SourceInventory
           direction={direction}
-          integrations={collection.integrations}
-          isLoading={query.isLoading}
+          integrations={integrations}
+          isLoading={isLoading}
           onPageChange={onPageChange}
           onPageSizeChange={onPageSizeChange}
           onSortChange={onSortChange}
           page={page}
           pageSize={pageSize}
           sort={sort}
-          total={collection.total}
+          total={total}
         />
       ) : null}
     </section>

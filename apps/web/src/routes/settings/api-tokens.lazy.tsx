@@ -80,8 +80,6 @@ export const Route = createLazyFileRoute('/settings/api-tokens')({
 
 const EMPTY_API_TOKENS: Array<ApiTokenSummary> = []
 
-// ── Helpers ─────────────────────────────────────────────────────
-
 function getTokenStatus(
   token: ApiTokenSummary,
 ): 'active' | 'expired' | 'revoked' {
@@ -104,8 +102,6 @@ const EXPIRY_OPTIONS: Record<string, string> = {
   '365': '1 year',
 }
 
-// ── Create Token Form Schema ────────────────────────────────────
-
 const createTokenSchema = z.object({
   name: z
     .string()
@@ -117,8 +113,6 @@ const createTokenSchema = z.object({
 })
 
 type CreateTokenFormValues = z.infer<typeof createTokenSchema>
-
-// ── Create Token Dialog ─────────────────────────────────────────
 
 interface CreateTokenDialogProps {
   open: boolean
@@ -303,8 +297,6 @@ function CreateTokenDialog({
   )
 }
 
-// ── Main Page ───────────────────────────────────────────────────
-
 const API_TOKEN_SORT_OPTIONS: Record<ApiTokenSort, string> = {
   created_at: 'Created',
   last_used_at: 'Last used',
@@ -360,30 +352,27 @@ function ApiTokensPage() {
   const direction = search.direction ?? 'desc'
   const tokens = tokensQuery.data?.tokens ?? EMPTY_API_TOKENS
   const activeCount = tokens.filter(
-    (t) => !t.is_revoked && !t.is_expired,
+    (token) => !token.is_revoked && !token.is_expired,
   ).length
-  const filteredTokens = useMemo(() => {
+  const sortedTokens = useMemo(() => {
     const query = search.q?.toLowerCase()
-    if (!query) return tokens
+    const matchingTokens = query
+      ? tokens.filter((token) =>
+          [
+            token.name,
+            token.prefix,
+            token.role,
+            token.created_by_email,
+            getTokenStatus(token),
+          ].some((value) => value.toLowerCase().includes(query)),
+        )
+      : tokens
 
-    return tokens.filter((token) =>
-      [
-        token.name,
-        token.prefix,
-        token.role,
-        token.created_by_email,
-        getTokenStatus(token),
-      ].some((value) => value.toLowerCase().includes(query)),
-    )
-  }, [search.q, tokens])
-  const sortedTokens = useMemo(
-    () =>
-      [...filteredTokens].sort((left, right) => {
-        const result = compareTokens(left, right, sort)
-        return direction === 'asc' ? result : -result
-      }),
-    [direction, filteredTokens, sort],
-  )
+    return [...matchingTokens].sort((left, right) => {
+      const result = compareTokens(left, right, sort)
+      return direction === 'asc' ? result : -result
+    })
+  }, [direction, search.q, sort, tokens])
   const total = sortedTokens.length
   const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
   const visibleTokens = sortedTokens.slice(
@@ -411,7 +400,7 @@ function ApiTokensPage() {
   }
 
   function handleTokenCreated(response: CreateApiTokenResponse) {
-    setCreatedResponse(() => response)
+    setCreatedResponse(response)
     toast.success('API token created')
   }
 

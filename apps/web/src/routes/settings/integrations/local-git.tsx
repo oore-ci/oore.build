@@ -25,7 +25,7 @@ export const Route = createFileRoute('/settings/integrations/local-git')({
   component: LocalGitPage,
 })
 
-export function LocalGitPage() {
+function LocalGitPage() {
   const canCreateProjects = useHasPermission('projects', 'write')
   const canReadPreferences = useHasPermission('instance_settings', 'read')
   const { data: preferences } = useInstancePreferences({

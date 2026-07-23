@@ -221,38 +221,31 @@ function RunnersSettingsPage() {
   const sort = search.sort ?? 'name'
   const direction = search.direction ?? 'asc'
   const runners = runnersQuery.data?.runners ?? EMPTY_RUNNERS
-  const onlineCount = useMemo(
-    () =>
-      runners.filter(
-        (runner) => runner.status === 'online' || runner.status === 'busy',
-      ).length,
-    [runners],
-  )
-  const offlineCount = useMemo(
-    () => runners.filter((runner) => runner.status === 'offline').length,
-    [runners],
-  )
-  const filteredRunners = useMemo(() => {
+  const onlineCount = runners.filter(
+    (runner) => runner.status === 'online' || runner.status === 'busy',
+  ).length
+  const offlineCount = runners.filter(
+    (runner) => runner.status === 'offline',
+  ).length
+  const sortedRunners = useMemo(() => {
     const query = search.q?.toLowerCase()
-    if (!query) return runners
-    return runners.filter((runner) =>
-      [
-        runner.name,
-        runner.id,
-        runner.status,
-        runner.registered_by ?? 'embedded',
-        formatCapabilities(runner.capabilities),
-      ].some((value) => value.toLowerCase().includes(query)),
-    )
-  }, [runners, search.q])
-  const sortedRunners = useMemo(
-    () =>
-      [...filteredRunners].sort((left, right) => {
-        const result = compareRunners(left, right, sort)
-        return direction === 'asc' ? result : -result
-      }),
-    [direction, filteredRunners, sort],
-  )
+    const matchingRunners = query
+      ? runners.filter((runner) =>
+          [
+            runner.name,
+            runner.id,
+            runner.status,
+            runner.registered_by ?? 'embedded',
+            formatCapabilities(runner.capabilities),
+          ].some((value) => value.toLowerCase().includes(query)),
+        )
+      : runners
+
+    return [...matchingRunners].sort((left, right) => {
+      const result = compareRunners(left, right, sort)
+      return direction === 'asc' ? result : -result
+    })
+  }, [direction, runners, search.q, sort])
   const total = sortedRunners.length
   const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
   const visibleRunners = sortedRunners.slice(
@@ -278,10 +271,6 @@ function RunnersSettingsPage() {
 
   function handleSortChange(nextSort: RunnerSort, next: SortDirection) {
     updateSearch({ sort: nextSort, direction: next, page: undefined })
-  }
-
-  function openRename(runner: Runner) {
-    setSelectedRunner(runner)
   }
 
   return (
@@ -457,7 +446,7 @@ function RunnersSettingsPage() {
               page: undefined,
             })
           }
-          onRename={openRename}
+          onRename={setSelectedRunner}
           onSortChange={handleSortChange}
           page={currentPage}
           pageSize={pageSize}

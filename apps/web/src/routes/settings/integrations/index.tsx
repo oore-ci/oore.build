@@ -33,7 +33,6 @@ import PageLayout from '@/components/page-layout'
 import type { IntegrationSort } from './-source-inventory'
 import { ConnectSourceOptions } from './-connect-source-options'
 import { ConnectedSourcesSection } from './-connected-sources-section'
-import { LocalOnlySourcesNotice } from './-local-only-sources-notice'
 
 interface IntegrationsSearch {
   direction?: SortDirection
@@ -88,7 +87,7 @@ function IntegrationsPage() {
   const integrationsQuery = useIntegrations()
   const preferencesQuery = useInstancePreferences({ enabled: canWrite })
   const runtimeMode = preferencesQuery.data?.runtime_mode
-  const remoteEnabled = !canWrite || runtimeMode === 'remote'
+  const sourcesAvailable = !canWrite || runtimeMode === 'remote'
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'updated_at'
   const direction = search.direction ?? 'desc'
@@ -182,7 +181,7 @@ function IntegrationsPage() {
         title="Sources"
         description="Source connections used to discover repositories and trigger builds."
         actions={
-          remoteEnabled && canWrite && hasConnectedSources ? (
+          sourcesAvailable && canWrite && hasConnectedSources ? (
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button />}>
                 <DynamicLucideIcon
@@ -236,38 +235,47 @@ function IntegrationsPage() {
             </Button>
           </AlertDescription>
         </Alert>
-      ) : !remoteEnabled ? (
-        <LocalOnlySourcesNotice
-          actions={
-            <>
-              <Button
-                variant="outline"
-                render={<Link to="/settings/preferences" />}
-                nativeButton={false}
-              >
-                Open General settings
-              </Button>
-              <Button render={<Link to="/projects" />} nativeButton={false}>
-                Go to projects
-              </Button>
-            </>
-          }
-        />
+      ) : !sourcesAvailable ? (
+        <section
+          className="space-y-3 border-t pt-4"
+          aria-labelledby="local-only-sources-title"
+        >
+          <div>
+            <h2 id="local-only-sources-title" className="text-sm font-semibold">
+              Local Only mode
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Create projects from paths on this Mac. GitHub and GitLab sources
+              become available when External Access is configured.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              render={<Link to="/settings/preferences" />}
+              nativeButton={false}
+            >
+              Open General settings
+            </Button>
+            <Button render={<Link to="/projects" />} nativeButton={false}>
+              Go to projects
+            </Button>
+          </div>
+        </section>
       ) : null}
 
-      {remoteEnabled &&
+      {sourcesAvailable &&
       (integrationsQuery.isLoading ||
         integrationsQuery.error ||
         hasConnectedSources ||
         hasSearch ||
         !canWrite) ? (
         <ConnectedSourcesSection
-          collection={{
-            canWrite,
-            integrations: visibleIntegrations,
-            total,
-          }}
+          canWrite={canWrite}
           direction={direction}
+          error={integrationsQuery.error}
+          integrations={visibleIntegrations}
+          isLoading={integrationsQuery.isLoading}
           onClearSearch={() => updateSearch({ q: undefined, page: undefined })}
           onPageChange={(nextPage) =>
             updateSearch({ page: nextPage > 1 ? nextPage : undefined })
@@ -286,16 +294,13 @@ function IntegrationsPage() {
           onSortChange={handleSortChange}
           page={page}
           pageSize={pageSize}
-          query={{
-            error: integrationsQuery.error,
-            isLoading: integrationsQuery.isLoading,
-            search: search.q,
-          }}
+          search={search.q}
           sort={sort}
+          total={total}
         />
       ) : null}
 
-      {remoteEnabled &&
+      {sourcesAvailable &&
       canWrite &&
       !integrationsQuery.isLoading &&
       !integrationsQuery.error &&
@@ -303,7 +308,7 @@ function IntegrationsPage() {
         <ConnectSourceOptions />
       ) : null}
 
-      {remoteEnabled && !canWrite ? (
+      {sourcesAvailable && !canWrite ? (
         <Alert>
           <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
