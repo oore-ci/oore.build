@@ -56,8 +56,6 @@ function RootLayout() {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
-        {/* TODO: bring this back once a concrete list of hotkeys for the app is decided */}
-        {/* <AppShortcuts />  */}
         <a
           href="#main-content"
           className="fixed top-2 left-2 z-100 -translate-y-20 px-3 py-2 text-sm font-medium text-foreground ring-2 ring-ring transition-transform focus:translate-y-0"

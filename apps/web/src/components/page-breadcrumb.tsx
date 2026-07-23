@@ -1,9 +1,4 @@
-import {
-  isMatch,
-  Link,
-  useMatches,
-  useParentMatches,
-} from '@tanstack/react-router'
+import { isMatch, Link, useMatches } from '@tanstack/react-router'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -14,29 +9,15 @@ import {
 } from '@/components/ui/breadcrumb'
 
 export default function PageBreadcrumb() {
-  const parentBreadcrumbs = useParentMatches({
+  const breadcrumbs = useMatches({
     select: (matches) =>
       matches
         .filter((m) => isMatch(m, 'staticData.breadcrumb'))
         .map((match) => ({
           href: match.pathname,
           label: match.staticData?.breadcrumb?.title,
-          path: match.fullPath,
         })),
   })
-
-  const currBreadcrumbs = useMatches({
-    select: (matches) =>
-      matches
-        .filter((m) => isMatch(m, 'staticData.breadcrumb'))
-        .map((match) => ({
-          href: match.pathname,
-          label: match.staticData?.breadcrumb?.title,
-          path: match.fullPath,
-        })),
-  })
-
-  const breadcrumbs = [...parentBreadcrumbs, ...currBreadcrumbs]
 
   return (
     <Breadcrumb>
