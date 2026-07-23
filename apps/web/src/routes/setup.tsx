@@ -5,10 +5,9 @@ import {
   useLocation,
 } from '@tanstack/react-router'
 import { Card, CardContent } from '@/components/ui/card'
-import { useSetupStatus } from '@/hooks/use-setup'
+import { setupStatusQueryOptions, useSetupStatus } from '@/hooks/use-setup'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
 import { useExpiredSetupSessionRedirect } from '@/hooks/use-setup-route-transitions'
-import { getSetupStatus } from '@/lib/api'
 import { isMixedContentBlocked } from '@/lib/connectivity'
 import {
   getActiveInstanceOrRedirect,
@@ -21,6 +20,7 @@ import {
 import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
+import { queryClient } from '@/lib/query-client'
 import {
   SetupRouteError,
   SetupStepIndicator,
@@ -89,7 +89,9 @@ export const Route = createFileRoute('/setup')({
       throw new Error('mixed_content_blocked')
     }
 
-    const status = await getSetupStatus(baseUrl)
+    const status = await queryClient.ensureQueryData(
+      setupStatusQueryOptions(instance),
+    )
     if (status.is_configured) {
       throw redirect({ to: '/' })
     }

@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import type { Instance, OidcConfigureRequest } from '@/lib/types'
 import {
   completeSetup,
@@ -19,23 +24,29 @@ function requireInstance(instance: Instance | null): string {
   return resolveRequiredInstanceApiBaseUrl(instance)
 }
 
-function useSetupStatusKey() {
-  const instance = useActiveInstance()
-  return [instance?.id ?? '__none__', 'setup-status'] as const
+function setupStatusQueryKey(instanceId: string | undefined) {
+  return [instanceId ?? '__none__', 'setup-status'] as const
 }
 
-export function useSetupStatus() {
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
-
-  return useQuery({
-    queryKey,
+export function setupStatusQueryOptions(instance: Instance | null) {
+  return queryOptions({
+    queryKey: setupStatusQueryKey(instance?.id),
     queryFn: ({ signal }) =>
       getSetupStatus(requireInstance(instance), { signal }),
     refetchInterval: (query) =>
       query.state.data?.is_configured ? false : 3000,
     enabled: !!instance,
   })
+}
+
+function useSetupStatusKey() {
+  const instance = useActiveInstance()
+  return setupStatusQueryKey(instance?.id)
+}
+
+export function useSetupStatus() {
+  const instance = useActiveInstance()
+  return useQuery(setupStatusQueryOptions(instance))
 }
 
 export function useVerifyBootstrapToken() {
