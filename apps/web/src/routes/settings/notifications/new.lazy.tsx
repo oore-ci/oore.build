@@ -259,7 +259,7 @@ function NotificationChannelFields({
   )
 }
 
-function useNewNotificationChannelPageState() {
+function NewNotificationChannelPage() {
   const navigate = useNavigate()
   const createMutation = useCreateNotificationChannel()
 
@@ -377,14 +377,6 @@ function useNewNotificationChannelPageState() {
       )
     }
   }
-
-  return { channelType, createMutation, form, isEmail, navigate, onSubmit }
-}
-
-function NewNotificationChannelPage() {
-  const pageState = useNewNotificationChannelPageState()
-  const { channelType, createMutation, form, isEmail, navigate, onSubmit } =
-    pageState
 
   return (
     <PageLayout width="wide">

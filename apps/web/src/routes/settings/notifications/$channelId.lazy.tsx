@@ -332,7 +332,7 @@ function NotificationChannelSettingsFields({
   )
 }
 
-function useNotificationChannelDetailPageState() {
+function NotificationChannelDetailPage() {
   const { channelId } = Route.useParams()
   const navigate = useNavigate()
 
@@ -475,43 +475,6 @@ function useNotificationChannelDetailPageState() {
   }
 
   if (isLoading) {
-    return { status: 'loading' as const }
-  }
-
-  if (channelsError) {
-    return {
-      status: 'error' as const,
-      message: channelsError.message,
-      retry: refetchChannels,
-    }
-  }
-
-  if (!channel) {
-    return { status: 'missing' as const }
-  }
-
-  return {
-    status: 'ready' as const,
-    channel,
-    deleteMutation,
-    deliveries,
-    deliveriesError,
-    deliveriesLoading,
-    form,
-    handleDelete,
-    handleTest,
-    isEmail,
-    onSubmit,
-    refetchDeliveries,
-    testMutation,
-    updateMutation,
-  }
-}
-
-function NotificationChannelDetailPage() {
-  const pageState = useNotificationChannelDetailPageState()
-
-  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
@@ -523,20 +486,20 @@ function NotificationChannelDetailPage() {
     )
   }
 
-  if (pageState.status === 'error') {
+  if (channelsError) {
     return (
       <PageLayout width="wide">
         <PageHeader title="Notification channel" />
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              Failed to load notification channels: {pageState.message}
+              Failed to load notification channels: {channelsError.message}
             </span>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void pageState.retry()}
+              onClick={() => void refetchChannels()}
             >
               Retry
             </Button>
@@ -546,7 +509,7 @@ function NotificationChannelDetailPage() {
     )
   }
 
-  if (pageState.status === 'missing') {
+  if (!channel) {
     return (
       <PageLayout width="wide">
         <PageHeader title="Channel not found" />
@@ -556,21 +519,6 @@ function NotificationChannelDetailPage() {
       </PageLayout>
     )
   }
-
-  const {
-    channel,
-    deleteMutation,
-    deliveries,
-    deliveriesError,
-    deliveriesLoading,
-    form,
-    handleDelete,
-    handleTest,
-    onSubmit,
-    refetchDeliveries,
-    testMutation,
-    updateMutation,
-  } = pageState
 
   return (
     <PageLayout width="wide">
