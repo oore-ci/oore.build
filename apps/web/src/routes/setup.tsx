@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { setupStatusQueryOptions, useSetupStatus } from '@/hooks/use-setup'
 import { useSessionCountdown } from '@/hooks/use-session-countdown'
 import { useExpiredSetupSessionRedirect } from '@/hooks/use-setup-route-transitions'
-import { isMixedContentBlocked } from '@/lib/connectivity'
+import { isLoopbackUrl, isMixedContentBlocked } from '@/lib/connectivity'
 import {
   getActiveInstanceOrRedirect,
   syncSetupStoreContext,
@@ -25,10 +25,6 @@ import {
   SetupRouteError,
   SetupStepIndicator,
 } from '@/components/setup-route-components'
-
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === '127.0.0.1' || hostname === 'localhost'
-}
 
 function maybeAutoAddBackendInstance() {
   const params = new URLSearchParams(window.location.search)
@@ -54,7 +50,7 @@ function maybeAutoAddBackendInstance() {
     // Only auto-add if instance store is empty (prevents phishing via crafted links)
     if (Object.keys(store.instances).length === 0) {
       const parsed = new URL(backendUrl)
-      const label = isLoopbackHost(parsed.hostname) ? 'Local' : parsed.hostname
+      const label = isLoopbackUrl(backendUrl) ? 'Local' : parsed.hostname
       const id = store.addInstance(label, backendUrl.replace(/\/+$/, ''))
       store.setActiveInstance(id)
       instanceId = id

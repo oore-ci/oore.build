@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowLeft as ArrowLeft01Icon,
   Copy as Copy01Icon,
@@ -31,10 +30,6 @@ const expiryFormatter = new Intl.DateTimeFormat(undefined, {
 
 function expiryLabel(expiresAt: number): string {
   return `Available until ${expiryFormatter.format(new Date(expiresAt * 1000))}`
-}
-
-function displayName(name: string): string {
-  return name.replace(/\.(apk|ipa)$/i, '')
 }
 
 function copyPageLink() {
@@ -70,7 +65,8 @@ export default function OperatorArtifactInstallPage({
   const isDesktopIos = isIos && device === 'other'
   const canInstall =
     readiness.ready && !expired && !wrongPhone && !needsSafari && !isDesktopIos
-  const appName = iosApp?.displayName ?? displayName(artifact.name)
+  const appName =
+    iosApp?.displayName ?? artifact.name.replace(/\.(apk|ipa)$/i, '')
 
   function handleInstall() {
     installMutation.mutate(artifact.id, {
@@ -107,7 +103,7 @@ export default function OperatorArtifactInstallPage({
         nativeButton={false}
         className="hidden w-fit sm:inline-flex"
       >
-        <DynamicLucideIcon icon={ArrowLeft01Icon} />
+        <ArrowLeft01Icon />
         Build #{build.build_number}
       </Button>
 
@@ -134,7 +130,7 @@ export default function OperatorArtifactInstallPage({
 
         {!readiness.ready ? (
           <Alert variant="destructive">
-            <DynamicLucideIcon icon={InformationCircleIcon} />
+            <InformationCircleIcon />
             <AlertTitle>Not install-ready</AlertTitle>
             <AlertDescription>{readiness.reason}</AlertDescription>
           </Alert>
@@ -142,7 +138,7 @@ export default function OperatorArtifactInstallPage({
 
         {expired ? (
           <Alert variant="destructive">
-            <DynamicLucideIcon icon={InformationCircleIcon} />
+            <InformationCircleIcon />
             <AlertTitle>Artifact expired</AlertTitle>
             <AlertDescription>
               Ask a developer to run a fresh build before installing.
@@ -152,7 +148,7 @@ export default function OperatorArtifactInstallPage({
 
         {needsSafari ? (
           <Alert>
-            <DynamicLucideIcon icon={Globe02Icon} />
+            <Globe02Icon />
             <AlertTitle>Open this page in Safari</AlertTitle>
             <AlertDescription>
               iOS installation can only start from Safari on this iPhone.
@@ -162,7 +158,7 @@ export default function OperatorArtifactInstallPage({
 
         {isDesktopIos ? (
           <Alert>
-            <DynamicLucideIcon icon={SmartPhone01Icon} />
+            <SmartPhone01Icon />
             <AlertTitle>Open this page on the registered iPhone</AlertTitle>
             <AlertDescription>
               Use Safari on a device included in this version’s provisioning
@@ -173,7 +169,7 @@ export default function OperatorArtifactInstallPage({
 
         {wrongPhone ? (
           <Alert>
-            <DynamicLucideIcon icon={InformationCircleIcon} />
+            <InformationCircleIcon />
             <AlertTitle>Open this page on the right device</AlertTitle>
             <AlertDescription>
               This version is for {isIos ? 'iOS' : 'Android'}.
@@ -198,7 +194,7 @@ export default function OperatorArtifactInstallPage({
               aria-label="Back to build"
               className="min-h-11 sm:hidden"
             >
-              <DynamicLucideIcon icon={ArrowLeft01Icon} />
+              <ArrowLeft01Icon />
             </Button>
             <Button
               size="lg"
@@ -206,11 +202,7 @@ export default function OperatorArtifactInstallPage({
               disabled={!canInstall || installMutation.isPending}
               className="min-h-11 min-w-0 flex-1 sm:w-full"
             >
-              {installMutation.isPending ? (
-                <Spinner />
-              ) : (
-                <DynamicLucideIcon icon={SmartPhone01Icon} />
-              )}
+              {installMutation.isPending ? <Spinner /> : <SmartPhone01Icon />}
               {primaryLabel}
             </Button>
           </div>
@@ -219,7 +211,7 @@ export default function OperatorArtifactInstallPage({
             onClick={copyPageLink}
             className="mt-2 w-full"
           >
-            <DynamicLucideIcon icon={Copy01Icon} />
+            <Copy01Icon />
             Copy install page link
           </Button>
         </div>
