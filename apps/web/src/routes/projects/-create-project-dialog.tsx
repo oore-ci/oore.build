@@ -32,7 +32,6 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { SourceDiscoveryWarning } from '@/components/source-discovery-warning'
-import { repositoryProjectDefaults } from '@/lib/project-form-utils'
 import { useCreateProjectDialogState } from './-use-create-project-dialog-state'
 
 interface CreateProjectDialogProps {
@@ -125,15 +124,19 @@ export default function CreateProjectDialog({
                               (repo) => repo.id === value,
                             )
                             if (!repository) return
-                            const defaults =
-                              repositoryProjectDefaults(repository)
                             if (!form.getFieldState('name').isDirty) {
-                              form.setValue('name', defaults.name)
+                              form.setValue(
+                                'name',
+                                repository.full_name
+                                  .split('/')
+                                  .filter(Boolean)
+                                  .at(-1) ?? '',
+                              )
                             }
                             if (!form.getFieldState('default_branch').isDirty) {
                               form.setValue(
                                 'default_branch',
-                                defaults.defaultBranch,
+                                repository.default_branch ?? '',
                               )
                             }
                           }}

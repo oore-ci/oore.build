@@ -346,10 +346,7 @@ function useTriggerBuildDialogState({
     () => pipelines.find((pipeline) => pipeline.id === selectedPipelineId),
     [pipelines, selectedPipelineId],
   )
-  const availablePlatforms = useMemo(
-    () => selectedPipeline?.execution_config.platforms ?? [],
-    [selectedPipeline],
-  )
+  const availablePlatforms = selectedPipeline?.execution_config.platforms ?? []
   const branchItems = useMemo(
     () =>
       Array.from(

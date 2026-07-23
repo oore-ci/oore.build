@@ -19,7 +19,8 @@ import {
   useBuild,
   useProjectArtifacts,
 } from '@/hooks/use-builds'
-import { useProjectDetail } from '@/hooks/use-project-detail'
+import { useProject } from '@/hooks/use-projects'
+import { formatFileSize } from '@/lib/format-utils'
 import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -53,13 +54,6 @@ const expiryFormatter = new Intl.DateTimeFormat(undefined, {
 function expiryLabel(expiresAt: number | undefined): string {
   if (expiresAt == null) return 'No scheduled expiry'
   return `Available until ${expiryFormatter.format(new Date(expiresAt * 1000))}`
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
 
 function ArtifactInstallLoading() {
@@ -382,7 +376,7 @@ export function ArtifactInstallPage({
     refetchInterval: isTerminal ? false : 3000,
   })
   const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
-  const projectQuery = useProjectDetail(
+  const projectQuery = useProject(
     isQaViewer ? (buildQuery.data?.build.project_id ?? '') : '',
   )
   const projectArtifactsQuery = useProjectArtifacts(
