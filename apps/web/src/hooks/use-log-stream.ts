@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react'
 
 import type { BuildLogChunk } from '@/lib/types'
 import { createStreamToken, getBuildLogs } from '@/lib/api'
@@ -58,7 +65,7 @@ export function useLogStream(
   enabled: boolean,
   options?: UseLogStreamOptions,
 ): UseLogStreamResult {
-  const onDone = options?.onDone
+  const onDone = useEffectEvent(() => options?.onDone?.())
   const [stream, updateStream] = useReducer(streamReducer, initialStreamState)
 
   const { baseUrl, token } = useApiContext()
@@ -178,7 +185,7 @@ export function useLogStream(
       eventSourceRef.current = null
       void pollOnce()
       stopPolling()
-      onDone?.()
+      onDone()
     }
 
     const handleError = () => {
@@ -242,7 +249,6 @@ export function useLogStream(
     stopPolling,
     pollOnce,
     cleanup,
-    onDone,
   ])
 
   return stream

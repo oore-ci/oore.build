@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
@@ -90,10 +90,10 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
     buildId,
     streamEnabled,
     {
-      onDone: useCallback(() => {
+      onDone: () => {
         void refetchBuild()
         void refetchArtifacts()
-      }, [refetchBuild, refetchArtifacts]),
+      },
     },
   )
   const fullLogsQuery = useBuildLogs(buildId, { enabled: isTerminal })
