@@ -3,6 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Download04Icon } from '@hugeicons/core-free-icons'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
+import { installerCommand } from '@/components/runtime-update-utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -159,9 +160,18 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
               </Button>
               {runtimeUpdates.backendUpdate.data &&
               !runtimeUpdates.backendUpdate.data.managed_service ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Install oored as the managed macOS service to update it here.
-                </p>
+                <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+                  <p>
+                    Run the current installer once from Terminal to finish or
+                    repair managed service setup. Later backend updates remain
+                    available here.
+                  </p>
+                  <code className="block break-all rounded-md bg-muted p-2 font-mono text-foreground">
+                    {installerCommand(
+                      runtimeUpdates.backendRelease.data.channel,
+                    )}
+                  </code>
+                </div>
               ) : null}
             </>
           ) : null}

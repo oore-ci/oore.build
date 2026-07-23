@@ -15,12 +15,14 @@ Upload your signing certificate and provisioning profile directly to Oore CI for
 - A [pipeline](/guides/projects/pipeline-config) configured for iOS builds
 - A macOS runner installed with `oore runner install-service`
 
-::: info Headless signing
+::: info Runner login for Apple signing
 The Direct runner is a boot-time system LaunchDaemon running as its configured
-non-root account. iOS signing does not require an active GUI login. Oore keeps
-profiles inside the private job workspace and passes its temporary keychain
-explicitly to signing tools; it does not change the user's default keychain,
-keychain search list, or globally installed provisioning profiles.
+non-root account, so ordinary and Android builds remain available before login.
+Apple signing requires that account to have an active macOS login session. If
+it does not, a build already configured for iOS stops before checkout and asks
+you to log in and retry. Oore keeps profiles inside the private job workspace,
+temporarily selects its build keychain for fixed signing commands, then restores
+the previous default and search list; it does not install profiles globally.
 :::
 
 ## Steps
