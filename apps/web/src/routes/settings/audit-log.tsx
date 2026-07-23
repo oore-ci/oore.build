@@ -4,7 +4,7 @@ import {
   Search as Search01Icon,
 } from 'lucide-react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
+import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { format } from 'date-fns'
 import type { DateRange } from 'react-day-picker'
 
@@ -39,10 +39,9 @@ import { CollectionSearchInput } from '@/components/collection-search-input'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
-import { useAuthStore } from '@/stores/auth-store'
 import { AuditLogInventory } from './-audit-log-inventory'
 import type { AuditSort } from './-audit-log-inventory'
 
@@ -126,11 +125,7 @@ export const Route = createFileRoute('/settings/audit-log')({
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-    const user = useAuthStore.getState().user
-    if (!user || (user.role !== 'owner' && user.role !== 'admin')) {
-      throw redirect({ to: '/' })
-    }
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: AuditLogPage,
 })

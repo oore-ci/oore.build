@@ -38,7 +38,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { RetentionSummaryCard } from './-retention-summary-card'
-import { resolveRetentionPolicyLoadState } from './-retention-state'
 
 export const Route = createLazyFileRoute('/settings/retention')({
   component: RetentionPage,
@@ -392,13 +391,11 @@ function useRetentionPageState() {
     )
   }
 
-  const loadState = resolveRetentionPolicyLoadState(policyLoading, policyError)
-
-  if (loadState === 'loading') {
+  if (policyLoading) {
     return { status: 'loading' as const }
   }
 
-  if (loadState === 'error' && policyError) {
+  if (policyError) {
     return {
       status: 'error' as const,
       message: policyError.message,

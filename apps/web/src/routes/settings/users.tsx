@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import {
   flexRender,
   getCoreRowModel,
@@ -44,7 +44,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { ApiClientError } from '@/lib/api'
 import PageLayout from '@/components/page-layout'
@@ -94,12 +94,7 @@ export const Route = createFileRoute('/settings/users')({
   validateSearch: parseUsersSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-
-    const user = useAuthStore.getState().user
-    if (!user || (user.role !== 'owner' && user.role !== 'admin')) {
-      throw redirect({ to: '/' })
-    }
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: UsersSettingsPage,
 })
