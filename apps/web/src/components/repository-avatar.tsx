@@ -33,6 +33,6 @@ export default function RepositoryAvatar({
 }
 
 function GitLabAvatarImage({ repositoryId }: { repositoryId: string }) {
-  const avatarUrl = useRepositoryAvatar(repositoryId)
+  const { data: avatarUrl } = useRepositoryAvatar(repositoryId)
   return avatarUrl ? <AvatarImage src={avatarUrl} alt="" /> : null
 }

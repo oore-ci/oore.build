@@ -85,7 +85,7 @@ export default function CreateProjectDialog({
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 
   const repositoriesQuery = useSourceRepositories(open && isRemoteMode)
-  const repos = repositoriesQuery.data
+  const repos = repositoriesQuery.data?.repositories
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const repoItems = useMemo(
@@ -220,7 +220,7 @@ export default function CreateProjectDialog({
                     <FormItem>
                       <FormLabel>Repository</FormLabel>
                       <SourceDiscoveryWarning
-                        failures={repositoriesQuery.sourceFailures}
+                        failures={repositoriesQuery.data?.failures ?? []}
                         isRetrying={repositoriesQuery.isFetching}
                         onRetry={() => void repositoriesQuery.refetch()}
                       />

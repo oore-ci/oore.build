@@ -10,6 +10,7 @@ import type {
   BuildChangelogPreviewResponse,
   BuildDetailResponse,
   BuildLogChunk,
+  BuildLogsResponse,
   BuildStatus,
   CreateBuildRequest,
   CreateScopedDownloadTokenRequest,
@@ -242,16 +243,14 @@ export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-logs', buildId],
     queryFn: async ({ signal }) => {
-      // Fetch all log pages (server max per page is 5000)
       const pageSize = 5000
-      let allLogs: Array<BuildLogChunk> = []
+      const logs: Array<BuildLogChunk> = []
       let afterSeq = -1
-      let total = 0
+      let page: BuildLogsResponse
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      while (true) {
+      do {
         signal.throwIfAborted()
-        const page = await getBuildLogs(
+        page = await getBuildLogs(
           baseUrl!,
           token!,
           buildId,
@@ -261,15 +260,11 @@ export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
           },
           { signal },
         )
-        total = page.total
-        if (page.logs.length === 0) break
-        allLogs = allLogs.concat(page.logs)
-        afterSeq = page.logs[page.logs.length - 1].sequence
-        // If we got fewer than requested, we've reached the end
-        if (page.logs.length < pageSize) break
-      }
+        logs.push(...page.logs)
+        afterSeq = page.logs.at(-1)?.sequence ?? afterSeq
+      } while (page.logs.length === pageSize)
 
-      return { logs: allLogs, total }
+      return { logs, total: page.total }
     },
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!buildId,
   })

@@ -134,11 +134,11 @@ type RequestOptions = Pick<RequestInit, 'signal'>
 
 // ── Fetch wrapper ───────────────────────────────────────────────
 
-async function request<T>(
+async function requestResponse(
   baseUrl: string,
   path: string,
   options: RequestInit = {},
-): Promise<T> {
+) {
   const method = (options.method ?? 'GET').toUpperCase()
   if (isDemoMutationBlocked(method, path)) {
     throw new ApiClientError(403, {
@@ -173,7 +173,16 @@ async function request<T>(
     throw new ApiClientError(res.status, body)
   }
 
-  return (await res.json()) as T
+  return res
+}
+
+async function request<T>(
+  baseUrl: string,
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const response = await requestResponse(baseUrl, path, options)
+  return (await response.json()) as T
 }
 
 async function requestBlob(
@@ -181,20 +190,8 @@ async function requestBlob(
   path: string,
   options: RequestInit = {},
 ): Promise<Blob> {
-  const res = await fetch(`${baseUrl}${path}`, options)
-  if (!res.ok) {
-    let body: ApiError
-    try {
-      body = (await res.json()) as ApiError
-    } catch {
-      body = {
-        error: `Request failed with status ${res.status}`,
-        code: 'unknown_error',
-      }
-    }
-    throw new ApiClientError(res.status, body)
-  }
-  return res.blob()
+  const response = await requestResponse(baseUrl, path, options)
+  return response.blob()
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -1042,7 +1039,7 @@ export function getBuildLogs(
 
 // ── Artifact API ────────────────────────────────────────────
 
-function useInstanceOrigin(baseUrl: string, downloadUrl: string): string {
+function resolveArtifactUrl(baseUrl: string, downloadUrl: string): string {
   if (!isLoopbackUrl(downloadUrl)) return downloadUrl
 
   try {
@@ -1113,7 +1110,7 @@ export function getArtifactDownloadLink(
     { method: 'POST', headers: authHeaders(token) },
   ).then((response) => ({
     ...response,
-    download_url: useInstanceOrigin(baseUrl, response.download_url),
+    download_url: resolveArtifactUrl(baseUrl, response.download_url),
   }))
 }
 
@@ -1128,9 +1125,9 @@ export function createArtifactInstallLink(
     { method: 'POST', headers: authHeaders(token) },
   ).then((response) => ({
     ...response,
-    download_url: useInstanceOrigin(baseUrl, response.download_url),
+    download_url: resolveArtifactUrl(baseUrl, response.download_url),
     manifest_url: response.manifest_url
-      ? useInstanceOrigin(baseUrl, response.manifest_url)
+      ? resolveArtifactUrl(baseUrl, response.manifest_url)
       : undefined,
   }))
 }
@@ -1151,7 +1148,7 @@ export function createScopedDownloadToken(
     },
   ).then((response) => ({
     ...response,
-    download_url: useInstanceOrigin(baseUrl, response.download_url),
+    download_url: resolveArtifactUrl(baseUrl, response.download_url),
   }))
 }
 
@@ -1325,36 +1322,15 @@ export function updateProject(
   })
 }
 
-export async function deleteProject(
+export function deleteProject(
   baseUrl: string,
   token: string,
   projectId: string,
 ): Promise<void> {
-  if (isDemoMutationBlocked('DELETE', `/v1/projects/${projectId}`)) {
-    throw new ApiClientError(403, {
-      error: READ_ONLY_REASON,
-      code: 'demo_read_only',
-    })
-  }
-  const res = await fetch(`${baseUrl}/v1/projects/${projectId}`, {
+  return requestResponse(baseUrl, `/v1/projects/${projectId}`, {
     method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(token),
-    },
-  })
-  if (!res.ok) {
-    let body: ApiError
-    try {
-      body = (await res.json()) as ApiError
-    } catch {
-      body = {
-        error: `Request failed with status ${res.status}`,
-        code: 'unknown_error',
-      }
-    }
-    throw new ApiClientError(res.status, body)
-  }
+    headers: authHeaders(token),
+  }).then(() => undefined)
 }
 
 // ── Pipeline API ────────────────────────────────────────────────
@@ -1481,36 +1457,15 @@ export function updatePipeline(
   )
 }
 
-export async function deletePipeline(
+export function deletePipeline(
   baseUrl: string,
   token: string,
   pipelineId: string,
 ): Promise<void> {
-  if (isDemoMutationBlocked('DELETE', `/v1/pipelines/${pipelineId}`)) {
-    throw new ApiClientError(403, {
-      error: READ_ONLY_REASON,
-      code: 'demo_read_only',
-    })
-  }
-  const res = await fetch(`${baseUrl}/v1/pipelines/${pipelineId}`, {
+  return requestResponse(baseUrl, `/v1/pipelines/${pipelineId}`, {
     method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(token),
-    },
-  })
-  if (!res.ok) {
-    let body: ApiError
-    try {
-      body = (await res.json()) as ApiError
-    } catch {
-      body = {
-        error: `Request failed with status ${res.status}`,
-        code: 'unknown_error',
-      }
-    }
-    throw new ApiClientError(res.status, body)
-  }
+    headers: authHeaders(token),
+  }).then(() => undefined)
 }
 
 export function validatePipeline(

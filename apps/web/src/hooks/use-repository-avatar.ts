@@ -8,7 +8,7 @@ const createObjectURL = (blob: Blob) => URL.createObjectURL(blob)
 export function useRepositoryAvatar(repositoryId: string) {
   const { baseUrl, instance, token } = useApiContext()
 
-  const response = useQuery({
+  return useQuery({
     queryKey: [instance?.id ?? '__none__', 'repository-avatar', repositoryId],
     queryFn: ({ signal }) =>
       getRepositoryAvatar(baseUrl!, token!, repositoryId, { signal }),
@@ -16,6 +16,4 @@ export function useRepositoryAvatar(repositoryId: string) {
     enabled: !!baseUrl && !!token,
     staleTime: 60 * 60 * 1000,
   })
-
-  return response.data
 }

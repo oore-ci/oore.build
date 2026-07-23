@@ -39,11 +39,6 @@ export function setupStatusQueryOptions(instance: Instance | null) {
   })
 }
 
-function useSetupStatusKey() {
-  const instance = useActiveInstance()
-  return setupStatusQueryKey(instance?.id)
-}
-
 export function useSetupStatus() {
   const instance = useActiveInstance()
   return useQuery(setupStatusQueryOptions(instance))
@@ -52,7 +47,7 @@ export function useSetupStatus() {
 export function useVerifyBootstrapToken() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: (token: string) =>
@@ -66,7 +61,7 @@ export function useVerifyBootstrapToken() {
 export function useConfigureOidc() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -88,7 +83,7 @@ export function useConfigureOidc() {
 export function useSetupLocalOwnerCreate() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -110,7 +105,7 @@ export function useSetupLocalOwnerCreate() {
 export function useSetupPreferences() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -138,7 +133,7 @@ export function useSetupPreferences() {
 export function useSetupTrustedProxyConfigure() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -172,7 +167,7 @@ export function useSetupTrustedProxyConfigure() {
 export function useSetupTrustedProxyClaimOwner() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({ sessionToken }: { sessionToken: string }) =>
@@ -201,7 +196,7 @@ export function useSetupSummary() {
 export function useCompleteSetup() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: (sessionToken: string) =>

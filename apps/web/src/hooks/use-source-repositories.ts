@@ -88,7 +88,7 @@ export async function discoverSourceRepositories(
 export function useSourceRepositories(enabled: boolean) {
   const { baseUrl, instance, token } = useApiContext()
 
-  const query = useQuery({
+  return useQuery({
     queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
     queryFn: async ({ signal }) => {
       signal.throwIfAborted()
@@ -112,10 +112,4 @@ export function useSourceRepositories(enabled: boolean) {
     },
     enabled: enabled && !!baseUrl && !!token,
   })
-
-  return {
-    ...query,
-    data: query.data?.repositories,
-    sourceFailures: query.data?.failures ?? [],
-  }
 }

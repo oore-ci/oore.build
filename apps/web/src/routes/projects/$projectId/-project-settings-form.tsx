@@ -55,7 +55,7 @@ export function ProjectSettingsForm({
 }) {
   const updateMutation = useUpdateProject()
   const repositoriesQuery = useSourceRepositories(canChangeSource)
-  const repositories = repositoriesQuery.data ?? []
+  const repositories = repositoriesQuery.data?.repositories ?? []
   const repositoryItems = Object.fromEntries(
     repositories.map((repository) => [repository.id, repository.full_name]),
   )
@@ -124,7 +124,7 @@ export function ProjectSettingsForm({
                   <FormItem>
                     <FormLabel>Source repository</FormLabel>
                     <SourceDiscoveryWarning
-                      failures={repositoriesQuery.sourceFailures}
+                      failures={repositoriesQuery.data?.failures ?? []}
                       isRetrying={repositoriesQuery.isFetching}
                       onRetry={() => void repositoriesQuery.refetch()}
                     />
