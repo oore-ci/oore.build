@@ -281,7 +281,7 @@ function RepositoryWorkflowSummary({
   )
 }
 
-function useNewPipelinePageState() {
+function NewPipelinePage() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
@@ -671,55 +671,6 @@ function useNewPipelinePageState() {
           : undefined,
     }
   }
-
-  return {
-    activeTemplate,
-    createMutation,
-    handleSubmit,
-    invalidWorkflows,
-    manualOnlyTriggers,
-    manualSetup,
-    navigate,
-    projectData,
-    projectId,
-    selectedTemplate,
-    selectedWorkflow,
-    selectedWorkflowPath,
-    setManualSetup,
-    setSelectedTemplate,
-    setSelectedWorkflowPath,
-    updateIosSigningMutation,
-    updateSigningMutation,
-    validationErrors,
-    validWorkflows,
-    workflowsQuery,
-  }
-}
-
-function NewPipelinePage() {
-  const pageState = useNewPipelinePageState()
-  const {
-    activeTemplate,
-    createMutation,
-    handleSubmit,
-    invalidWorkflows,
-    manualOnlyTriggers,
-    manualSetup,
-    navigate,
-    projectData,
-    projectId,
-    selectedTemplate,
-    selectedWorkflow,
-    selectedWorkflowPath,
-    setManualSetup,
-    setSelectedTemplate,
-    setSelectedWorkflowPath,
-    updateIosSigningMutation,
-    updateSigningMutation,
-    validationErrors,
-    validWorkflows,
-    workflowsQuery,
-  } = pageState
 
   return (
     <PageLayout width="wide">

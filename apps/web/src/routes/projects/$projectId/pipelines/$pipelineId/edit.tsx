@@ -91,7 +91,7 @@ export const Route = createFileRoute(
   component: EditPipelinePage,
 })
 
-function useEditPipelinePageState() {
+function EditPipelinePage() {
   const { projectId, pipelineId } = Route.useParams()
   const { signing: retrySigning, signingError } = Route.useSearch()
   const navigate = useNavigate()
@@ -116,15 +116,26 @@ function useEditPipelinePageState() {
     : 'Edit Pipeline'
 
   if (isLoading || signingQuery.isLoading || iosSigningQuery.isLoading) {
-    return { status: 'loading' as const, label }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-96 w-full" />
+      </PageLayout>
+    )
   }
 
   if (error || !data) {
-    return {
-      status: 'error' as const,
-      label,
-      message: error?.message ?? 'Not found',
-    }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load pipeline: {error?.message ?? 'Not found'}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
   }
 
   const { pipeline } = data
@@ -578,90 +589,6 @@ function useEditPipelinePageState() {
       toast.error(`Failed to sync iOS signing: ${message}`)
     }
   }
-
-  return {
-    status: 'ready' as const,
-    deviceName,
-    deviceUdid,
-    formInitialValues,
-    handleRegisterDevice,
-    handleSubmit,
-    handleSyncIosSigning,
-    iosDevicesQuery,
-    iosSigningQuery,
-    label,
-    manualOnlyTriggers,
-    navigate,
-    pipeline,
-    pipelineId,
-    projectId,
-    registerIosDeviceMutation,
-    retrySigning,
-    setDeviceName,
-    setDeviceUdid,
-    signingError,
-    signingQuery,
-    syncIosSigningMutation,
-    updateIosSigningMutation,
-    updateMutation,
-    updateSigningMutation,
-    validationErrors,
-  }
-}
-
-function EditPipelinePage() {
-  const pageState = useEditPipelinePageState()
-
-  if (pageState.status === 'loading') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-96 w-full" />
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'error') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Alert variant="destructive">
-          <AlertDescription>
-            Failed to load pipeline: {pageState.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
-  }
-
-  const {
-    deviceName,
-    deviceUdid,
-    formInitialValues,
-    handleRegisterDevice,
-    handleSubmit,
-    handleSyncIosSigning,
-    iosDevicesQuery,
-    iosSigningQuery,
-    label,
-    manualOnlyTriggers,
-    navigate,
-    pipeline,
-    pipelineId,
-    projectId,
-    registerIosDeviceMutation,
-    retrySigning,
-    setDeviceName,
-    setDeviceUdid,
-    signingError,
-    signingQuery,
-    syncIosSigningMutation,
-    updateIosSigningMutation,
-    updateMutation,
-    updateSigningMutation,
-    validationErrors,
-  } = pageState
 
   return (
     <PageLayout width="wide">
