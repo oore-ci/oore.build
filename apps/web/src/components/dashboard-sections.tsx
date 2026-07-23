@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
   ArrowRight as ArrowRight01Icon,
@@ -63,7 +62,7 @@ export function DashboardGettingStarted({
                     render={<Link to={integrationConnectTo} />}
                     nativeButton={false}
                   >
-                    <DynamicLucideIcon icon={Link04Icon} />
+                    <Link04Icon />
                     Connect source
                   </Button>
                 ) : (
@@ -91,7 +90,7 @@ export function DashboardGettingStarted({
                   render={<Link to="/projects" search={{ openCreate: '1' }} />}
                   nativeButton={false}
                 >
-                  <DynamicLucideIcon icon={Add01Icon} />
+                  <Add01Icon />
                   Create project
                 </Button>
               ) : (
@@ -161,7 +160,7 @@ export function DashboardRecentBuilds({
           nativeButton={false}
         >
           View all
-          <DynamicLucideIcon icon={ArrowRight01Icon} />
+          <ArrowRight01Icon />
         </Button>
       </div>
 

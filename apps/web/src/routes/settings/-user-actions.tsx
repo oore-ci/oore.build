@@ -3,7 +3,6 @@ import {
   CircleEllipsis as MoreHorizontalCircle01Icon,
   UserCheck as UserCheck01Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import type { User, UserRole } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -52,7 +51,7 @@ export function UserActions({
           />
         }
       >
-        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
         {!isDisabled ? (
@@ -84,13 +83,13 @@ export function UserActions({
               variant="destructive"
               onClick={() => onDisable(user.id, user.email)}
             >
-              <DynamicLucideIcon icon={Cancel01Icon} size={14} />
+              <Cancel01Icon size={14} />
               Disable user
             </DropdownMenuItem>
           </>
         ) : (
           <DropdownMenuItem onClick={() => onReEnable(user.id, user.email)}>
-            <DynamicLucideIcon icon={UserCheck01Icon} size={14} />
+            <UserCheck01Icon size={14} />
             Re-enable user
           </DropdownMenuItem>
         )}

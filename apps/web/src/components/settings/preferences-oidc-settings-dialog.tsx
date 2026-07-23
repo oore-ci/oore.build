@@ -1,5 +1,4 @@
 import { toast } from '@/lib/toast'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   CircleAlert as AlertCircleIcon,
   CircleCheck as CheckmarkCircle02Icon,
@@ -150,11 +149,7 @@ export default function OidcSettingsDialog({
 
             {testMutation.isSuccess ? (
               <Alert>
-                <DynamicLucideIcon
-                  icon={CheckmarkCircle02Icon}
-                  size={16}
-                  className="text-success"
-                />
+                <CheckmarkCircle02Icon size={16} className="text-success" />
                 <AlertDescription>
                   Connection successful.{' '}
                   <span className="font-mono text-xs">
@@ -164,7 +159,7 @@ export default function OidcSettingsDialog({
               </Alert>
             ) : testMutation.isError ? (
               <Alert variant="destructive">
-                <DynamicLucideIcon icon={AlertCircleIcon} size={16} />
+                <AlertCircleIcon size={16} />
                 <AlertDescription>
                   Connection failed. Verify the issuer URL and try again.
                 </AlertDescription>

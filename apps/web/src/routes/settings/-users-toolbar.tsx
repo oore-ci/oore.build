@@ -2,7 +2,6 @@ import {
   ArrowDown as ArrowDown01Icon,
   ArrowUp as ArrowUp01Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import type { Table } from '@tanstack/react-table'
 
 import { CollectionSearchInput } from '@/components/collection-search-input'
@@ -39,6 +38,7 @@ export function UsersToolbar({
   table,
 }: UsersToolbarProps) {
   const selectedRows = table.getFilteredSelectedRowModel().rows
+  const DirectionIcon = direction === 'asc' ? ArrowUp01Icon : ArrowDown01Icon
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -74,9 +74,7 @@ export function UsersToolbar({
             onSortChange(sort, direction === 'asc' ? 'desc' : 'asc')
           }
         >
-          <DynamicLucideIcon
-            icon={direction === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
-          />
+          <DirectionIcon />
         </Button>
       </div>
 

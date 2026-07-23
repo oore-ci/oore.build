@@ -1,5 +1,4 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Plus as Add01Icon } from 'lucide-react'
 import {
   getActiveInstanceOrRedirect,
@@ -72,7 +71,7 @@ function LocalGitPage() {
               render={<Link to="/projects" search={{ openCreate: '1' }} />}
               nativeButton={false}
             >
-              <DynamicLucideIcon icon={Add01Icon} />
+              <Add01Icon />
               Create project
             </Button>
           ) : null}

@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { ArrowRight as ArrowRight01Icon } from 'lucide-react'
 import type {
   useExternalAccessNetworkSettings,
@@ -59,10 +58,7 @@ export function ExternalAccessManagement({
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Edit
-              <DynamicLucideIcon
-                icon={ArrowRight01Icon}
-                data-icon="inline-end"
-              />
+              <ArrowRight01Icon data-icon="inline-end" />
             </span>
           </span>
         </Button>
@@ -92,10 +88,7 @@ export function ExternalAccessManagement({
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Edit
-              <DynamicLucideIcon
-                icon={ArrowRight01Icon}
-                data-icon="inline-end"
-              />
+              <ArrowRight01Icon data-icon="inline-end" />
             </span>
           </span>
         </Button>

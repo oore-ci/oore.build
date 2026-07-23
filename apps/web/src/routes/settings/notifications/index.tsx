@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
   Info as InformationCircleIcon,
@@ -214,7 +213,7 @@ function NotificationsPage() {
             render={<Link to="/settings/notifications/new" />}
             nativeButton={false}
           >
-            <DynamicLucideIcon icon={Add01Icon} />
+            <Add01Icon />
             Add channel
           </Button>
         }
@@ -247,7 +246,7 @@ function NotificationsPage() {
 
       {channelsQuery.error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Failed to load notification channels:{' '}
@@ -268,7 +267,7 @@ function NotificationsPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={InformationCircleIcon} />
+              <InformationCircleIcon />
             </EmptyMedia>
             <EmptyTitle>No notification channels</EmptyTitle>
             <EmptyDescription>
@@ -280,7 +279,7 @@ function NotificationsPage() {
               render={<Link to="/settings/notifications/new" />}
               nativeButton={false}
             >
-              <DynamicLucideIcon icon={Add01Icon} />
+              <Add01Icon />
               Add channel
             </Button>
           </EmptyContent>
@@ -291,7 +290,7 @@ function NotificationsPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching channels</EmptyTitle>
             <EmptyDescription>

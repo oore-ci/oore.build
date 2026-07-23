@@ -1,6 +1,5 @@
 import { useMemo } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Info as InformationCircleIcon,
   Link2 as Link04Icon,
@@ -184,11 +183,7 @@ function IntegrationsPage() {
           sourcesAvailable && canWrite && hasConnectedSources ? (
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button />}>
-                <DynamicLucideIcon
-                  icon={Link04Icon}
-                  data-icon="inline-start"
-                  aria-hidden
-                />
+                <Link04Icon data-icon="inline-start" aria-hidden />
                 Connect source
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -221,7 +216,7 @@ function IntegrationsPage() {
         </section>
       ) : canWrite && preferencesQuery.error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Failed to load access policy: {preferencesQuery.error.message}
@@ -310,7 +305,7 @@ function IntegrationsPage() {
 
       {sourcesAvailable && !canWrite ? (
         <Alert>
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             You have read-only access to connected sources. An owner or admin
             can add, reconnect, or disconnect providers.

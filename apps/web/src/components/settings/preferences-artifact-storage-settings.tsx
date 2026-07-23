@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Folder as Folder02Icon } from 'lucide-react'
 import type { UseFormReturn } from 'react-hook-form'
 import * as z from 'zod'
@@ -264,10 +263,7 @@ export function ArtifactStorageSettings({
                                 onClick={onOpenFolderPicker}
                                 disabled={!canWrite || isSaving}
                               >
-                                <DynamicLucideIcon
-                                  icon={Folder02Icon}
-                                  size={16}
-                                />
+                                <Folder02Icon size={16} />
                               </Button>
                             </div>
                           ) : null}

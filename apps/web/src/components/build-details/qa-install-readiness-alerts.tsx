@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Globe as Globe02Icon,
   Info as InformationCircleIcon,
@@ -24,7 +23,7 @@ export default function QaInstallReadinessAlerts({
   if (readiness && !readiness.ready) {
     return (
       <Alert variant="destructive">
-        <DynamicLucideIcon icon={InformationCircleIcon} />
+        <InformationCircleIcon />
         <AlertTitle>Not install-ready</AlertTitle>
         <AlertDescription>{readiness.reason}</AlertDescription>
       </Alert>
@@ -33,7 +32,7 @@ export default function QaInstallReadinessAlerts({
   if (conditions.expired) {
     return (
       <Alert variant="destructive">
-        <DynamicLucideIcon icon={InformationCircleIcon} />
+        <InformationCircleIcon />
         <AlertTitle>Artifact expired</AlertTitle>
         <AlertDescription>
           Ask a developer to run a fresh build before installing.
@@ -44,7 +43,7 @@ export default function QaInstallReadinessAlerts({
   if (conditions.needsSafari) {
     return (
       <Alert>
-        <DynamicLucideIcon icon={Globe02Icon} />
+        <Globe02Icon />
         <AlertTitle>Open this page in Safari</AlertTitle>
         <AlertDescription>
           iOS installation can only start from Safari on this iPhone.
@@ -55,7 +54,7 @@ export default function QaInstallReadinessAlerts({
   if (conditions.desktopIos) {
     return (
       <Alert>
-        <DynamicLucideIcon icon={SmartPhone01Icon} />
+        <SmartPhone01Icon />
         <AlertTitle>Open this page on the registered iPhone</AlertTitle>
         <AlertDescription>
           Use Safari on a device included in this version’s provisioning
@@ -67,7 +66,7 @@ export default function QaInstallReadinessAlerts({
   if (conditions.wrongPhone) {
     return (
       <Alert>
-        <DynamicLucideIcon icon={InformationCircleIcon} />
+        <InformationCircleIcon />
         <AlertTitle>Open this page on the right device</AlertTitle>
         <AlertDescription>This version is for {platform}.</AlertDescription>
       </Alert>

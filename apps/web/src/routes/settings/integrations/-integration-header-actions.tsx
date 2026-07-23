@@ -5,7 +5,6 @@ import {
   RefreshCw as Refresh01Icon,
   Settings as Setting07Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -42,12 +41,12 @@ export function IntegrationHeaderActions({
     <>
       {needsAuthorization ? (
         <Button onClick={onAuthorize} disabled={authorizePending}>
-          <DynamicLucideIcon icon={LinkSquare02Icon} size={16} />
+          <LinkSquare02Icon size={16} />
           {authorizePending ? 'Redirecting...' : 'Authorize GitLab'}
         </Button>
       ) : canSync ? (
         <Button onClick={onSync} disabled={syncPending}>
-          <DynamicLucideIcon icon={Refresh01Icon} />
+          <Refresh01Icon />
           {syncPending ? 'Syncing...' : syncLabel}
         </Button>
       ) : null}
@@ -58,7 +57,7 @@ export function IntegrationHeaderActions({
             <Button variant="outline" size="icon" aria-label="Source actions" />
           }
         >
-          <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+          <MoreHorizontalCircle01Icon />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
           {manageHref ? (
@@ -67,12 +66,12 @@ export function IntegrationHeaderActions({
                 window.open(manageHref, '_blank', 'noopener,noreferrer')
               }
             >
-              <DynamicLucideIcon icon={Setting07Icon} />
+              <Setting07Icon />
               {manageLabel}
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem variant="destructive" onClick={onDisconnect}>
-            <DynamicLucideIcon icon={Delete02Icon} />
+            <Delete02Icon />
             Disconnect source
           </DropdownMenuItem>
         </DropdownMenuContent>

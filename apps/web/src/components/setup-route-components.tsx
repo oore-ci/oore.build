@@ -1,5 +1,4 @@
 import { useNavigate, useRouter } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Check as Tick02Icon } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -52,11 +51,7 @@ export function SetupStepIndicator({
               >
                 {isCompleted ? (
                   <>
-                    <DynamicLucideIcon
-                      icon={Tick02Icon}
-                      size={12}
-                      className="mr-0.5"
-                    />
+                    <Tick02Icon size={12} className="mr-0.5" />
                     {label}
                   </>
                 ) : (

@@ -1,6 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowRight as ArrowRight01Icon,
   ListFilter as FilterIcon,
@@ -217,8 +216,7 @@ function QaActivityRow({
           {relativeTime(build.finished_at ?? build.created_at)}
         </p>
       </div>
-      <DynamicLucideIcon
-        icon={ArrowRight01Icon}
+      <ArrowRight01Icon
         className="shrink-0 text-muted-foreground"
         aria-hidden
       />
@@ -346,7 +344,7 @@ function ActivityPanel({
             }
           >
             <span className="relative flex">
-              <DynamicLucideIcon icon={FilterIcon} data-icon="inline-start" />
+              <FilterIcon data-icon="inline-start" />
               {statuses.length > 0 ? (
                 <Badge
                   aria-hidden
@@ -434,7 +432,7 @@ function ActivityPanel({
                 size="sm"
                 onClick={() => void buildsQuery.refetch()}
               >
-                <DynamicLucideIcon icon={RefreshIcon} />
+                <RefreshIcon />
                 Retry
               </Button>
             </AlertDescription>
@@ -476,7 +474,7 @@ function ActivityPanel({
                     size="sm"
                     onClick={() => void artifactsQuery.refetch()}
                   >
-                    <DynamicLucideIcon icon={RefreshIcon} />
+                    <RefreshIcon />
                     Retry
                   </Button>
                 </AlertDescription>
@@ -556,7 +554,7 @@ export default function QaReleasesPage() {
               size="sm"
               onClick={() => void projectsQuery.refetch()}
             >
-              <DynamicLucideIcon icon={RefreshIcon} />
+              <RefreshIcon />
               Retry
             </Button>
           </AlertDescription>
@@ -572,7 +570,7 @@ export default function QaReleasesPage() {
           <Empty className="py-12">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <DynamicLucideIcon icon={SmartPhone01Icon} />
+                <SmartPhone01Icon />
               </EmptyMedia>
               <EmptyTitle>No apps shared with you yet</EmptyTitle>
               <EmptyDescription>

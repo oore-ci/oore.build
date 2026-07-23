@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   BookOpen as BookOpen01Icon,
   ChevronsUpDown,
@@ -217,21 +216,21 @@ export default function NavUserMenu({
                 Theme
               </DropdownMenuLabel>
               <DropdownMenuItem onClick={() => setTheme('light')}>
-                <DynamicLucideIcon icon={Sun03Icon} size={16} />
+                <Sun03Icon size={16} />
                 Light
                 {theme === 'light' ? (
                   <span className="ml-auto text-xs text-primary">Active</span>
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setTheme('dark')}>
-                <DynamicLucideIcon icon={Moon02Icon} size={16} />
+                <Moon02Icon size={16} />
                 Dark
                 {theme === 'dark' ? (
                   <span className="ml-auto text-xs text-primary">Active</span>
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setTheme('system')}>
-                <DynamicLucideIcon icon={SmartPhone01Icon} size={16} />
+                <SmartPhone01Icon size={16} />
                 System
                 {theme === 'system' ? (
                   <span className="ml-auto text-xs text-primary">Active</span>
@@ -249,14 +248,14 @@ export default function NavUserMenu({
                 />
               }
             >
-              <DynamicLucideIcon icon={BookOpen01Icon} size={16} />
+              <BookOpen01Icon size={16} />
               Documentation
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => logoutMutation.mutate()}
               disabled={logoutMutation.isPending}
             >
-              <DynamicLucideIcon icon={Logout03Icon} size={16} />
+              <Logout03Icon size={16} />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

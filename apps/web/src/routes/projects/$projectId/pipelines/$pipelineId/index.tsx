@@ -1,6 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Trash2 as Delete02Icon,
   Pencil as Edit02Icon,
@@ -129,7 +128,7 @@ function PipelineDetailPage() {
       <PageLayout width="wide">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             Failed to load pipeline: {error.message}
           </AlertDescription>
@@ -200,7 +199,7 @@ function PipelineDetailPage() {
                   onClick={() => setTriggerBuildOpen(true)}
                   disabled={!projectHasSource}
                 >
-                  <DynamicLucideIcon icon={PlayIcon} />
+                  <PlayIcon />
                   Run build
                 </Button>
               ) : null}
@@ -225,7 +224,7 @@ function PipelineDetailPage() {
                   }
                   nativeButton={false}
                 >
-                  <DynamicLucideIcon icon={Edit02Icon} />
+                  <Edit02Icon />
                   Edit
                 </Button>
               ) : null}
@@ -234,7 +233,7 @@ function PipelineDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <DynamicLucideIcon icon={Delete02Icon} />
+                  <Delete02Icon />
                   Delete
                 </Button>
               ) : null}
@@ -244,7 +243,7 @@ function PipelineDetailPage() {
       />
       {!projectHasSource ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             This project has no linked source repository. Link a repository
             before triggering builds.
@@ -266,7 +265,7 @@ function PipelineDetailPage() {
             <Empty className="p-8">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <DynamicLucideIcon icon={PlayIcon} />
+                  <PlayIcon />
                 </EmptyMedia>
                 <EmptyTitle>No builds yet</EmptyTitle>
                 <EmptyDescription>
@@ -282,7 +281,7 @@ function PipelineDetailPage() {
                     onFocus={() => void loadTriggerBuildDialog()}
                     onClick={() => setTriggerBuildOpen(true)}
                   >
-                    <DynamicLucideIcon icon={PlayIcon} />
+                    <PlayIcon />
                     Run first build
                   </Button>
                 </EmptyContent>

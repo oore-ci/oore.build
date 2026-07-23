@@ -1,5 +1,4 @@
 import { Info as InformationCircleIcon } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Children } from 'react'
 import type { ReactNode } from 'react'
 
@@ -28,8 +27,7 @@ export default function SetupHint({
       )}
     >
       <div className="flex items-center gap-2 text-foreground">
-        <DynamicLucideIcon
-          icon={InformationCircleIcon}
+        <InformationCircleIcon
           size={14}
           className="shrink-0 text-muted-foreground"
         />

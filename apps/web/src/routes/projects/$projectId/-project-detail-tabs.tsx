@@ -3,7 +3,6 @@ import {
   Play as PlayIcon,
   Search as Search01Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
@@ -206,7 +205,7 @@ export function ProjectBuildsTab({
 
           {buildsQuery.error ? (
             <Alert variant="destructive">
-              <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+              <InformationCircleIcon size={16} />
               <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <span>Failed to load builds: {buildsQuery.error.message}</span>
                 <Button
@@ -224,7 +223,7 @@ export function ProjectBuildsTab({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <DynamicLucideIcon icon={PlayIcon} />
+                  <PlayIcon />
                 </EmptyMedia>
                 <EmptyTitle>No builds yet</EmptyTitle>
                 <EmptyDescription>
@@ -241,7 +240,7 @@ export function ProjectBuildsTab({
                     onFocus={onPreloadTriggerBuild}
                     onClick={onTriggerBuild}
                   >
-                    <DynamicLucideIcon icon={PlayIcon} />
+                    <PlayIcon />
                     Run first build
                   </Button>
                 </EmptyContent>
@@ -253,7 +252,7 @@ export function ProjectBuildsTab({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <DynamicLucideIcon icon={Search01Icon} />
+                  <Search01Icon />
                 </EmptyMedia>
                 <EmptyTitle>No matching builds</EmptyTitle>
                 <EmptyDescription>

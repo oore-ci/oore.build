@@ -5,7 +5,6 @@ import {
   redirect,
   useSearch,
 } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
   Folder as Folder02Icon,
@@ -189,7 +188,7 @@ function ProjectsListPage() {
               onFocus={() => void loadCreateProjectDialog()}
               onClick={() => setCreateOpen(true)}
             >
-              <DynamicLucideIcon icon={Add01Icon} />
+              <Add01Icon />
               New project
             </Button>
           ) : undefined
@@ -223,7 +222,7 @@ function ProjectsListPage() {
 
       {projectsQuery.error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load projects: {projectsQuery.error.message}</span>
             <Button
@@ -241,7 +240,7 @@ function ProjectsListPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Folder02Icon} />
+              <Folder02Icon />
             </EmptyMedia>
             <EmptyTitle>Create your first project</EmptyTitle>
             <EmptyDescription>
@@ -259,7 +258,7 @@ function ProjectsListPage() {
                   render={<Link to="/settings/integrations" />}
                   nativeButton={false}
                 >
-                  <DynamicLucideIcon icon={Link04Icon} />
+                  <Link04Icon />
                   Connect source
                 </Button>
               ) : (
@@ -273,7 +272,7 @@ function ProjectsListPage() {
                 onFocus={() => void loadCreateProjectDialog()}
                 onClick={() => setCreateOpen(true)}
               >
-                <DynamicLucideIcon icon={Add01Icon} />
+                <Add01Icon />
                 Create project
               </Button>
             ) : (
@@ -289,7 +288,7 @@ function ProjectsListPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching projects</EmptyTitle>
             <EmptyDescription>

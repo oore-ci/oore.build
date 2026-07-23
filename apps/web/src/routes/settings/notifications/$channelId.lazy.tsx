@@ -4,7 +4,6 @@ import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Trash2 as Delete02Icon,
   FlaskConical as TestTube01Icon,
@@ -533,14 +532,14 @@ function NotificationChannelDetailPage() {
               onClick={handleTest}
               disabled={testMutation.isPending}
             >
-              <DynamicLucideIcon icon={TestTube01Icon} />
+              <TestTube01Icon />
               {testMutation.isPending ? 'Sending...' : 'Test'}
             </Button>
             <AlertDialog>
               <AlertDialogTrigger
                 render={
                   <Button variant="destructive">
-                    <DynamicLucideIcon icon={Delete02Icon} />
+                    <Delete02Icon />
                     Delete
                   </Button>
                 }

@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Plus as Add01Icon, Info as InformationCircleIcon } from 'lucide-react'
 
 import type { Pipeline } from '@/lib/types'
@@ -128,7 +127,7 @@ export function ProjectPipelinesTab({
                 />
               }
             >
-              <DynamicLucideIcon icon={Add01Icon} />
+              <Add01Icon />
               Add pipeline
             </Button>
           </div>
@@ -136,7 +135,7 @@ export function ProjectPipelinesTab({
 
         {error ? (
           <Alert variant="destructive">
-            <DynamicLucideIcon icon={InformationCircleIcon} />
+            <InformationCircleIcon />
             <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span>Failed to load pipelines: {error}</span>
               <Button variant="outline" size="sm" onClick={onRetry}>
@@ -171,7 +170,7 @@ export function ProjectPipelinesTab({
                 {workflowDiscoveryLoading ? (
                   <Spinner className="size-5" />
                 ) : (
-                  <DynamicLucideIcon icon={Add01Icon} />
+                  <Add01Icon />
                 )}
               </EmptyMedia>
               <EmptyTitle>
@@ -203,7 +202,7 @@ export function ProjectPipelinesTab({
                     />
                   }
                 >
-                  <DynamicLucideIcon icon={Add01Icon} />
+                  <Add01Icon />
                   {hasValidRepositoryWorkflow
                     ? 'Use repository workflow'
                     : 'Set up a build'}

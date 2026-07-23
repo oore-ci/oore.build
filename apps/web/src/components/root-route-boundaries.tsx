@@ -1,6 +1,5 @@
 import { Link, useRouter } from '@tanstack/react-router'
 import type { ErrorComponentProps } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   CircleAlert as AlertCircleIcon,
   ArrowLeft as ArrowLeft02Icon,
@@ -23,7 +22,7 @@ export function RootNotFound() {
         </p>
       </div>
       <Button variant="outline" render={<Link to="/" />} nativeButton={false}>
-        <DynamicLucideIcon icon={Home01Icon} size={16} />
+        <Home01Icon size={16} />
         Dashboard
       </Button>
     </div>
@@ -36,11 +35,7 @@ export function RootErrorBoundary({ error, reset }: ErrorComponentProps) {
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-6 text-center">
       <div className="flex size-12 items-center justify-center border border-destructive/30 bg-destructive/10">
-        <DynamicLucideIcon
-          icon={AlertCircleIcon}
-          size={24}
-          className="text-destructive"
-        />
+        <AlertCircleIcon size={24} className="text-destructive" />
       </div>
       <div className="space-y-2">
         <h1 className="text-2xl font-bold tracking-tight">
@@ -63,11 +58,11 @@ export function RootErrorBoundary({ error, reset }: ErrorComponentProps) {
             void router.invalidate()
           }}
         >
-          <DynamicLucideIcon icon={RotateClockwiseIcon} size={16} />
+          <RotateClockwiseIcon size={16} />
           Try again
         </Button>
         <Button variant="outline" onClick={() => window.history.back()}>
-          <DynamicLucideIcon icon={ArrowLeft02Icon} size={16} />
+          <ArrowLeft02Icon size={16} />
           Go back
         </Button>
       </div>

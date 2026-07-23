@@ -1,5 +1,4 @@
 import { Copy as Copy01Icon } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { toast } from '@/lib/toast'
 import type { Integration } from '@/lib/types'
@@ -111,7 +110,7 @@ export function IntegrationConnectionDetails({
                               )
                           }}
                         >
-                          <DynamicLucideIcon icon={Copy01Icon} />
+                          <Copy01Icon />
                         </Button>
                       </div>
                     ) : null}

@@ -4,7 +4,6 @@ import {
   ArrowDown as ArrowDown01Icon,
   ArrowRight as ArrowRight01Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -28,14 +27,12 @@ function Section({
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const SectionIcon = open ? ArrowDown01Icon : ArrowRight01Icon
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="flex w-full items-center gap-2 py-2 text-sm font-medium">
-        <DynamicLucideIcon
-          icon={open ? ArrowDown01Icon : ArrowRight01Icon}
-          size={14}
-        />
+        <SectionIcon size={14} />
         {title}
       </CollapsibleTrigger>
       <CollapsibleContent>

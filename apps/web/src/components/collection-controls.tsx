@@ -4,8 +4,6 @@ import {
   ArrowUp as ArrowUp01Icon,
   ArrowUpDown as ArrowUpDownIcon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
-
 import { Button } from '@/components/ui/button'
 import {
   Pagination,
@@ -40,7 +38,7 @@ export function SortableTableHead<TSort extends string>({
   const active = sort === sortKey
   const nextDirection: SortDirection =
     active && direction === 'asc' ? 'desc' : 'asc'
-  const icon = active
+  const Icon = active
     ? direction === 'asc'
       ? ArrowUp01Icon
       : ArrowDown01Icon
@@ -60,7 +58,7 @@ export function SortableTableHead<TSort extends string>({
         onClick={() => onSortChange(sortKey, nextDirection)}
       >
         {children}
-        <DynamicLucideIcon icon={icon} aria-hidden />
+        <Icon aria-hidden />
       </Button>
     </TableHead>
   )

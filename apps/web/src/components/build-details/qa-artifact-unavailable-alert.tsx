@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { isTerminalStatus } from '@/hooks/use-builds'
@@ -12,7 +11,7 @@ export default function QaArtifactUnavailableAlert({
 }) {
   return (
     <Alert variant={buildStatus === 'failed' ? 'destructive' : 'default'}>
-      <DynamicLucideIcon icon={InformationCircleIcon} />
+      <InformationCircleIcon />
       <AlertTitle>
         {buildStatus === 'failed'
           ? 'Build failed'

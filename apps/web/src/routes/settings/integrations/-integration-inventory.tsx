@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowLeft as ArrowLeft01Icon,
   ArrowRight as ArrowRight01Icon,
@@ -106,11 +105,11 @@ function RepositoryWebhookAction({
           />
         }
       >
-        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
         <DropdownMenuItem onClick={onSelect}>
-          <DynamicLucideIcon icon={Refresh01Icon} />
+          <Refresh01Icon />
           Create webhook token
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -252,7 +251,7 @@ function RepositoryPagination({
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
         >
-          <DynamicLucideIcon icon={ArrowLeft01Icon} aria-hidden />
+          <ArrowLeft01Icon aria-hidden />
           Previous
         </Button>
         <span className="min-w-20 text-center text-xs text-muted-foreground">
@@ -266,7 +265,7 @@ function RepositoryPagination({
           onClick={() => onPageChange(page + 1)}
         >
           Next
-          <DynamicLucideIcon icon={ArrowRight01Icon} aria-hidden />
+          <ArrowRight01Icon aria-hidden />
         </Button>
       </div>
     </div>
@@ -335,7 +334,7 @@ export function IntegrationRepositoryInventory({
 
       {error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Could not load {repositoryKind}: {error.message}
@@ -359,7 +358,7 @@ export function IntegrationRepositoryInventory({
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={GitBranchIcon} />
+              <GitBranchIcon />
             </EmptyMedia>
             <EmptyTitle>No synced {repositoryKind}</EmptyTitle>
             <EmptyDescription>
@@ -373,7 +372,7 @@ export function IntegrationRepositoryInventory({
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching {repositoryKind}</EmptyTitle>
             <EmptyDescription>Try a different search.</EmptyDescription>
@@ -428,7 +427,7 @@ export function IntegrationAccountsInventory({
   if (error) {
     return (
       <Alert variant="destructive">
-        <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+        <InformationCircleIcon size={16} />
         <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span>
             Could not load {label.toLocaleLowerCase()}: {error.message}

@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Link2 as Link04Icon } from 'lucide-react'
 
 import { buttonVariants } from '@/components/ui/button-variants'
@@ -73,11 +72,7 @@ export function ConnectSourceOptions() {
                   className: 'w-full sm:w-auto',
                 })}
               >
-                <DynamicLucideIcon
-                  icon={Link04Icon}
-                  data-icon="inline-start"
-                  aria-hidden
-                />
+                <Link04Icon data-icon="inline-start" aria-hidden />
                 Connect {provider.name}
               </Link>
             </div>

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { toast } from '@/lib/toast'
@@ -261,7 +260,7 @@ function IntegrationDetailPage() {
       <PageLayout width="wide">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             <span>Failed to load source: {detailQuery.error.message}</span>
             <Button
@@ -438,7 +437,7 @@ function IntegrationDetailPage() {
           canWrite &&
           networkSettingsQuery.error ? (
             <Alert variant="destructive" className="mb-4">
-              <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+              <InformationCircleIcon size={16} />
               <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <span>
                   Webhook actions are unavailable because the public URL could

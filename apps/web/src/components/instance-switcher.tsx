@@ -17,7 +17,6 @@ import {
 } from '@/components/ui/sidebar'
 import { ChevronsUpDown, PlusIcon } from 'lucide-react'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
-import { DynamicLucideIcon } from './ui/dynamic-lucide-icon'
 import { getInstanceIcon } from '@/lib/instance-icons'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useHotkeys } from '@tanstack/react-hotkeys'
@@ -29,6 +28,7 @@ export default function InstanceSwitcher() {
   const isMobile = useIsMobile()
   const instances = useInstanceStore((state) => state.instances)
   const instanceList = Object.values(instances)
+  const ActiveInstanceIcon = getInstanceIcon(activeInstance?.icon)
 
   function selectInstance(id: string) {
     useInstanceStore.getState().setActiveInstance(id)
@@ -60,10 +60,7 @@ export default function InstanceSwitcher() {
               }
             >
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <DynamicLucideIcon
-                  icon={getInstanceIcon(activeInstance?.icon)}
-                  className="size-4"
-                />
+                <ActiveInstanceIcon className="size-4" />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">
@@ -83,22 +80,24 @@ export default function InstanceSwitcher() {
                 <DropdownMenuLabel className="text-xs text-muted-foreground">
                   Instances
                 </DropdownMenuLabel>
-                {instanceList.map((candidate, index) => (
-                  <DropdownMenuItem
-                    key={candidate.id}
-                    onClick={() => selectInstance(candidate.id)}
-                    className="min-w-0 gap-2 rounded-r-none p-2"
-                    aria-selected={candidate.id == activeInstance?.id}
-                  >
-                    <div className="flex size-6 items-center justify-center rounded-md border">
-                      <DynamicLucideIcon
-                        icon={getInstanceIcon(candidate.icon)}
-                      />
-                    </div>
-                    {candidate.label}
-                    <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                ))}
+                {instanceList.map((candidate, index) => {
+                  const CandidateIcon = getInstanceIcon(candidate.icon)
+
+                  return (
+                    <DropdownMenuItem
+                      key={candidate.id}
+                      onClick={() => selectInstance(candidate.id)}
+                      className="min-w-0 gap-2 rounded-r-none p-2"
+                      aria-selected={candidate.id == activeInstance?.id}
+                    >
+                      <div className="flex size-6 items-center justify-center rounded-md border">
+                        <CandidateIcon />
+                      </div>
+                      {candidate.label}
+                      <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  )
+                })}
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem

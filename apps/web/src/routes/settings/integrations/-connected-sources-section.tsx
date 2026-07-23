@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Info as InformationCircleIcon,
   Link2 as Link04Icon,
@@ -96,7 +95,7 @@ export function ConnectedSourcesSection({
       ) : null}
       {error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load sources: {error.message}</span>
             <Button variant="outline" size="sm" onClick={onRetry}>
@@ -109,7 +108,7 @@ export function ConnectedSourcesSection({
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Link04Icon} />
+              <Link04Icon />
             </EmptyMedia>
             <EmptyTitle>No connected sources</EmptyTitle>
             <EmptyDescription>
@@ -124,7 +123,7 @@ export function ConnectedSourcesSection({
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching sources</EmptyTitle>
             <EmptyDescription>

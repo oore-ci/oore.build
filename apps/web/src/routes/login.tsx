@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Plus as Add01Icon, Check as Tick02Icon } from 'lucide-react'
 import type { ConnectivityIssue } from '@/lib/connectivity'
 import { useMountEffect } from '@/hooks/use-mount-effect'
@@ -589,7 +588,7 @@ function LoginPage() {
                       </div>
                       {isActive ? (
                         <span className="flex items-center gap-1 text-xs text-primary">
-                          <DynamicLucideIcon icon={Tick02Icon} size={14} />
+                          <Tick02Icon size={14} />
                           Active
                         </span>
                       ) : null}
@@ -603,7 +602,7 @@ function LoginPage() {
               className="w-full"
               onClick={() => setShowAddInstance(true)}
             >
-              <DynamicLucideIcon icon={Add01Icon} />
+              <Add01Icon />
               Add another instance
             </Button>
           </CardContent>

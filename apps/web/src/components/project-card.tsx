@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Play as PlayIcon, Settings as Setting07Icon } from 'lucide-react'
 
 import type { Project } from '@/lib/types'
@@ -71,7 +70,7 @@ export default function ProjectCard({
               onFocus={onPreloadTriggerBuild}
               onClick={() => onTriggerBuild(project.id)}
             >
-              <DynamicLucideIcon icon={PlayIcon} />
+              <PlayIcon />
             </Button>
           ) : null}
           {canOpenSettings ? (
@@ -88,7 +87,7 @@ export default function ProjectCard({
               }
               nativeButton={false}
             >
-              <DynamicLucideIcon icon={Setting07Icon} />
+              <Setting07Icon />
             </Button>
           ) : null}
         </div>
@@ -148,7 +147,7 @@ export default function ProjectCard({
               }
               nativeButton={false}
             >
-              <DynamicLucideIcon icon={Setting07Icon} />
+              <Setting07Icon />
             </Button>
           ) : null}
         </div>
@@ -162,7 +161,7 @@ export default function ProjectCard({
             onFocus={onPreloadTriggerBuild}
             onClick={() => onTriggerBuild(project.id)}
           >
-            <DynamicLucideIcon icon={PlayIcon} />
+            <PlayIcon />
             Run build
           </Button>
         ) : null}

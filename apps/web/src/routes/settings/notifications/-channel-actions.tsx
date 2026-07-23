@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Trash2 as Delete02Icon,
   CircleEllipsis as MoreHorizontalCircle01Icon,
@@ -37,16 +36,16 @@ export function ChannelActions({
           />
         }
       >
-        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
         <DropdownMenuItem onClick={onTest} disabled={pending}>
-          <DynamicLucideIcon icon={TestTube01Icon} />
+          <TestTube01Icon />
           Send test
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={onDelete}>
-          <DynamicLucideIcon icon={Delete02Icon} />
+          <Delete02Icon />
           Delete channel
         </DropdownMenuItem>
       </DropdownMenuContent>

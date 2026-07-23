@@ -1,5 +1,4 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { ArrowRight as ArrowRight01Icon } from 'lucide-react'
 
 import PageHeader from '@/components/page-header'
@@ -37,30 +36,33 @@ function SettingsHubPage() {
               {group.title}
             </h2>
             <div className="divide-y border bg-card">
-              {group.items.map((item) => (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className="group grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 p-3 transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-4"
-                >
-                  <span className="flex size-8 items-center justify-center text-muted-foreground group-hover:text-foreground">
-                    <DynamicLucideIcon icon={item.icon} aria-hidden />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium">
-                      {item.title}
+              {group.items.map((item) => {
+                const ItemIcon = item.icon
+
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className="group grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 p-3 transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-4"
+                  >
+                    <span className="flex size-8 items-center justify-center text-muted-foreground group-hover:text-foreground">
+                      <ItemIcon aria-hidden />
                     </span>
-                    <span className="block text-xs leading-relaxed text-muted-foreground">
-                      {item.description}
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">
+                        {item.title}
+                      </span>
+                      <span className="block text-xs leading-relaxed text-muted-foreground">
+                        {item.description}
+                      </span>
                     </span>
-                  </span>
-                  <DynamicLucideIcon
-                    icon={ArrowRight01Icon}
-                    className="text-muted-foreground"
-                    aria-hidden
-                  />
-                </Link>
-              ))}
+                    <ArrowRight01Icon
+                      className="text-muted-foreground"
+                      aria-hidden
+                    />
+                  </Link>
+                )
+              })}
             </div>
           </section>
         ))}

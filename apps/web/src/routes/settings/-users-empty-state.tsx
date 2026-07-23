@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Search as Search01Icon,
   Users as UserMultiple02Icon,
@@ -23,13 +22,13 @@ export function UsersEmptyState({
   state: 'empty' | 'no-results' | null
 }) {
   if (!state) return null
+  const Icon = state === 'empty' ? UserMultiple02Icon : Search01Icon
+
   return (
     <Empty className="bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <DynamicLucideIcon
-            icon={state === 'empty' ? UserMultiple02Icon : Search01Icon}
-          />
+          <Icon />
         </EmptyMedia>
         <EmptyTitle>
           {state === 'empty' ? 'No users yet' : 'No matching users'}

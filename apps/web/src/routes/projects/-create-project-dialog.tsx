@@ -3,7 +3,6 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Folder as Folder02Icon, Link2 as Link04Icon } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
@@ -306,7 +305,7 @@ export default function CreateProjectDialog({
                             render={<Link to="/settings/integrations" />}
                             nativeButton={false}
                           >
-                            <DynamicLucideIcon icon={Link04Icon} />
+                            <Link04Icon />
                             Connect source
                           </Button>
                         </div>
@@ -382,7 +381,7 @@ export default function CreateProjectDialog({
                               title="Browse"
                               onClick={handleOpenPicker}
                             >
-                              <DynamicLucideIcon icon={Folder02Icon} />
+                              <Folder02Icon />
                             </Button>
                           </div>
                         ) : null}

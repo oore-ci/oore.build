@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowRight as ArrowRight01Icon,
   Info as InformationCircleIcon,
@@ -94,7 +93,7 @@ function GitHubSetupPage() {
                 startMutation.isPending || preferencesLoading || !remoteEnabled
               }
             >
-              <DynamicLucideIcon icon={LinkSquare02Icon} />
+              <LinkSquare02Icon />
               {preferencesLoading
                 ? 'Checking access...'
                 : !remoteEnabled
@@ -102,9 +101,7 @@ function GitHubSetupPage() {
                   : startMutation.isPending
                     ? 'Starting...'
                     : 'Create GitHub app'}
-              {!startMutation.isPending ? (
-                <DynamicLucideIcon icon={ArrowRight01Icon} />
-              ) : null}
+              {!startMutation.isPending ? <ArrowRight01Icon /> : null}
             </Button>
           </div>
         </section>
@@ -139,7 +136,7 @@ function GitHubSetupPage() {
       </section>
 
       <Alert>
-        <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+        <InformationCircleIcon size={16} />
         <AlertDescription>
           {remoteEnabled
             ? 'After GitHub installation, you will return to Sources with the connection status updated.'

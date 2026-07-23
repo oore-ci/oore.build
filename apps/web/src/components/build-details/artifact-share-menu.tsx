@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Copy as Copy01Icon, Share2 as Share08Icon } from 'lucide-react'
 import { toast } from '@/lib/toast'
 
@@ -120,7 +119,7 @@ export default function ArtifactShareMenu({
             />
           }
         >
-          <DynamicLucideIcon icon={Share08Icon} />
+          <Share08Icon />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
           <DropdownMenuGroup>
@@ -128,11 +127,11 @@ export default function ArtifactShareMenu({
               onClick={copyDownloadLink}
               disabled={downloadMutation.isPending}
             >
-              <DynamicLucideIcon icon={Copy01Icon} />
+              <Copy01Icon />
               Copy download link
             </DropdownMenuItem>
             <DropdownMenuItem onClick={openShareDialog}>
-              <DynamicLucideIcon icon={Share08Icon} />
+              <Share08Icon />
               Create share link
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -175,11 +174,7 @@ export default function ArtifactShareMenu({
                   Close
                 </Button>
                 <Button onClick={copyShareUrl}>
-                  <DynamicLucideIcon
-                    icon={Copy01Icon}
-                    size={14}
-                    className="mr-1.5"
-                  />
+                  <Copy01Icon size={14} className="mr-1.5" />
                   Copy link
                 </Button>
               </DialogFooter>

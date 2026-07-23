@@ -1,5 +1,4 @@
 import { useNavigate } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Command as CommandLineIcon,
   Monitor as ComputerIcon,
@@ -156,41 +155,41 @@ export default function CommandPalette({
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
           <CommandGroup heading="Navigation">
-            {navItems.map((item) => (
-              <CommandItem
-                key={item.id}
-                value={item.label}
-                keywords={item.keywords ? [item.keywords] : undefined}
-                onSelect={() => item.action()}
-              >
-                <DynamicLucideIcon
-                  icon={item.icon}
-                  size={16}
-                  className="text-muted-foreground"
-                />
-                {item.label}
-              </CommandItem>
-            ))}
+            {navItems.map((item) => {
+              const Icon = item.icon
+
+              return (
+                <CommandItem
+                  key={item.id}
+                  value={item.label}
+                  keywords={item.keywords ? [item.keywords] : undefined}
+                  onSelect={() => item.action()}
+                >
+                  <Icon size={16} className="text-muted-foreground" />
+                  {item.label}
+                </CommandItem>
+              )
+            })}
           </CommandGroup>
           {adminItems.length > 0 ? (
             <>
               <CommandSeparator />
               <CommandGroup heading="Admin">
-                {adminItems.map((item) => (
-                  <CommandItem
-                    key={item.id}
-                    value={item.label}
-                    keywords={item.keywords ? [item.keywords] : undefined}
-                    onSelect={() => item.action()}
-                  >
-                    <DynamicLucideIcon
-                      icon={item.icon}
-                      size={16}
-                      className="text-muted-foreground"
-                    />
-                    {item.label}
-                  </CommandItem>
-                ))}
+                {adminItems.map((item) => {
+                  const Icon = item.icon
+
+                  return (
+                    <CommandItem
+                      key={item.id}
+                      value={item.label}
+                      keywords={item.keywords ? [item.keywords] : undefined}
+                      onSelect={() => item.action()}
+                    >
+                      <Icon size={16} className="text-muted-foreground" />
+                      {item.label}
+                    </CommandItem>
+                  )
+                })}
               </CommandGroup>
             </>
           ) : null}
@@ -198,21 +197,21 @@ export default function CommandPalette({
             <>
               <CommandSeparator />
               <CommandGroup heading="Actions">
-                {actionItems.map((item) => (
-                  <CommandItem
-                    key={item.id}
-                    value={item.label}
-                    keywords={item.keywords ? [item.keywords] : undefined}
-                    onSelect={() => item.action()}
-                  >
-                    <DynamicLucideIcon
-                      icon={item.icon}
-                      size={16}
-                      className="text-muted-foreground"
-                    />
-                    {item.label}
-                  </CommandItem>
-                ))}
+                {actionItems.map((item) => {
+                  const Icon = item.icon
+
+                  return (
+                    <CommandItem
+                      key={item.id}
+                      value={item.label}
+                      keywords={item.keywords ? [item.keywords] : undefined}
+                      onSelect={() => item.action()}
+                    >
+                      <Icon size={16} className="text-muted-foreground" />
+                      {item.label}
+                    </CommandItem>
+                  )
+                })}
               </CommandGroup>
             </>
           ) : null}
@@ -220,21 +219,21 @@ export default function CommandPalette({
             <>
               <CommandSeparator />
               <CommandGroup heading="Projects">
-                {projectItems.map((item) => (
-                  <CommandItem
-                    key={item.id}
-                    value={item.label}
-                    keywords={item.keywords ? [item.keywords] : undefined}
-                    onSelect={() => item.action()}
-                  >
-                    <DynamicLucideIcon
-                      icon={item.icon}
-                      size={16}
-                      className="text-muted-foreground"
-                    />
-                    {item.label}
-                  </CommandItem>
-                ))}
+                {projectItems.map((item) => {
+                  const Icon = item.icon
+
+                  return (
+                    <CommandItem
+                      key={item.id}
+                      value={item.label}
+                      keywords={item.keywords ? [item.keywords] : undefined}
+                      onSelect={() => item.action()}
+                    >
+                      <Icon size={16} className="text-muted-foreground" />
+                      {item.label}
+                    </CommandItem>
+                  )
+                })}
               </CommandGroup>
             </>
           ) : null}

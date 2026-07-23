@@ -1,5 +1,4 @@
 import { TriangleAlert as Alert02Icon } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import {
   useInstancePreferences,
@@ -43,7 +42,7 @@ function DirectRunnerPolicyControl() {
   if (preferencesQuery.error) {
     return (
       <Alert variant="destructive">
-        <DynamicLucideIcon icon={Alert02Icon} aria-hidden />
+        <Alert02Icon aria-hidden />
         <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span>
             Failed to load Direct runner policy:{' '}

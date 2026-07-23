@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { toast } from '@/lib/toast'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Copy as Copy01Icon, Check as Tick02Icon } from 'lucide-react'
 
 import type { CreateApiTokenResponse } from '@/lib/types'
@@ -27,6 +26,7 @@ export default function TokenCreatedDialog({
   response,
 }: TokenCreatedDialogProps) {
   const [copied, setCopied] = useState(false)
+  const CopyIcon = copied ? Tick02Icon : Copy01Icon
 
   function handleCopy() {
     if (!response) return
@@ -53,7 +53,7 @@ export default function TokenCreatedDialog({
               {response?.token}
             </code>
             <Button variant="outline" size="sm" onClick={handleCopy}>
-              <DynamicLucideIcon icon={copied ? Tick02Icon : Copy01Icon} />
+              <CopyIcon />
               {copied ? 'Copied' : 'Copy'}
             </Button>
           </div>

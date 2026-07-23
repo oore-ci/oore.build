@@ -1,6 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowDown as ArrowDown01Icon,
   ArrowRight as ArrowRight01Icon,
@@ -290,7 +289,7 @@ function ProjectDetailPage() {
       <PageLayout width="wide">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {notFound
@@ -369,6 +368,8 @@ function ProjectDetailPage() {
     if (canWriteProjects) void loadProjectSettingsForm()
   }
 
+  const DangerIcon = dangerOpen ? ArrowDown01Icon : ArrowRight01Icon
+
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
@@ -415,7 +416,7 @@ function ProjectDetailPage() {
                     onClick={() => openTriggerBuild()}
                     disabled={pipelineCount === 0 || !projectHasSource}
                   >
-                    <DynamicLucideIcon icon={PlayIcon} />
+                    <PlayIcon />
                     Run build
                   </Button>
                 </span>
@@ -425,7 +426,7 @@ function ProjectDetailPage() {
                   variant="destructive"
                   onClick={() => setDeleteOpen(true)}
                 >
-                  <DynamicLucideIcon icon={Delete02Icon} />
+                  <Delete02Icon />
                   Delete
                 </Button>
               ) : null}
@@ -435,7 +436,7 @@ function ProjectDetailPage() {
       />
       {!project.repository_id ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               This project has no linked source repository.{' '}
@@ -457,7 +458,7 @@ function ProjectDetailPage() {
       ) : null}
       {runnerPolicyBlockReason ? (
         <Alert>
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             {runnerPolicyBlockReason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
@@ -626,8 +627,7 @@ function ProjectDetailPage() {
                   <CardContent>
                     <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-destructive">
                       Danger zone
-                      <DynamicLucideIcon
-                        icon={dangerOpen ? ArrowDown01Icon : ArrowRight01Icon}
+                      <DangerIcon
                         className="size-4 text-muted-foreground"
                         aria-hidden
                       />
@@ -642,7 +642,7 @@ function ProjectDetailPage() {
                           variant="destructive"
                           onClick={() => setDeleteOpen(true)}
                         >
-                          <DynamicLucideIcon icon={Delete02Icon} />
+                          <Delete02Icon />
                           Delete project
                         </Button>
                       </div>

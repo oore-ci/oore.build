@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   CircleAlert as AlertCircleIcon,
   ArrowDown as ArrowDown01Icon,
@@ -75,6 +74,7 @@ export function ExternalAccessSetup({
   const failedReadinessChecks =
     preflightQuery.data?.checks.filter((check) => !check.ok) ?? []
   const setupStepCount = 2
+  const ReadinessIcon = readinessOpen ? ArrowDown01Icon : ArrowRight01Icon
   return (
     <>
       <div className="space-y-3 border p-3">
@@ -132,7 +132,7 @@ export function ExternalAccessSetup({
             </p>
             <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Configure
-              <DynamicLucideIcon icon={ArrowRight01Icon} size={14} />
+              <ArrowRight01Icon size={14} />
             </p>
           </Button>
 
@@ -216,7 +216,7 @@ export function ExternalAccessSetup({
             ) : null}
             <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               {identityReady ? 'Reconfigure' : 'Configure'}
-              <DynamicLucideIcon icon={ArrowRight01Icon} size={14} />
+              <ArrowRight01Icon size={14} />
             </p>
           </Button>
         </div>
@@ -296,10 +296,7 @@ export function ExternalAccessSetup({
             )}
           </div>
           <CollapsibleTrigger className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-            <DynamicLucideIcon
-              icon={readinessOpen ? ArrowDown01Icon : ArrowRight01Icon}
-              size={14}
-            />
+            <ReadinessIcon size={14} />
             {readinessOpen ? 'Hide checks' : 'Show checks'}
           </CollapsibleTrigger>
         </div>
@@ -324,40 +321,43 @@ export function ExternalAccessSetup({
 
         <CollapsibleContent className="space-y-2">
           {preflightQuery.data
-            ? preflightQuery.data.checks.map((check) => (
-                <div key={check.id} className="border border-border/60 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-2">
-                      <DynamicLucideIcon
-                        icon={
-                          check.ok ? CheckmarkCircle02Icon : AlertCircleIcon
-                        }
-                        size={14}
-                        className={
-                          check.ok ? 'text-success' : 'text-destructive'
-                        }
-                      />
-                      <div>
-                        <p className="text-sm font-medium">{check.label}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {check.ok
-                            ? check.message
-                            : guidanceForPreflight(
-                                check.id,
-                                check.failure_code,
-                              )}
-                        </p>
+            ? preflightQuery.data.checks.map((check) => {
+                const CheckIcon = check.ok
+                  ? CheckmarkCircle02Icon
+                  : AlertCircleIcon
+
+                return (
+                  <div key={check.id} className="border border-border/60 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        <CheckIcon
+                          size={14}
+                          className={
+                            check.ok ? 'text-success' : 'text-destructive'
+                          }
+                        />
+                        <div>
+                          <p className="text-sm font-medium">{check.label}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {check.ok
+                              ? check.message
+                              : guidanceForPreflight(
+                                  check.id,
+                                  check.failure_code,
+                                )}
+                          </p>
+                        </div>
                       </div>
+                      <Badge
+                        variant={check.ok ? 'secondary' : 'outline'}
+                        className="mt-0.5"
+                      >
+                        {check.ok ? 'Ready' : 'Needs setup'}
+                      </Badge>
                     </div>
-                    <Badge
-                      variant={check.ok ? 'secondary' : 'outline'}
-                      className="mt-0.5"
-                    >
-                      {check.ok ? 'Ready' : 'Needs setup'}
-                    </Badge>
                   </div>
-                </div>
-              ))
+                )
+              })
             : null}
         </CollapsibleContent>
       </Collapsible>

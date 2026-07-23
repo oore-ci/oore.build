@@ -5,7 +5,6 @@ import {
   Search as Search01Icon,
   WrapText as TextWrapIcon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import type { RefObject } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -51,7 +50,7 @@ export function LogToolbar({
           className="font-mono text-xs"
         />
         <InputGroupAddon align="inline-start">
-          <DynamicLucideIcon icon={Search01Icon} />
+          <Search01Icon />
         </InputGroupAddon>
         {searchQuery ? (
           <InputGroupAddon align="inline-end">
@@ -60,7 +59,7 @@ export function LogToolbar({
               aria-label="Clear log search"
               onClick={onSearchClear}
             >
-              <DynamicLucideIcon icon={Cancel01Icon} />
+              <Cancel01Icon />
             </InputGroupButton>
           </InputGroupAddon>
         ) : null}
@@ -72,7 +71,7 @@ export function LogToolbar({
         disabled={!hasErrors}
         onClick={onJumpToError}
       >
-        <DynamicLucideIcon icon={AlertCircleIcon} />
+        <AlertCircleIcon />
       </ToolbarButton>
       <ToolbarButton
         label="Toggle line wrapping"
@@ -81,14 +80,14 @@ export function LogToolbar({
         pressed={wrapLines}
         onClick={onToggleWrap}
       >
-        <DynamicLucideIcon icon={TextWrapIcon} />
+        <TextWrapIcon />
       </ToolbarButton>
       <ToolbarButton
         label="Download raw logs"
         title="Download raw logs"
         onClick={onDownload}
       >
-        <DynamicLucideIcon icon={Download04Icon} />
+        <Download04Icon />
       </ToolbarButton>
     </div>
   )

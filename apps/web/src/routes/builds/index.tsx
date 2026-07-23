@@ -1,6 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Info as InformationCircleIcon, Play as PlayIcon } from 'lucide-react'
 
 import {
@@ -159,7 +158,7 @@ function OperationsBuildsPage() {
               onFocus={() => void loadTriggerBuildDialog()}
               onClick={() => setTriggerBuildOpen(true)}
             >
-              <DynamicLucideIcon icon={PlayIcon} />
+              <PlayIcon />
               Run build
             </Button>
           ) : undefined
@@ -180,7 +179,7 @@ function OperationsBuildsPage() {
 
       {projectsQuery.error ? (
         <Alert>
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Project filters and build actions are temporarily unavailable.
@@ -198,7 +197,7 @@ function OperationsBuildsPage() {
 
       {buildsQuery.error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load builds: {buildsQuery.error.message}</span>
             <Button

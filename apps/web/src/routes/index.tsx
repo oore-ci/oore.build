@@ -1,6 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { lazy, Suspense, useRef, useState } from 'react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
   ArrowRight as ArrowRight01Icon,
@@ -218,7 +217,7 @@ function IndexPage() {
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
-                <DynamicLucideIcon icon={Add01Icon} />
+                <Add01Icon />
                 Add instance
               </Button>
             </CardContent>
@@ -387,7 +386,7 @@ function ConfiguredDashboard({
               onFocus={() => void loadTriggerBuildDialog()}
               onClick={handleGlobalTrigger}
             >
-              <DynamicLucideIcon icon={PlayIcon} />
+              <PlayIcon />
               Run build
             </Button>
           ) : undefined
@@ -408,11 +407,7 @@ function ConfiguredDashboard({
       {activeBuilds.length > 0 ? (
         <section className="space-y-2">
           <div className="flex items-center gap-2">
-            <DynamicLucideIcon
-              icon={Loading03Icon}
-              size={14}
-              className="animate-spin text-info"
-            />
+            <Loading03Icon size={14} className="animate-spin text-info" />
             <h2 className="text-sm font-medium text-muted-foreground">
               Active builds
             </h2>
@@ -439,7 +434,7 @@ function ConfiguredDashboard({
             nativeButton={false}
           >
             View all
-            <DynamicLucideIcon icon={ArrowRight01Icon} />
+            <ArrowRight01Icon />
           </Button>
         </div>
 

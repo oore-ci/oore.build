@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Copy as Copy01Icon, RefreshCw as Refresh01Icon } from 'lucide-react'
 
 import {
@@ -91,7 +90,7 @@ export function GitLabWebhookTokenDialogs({
               onClick={generateToken}
               disabled={rotate.isPending}
             >
-              <DynamicLucideIcon icon={Refresh01Icon} />
+              <Refresh01Icon />
               {rotate.isPending ? 'Creating...' : 'Create token'}
             </Button>
           </AlertDialogFooter>
@@ -134,7 +133,7 @@ export function GitLabWebhookTokenDialogs({
                   aria-label="Copy GitLab webhook URL"
                   onClick={() => copyToClipboard(webhookUrl, 'Webhook URL')}
                 >
-                  <DynamicLucideIcon icon={Copy01Icon} />
+                  <Copy01Icon />
                 </Button>
               </div>
             </div>
@@ -161,7 +160,7 @@ export function GitLabWebhookTokenDialogs({
                     }
                   }}
                 >
-                  <DynamicLucideIcon icon={Copy01Icon} />
+                  <Copy01Icon />
                 </Button>
               </div>
             </div>

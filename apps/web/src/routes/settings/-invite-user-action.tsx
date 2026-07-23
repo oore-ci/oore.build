@@ -1,5 +1,4 @@
 import { lazy, Suspense, useState } from 'react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { UserPlus as UserAdd01Icon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -16,11 +15,7 @@ export function InviteUserAction() {
         onFocus={() => void loadInviteUserDialog()}
         onClick={() => setOpen(true)}
       >
-        <DynamicLucideIcon
-          icon={UserAdd01Icon}
-          data-icon="inline-start"
-          aria-hidden
-        />
+        <UserAdd01Icon data-icon="inline-start" aria-hidden />
         Invite user
       </Button>
       {open ? (

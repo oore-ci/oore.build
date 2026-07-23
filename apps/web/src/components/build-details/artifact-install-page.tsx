@@ -1,6 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowLeft as ArrowLeft01Icon,
   Smartphone as SmartPhone01Icon,
@@ -173,7 +172,7 @@ function QaReleaseDetail({
         nativeButton={false}
         className="hidden w-fit sm:inline-flex"
       >
-        <DynamicLucideIcon icon={ArrowLeft01Icon} />
+        <ArrowLeft01Icon />
         Back to apps
       </Button>
 
@@ -319,7 +318,7 @@ function QaReleaseDetail({
                     aria-label="Back to apps"
                     className="min-h-11 sm:hidden"
                   >
-                    <DynamicLucideIcon icon={ArrowLeft01Icon} />
+                    <ArrowLeft01Icon />
                   </Button>
                   <Button
                     size="lg"
@@ -330,7 +329,7 @@ function QaReleaseDetail({
                     {installMutation.isPending ? (
                       <Spinner />
                     ) : (
-                      <DynamicLucideIcon icon={SmartPhone01Icon} />
+                      <SmartPhone01Icon />
                     )}
                     {primaryLabel}
                   </Button>

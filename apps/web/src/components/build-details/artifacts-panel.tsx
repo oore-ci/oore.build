@@ -1,6 +1,5 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Download as Download04Icon,
   File as File01Icon,
@@ -68,7 +67,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
         setOpen(true)
       }}
     >
-      <DynamicLucideIcon icon={Share08Icon} />
+      <Share08Icon />
     </Button>
   )
 
@@ -143,7 +142,7 @@ function ArtifactRow({
             aria-label={`Install ${artifact.name}`}
             title="Install"
           >
-            <DynamicLucideIcon icon={Download04Icon} />
+            <Download04Icon />
           </Button>
         ) : (
           <Button
@@ -154,11 +153,7 @@ function ArtifactRow({
             onClick={() => onDownload(artifact.id, artifact.name)}
             disabled={isDownloadPending || expired}
           >
-            {isDownloadPending ? (
-              <Spinner />
-            ) : (
-              <DynamicLucideIcon icon={Download04Icon} />
-            )}
+            {isDownloadPending ? <Spinner /> : <Download04Icon />}
           </Button>
         )}
         {canManageShareLinks ? (
@@ -197,7 +192,7 @@ export function ArtifactsPanel({
     <Card size="sm">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <DynamicLucideIcon icon={File01Icon} size={14} />
+          <File01Icon size={14} />
           Artifacts
           {artifacts.length > 0 ? (
             <Badge variant="secondary" className="text-[10px]">

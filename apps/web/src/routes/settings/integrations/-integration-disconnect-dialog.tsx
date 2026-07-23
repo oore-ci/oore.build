@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Info as InformationCircleIcon } from 'lucide-react'
 
 import type { Integration, Project } from '@/lib/types'
@@ -63,7 +62,7 @@ export function IntegrationDisconnectDialog({
             </div>
           ) : error ? (
             <Alert variant="destructive">
-              <DynamicLucideIcon icon={InformationCircleIcon} aria-hidden />
+              <InformationCircleIcon aria-hidden />
               <AlertDescription className="space-y-3">
                 <p>Could not load the disconnect preview: {error.message}</p>
                 {onRetry ? (

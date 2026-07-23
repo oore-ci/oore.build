@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowDown as ArrowDown01Icon,
   ArrowRight as ArrowRight01Icon,
@@ -46,6 +45,7 @@ export default function PipelineCard({
 }: PipelineCardProps) {
   const updateMutation = useUpdatePipeline()
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const DetailsIcon = detailsOpen ? ArrowDown01Icon : ArrowRight01Icon
 
   function handleToggle() {
     updateMutation.mutate(
@@ -120,7 +120,7 @@ export default function PipelineCard({
                 onFocus={onPreloadTriggerBuild}
                 onClick={() => onTriggerBuild(pipeline.id)}
               >
-                <DynamicLucideIcon icon={PlayIcon} />
+                <PlayIcon />
                 Run build
               </Button>
             ) : null}
@@ -137,7 +137,7 @@ export default function PipelineCard({
                 }
                 nativeButton={false}
               >
-                <DynamicLucideIcon icon={Edit02Icon} />
+                <Edit02Icon />
                 Edit
               </Button>
             ) : null}
@@ -162,7 +162,7 @@ export default function PipelineCard({
               }
               nativeButton={false}
             >
-              <DynamicLucideIcon icon={Link01Icon} />
+              <Link01Icon />
               Permalink
             </Button>
 
@@ -172,9 +172,7 @@ export default function PipelineCard({
               className="ml-auto"
               onClick={() => setDetailsOpen((o) => !o)}
             >
-              <DynamicLucideIcon
-                icon={detailsOpen ? ArrowDown01Icon : ArrowRight01Icon}
-              />
+              <DetailsIcon />
               Details
             </Button>
           </div>

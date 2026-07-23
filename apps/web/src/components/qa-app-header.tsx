@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   LogOut as Logout03Icon,
   Moon as Moon02Icon,
@@ -16,6 +15,7 @@ export default function QaAppHeader() {
   const logoutMutation = useLogout()
   const { resolvedTheme, setTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
+  const ThemeIcon = isDark ? Sun03Icon : Moon02Icon
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background pt-(--safe-area-top)">
@@ -35,7 +35,7 @@ export default function QaAppHeader() {
             aria-label={`Switch to ${isDark ? 'light' : 'dark'} theme`}
             onClick={() => setTheme(isDark ? 'light' : 'dark')}
           >
-            <DynamicLucideIcon icon={isDark ? Sun03Icon : Moon02Icon} />
+            <ThemeIcon />
           </Button>
           <Button
             variant="ghost"
@@ -43,7 +43,7 @@ export default function QaAppHeader() {
             onClick={() => logoutMutation.mutate()}
             disabled={logoutMutation.isPending}
           >
-            <DynamicLucideIcon icon={Logout03Icon} />
+            <Logout03Icon />
             <span className="hidden sm:inline">Sign out</span>
           </Button>
         </div>

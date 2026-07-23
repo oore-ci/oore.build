@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowDown as ArrowDown01Icon,
   ArrowUp as ArrowUp01Icon,
@@ -18,6 +17,8 @@ export function PipelineFormSectionHeader({
   open: boolean
   errorCount?: number
 }) {
+  const Icon = open ? ArrowUp01Icon : ArrowDown01Icon
+
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-2">
@@ -34,11 +35,7 @@ export function PipelineFormSectionHeader({
         {!open && summary ? (
           <CardDescription className="text-xs">{summary}</CardDescription>
         ) : null}
-        <DynamicLucideIcon
-          icon={open ? ArrowUp01Icon : ArrowDown01Icon}
-          size={16}
-          className="text-muted-foreground"
-        />
+        <Icon size={16} className="text-muted-foreground" />
       </div>
     </div>
   )

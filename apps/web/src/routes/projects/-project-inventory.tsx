@@ -1,6 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { CircleEllipsis as MoreHorizontalCircle01Icon } from 'lucide-react'
 
 import type { AuthorizedProject, Project } from '@/lib/types'
@@ -77,7 +76,7 @@ function ProjectActionsControl({
         setOpen(true)
       }}
     >
-      <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+      <MoreHorizontalCircle01Icon />
     </Button>
   )
 

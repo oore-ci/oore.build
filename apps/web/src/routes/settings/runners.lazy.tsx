@@ -8,7 +8,6 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Info as InformationCircleIcon,
   Search as Search01Icon,
@@ -379,7 +378,7 @@ function RunnersSettingsPage() {
 
       {runnersQuery.error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load runners: {runnersQuery.error.message}</span>
             <Button
@@ -413,7 +412,7 @@ function RunnersSettingsPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching runners</EmptyTitle>
             <EmptyDescription>

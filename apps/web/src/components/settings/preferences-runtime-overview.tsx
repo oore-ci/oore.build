@@ -1,5 +1,4 @@
 import { toast } from '@/lib/toast'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Download as Download04Icon } from 'lucide-react'
 import type { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import type { RuntimeUpdateStatus } from '@/lib/types'
@@ -69,7 +68,7 @@ export function RuntimeOverview({
                 })
               }
             >
-              <DynamicLucideIcon icon={Download04Icon} />
+              <Download04Icon />
               {runtimeUpdates.startFrontendUpdate.isPending
                 ? 'Starting...'
                 : frontendUpdatePhase === 'restarting'
@@ -120,7 +119,7 @@ export function RuntimeOverview({
                 })
               }
             >
-              <DynamicLucideIcon icon={Download04Icon} />
+              <Download04Icon />
               {runtimeUpdates.startBackendUpdate.isPending
                 ? 'Starting...'
                 : backendUpdatePhase === 'restarting'

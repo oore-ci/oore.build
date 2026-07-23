@@ -1,5 +1,4 @@
 import { Link, useLocation, useMatches } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Command as CommandLineIcon,
   LayoutDashboard as DashboardSquare01Icon,
@@ -61,19 +60,23 @@ export default function NavMain() {
       <SidebarGroup className="py-2">
         <SidebarGroupContent>
           <SidebarMenu>
-            {visiblePrimaryItems.map((item) => (
-              <SidebarMenuItem key={item.to}>
-                <SidebarMenuButton
-                  isActive={isActive(item)}
-                  tooltip={item.title}
-                  render={<Link to={item.to} />}
-                >
-                  <DynamicLucideIcon icon={item.icon} size={18} />
-                  <span>{item.title}</span>
-                </SidebarMenuButton>
-                {item.to === '/builds' && <ActiveBuildBadge />}
-              </SidebarMenuItem>
-            ))}
+            {visiblePrimaryItems.map((item) => {
+              const Icon = item.icon
+
+              return (
+                <SidebarMenuItem key={item.to}>
+                  <SidebarMenuButton
+                    isActive={isActive(item)}
+                    tooltip={item.title}
+                    render={<Link to={item.to} />}
+                  >
+                    <Icon size={18} />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                  {item.to === '/builds' && <ActiveBuildBadge />}
+                </SidebarMenuItem>
+              )
+            })}
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>

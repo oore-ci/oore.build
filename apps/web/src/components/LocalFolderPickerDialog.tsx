@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
   ArrowUp as ArrowUp01Icon,
@@ -63,7 +62,7 @@ export default function LocalFolderPickerDialog({
   const canSelectCurrent =
     !!browserData &&
     (!requireGitRepository || browserData.current_is_git_repository)
-  const currentSelectIcon = requireGitRepository ? GitBranchIcon : Folder02Icon
+  const CurrentSelectIcon = requireGitRepository ? GitBranchIcon : Folder02Icon
 
   return (
     <Dialog
@@ -124,7 +123,7 @@ export default function LocalFolderPickerDialog({
               }}
               disabled={!browserData?.parent_path || browserFetching}
             >
-              <DynamicLucideIcon icon={ArrowUp01Icon} />
+              <ArrowUp01Icon />
               Up
             </Button>
 
@@ -135,7 +134,7 @@ export default function LocalFolderPickerDialog({
               onClick={() => void refetchBrowser()}
               disabled={browserFetching}
             >
-              <DynamicLucideIcon icon={Refresh01Icon} />
+              <Refresh01Icon />
               Refresh
             </Button>
 
@@ -148,7 +147,7 @@ export default function LocalFolderPickerDialog({
                   onOpenChange(false)
                 }}
               >
-                <DynamicLucideIcon icon={currentSelectIcon} />
+                <CurrentSelectIcon />
                 {selectCurrentLabel}
               </Button>
             ) : null}
@@ -179,7 +178,7 @@ export default function LocalFolderPickerDialog({
                           onClick={() => setBrowserPath(directory.path)}
                         >
                           <div className="flex items-center gap-2">
-                            <DynamicLucideIcon icon={Folder02Icon} size={14} />
+                            <Folder02Icon size={14} />
                             <p className="truncate text-sm font-medium">
                               {directory.name}
                             </p>
@@ -201,7 +200,7 @@ export default function LocalFolderPickerDialog({
                               onOpenChange(false)
                             }}
                           >
-                            <DynamicLucideIcon icon={Add01Icon} />
+                            <Add01Icon />
                             {selectDirectoryLabel}
                           </Button>
                         ) : null}

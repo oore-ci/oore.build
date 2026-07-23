@@ -1,4 +1,3 @@
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -13,7 +12,7 @@ export function UsersErrorAlert({
 }) {
   return (
     <Alert variant="destructive">
-      <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+      <InformationCircleIcon size={16} />
       <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span>
           Failed to load users:{' '}

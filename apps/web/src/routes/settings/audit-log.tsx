@@ -3,7 +3,6 @@ import {
   Info as InformationCircleIcon,
   Search as Search01Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { format } from 'date-fns'
 import type { DateRange } from 'react-day-picker'
@@ -169,11 +168,7 @@ function AuditDateRangePicker({
           />
         }
       >
-        <DynamicLucideIcon
-          icon={Calendar03Icon}
-          data-icon="inline-start"
-          aria-hidden
-        />
+        <Calendar03Icon data-icon="inline-start" aria-hidden />
         <span className="truncate">{label}</span>
       </PopoverTrigger>
       <PopoverContent
@@ -353,7 +348,7 @@ function AuditLogPage() {
 
       {auditQuery.error ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load audit log: {auditQuery.error.message}</span>
             <Button
@@ -371,7 +366,7 @@ function AuditLogPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching activity</EmptyTitle>
             <EmptyDescription>
@@ -390,7 +385,7 @@ function AuditLogPage() {
         <Empty className="bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <DynamicLucideIcon icon={InformationCircleIcon} />
+              <InformationCircleIcon />
             </EmptyMedia>
             <EmptyTitle>No activity yet</EmptyTitle>
             <EmptyDescription>

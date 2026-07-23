@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowRight as ArrowRight01Icon,
   CircleEllipsis as MoreHorizontalCircle01Icon,
@@ -35,13 +34,13 @@ export default function BuildActionsMenu({
           />
         }
       >
-        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem
           render={<Link to="/builds/$buildId" params={{ buildId: build.id }} />}
         >
-          <DynamicLucideIcon icon={ArrowRight01Icon} />
+          <ArrowRight01Icon />
           Open build
         </DropdownMenuItem>
         <DropdownMenuItem

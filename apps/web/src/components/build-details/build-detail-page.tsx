@@ -1,6 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Info as InformationCircleIcon,
   RefreshCw as Refresh01Icon,
@@ -133,7 +132,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
       <PageLayout width="full">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {notFound
@@ -233,7 +232,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 }}
                 disabled={rerunMutation.isPending}
               >
-                <DynamicLucideIcon icon={Refresh01Icon} size={14} />
+                <Refresh01Icon size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
@@ -255,7 +254,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
 
       {build.runner_policy_block_reason ? (
         <Alert>
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
@@ -297,7 +296,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
 
       {failureReason ? (
         <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>{failureReason}</AlertDescription>
         </Alert>
       ) : null}

@@ -1,6 +1,5 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { addInstanceSchema } from '@/components/add-instance-schema'
 import type { AddInstanceForm } from '@/components/add-instance-schema'
 import { Button } from '@/components/ui/button'
@@ -146,25 +145,29 @@ export default function AddInstanceDialog({
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Icon</legend>
             <div className="flex flex-wrap gap-2">
-              {INSTANCE_ICONS.map((entry) => (
-                <Button
-                  key={entry.key}
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className={
-                    selectedIcon === entry.key
-                      ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                      : ''
-                  }
-                  onClick={() => setValue('icon', entry.key)}
-                  aria-label={`Select ${entry.label} icon`}
-                  aria-pressed={selectedIcon === entry.key}
-                  title={entry.label}
-                >
-                  <DynamicLucideIcon icon={entry.icon} />
-                </Button>
-              ))}
+              {INSTANCE_ICONS.map((entry) => {
+                const Icon = entry.icon
+
+                return (
+                  <Button
+                    key={entry.key}
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className={
+                      selectedIcon === entry.key
+                        ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
+                        : ''
+                    }
+                    onClick={() => setValue('icon', entry.key)}
+                    aria-label={`Select ${entry.label} icon`}
+                    aria-pressed={selectedIcon === entry.key}
+                    title={entry.label}
+                  >
+                    <Icon />
+                  </Button>
+                )
+              })}
             </div>
           </fieldset>
 

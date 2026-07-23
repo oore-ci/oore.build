@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowRight as ArrowRight01Icon,
   CircleEllipsis as MoreHorizontalCircle01Icon,
@@ -38,7 +37,7 @@ export default function ProjectActionsMenu({
           />
         }
       >
-        <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem
@@ -49,7 +48,7 @@ export default function ProjectActionsMenu({
             />
           }
         >
-          <DynamicLucideIcon icon={ArrowRight01Icon} />
+          <ArrowRight01Icon />
           Open project
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -73,7 +72,7 @@ export default function ProjectActionsMenu({
               />
             }
           >
-            <DynamicLucideIcon icon={Settings01Icon} />
+            <Settings01Icon />
             Project settings
           </DropdownMenuItem>
         ) : null}

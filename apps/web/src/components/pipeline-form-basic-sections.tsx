@@ -1,5 +1,4 @@
 import { useFormContext } from 'react-hook-form'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { CircleAlert as AlertCircleIcon } from 'lucide-react'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
@@ -266,7 +265,7 @@ export function PipelineTriggersSection({
           <CardContent className="space-y-4">
             {manualOnlyTriggers ? (
               <Alert>
-                <DynamicLucideIcon icon={AlertCircleIcon} size={16} />
+                <AlertCircleIcon size={16} />
                 <AlertDescription>
                   This repository uses local Git — builds can only be triggered
                   manually from the UI or API. Webhook triggers require a

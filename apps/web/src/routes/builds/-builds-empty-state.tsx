@@ -5,7 +5,6 @@ import {
   Play as PlayIcon,
   Search as Search01Icon,
 } from 'lucide-react'
-import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -66,7 +65,7 @@ export function BuildsEmptyState({
             {capabilities.writeProjects ? (
               <Button render={<Link to="/projects" />} nativeButton={false}>
                 Go to projects
-                <DynamicLucideIcon icon={ArrowRight01Icon} />
+                <ArrowRight01Icon />
               </Button>
             ) : (
               <p className="text-xs text-muted-foreground">
@@ -79,7 +78,7 @@ export function BuildsEmptyState({
                 render={<Link to="/settings/integrations" />}
                 nativeButton={false}
               >
-                <DynamicLucideIcon icon={Link04Icon} />
+                <Link04Icon />
                 Connect source
               </Button>
             ) : null}
@@ -94,7 +93,7 @@ export function BuildsEmptyState({
       <Empty className="bg-card">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <DynamicLucideIcon icon={PlayIcon} />
+            <PlayIcon />
           </EmptyMedia>
           <EmptyTitle>No builds yet</EmptyTitle>
           <EmptyDescription>
@@ -108,7 +107,7 @@ export function BuildsEmptyState({
               onFocus={onWarmBuildDialog}
               onClick={onRunBuild}
             >
-              <DynamicLucideIcon icon={PlayIcon} />
+              <PlayIcon />
               Run first build
             </Button>
           </EmptyContent>
@@ -121,7 +120,7 @@ export function BuildsEmptyState({
     <Empty className="bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <DynamicLucideIcon icon={Search01Icon} />
+          <Search01Icon />
         </EmptyMedia>
         <EmptyTitle>No matching builds</EmptyTitle>
         <EmptyDescription>
