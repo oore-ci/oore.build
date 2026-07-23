@@ -94,10 +94,11 @@ export const Route = createFileRoute('/settings/integrations/$integrationId')({
   component: IntegrationDetailPage,
 })
 
-function useIntegrationDetailPageState(
-  canWrite: boolean,
-  disconnectOpen: boolean,
-) {
+function IntegrationDetailPage() {
+  const canWrite = useHasPermission('integrations', 'write')
+  const [disconnectOpen, setDisconnectOpen] = useState(false)
+  const [webhookTarget, setWebhookTarget] =
+    useState<IntegrationRepository | null>(null)
   const { integrationId } = Route.useParams()
   const search = useSearch({ from: '/settings/integrations/$integrationId' })
   const navigate = Route.useNavigate()
@@ -245,21 +246,53 @@ function useIntegrationDetailPageState(
   }
 
   if (detailQuery.isLoading) {
-    return { status: 'loading' as const, label }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-10 w-72" />
+        <Skeleton className="h-64 w-full" />
+      </PageLayout>
+    )
   }
 
   if (detailQuery.error) {
-    return {
-      status: 'error' as const,
-      label,
-      message: detailQuery.error.message,
-      retry: detailQuery.refetch,
-    }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Alert variant="destructive">
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            <span>Failed to load source: {detailQuery.error.message}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => void detailQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
   }
 
-  if (!detailQuery.data) return { status: 'missing' as const, label }
+  if (!detailQuery.data) {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title="Source not found" noindex />
+        <PageHeader title="Source not found" />
+        <p className="text-sm text-muted-foreground">
+          This source connection does not exist or is no longer available.
+        </p>
+      </PageLayout>
+    )
+  }
 
-  const { integration } = detailQuery.data
+  const detail = detailQuery.data
+  const { integration } = detail
   const installations = installationsQuery.data?.installations ?? []
   const providerLabel =
     integration.provider === 'gitlab'
@@ -285,6 +318,7 @@ function useIntegrationDetailPageState(
     integration.provider === 'gitlab' ? 'Sync projects' : 'Sync repositories'
   const canSyncInstallations =
     integration.provider === 'github' || integration.provider === 'gitlab'
+  const tab = search.tab ?? 'repositories'
   const gitLabWebhookUrl = networkSettingsQuery.data
     ? gitLabPublicEndpoints(
         networkSettingsQuery.data.public_url,
@@ -292,128 +326,6 @@ function useIntegrationDetailPageState(
       ).webhookUrl
     : null
 
-  return {
-    status: 'ready' as const,
-    accountsTabLabel,
-    accountsEmptyDescription,
-    canSyncInstallations,
-    deleteMutation,
-    detail: detailQuery.data,
-    disconnectImpactQuery,
-    disconnectPrerequisiteError,
-    gitLabWebhookUrl,
-    gitlabAuthorizeMutation,
-    handleDisconnect,
-    handleSync,
-    installations,
-    installationsLabel,
-    installationsQuery,
-    integration,
-    integrationId,
-    label,
-    networkSettingsQuery,
-    page,
-    pageSize,
-    defaultPageSize,
-    providerLabel,
-    repositories,
-    repositoriesQuery,
-    search,
-    syncLabel,
-    syncMutation,
-    tab: search.tab ?? 'repositories',
-    total,
-    updateSearch,
-    visibleRepositories,
-  }
-}
-
-function IntegrationDetailPage() {
-  const canWrite = useHasPermission('integrations', 'write')
-  const [disconnectOpen, setDisconnectOpen] = useState(false)
-  const [webhookTarget, setWebhookTarget] =
-    useState<IntegrationRepository | null>(null)
-  const pageState = useIntegrationDetailPageState(canWrite, disconnectOpen)
-
-  if (pageState.status === 'loading') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-64 w-full" />
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'error') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            <span>Failed to load source: {pageState.message}</span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => void pageState.retry()}
-            >
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'missing') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title="Source not found" noindex />
-        <PageHeader title="Source not found" />
-        <p className="text-sm text-muted-foreground">
-          This source connection does not exist or is no longer available.
-        </p>
-      </PageLayout>
-    )
-  }
-
-  const {
-    accountsEmptyDescription,
-    accountsTabLabel,
-    canSyncInstallations,
-    defaultPageSize,
-    deleteMutation,
-    detail,
-    disconnectImpactQuery,
-    disconnectPrerequisiteError,
-    gitLabWebhookUrl,
-    gitlabAuthorizeMutation,
-    handleDisconnect,
-    handleSync,
-    installations,
-    installationsLabel,
-    installationsQuery,
-    integration,
-    integrationId,
-    label,
-    networkSettingsQuery,
-    page,
-    pageSize,
-    providerLabel,
-    repositories,
-    repositoriesQuery,
-    search,
-    syncLabel,
-    syncMutation,
-    tab,
-    total,
-    updateSearch,
-    visibleRepositories,
-  } = pageState
   const needsGitLabAuthorization =
     integration.provider === 'gitlab' &&
     integration.auth_mode === 'oauth_app' &&

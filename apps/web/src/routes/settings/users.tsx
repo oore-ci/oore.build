@@ -108,7 +108,14 @@ interface ConfirmAction {
   userIds?: Array<string>
 }
 
-function useUsersSettingsPageState() {
+function renderUserCell(row: Row<User>, columnId: string) {
+  const cell = row
+    .getVisibleCells()
+    .find((candidate) => candidate.column.id === columnId)
+  return cell ? flexRender(cell.column.columnDef.cell, cell.getContext()) : null
+}
+
+function UsersSettingsPage() {
   const authUser = useAuthStore((state) => state.user)
   const usersQuery = useUsers()
   const updateRoleMutation = useUpdateUserRole()
@@ -294,55 +301,6 @@ function useUsersSettingsPageState() {
     : confirmAction.type === 'role_change'
       ? `Change role from current to ${confirmAction.newRole?.replace('_', ' ') ?? ''}?`
       : 'This will revoke all active sessions. You can re-enable the affected users later.'
-
-  return {
-    confirmAction,
-    confirmDescription,
-    confirmTitle,
-    direction,
-    filteredTotal,
-    handleConfirm,
-    page,
-    pageSize,
-    search,
-    setConfirmAction,
-    sort,
-    table,
-    updateSearch,
-    userStatusCounts,
-    users,
-    usersQuery,
-    pendingMutation: deleteMutation.isPending || updateRoleMutation.isPending,
-  }
-}
-
-function renderUserCell(row: Row<User>, columnId: string) {
-  const cell = row
-    .getVisibleCells()
-    .find((candidate) => candidate.column.id === columnId)
-  return cell ? flexRender(cell.column.columnDef.cell, cell.getContext()) : null
-}
-
-function UsersSettingsPage() {
-  const pageState = useUsersSettingsPageState()
-  const {
-    confirmAction,
-    confirmDescription,
-    confirmTitle,
-    direction,
-    filteredTotal,
-    handleConfirm,
-    page,
-    pageSize,
-    search,
-    setConfirmAction,
-    sort,
-    table,
-    updateSearch,
-    userStatusCounts,
-    users,
-    usersQuery,
-  } = pageState
   const rows = table.getRowModel().rows
   const showTrueEmpty =
     !usersQuery.isLoading && !usersQuery.error && users.length === 0
@@ -606,7 +564,7 @@ function UsersSettingsPage() {
         confirmVariant={
           confirmAction?.type === 'role_change' ? 'default' : 'destructive'
         }
-        isPending={pageState.pendingMutation}
+        isPending={deleteMutation.isPending || updateRoleMutation.isPending}
         onConfirm={() => void handleConfirm()}
       />
     </PageLayout>
