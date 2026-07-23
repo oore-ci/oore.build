@@ -147,7 +147,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
   component: ProjectDetailPage,
 })
 
-function useProjectDetailPageState() {
+function ProjectDetailPage() {
   const { projectId } = Route.useParams()
   const search = Route.useSearch()
   const { tab } = search
@@ -258,23 +258,59 @@ function useProjectDetailPageState() {
   const label = data?.project.name ?? 'Project Details'
 
   if (isLoading) {
-    return { status: 'loading' as const, label }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-10 w-72" />
+        <Skeleton className="h-56 w-full" />
+      </PageLayout>
+    )
   }
 
   if (error) {
-    return {
-      status: 'error' as const,
-      label,
-      message: error.message,
-      notFound: error instanceof ApiClientError && error.status === 404,
-      retry: projectQuery.refetch,
-    }
+    const notFound = error instanceof ApiClientError && error.status === 404
+
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Alert variant="destructive">
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {notFound
+                ? 'This project was not found or is no longer available.'
+                : `Failed to load project: ${error.message}`}
+            </span>
+            <span className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link to="/projects" />}
+              >
+                Back to projects
+              </Button>
+              {!notFound ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void projectQuery.refetch()}
+                >
+                  Retry
+                </Button>
+              ) : null}
+            </span>
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
   }
 
-  if (!data) return { status: 'missing' as const }
+  if (!data) return null
 
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
+  const pipelineQuery = search.pipelineQ ?? ''
   const projectHasSource = projectSourceAvailable
   const runnerPolicyBlockReason =
     project.repository_id && !projectHasSource
@@ -312,140 +348,6 @@ function useProjectDetailPageState() {
     setTriggerPipelineId(() => pipelineId)
     setTriggerBuildOpen(true)
   }
-
-  return {
-    status: 'ready' as const,
-    activeTab,
-    buildCount,
-    canDeleteProjects,
-    canManageAccess,
-    canTriggerBuild,
-    canWriteInstanceSettings,
-    canWritePipelines,
-    canWriteProjects,
-    dangerOpen,
-    deleteMutation,
-    deleteOpen,
-    handleDelete,
-    label,
-    lastBuildByPipeline,
-    navigate,
-    openTriggerBuild,
-    pipelines,
-    pipelinesQuery,
-    pipelineDirection,
-    pipelineCount,
-    pipelinePage,
-    pipelinePageSize,
-    pipelineQuery: search.pipelineQ ?? '',
-    pipelineSort,
-    project,
-    projectHasSource,
-    projectId,
-    repositoryWorkflowsQuery,
-    runnerPolicyBlockReason,
-    setDangerOpen,
-    setDeleteOpen,
-    setTab,
-    setTriggerBuildOpen,
-    setTriggerPipelineId,
-    triggerBuildOpen,
-    triggerPipelineId,
-    updatePipelineSearch,
-  }
-}
-
-function ProjectDetailPage() {
-  const pageState = useProjectDetailPageState()
-
-  if (pageState.status === 'loading') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-56 w-full" />
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'error') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {pageState.notFound
-                ? 'This project was not found or is no longer available.'
-                : `Failed to load project: ${pageState.message}`}
-            </span>
-            <span className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                render={<Link to="/projects" />}
-              >
-                Back to projects
-              </Button>
-              {!pageState.notFound ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void pageState.retry()}
-                >
-                  Retry
-                </Button>
-              ) : null}
-            </span>
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'missing') return null
-
-  const {
-    activeTab,
-    buildCount,
-    canDeleteProjects,
-    canManageAccess,
-    canTriggerBuild,
-    canWriteInstanceSettings,
-    canWritePipelines,
-    canWriteProjects,
-    dangerOpen,
-    deleteMutation,
-    deleteOpen,
-    handleDelete,
-    label,
-    lastBuildByPipeline,
-    navigate,
-    openTriggerBuild,
-    pipelines,
-    pipelinesQuery,
-    pipelineDirection,
-    pipelineCount,
-    pipelinePage,
-    pipelinePageSize,
-    pipelineQuery,
-    pipelineSort,
-    project,
-    projectHasSource,
-    projectId,
-    repositoryWorkflowsQuery,
-    runnerPolicyBlockReason,
-    setDangerOpen,
-    setDeleteOpen,
-    setTab,
-    setTriggerBuildOpen,
-    setTriggerPipelineId,
-    triggerBuildOpen,
-    triggerPipelineId,
-    updatePipelineSearch,
-  } = pageState
 
   function preloadProjectSettings() {
     if (canManageAccess) void loadProjectAccessCard()

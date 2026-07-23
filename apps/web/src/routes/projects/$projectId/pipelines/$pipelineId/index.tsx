@@ -81,7 +81,7 @@ export const Route = createFileRoute(
 /*  Main page                                                          */
 /* ------------------------------------------------------------------ */
 
-function usePipelineDetailPageState() {
+function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
   const { data, isLoading, error } = usePipeline(pipelineId)
@@ -114,14 +114,31 @@ function usePipelineDetailPageState() {
   const label = data?.pipeline.name ?? 'Pipeline Details'
 
   if (isLoading) {
-    return { status: 'loading' as const, label }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-56 w-full" />
+      </PageLayout>
+    )
   }
 
   if (error) {
-    return { status: 'error' as const, label, message: error.message }
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <Alert variant="destructive">
+          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            Failed to load pipeline: {error.message}
+          </AlertDescription>
+        </Alert>
+      </PageLayout>
+    )
   }
 
-  if (!data) return { status: 'missing' as const }
+  if (!data) return null
 
   const { pipeline } = data
   const builds = buildsData?.builds ?? []
@@ -153,88 +170,6 @@ function usePipelineDetailPageState() {
         toast.error(`Failed to delete pipeline: ${err.message}`),
     })
   }
-
-  return {
-    status: 'ready' as const,
-    builds,
-    canDelete,
-    canTriggerBuild,
-    canWrite,
-    deleteMutation,
-    deleteOpen,
-    handleDelete,
-    handleToggleEnabled,
-    iosSigningQuery,
-    label,
-    manualOnlyTriggers,
-    navigate,
-    pipeline,
-    pipelineId,
-    projectData,
-    projectHasSource,
-    projectId,
-    setDeleteOpen,
-    setTriggerBuildOpen,
-    signingQuery,
-    triggerBuildOpen,
-    updateMutation,
-  }
-}
-
-function PipelineDetailPage() {
-  const pageState = usePipelineDetailPageState()
-
-  if (pageState.status === 'loading') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-28 w-full" />
-        <Skeleton className="h-56 w-full" />
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'error') {
-    return (
-      <PageLayout width="wide">
-        <PageMeta title={pageState.label} noindex />
-        <Alert variant="destructive">
-          <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load pipeline: {pageState.message}
-          </AlertDescription>
-        </Alert>
-      </PageLayout>
-    )
-  }
-
-  if (pageState.status === 'missing') return null
-
-  const {
-    builds,
-    canDelete,
-    canTriggerBuild,
-    canWrite,
-    deleteMutation,
-    deleteOpen,
-    handleDelete,
-    handleToggleEnabled,
-    iosSigningQuery,
-    label,
-    manualOnlyTriggers,
-    navigate,
-    pipeline,
-    pipelineId,
-    projectData,
-    projectHasSource,
-    projectId,
-    setDeleteOpen,
-    setTriggerBuildOpen,
-    signingQuery,
-    triggerBuildOpen,
-    updateMutation,
-  } = pageState
 
   return (
     <PageLayout width="wide">
