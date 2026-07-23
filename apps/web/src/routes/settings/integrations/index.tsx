@@ -87,7 +87,7 @@ function IntegrationsPage() {
   const navigate = Route.useNavigate()
   const integrationsQuery = useIntegrations()
   const preferencesQuery = useInstancePreferences({ enabled: canWrite })
-  const runtimeMode = preferencesQuery.data?.preferences.runtime_mode
+  const runtimeMode = preferencesQuery.data?.runtime_mode
   const remoteEnabled = !canWrite || runtimeMode === 'remote'
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'updated_at'

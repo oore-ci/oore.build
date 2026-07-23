@@ -295,7 +295,7 @@ function EnabledRetentionFields({
   )
 }
 
-function useRetentionPageState() {
+function RetentionPage() {
   const {
     data: policyData,
     error: policyError,
@@ -392,42 +392,6 @@ function useRetentionPageState() {
   }
 
   if (policyLoading) {
-    return { status: 'loading' as const }
-  }
-
-  if (policyError) {
-    return {
-      status: 'error' as const,
-      message: policyError.message,
-      retry: refetchPolicy,
-    }
-  }
-
-  if (!policy) {
-    return {
-      status: 'error' as const,
-      message: 'The response did not include a retention policy.',
-      retry: refetchPolicy,
-    }
-  }
-
-  return {
-    status: 'ready' as const,
-    cleanupError,
-    cleanupLoading,
-    enabled,
-    form,
-    lastCleanup,
-    onSubmit,
-    refetchCleanup,
-    updateMutation,
-  }
-}
-
-function RetentionPage() {
-  const pageState = useRetentionPageState()
-
-  if (pageState.status === 'loading') {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
@@ -444,7 +408,9 @@ function RetentionPage() {
     )
   }
 
-  if (pageState.status === 'error') {
+  if (policyError || !policy) {
+    const message =
+      policyError?.message ?? 'The response did not include a retention policy.'
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
@@ -454,14 +420,12 @@ function RetentionPage() {
         />
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              Failed to load the retention policy: {pageState.message}
-            </span>
+            <span>Failed to load the retention policy: {message}</span>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void pageState.retry()}
+              onClick={() => void refetchPolicy()}
             >
               Retry
             </Button>
@@ -470,17 +434,6 @@ function RetentionPage() {
       </PageLayout>
     )
   }
-
-  const {
-    cleanupError,
-    cleanupLoading,
-    enabled,
-    form,
-    lastCleanup,
-    onSubmit,
-    refetchCleanup,
-    updateMutation,
-  } = pageState
 
   return (
     <PageLayout width="wide">

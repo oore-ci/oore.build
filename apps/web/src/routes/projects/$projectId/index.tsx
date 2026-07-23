@@ -280,7 +280,7 @@ function useProjectDetailPageState() {
     project.repository_id && !projectHasSource
       ? ('repository_unavailable' as const)
       : canReadInstanceSettings &&
-          preferencesQuery.data?.preferences.direct_macos_runner_paused
+          preferencesQuery.data?.direct_macos_runner_paused
         ? ('instance_paused' as const)
         : undefined
 

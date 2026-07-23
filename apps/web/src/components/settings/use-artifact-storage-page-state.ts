@@ -106,7 +106,7 @@ export function useArtifactStoragePageState() {
     isLoopbackHostname(resolveHostname(instanceApiBaseUrl))
   const settingsQuery = useArtifactStorageSettings()
   const updateStorageMutation = useUpdateArtifactStorageSettings()
-  const settings = settingsQuery.data?.settings
+  const settings = settingsQuery.data
 
   const storageValues = useMemo<StorageFormInput | undefined>(() => {
     if (!settings) return undefined

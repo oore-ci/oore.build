@@ -31,7 +31,7 @@ export function LocalGitPage() {
   const { data: preferences } = useInstancePreferences({
     enabled: canReadPreferences,
   })
-  const runtimeMode = preferences?.preferences.runtime_mode
+  const runtimeMode = preferences?.runtime_mode
 
   return (
     <PageLayout width="wide">

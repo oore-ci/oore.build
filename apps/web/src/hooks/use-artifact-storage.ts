@@ -32,6 +32,7 @@ export function useArtifactStorageSettings() {
     queryFn: ({ signal }) =>
       getArtifactStorageSettings(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
+    select: (response) => response.settings,
   })
 }
 
@@ -62,6 +63,7 @@ export function useInstancePreferences(options?: { enabled?: boolean }) {
     queryFn: ({ signal }) =>
       getInstancePreferences(baseUrl!, token!, { signal }),
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
+    select: (response) => response.preferences,
   })
 }
 
@@ -154,6 +156,7 @@ export function useExternalAccessNetworkSettings(options?: {
     queryFn: ({ signal }) =>
       getExternalAccessNetworkSettings(baseUrl!, token!, { signal }),
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
+    select: (response) => response.settings,
   })
 }
 
@@ -190,6 +193,7 @@ export function useExternalAccessTrustedProxySettings() {
     queryFn: ({ signal }) =>
       getExternalAccessTrustedProxySettings(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
+    select: (response) => response.settings,
   })
 }
 

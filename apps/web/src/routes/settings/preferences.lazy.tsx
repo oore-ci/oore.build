@@ -155,7 +155,7 @@ function usePreferencesPageState() {
       : undefined,
     mode: 'onBlur',
   })
-  const networkSettings = networkSettingsQuery.data?.settings
+  const networkSettings = networkSettingsQuery.data
   const networkValues = useMemo(() => {
     if (!networkSettings) return undefined
     return {
@@ -176,7 +176,7 @@ function usePreferencesPageState() {
     mode: 'onBlur',
   })
 
-  const trustedProxySettings = trustedProxyQuery.data?.settings
+  const trustedProxySettings = trustedProxyQuery.data
   const trustedProxyValues = useMemo(() => {
     if (!trustedProxySettings) return undefined
     return {
@@ -333,7 +333,7 @@ function usePreferencesPageState() {
     )
   }
 
-  const preferences = preferencesQuery.data?.preferences
+  const preferences = preferencesQuery.data
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
   const remoteAuthMode = preferences?.remote_auth_mode ?? 'oidc'
   const webVersionLabel = healthVersionLabel(

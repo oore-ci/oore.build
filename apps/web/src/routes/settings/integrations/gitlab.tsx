@@ -45,7 +45,7 @@ function GitLabSetupPage() {
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
   const { data: networkSettings } = useExternalAccessNetworkSettings()
-  const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
+  const remoteEnabled = preferences?.runtime_mode === 'remote'
   const [hostKind, setSelectedHostKind] = useState<GitLabHostKind>('gitlab_com')
   const form = useForm<GitLabSetupForm>({
     resolver: zodResolver(gitLabSetupSchema),
@@ -63,7 +63,7 @@ function GitLabSetupPage() {
   const normalizedHostUrl =
     normalizeGitLabHostUrl(hostUrl) ?? 'https://gitlab.com'
   const { callbackUrl } = gitLabPublicEndpoints(
-    networkSettings?.settings.public_url,
+    networkSettings?.public_url,
     window.location.origin,
   )
 

@@ -25,7 +25,7 @@ function DirectRunnerPolicyControl() {
   const preferencesQuery = useInstancePreferences()
   const updatePreferences = useUpdateInstancePreferences()
   const canWrite = useHasPermission('instance_settings', 'write')
-  const preferences = preferencesQuery.data?.preferences
+  const preferences = preferencesQuery.data
   const enabled = !(preferences?.direct_macos_runner_paused ?? false)
 
   if (preferencesQuery.isLoading) {

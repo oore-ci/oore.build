@@ -41,7 +41,7 @@ function GitHubSetupPage() {
   const startMutation = usePreviewGitHubAppSetup()
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
-  const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
+  const remoteEnabled = preferences?.runtime_mode === 'remote'
 
   const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`

@@ -41,10 +41,6 @@ import {
   IntegrationAccountsInventory,
   IntegrationRepositoryInventory,
 } from './-integration-inventory'
-import {
-  filterIntegrationRepositories,
-  paginateIntegrationRepositories,
-} from './-integration-inventory-utils'
 import { GitLabWebhookTokenDialogs } from './-gitlab-webhook-tokens'
 import { IntegrationConnectionDetails } from './-integration-connection-details'
 import { IntegrationDisconnectDialog } from './-integration-disconnect-dialog'
@@ -160,17 +156,29 @@ function useIntegrationDetailPageState(
   })
   const defaultPageSize = isCompact ? 10 : 20
   const pageSize = search.pageSize ?? defaultPageSize
-  const filteredRepositories = useMemo(
-    () => filterIntegrationRepositories(repositories, search.q),
-    [repositories, search.q],
-  )
+  const filteredRepositories = useMemo(() => {
+    const query = search.q?.trim().toLocaleLowerCase()
+    return repositories
+      .filter((repository) => {
+        if (!query) return true
+        return [
+          repository.full_name,
+          repository.default_branch,
+          repository.is_private ? 'private' : 'public',
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLocaleLowerCase()
+          .includes(query)
+      })
+      .sort((left, right) => left.full_name.localeCompare(right.full_name))
+  }, [repositories, search.q])
   const total = filteredRepositories.length
   const requestedPage = search.page ?? 1
   const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)))
-  const visibleRepositories = paginateIntegrationRepositories(
-    filteredRepositories,
-    page,
-    pageSize,
+  const visibleRepositories = filteredRepositories.slice(
+    (page - 1) * pageSize,
+    page * pageSize,
   )
 
   function updateSearch(updates: Partial<IntegrationDetailSearch>) {
@@ -279,7 +287,7 @@ function useIntegrationDetailPageState(
     integration.provider === 'github' || integration.provider === 'gitlab'
   const gitLabWebhookUrl = networkSettingsQuery.data
     ? gitLabPublicEndpoints(
-        networkSettingsQuery.data.settings.public_url,
+        networkSettingsQuery.data.public_url,
         window.location.origin,
       ).webhookUrl
     : null
